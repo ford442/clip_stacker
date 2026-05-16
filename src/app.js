@@ -38,6 +38,7 @@ const DEFAULT_STORAGE_ENDPOINT = '';
 const MIN_CLIP_DURATION = 0.1;
 const FADE_SAFETY_MARGIN = 0.01;
 const DEFAULT_VIDEO_SIZE = '1280x720';
+const MEDIA_LOAD_TIMEOUT_MS = 5000;
 
 function setStatus(message) {
   statusNode.textContent = message;
@@ -411,11 +412,73 @@ async function mergeClips() {
   }
 }
 
+async function loadMediaDurationAndUrl(file, includeUrl = true) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const mediaElement = file.type.startsWith('video/') ? document.createElement('video') : document.createElement('audio');
+    mediaElement.src = objectUrl;
+    let resolved = false;
+    let timeoutId = null;
+
+    const cleanup = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      mediaElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+      mediaElement.removeEventListener('error', onError);
+      mediaElement.src = '';
+    };
+
+    const onLoadedMetadata = () => {
+      if (resolved) return;
+      resolved = true;
+      const duration = mediaElement.duration;
+      cleanup();
+      if (includeUrl) {
+        resolve({ duration, objectUrl });
+      } else {
+        URL.revokeObjectURL(objectUrl);
+        resolve(duration);
+      }
+    };
+
+    const onError = () => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Could not load media duration'));
+    };
+
+    mediaElement.addEventListener('loadedmetadata', onLoadedMetadata);
+    mediaElement.addEventListener('error', onError);
+    // Set a timeout in case the browser doesn't fire events properly
+    timeoutId = setTimeout(() => {
+      if (!isNaN(mediaElement.duration) && mediaElement.duration > 0) {
+        onLoadedMetadata();
+      } else {
+        onError();
+      }
+    }, MEDIA_LOAD_TIMEOUT_MS);
+  });
+}
+
+async function getMediaDuration(file) {
+  return loadMediaDurationAndUrl(file, false);
+}
+
+async function getMediaDurationAndUrl(file) {
+  return loadMediaDurationAndUrl(file, true);
+}
+
 clipInput.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
   if (files.length === 0) {
     return;
   }
+
+  setStatus('Importing clips...');
+  const newClips = [];
 
   for (const file of files) {
     const isVideo = file.type.startsWith('video/') || file.name.toLowerCase().endsWith('.mp4');
@@ -424,31 +487,43 @@ clipInput.addEventListener('change', async (event) => {
       continue;
     }
 
-    const objectUrl = URL.createObjectURL(file);
-    const duration = 10;
+    try {
+      const { duration, objectUrl } = await getMediaDurationAndUrl(file);
 
-    const clip = {
-      id: createClipId(),
-      file,
-      objectUrl,
-      title: file.name,
-      kind: isVideo ? 'video' : 'audio',
-      duration: Math.max(MIN_CLIP_DURATION, duration),
-      trimStart: 0,
-      trimEnd: NaN,
-      videoFadeIn: 0,
-      videoFadeOut: 0,
-      audioFadeIn: 0,
-      audioFadeOut: 0,
-    };
+      const clip = {
+        id: createClipId(),
+        file,
+        objectUrl,
+        title: file.name,
+        kind: isVideo ? 'video' : 'audio',
+        duration: Math.max(MIN_CLIP_DURATION, duration),
+        trimStart: 0,
+        trimEnd: NaN,
+        videoFadeIn: 0,
+        videoFadeOut: 0,
+        audioFadeIn: 0,
+        audioFadeOut: 0,
+      };
 
-    state.clips.push(clip);
-    state.selectedClipId = clip.id;
+      state.clips.push(clip);
+      newClips.push(clip);
+    } catch (error) {
+      setStatus(`Failed to import ${file.name}: ${error.message}`);
+    }
+  }
+
+  if (newClips.length > 0) {
+    state.selectedClipId = newClips[newClips.length - 1].id;
   }
 
   event.target.value = '';
   downloadLink.hidden = true;
-  setStatus('Clips imported. Existing clips were kept and the newest clip was selected.');
+  
+  if (newClips.length > 0) {
+    setStatus(`${newClips.length} clip(s) imported. Existing clips were kept and the newest clip was selected.`);
+  } else {
+    setStatus('No media files could be imported. Check that files are valid video (MP4) or audio (WAV, MP3) formats.');
+  }
   render();
 });
 
