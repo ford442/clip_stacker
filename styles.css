@@ -1,0 +1,149 @@
+:root {
+  color-scheme: dark;
+  --bg: #0a0f1a;
+  --panel: #121a2a;
+  --panel-alt: #1a2233;
+  --accent: #4f8cff;
+  --text: #e5ebff;
+  --muted: #9ca8c9;
+  --border: #2f3d5f;
+}
+
+* {
+  box-sizing: border-box;
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: linear-gradient(180deg, #090d16, #0f1728 45%, #090d16);
+  color: var(--text);
+}
+
+.app-shell {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+  display: grid;
+  gap: 1rem;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 2rem;
+}
+
+.app-header p {
+  margin-top: 0.35rem;
+  color: var(--muted);
+}
+
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: rgba(18, 26, 42, 0.9);
+  padding: 1rem;
+}
+
+.layout-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.toolbar,
+.storage-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+button,
+.button-like {
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+  padding: 0.5rem 0.8rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+button:hover,
+.button-like:hover {
+  border-color: var(--accent);
+}
+
+.button-like input {
+  display: none;
+}
+
+label {
+  display: grid;
+  gap: 0.2rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+input {
+  border: 1px solid var(--border);
+  background: #0d1322;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 0.35rem 0.45rem;
+}
+
+.clip-list,
+.timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.clip-item,
+.timeline-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #0d1322;
+  padding: 0.65rem;
+}
+
+.clip-item.selected,
+.timeline-item.selected {
+  border-color: var(--accent);
+}
+
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+video,
+audio {
+  width: 100%;
+  border-radius: 8px;
+  background: #000;
+  margin-bottom: 0.8rem;
+}
+
+#status {
+  min-height: 1.4rem;
+  color: var(--muted);
+}
+
+.timeline-buttons {
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.timeline-buttons button {
+  padding: 0.2rem 0.45rem;
+}
