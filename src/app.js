@@ -291,64 +291,112 @@ async function ensureFfmpeg() {
   return ffmpeg;
 }
 
-function createFilterParts(inputCount) {
-  const filterParts = [];
-  const concatInputs = [];
+// Returns true if a clip requires re-encoding.
+// Audio clips always need it to synthesize a black video track.
+// Video clips need it only when fades are configured.
+function clipNeedsEffects(clip) {
+  if (clip.kind === 'audio') return true;
+  return clip.videoFadeIn > 0 || clip.videoFadeOut > 0 || clip.audioFadeIn > 0 || clip.audioFadeOut > 0;
+}
 
-  state.clips.forEach((clip, index) => {
-    const duration = getClipDuration(clip);
-    const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-    const safeVideoOut = Math.max(0, duration - clip.videoFadeOut);
-    const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
+// Build a filter_complex string to process a single clip (always at input index 0).
+// Used by Pass 1 when re-encoding is required.
+function buildSingleClipFilter(clip) {
+  const duration = getClipDuration(clip);
+  const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
+  const safeVideoOut = Math.max(0, duration - clip.videoFadeOut);
+  const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
+  const parts = [];
 
-    if (clip.kind === 'video') {
-      let videoChain = `[${index}:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS`;
-      if (clip.videoFadeIn > 0) {
-        videoChain += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
-      }
-      if (clip.videoFadeOut > 0) {
-        videoChain += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
-      }
-      videoChain += `[v${index}]`;
-      filterParts.push(videoChain);
+  if (clip.kind === 'video') {
+    let v = `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS`;
+    if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
+    if (clip.videoFadeOut > 0) v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
+    parts.push(`${v}[vout]`);
 
-      let audioChain = `[${index}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
-      if (clip.audioFadeIn > 0) {
-        audioChain += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
-      }
-      if (clip.audioFadeOut > 0) {
-        audioChain += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
-      }
-      audioChain += `[a${index}]`;
-      filterParts.push(audioChain);
-    } else {
-      filterParts.push(`color=c=black:s=${DEFAULT_VIDEO_SIZE}:d=${duration}[vsrc${index}]`);
-      let videoChain = `[vsrc${index}]`;
-      if (clip.videoFadeIn > 0) {
-        videoChain += `fade=t=in:st=0:d=${clip.videoFadeIn},`;
-      }
-      if (clip.videoFadeOut > 0) {
-        videoChain += `fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut},`;
-      }
-      videoChain += `format=yuv420p[v${index}]`;
-      filterParts.push(videoChain);
+    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+    if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
+    if (clip.audioFadeOut > 0) a += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
+    parts.push(`${a}[aout]`);
+  } else {
+    // Synthesize a black video track for audio-only clips.
+    parts.push(`color=c=black:s=${DEFAULT_VIDEO_SIZE}:d=${duration}[vsrc]`);
+    let v = `[vsrc]`;
+    if (clip.videoFadeIn > 0) v += `fade=t=in:st=0:d=${clip.videoFadeIn},`;
+    if (clip.videoFadeOut > 0) v += `fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut},`;
+    parts.push(`${v}format=yuv420p[vout]`);
 
-      let audioChain = `[${index}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
-      if (clip.audioFadeIn > 0) {
-        audioChain += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
-      }
-      if (clip.audioFadeOut > 0) {
-        audioChain += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
-      }
-      audioChain += `[a${index}]`;
-      filterParts.push(audioChain);
-    }
+    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+    if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
+    if (clip.audioFadeOut > 0) a += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
+    parts.push(`${a}[aout]`);
+  }
 
-    concatInputs.push(`[v${index}][a${index}]`);
+  return parts.join(';');
+}
+
+// Lossless path: all clips are clean video — use the concat demuxer with -c copy.
+// inpoint/outpoint in the concat list handles trimming with zero quality loss.
+async function mergeClipsLossless(ffmpeg) {
+  const listLines = state.clips.map((clip) => {
+    const lines = [`file '${clip.inputName}'`];
+    if (clip.trimStart > 0) lines.push(`inpoint ${clip.trimStart}`);
+    if (Number.isFinite(clip.trimEnd)) lines.push(`outpoint ${clip.trimEnd}`);
+    return lines.join('\n');
   });
+  await ffmpeg.writeFile('concat_list.txt', listLines.join('\n'));
 
-  filterParts.push(`${concatInputs.join('')}concat=n=${inputCount}:v=1:a=1[vout][aout]`);
-  return filterParts.join(';');
+  setStatus('Concatenating (lossless)...');
+  await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4']);
+  await ffmpeg.deleteFile('concat_list.txt');
+}
+
+// Pass 1: produce one intermediate mp4 per clip.
+// Clips that need effects are re-encoded with fades applied.
+// Clean video clips are stream-copied with a fast container-level seek for trimming.
+async function processClipPass1(ffmpeg, clip, index) {
+  const outName = `intermediate-${index}.mp4`;
+
+  if (clipNeedsEffects(clip)) {
+    setStatus(`Pass 1 [${index + 1}/${state.clips.length}]: Encoding "${clip.title}"...`);
+    await ffmpeg.exec([
+      '-i', clip.inputName,
+      '-filter_complex', buildSingleClipFilter(clip),
+      '-map', '[vout]',
+      '-map', '[aout]',
+      '-r', '30',
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'aac',
+      outName,
+    ]);
+  } else {
+    // -ss before -i triggers a fast container-level seek; -t is duration from that point.
+    setStatus(`Pass 1 [${index + 1}/${state.clips.length}]: Trimming "${clip.title}" (lossless)...`);
+    const args = [];
+    if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
+    args.push('-i', clip.inputName);
+    if (Number.isFinite(clip.trimEnd)) args.push('-t', String(clip.trimEnd - clip.trimStart));
+    args.push('-c', 'copy', outName);
+    await ffmpeg.exec(args);
+  }
+
+  return outName;
+}
+
+// Pass 2: concatenate all intermediate files produced by Pass 1.
+// All intermediates share the same h264/aac codec, so -c copy preserves quality.
+async function mergeClipsPass2(ffmpeg, intermediateNames) {
+  const concatList = intermediateNames.map((n) => `file '${n}'`).join('\n');
+  await ffmpeg.writeFile('concat_list.txt', concatList);
+
+  setStatus('Pass 2: Final concatenation...');
+  await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4']);
+
+  await ffmpeg.deleteFile('concat_list.txt');
+  for (const name of intermediateNames) {
+    await ffmpeg.deleteFile(name);
+  }
 }
 
 async function mergeClips() {
@@ -361,41 +409,51 @@ async function mergeClips() {
     const ffmpeg = await ensureFfmpeg();
     setStatus('Preparing media...');
 
-    for (const name of await ffmpeg.listDir('/')) {
-      if (name.name.startsWith('input-') || name.name === 'stacked.mp4') {
-        await ffmpeg.deleteFile(name.name);
+    // Clean up any leftover files from a previous run.
+    for (const entry of await ffmpeg.listDir('/')) {
+      if (entry.isDir) continue;
+      if (
+        entry.name.startsWith('input-') ||
+        entry.name.startsWith('intermediate-') ||
+        entry.name === 'stacked.mp4' ||
+        entry.name === 'concat_list.txt'
+      ) {
+        await ffmpeg.deleteFile(entry.name);
       }
     }
 
-    const args = [];
-
+    // Write all source files into the WASM virtual filesystem.
     for (const [index, clip] of state.clips.entries()) {
-      const extension = getSafeExtension(clip.file.name, clip.kind === 'video' ? 'mp4' : 'mp3');
-      clip.inputName = `input-${index}.${extension}`;
+      const ext = getSafeExtension(clip.file.name, clip.kind === 'video' ? 'mp4' : 'mp3');
+      clip.inputName = `input-${index}.${ext}`;
       await ffmpeg.writeFile(clip.inputName, await fetchFile(clip.file));
-      args.push('-i', clip.inputName);
     }
 
-    const filterComplex = createFilterParts(state.clips.length);
+    const effectClips = state.clips.filter(clipNeedsEffects);
 
-    await ffmpeg.exec([
-      ...args,
-      '-filter_complex',
-      filterComplex,
-      '-map',
-      '[vout]',
-      '-map',
-      '[aout]',
-      '-r',
-      '30',
-      '-c:v',
-      'libx264',
-      '-pix_fmt',
-      'yuv420p',
-      '-c:a',
-      'aac',
-      'stacked.mp4',
-    ]);
+    if (effectClips.length === 0) {
+      // All clips are clean video — lossless concat, no re-encoding needed.
+      await mergeClipsLossless(ffmpeg);
+    } else {
+      // One or more clips require re-encoding: warn the user then run two passes.
+      const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
+      setStatus(`Note: Re-encoding will occur for ${titles}. Starting two-pass export...`);
+      await new Promise((r) => setTimeout(r, 1500));
+
+      // Pass 1: process each clip individually into an intermediate file.
+      const intermediates = [];
+      for (const [index, clip] of state.clips.entries()) {
+        intermediates.push(await processClipPass1(ffmpeg, clip, index));
+      }
+
+      // Pass 2: join all intermediates into the final output.
+      await mergeClipsPass2(ffmpeg, intermediates);
+    }
+
+    // Remove input files from the WASM filesystem now that we are done with them.
+    for (const clip of state.clips) {
+      try { await ffmpeg.deleteFile(clip.inputName); } catch { /* ignore if already cleaned up */ }
+    }
 
     const output = await ffmpeg.readFile('stacked.mp4');
     const blob = new Blob([output.buffer], { type: 'video/mp4' });
