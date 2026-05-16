@@ -31,9 +31,12 @@ const projectFileInput = document.querySelector('#projectFileInput');
 const saveRemoteButton = document.querySelector('#saveRemoteButton');
 const loadRemoteButton = document.querySelector('#loadRemoteButton');
 const storageEndpoint = document.querySelector('#storageEndpoint');
+const storageAuthToken = document.querySelector('#storageAuthToken');
 const projectNameInput = document.querySelector('#projectName');
 
 const DEFAULT_STORAGE_ENDPOINT = 'https://example.com/contabo_storage_manager/projects';
+const MIN_CLIP_DURATION = 0.1;
+const FADE_SAFETY_MARGIN = 0.01;
 
 function setStatus(message) {
   statusNode.textContent = message;
@@ -45,7 +48,16 @@ function getSelectedClip() {
 
 function getClipDuration(clip) {
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-  return Math.max(0.1, end - clip.trimStart);
+  return Math.max(MIN_CLIP_DURATION, end - clip.trimStart);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
 function renderClips() {
@@ -55,9 +67,10 @@ function renderClips() {
   for (const [index, clip] of state.clips.entries()) {
     const clipNode = document.createElement('li');
     clipNode.className = `clip-item${clip.id === state.selectedClipId ? ' selected' : ''}`;
+    const safeTitle = escapeHtml(clip.title);
     clipNode.innerHTML = `
       <div class="row">
-        <strong>${clip.title}</strong>
+        <strong>${safeTitle}</strong>
         <span class="muted">${clip.kind.toUpperCase()}</span>
       </div>
       <div class="muted">${getClipDuration(clip).toFixed(1)}s (trim ${clip.trimStart.toFixed(1)}s → ${Number.isFinite(clip.trimEnd) ? clip.trimEnd.toFixed(1) : 'end'})</div>
@@ -72,7 +85,7 @@ function renderClips() {
     timelineNode.className = `timeline-item${clip.id === state.selectedClipId ? ' selected' : ''}`;
     timelineNode.innerHTML = `
       <div class="row">
-        <strong>${index + 1}. ${clip.title}</strong>
+        <strong>${index + 1}. ${safeTitle}</strong>
         <div class="timeline-buttons">
           <button type="button" data-action="up">↑</button>
           <button type="button" data-action="down">↓</button>
@@ -149,9 +162,9 @@ function render() {
 
 function sanitizeClipAdjustments(clip) {
   clip.trimStart = Number.isFinite(clip.trimStart) ? Math.max(0, clip.trimStart) : 0;
-  clip.trimEnd = Number.isFinite(clip.trimEnd) ? Math.max(clip.trimStart + 0.1, clip.trimEnd) : NaN;
+  clip.trimEnd = Number.isFinite(clip.trimEnd) ? Math.max(clip.trimStart + MIN_CLIP_DURATION, clip.trimEnd) : NaN;
 
-  const maxFade = Math.max(0, getClipDuration(clip) / 2 - 0.01);
+  const maxFade = Math.max(0, getClipDuration(clip) / 2 - FADE_SAFETY_MARGIN);
   clip.videoFadeIn = Math.min(Math.max(0, clip.videoFadeIn), maxFade);
   clip.videoFadeOut = Math.min(Math.max(0, clip.videoFadeOut), maxFade);
   clip.audioFadeIn = Math.min(Math.max(0, clip.audioFadeIn), maxFade);
@@ -208,14 +221,29 @@ function applyProjectData(project) {
 }
 
 class ContaboStorageManagerClient {
-  constructor(endpoint) {
+  constructor(endpoint, authToken) {
     this.endpoint = endpoint || DEFAULT_STORAGE_ENDPOINT;
+    this.authToken = authToken?.trim() || '';
+  }
+
+  getAuthHeader() {
+    if (!this.authToken) {
+      return null;
+    }
+
+    return this.authToken.startsWith('Bearer ') ? this.authToken : `Bearer ${this.authToken}`;
   }
 
   async save(name, payload) {
+    const authHeader = this.getAuthHeader();
+    const headers = { 'content-type': 'application/json' };
+    if (authHeader) {
+      headers.authorization = authHeader;
+    }
+
     const response = await fetch(this.endpoint, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify({ name, payload }),
     });
     if (!response.ok) {
@@ -224,7 +252,10 @@ class ContaboStorageManagerClient {
   }
 
   async load(name) {
-    const response = await fetch(`${this.endpoint}?name=${encodeURIComponent(name)}`);
+    const authHeader = this.getAuthHeader();
+    const response = await fetch(`${this.endpoint}?name=${encodeURIComponent(name)}`, {
+      headers: authHeader ? { authorization: authHeader } : undefined,
+    });
     if (!response.ok) {
       throw new Error(`Remote load failed (${response.status})`);
     }
@@ -327,7 +358,9 @@ async function mergeClips() {
     const args = [];
 
     for (const [index, clip] of state.clips.entries()) {
-      const extension = clip.file.name.split('.').pop()?.toLowerCase() || (clip.kind === 'video' ? 'mp4' : 'mp3');
+      const extensionMatch = /\.([^.]+)$/.exec(clip.file.name);
+      const rawExtension = extensionMatch?.[1]?.toLowerCase();
+      const extension = rawExtension && /^[a-z0-9]+$/.test(rawExtension) ? rawExtension : (clip.kind === 'video' ? 'mp4' : 'mp3');
       clip.inputName = `input-${index}.${extension}`;
       await ffmpeg.writeFile(clip.inputName, await fetchFile(clip.file));
       args.push('-i', clip.inputName);
@@ -392,12 +425,12 @@ clipInput.addEventListener('change', async (event) => {
     });
 
     const clip = {
-      id: crypto.randomUUID(),
+      id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
       file,
       objectUrl,
       title: file.name,
       kind: isVideo ? 'video' : 'audio',
-      duration: Math.max(0.1, duration),
+      duration: Math.max(MIN_CLIP_DURATION, duration),
       trimStart: 0,
       trimEnd: NaN,
       videoFadeIn: 0,
@@ -476,7 +509,7 @@ projectFileInput.addEventListener('change', async (event) => {
 
 saveRemoteButton.addEventListener('click', async () => {
   try {
-    const client = new ContaboStorageManagerClient(storageEndpoint.value);
+    const client = new ContaboStorageManagerClient(storageEndpoint.value, storageAuthToken.value);
     await client.save(projectNameInput.value || 'default-project', serializeProject());
     setStatus('Project saved to contabo_storage_manager endpoint.');
   } catch (error) {
@@ -486,7 +519,7 @@ saveRemoteButton.addEventListener('click', async () => {
 
 loadRemoteButton.addEventListener('click', async () => {
   try {
-    const client = new ContaboStorageManagerClient(storageEndpoint.value);
+    const client = new ContaboStorageManagerClient(storageEndpoint.value, storageAuthToken.value);
     const payload = await client.load(projectNameInput.value || 'default-project');
     applyProjectData(payload);
     setStatus('Project loaded from contabo_storage_manager endpoint.');

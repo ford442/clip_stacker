@@ -11,7 +11,7 @@ A lightweight web app for stacking clips into one merged MP4.
 - Apply per-clip fade in/out controls for video and audio
 - Merge timeline into one MP4 via FFmpeg (WebAssembly in-browser)
 - Save/load project metadata locally as JSON
-- Save/load project metadata remotely via a `ford442/contabo_storage_manager`-compatible HTTP endpoint
+- Save/load project metadata remotely via a [`ford442/contabo_storage_manager`](https://github.com/ford442/contabo_storage_manager)-compatible HTTP endpoint
 
 ## Run locally
 
@@ -31,3 +31,4 @@ Remote save/load expects an endpoint compatible with:
 - `GET /contabo_storage_manager/projects?name=...` returning `{ "payload": { ...project... } }`
 
 If your `contabo_storage_manager` deployment uses a different route shape, enter the correct endpoint URL in the app before saving/loading.
+If your deployment requires authentication, provide an API key or bearer token in the app's optional auth token field.
