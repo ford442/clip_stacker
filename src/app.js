@@ -38,6 +38,7 @@ const DEFAULT_STORAGE_ENDPOINT = '';
 const MIN_CLIP_DURATION = 0.1;
 const FADE_SAFETY_MARGIN = 0.01;
 const DEFAULT_VIDEO_SIZE = '1280x720';
+const MEDIA_LOAD_TIMEOUT_MS = 5000;
 
 function setStatus(message) {
   statusNode.textContent = message;
@@ -411,37 +412,63 @@ async function mergeClips() {
   }
 }
 
-async function getMediaDuration(file) {
+async function loadMediaDurationAndUrl(file, includeUrl = true) {
   return new Promise((resolve, reject) => {
     const objectUrl = URL.createObjectURL(file);
     const mediaElement = file.type.startsWith('video/') ? document.createElement('video') : document.createElement('audio');
     mediaElement.src = objectUrl;
+    let resolved = false;
+    let timeoutId = null;
+
+    const cleanup = () => {
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+      mediaElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+      mediaElement.removeEventListener('error', onError);
+      mediaElement.src = '';
+    };
 
     const onLoadedMetadata = () => {
+      if (resolved) return;
+      resolved = true;
+      const duration = mediaElement.duration;
       cleanup();
-      resolve(mediaElement.duration);
+      if (includeUrl) {
+        resolve({ duration, objectUrl });
+      } else {
+        URL.revokeObjectURL(objectUrl);
+        resolve(duration);
+      }
     };
 
     const onError = () => {
+      if (resolved) return;
+      resolved = true;
       cleanup();
-      reject(new Error('Could not load media duration'));
-    };
-
-    const cleanup = () => {
-      mediaElement.removeEventListener('loadedmetadata', onLoadedMetadata);
-      mediaElement.removeEventListener('error', onError);
       URL.revokeObjectURL(objectUrl);
+      reject(new Error('Could not load media duration'));
     };
 
     mediaElement.addEventListener('loadedmetadata', onLoadedMetadata);
     mediaElement.addEventListener('error', onError);
     // Set a timeout in case the browser doesn't fire events properly
-    setTimeout(() => {
-      if (!mediaElement.duration) {
+    timeoutId = setTimeout(() => {
+      if (!isNaN(mediaElement.duration) && mediaElement.duration > 0) {
+        onLoadedMetadata();
+      } else {
         onError();
       }
-    }, 5000);
+    }, MEDIA_LOAD_TIMEOUT_MS);
   });
+}
+
+async function getMediaDuration(file) {
+  return loadMediaDurationAndUrl(file, false);
+}
+
+async function getMediaDurationAndUrl(file) {
+  return loadMediaDurationAndUrl(file, true);
 }
 
 clipInput.addEventListener('change', async (event) => {
@@ -461,8 +488,7 @@ clipInput.addEventListener('change', async (event) => {
     }
 
     try {
-      const duration = await getMediaDuration(file);
-      const objectUrl = URL.createObjectURL(file);
+      const { duration, objectUrl } = await getMediaDurationAndUrl(file);
 
       const clip = {
         id: createClipId(),
@@ -492,7 +518,12 @@ clipInput.addEventListener('change', async (event) => {
 
   event.target.value = '';
   downloadLink.hidden = true;
-  setStatus(`${newClips.length} clip(s) imported. Existing clips were kept and the newest clip was selected.`);
+  
+  if (newClips.length > 0) {
+    setStatus(`${newClips.length} clip(s) imported. Existing clips were kept and the newest clip was selected.`);
+  } else {
+    setStatus('No media files could be imported. Check that files are valid video (MP4) or audio (WAV, MP3) formats.');
+  }
   render();
 });
 
