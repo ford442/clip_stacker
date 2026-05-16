@@ -34,9 +34,10 @@ const storageEndpoint = document.querySelector('#storageEndpoint');
 const storageAuthToken = document.querySelector('#storageAuthToken');
 const projectNameInput = document.querySelector('#projectName');
 
-const DEFAULT_STORAGE_ENDPOINT = 'https://example.com/contabo_storage_manager/projects';
+const DEFAULT_STORAGE_ENDPOINT = '';
 const MIN_CLIP_DURATION = 0.1;
 const FADE_SAFETY_MARGIN = 0.01;
+const DEFAULT_VIDEO_SIZE = '1280x720';
 
 function setStatus(message) {
   statusNode.textContent = message;
@@ -320,7 +321,7 @@ function createFilterParts(inputCount) {
       audioChain += `[a${index}]`;
       filterParts.push(audioChain);
     } else {
-      filterParts.push(`color=c=black:s=1280x720:d=${duration}[vsrc${index}]`);
+      filterParts.push(`color=c=black:s=${DEFAULT_VIDEO_SIZE}:d=${duration}[vsrc${index}]`);
       let videoChain = `[vsrc${index}]`;
       if (clip.videoFadeIn > 0) {
         videoChain += `fade=t=in:st=0:d=${clip.videoFadeIn},`;
