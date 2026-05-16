@@ -411,11 +411,47 @@ async function mergeClips() {
   }
 }
 
+async function getMediaDuration(file) {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const mediaElement = file.type.startsWith('video/') ? document.createElement('video') : document.createElement('audio');
+    mediaElement.src = objectUrl;
+
+    const onLoadedMetadata = () => {
+      cleanup();
+      resolve(mediaElement.duration);
+    };
+
+    const onError = () => {
+      cleanup();
+      reject(new Error('Could not load media duration'));
+    };
+
+    const cleanup = () => {
+      mediaElement.removeEventListener('loadedmetadata', onLoadedMetadata);
+      mediaElement.removeEventListener('error', onError);
+      URL.revokeObjectURL(objectUrl);
+    };
+
+    mediaElement.addEventListener('loadedmetadata', onLoadedMetadata);
+    mediaElement.addEventListener('error', onError);
+    // Set a timeout in case the browser doesn't fire events properly
+    setTimeout(() => {
+      if (!mediaElement.duration) {
+        onError();
+      }
+    }, 5000);
+  });
+}
+
 clipInput.addEventListener('change', async (event) => {
   const files = Array.from(event.target.files || []);
   if (files.length === 0) {
     return;
   }
+
+  setStatus('Importing clips...');
+  const newClips = [];
 
   for (const file of files) {
     const isVideo = file.type.startsWith('video/') || file.name.toLowerCase().endsWith('.mp4');
@@ -424,31 +460,39 @@ clipInput.addEventListener('change', async (event) => {
       continue;
     }
 
-    const objectUrl = URL.createObjectURL(file);
-    const duration = 10;
+    try {
+      const duration = await getMediaDuration(file);
+      const objectUrl = URL.createObjectURL(file);
 
-    const clip = {
-      id: createClipId(),
-      file,
-      objectUrl,
-      title: file.name,
-      kind: isVideo ? 'video' : 'audio',
-      duration: Math.max(MIN_CLIP_DURATION, duration),
-      trimStart: 0,
-      trimEnd: NaN,
-      videoFadeIn: 0,
-      videoFadeOut: 0,
-      audioFadeIn: 0,
-      audioFadeOut: 0,
-    };
+      const clip = {
+        id: createClipId(),
+        file,
+        objectUrl,
+        title: file.name,
+        kind: isVideo ? 'video' : 'audio',
+        duration: Math.max(MIN_CLIP_DURATION, duration),
+        trimStart: 0,
+        trimEnd: NaN,
+        videoFadeIn: 0,
+        videoFadeOut: 0,
+        audioFadeIn: 0,
+        audioFadeOut: 0,
+      };
 
-    state.clips.push(clip);
-    state.selectedClipId = clip.id;
+      state.clips.push(clip);
+      newClips.push(clip);
+    } catch (error) {
+      setStatus(`Failed to import ${file.name}: ${error.message}`);
+    }
+  }
+
+  if (newClips.length > 0) {
+    state.selectedClipId = newClips[newClips.length - 1].id;
   }
 
   event.target.value = '';
   downloadLink.hidden = true;
-  setStatus('Clips imported. Existing clips were kept and the newest clip was selected.');
+  setStatus(`${newClips.length} clip(s) imported. Existing clips were kept and the newest clip was selected.`);
   render();
 });
 
