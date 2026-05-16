@@ -60,6 +60,16 @@ function escapeHtml(value) {
     .replaceAll("'", '&#39;');
 }
 
+function getSafeExtension(fileName, defaultExtension) {
+  const extensionMatch = /\.([^.]+)$/.exec(fileName);
+  const rawExtension = extensionMatch?.[1]?.toLowerCase();
+  return rawExtension && /^[a-z0-9]+$/.test(rawExtension) ? rawExtension : defaultExtension;
+}
+
+function createClipId() {
+  return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
+
 function renderClips() {
   clipList.replaceChildren();
   timeline.replaceChildren();
@@ -358,9 +368,7 @@ async function mergeClips() {
     const args = [];
 
     for (const [index, clip] of state.clips.entries()) {
-      const extensionMatch = /\.([^.]+)$/.exec(clip.file.name);
-      const rawExtension = extensionMatch?.[1]?.toLowerCase();
-      const extension = rawExtension && /^[a-z0-9]+$/.test(rawExtension) ? rawExtension : (clip.kind === 'video' ? 'mp4' : 'mp3');
+      const extension = getSafeExtension(clip.file.name, clip.kind === 'video' ? 'mp4' : 'mp3');
       clip.inputName = `input-${index}.${extension}`;
       await ffmpeg.writeFile(clip.inputName, await fetchFile(clip.file));
       args.push('-i', clip.inputName);
@@ -416,16 +424,10 @@ clipInput.addEventListener('change', async (event) => {
     }
 
     const objectUrl = URL.createObjectURL(file);
-    const probe = document.createElement(isVideo ? 'video' : 'audio');
-    probe.preload = 'metadata';
-    probe.src = objectUrl;
-    const duration = await new Promise((resolve) => {
-      probe.addEventListener('loadedmetadata', () => resolve(Number.isFinite(probe.duration) ? probe.duration : 1), { once: true });
-      probe.addEventListener('error', () => resolve(1), { once: true });
-    });
+    const duration = 10;
 
     const clip = {
-      id: globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      id: createClipId(),
       file,
       objectUrl,
       title: file.name,
