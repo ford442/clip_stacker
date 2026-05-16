@@ -10,7 +10,7 @@ export function Preview({ clip, outputUrl }: Props) {
     return (
       <section className="panel">
         <h2>Preview</h2>
-        <video controls src={outputUrl} style={{ width: '100%', borderRadius: 8, background: '#000', marginBottom: '0.8rem' }} />
+        <video controls src={outputUrl} />
         <a href={outputUrl} download="stacked.mp4">
           Download merged MP4
         </a>
@@ -31,9 +31,9 @@ export function Preview({ clip, outputUrl }: Props) {
     <section className="panel">
       <h2>Preview</h2>
       {clip.kind === 'video' ? (
-        <video controls src={clip.objectUrl} style={{ width: '100%', borderRadius: 8, background: '#000', marginBottom: '0.8rem' }} />
+        <video controls src={clip.objectUrl} />
       ) : (
-        <audio controls src={clip.objectUrl} style={{ width: '100%', marginBottom: '0.8rem' }} />
+        <audio controls src={clip.objectUrl} />
       )}
     </section>
   );

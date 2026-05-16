@@ -188,7 +188,9 @@ export async function mergeClips(clips: Clip[], onStatus: StatusCallback): Promi
   }
 
   for (const clip of workingClips) {
-    try { await ffmpeg.deleteFile(clip.inputName!); } catch { /* ignore */ }
+    if (clip.inputName) {
+      try { await ffmpeg.deleteFile(clip.inputName); } catch { /* ignore */ }
+    }
   }
 
   const output = (await ffmpeg.readFile('stacked.mp4')) as Uint8Array;
