@@ -1,7 +1,9 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import type { Clip } from '../types';
+import type { Clip, ExportSettings, ClipTransition } from '../types';
+import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { getClipDuration } from '../utils/project';
+import { buildTransitionFilterComplex } from '../utils/transitions';
 
 const DEFAULT_VIDEO_SIZE = '1280x720';
 
@@ -93,6 +95,7 @@ async function processClipPass1(
   clip: Clip,
   index: number,
   total: number,
+  settings: ExportSettings,
   onStatus: StatusCallback,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
@@ -106,8 +109,11 @@ async function processClipPass1(
       '-map', '[aout]',
       '-r', '30',
       '-c:v', 'libx264',
+      '-crf', String(settings.crf),
+      '-preset', settings.preset,
       '-pix_fmt', 'yuv420p',
       '-c:a', 'aac',
+      '-b:a', '192k',
       outName,
     ]);
   } else {
@@ -142,7 +148,44 @@ async function mergeClipsPass2(
   }
 }
 
-export async function mergeClips(clips: Clip[], onStatus: StatusCallback): Promise<Blob> {
+/** Render all clips using a single filter_complex with xfade/acrossfade transitions. */
+async function mergeClipsWithTransitions(
+  ffmpeg: FFmpeg,
+  clips: Clip[],
+  transitions: ClipTransition[],
+  settings: ExportSettings,
+  filterComplex: string,
+  onStatus: StatusCallback,
+): Promise<void> {
+  onStatus('Building transition render...');
+
+  const inputArgs: string[] = [];
+  for (const clip of clips) {
+    inputArgs.push('-i', clip.inputName!);
+  }
+
+  await ffmpeg.exec([
+    ...inputArgs,
+    '-filter_complex', filterComplex,
+    '-map', '[vout]',
+    '-map', '[aout]',
+    '-r', '30',
+    '-c:v', 'libx264',
+    '-crf', String(settings.crf),
+    '-preset', settings.preset,
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-b:a', '192k',
+    'stacked.mp4',
+  ]);
+}
+
+export async function mergeClips(
+  clips: Clip[],
+  transitions: ClipTransition[] = [],
+  settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
+  onStatus: StatusCallback,
+): Promise<Blob> {
   if (clips.length === 0) throw new Error('Upload clips before rendering.');
 
   const ffmpeg = await ensureFfmpeg(onStatus);
@@ -171,18 +214,33 @@ export async function mergeClips(clips: Clip[], onStatus: StatusCallback): Promi
     await ffmpeg.writeFile(clip.inputName!, await fetchFile(clip.file));
   }
 
+  const activeTransitions = transitions.filter((t) => t.type !== 'none' && t.duration > 0);
   const effectClips = workingClips.filter(clipNeedsEffects);
+  const transitionFilterComplex =
+    activeTransitions.length > 0 ? buildTransitionFilterComplex(workingClips, activeTransitions) : null;
 
-  if (effectClips.length === 0) {
+  if (transitionFilterComplex) {
+    // Single-pass filter_complex render covering all clips + transitions
+    await mergeClipsWithTransitions(
+      ffmpeg,
+      workingClips,
+      activeTransitions,
+      settings,
+      transitionFilterComplex,
+      onStatus,
+    );
+  } else if (effectClips.length === 0) {
     await mergeClipsLossless(ffmpeg, workingClips, onStatus);
   } else {
     const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
-    onStatus(`Note: Re-encoding will occur for ${titles}. Starting two-pass export...`);
+    onStatus(
+      `Note: Re-encoding ${titles} with CRF ${settings.crf} (${settings.preset} preset). Starting export...`,
+    );
     await new Promise((r) => setTimeout(r, 1500));
 
     const intermediates: string[] = [];
     for (const [index, clip] of workingClips.entries()) {
-      intermediates.push(await processClipPass1(ffmpeg, clip, index, workingClips.length, onStatus));
+      intermediates.push(await processClipPass1(ffmpeg, clip, index, workingClips.length, settings, onStatus));
     }
     await mergeClipsPass2(ffmpeg, intermediates, onStatus);
   }
@@ -199,3 +257,4 @@ export async function mergeClips(clips: Clip[], onStatus: StatusCallback): Promi
   const plain = new Uint8Array(output).buffer as ArrayBuffer;
   return new Blob([plain], { type: 'video/mp4' });
 }
+

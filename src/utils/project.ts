@@ -1,4 +1,4 @@
-import type { Clip, Project, SerializedClip } from '../types';
+import type { Clip, Project, SerializedClip, ClipTransition, SerializedTransition } from '../types';
 import { MIN_CLIP_DURATION } from './media';
 
 const FADE_SAFETY_MARGIN = 0.01;
@@ -21,7 +21,7 @@ export function sanitizeClipAdjustments(clip: Clip): void {
   clip.audioFadeOut = Math.min(Math.max(0, clip.audioFadeOut), maxFade);
 }
 
-export function serializeProject(clips: Clip[]): Project {
+export function serializeProject(clips: Clip[], transitions: ClipTransition[] = []): Project {
   return {
     clips: clips.map((clip): SerializedClip => ({
       id: clip.id,
@@ -36,10 +36,18 @@ export function serializeProject(clips: Clip[]): Project {
       audioFadeOut: clip.audioFadeOut,
       fileName: clip.file.name,
     })),
+    transitions: transitions.map((t): SerializedTransition => ({
+      afterClipIndex: t.afterClipIndex,
+      type: t.type,
+      duration: t.duration,
+    })),
   };
 }
 
-export function applyProjectData(project: Project, clips: Clip[]): Clip[] {
+export function applyProjectData(
+  project: Project,
+  clips: Clip[],
+): { clips: Clip[]; transitions: ClipTransition[] } {
   if (!project || !Array.isArray(project.clips)) {
     throw new Error('Project file is invalid.');
   }
@@ -62,7 +70,15 @@ export function applyProjectData(project: Project, clips: Clip[]): Clip[] {
     mapped.push(liveClip);
   }
 
-  return mapped;
+  const transitions: ClipTransition[] = Array.isArray(project.transitions)
+    ? project.transitions.map((t) => ({
+        afterClipIndex: Number(t.afterClipIndex),
+        type: t.type ?? 'dissolve',
+        duration: Number(t.duration ?? 0.5),
+      }))
+    : [];
+
+  return { clips: mapped, transitions };
 }
 
 export class ContaboStorageManagerClient {
