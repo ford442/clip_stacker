@@ -313,8 +313,8 @@ async function encodeAudioFrames(
     const chunkSize = Math.min(AUDIO_FRAME_SIZE, trimmedLength - offset);
     const srcOffset = Math.floor(trimStart * audioBuffer.sampleRate) + offset;
 
-    // Build interleaved float32 data for all channels
-    const interleaved = new Float32Array(chunkSize * AUDIO_CHANNELS);
+    // Build planar float32 data directly (f32-planar: each channel's samples are contiguous)
+    const planarData = new Float32Array(new ArrayBuffer(chunkSize * AUDIO_CHANNELS * 4));
     for (let ch = 0; ch < Math.min(AUDIO_CHANNELS, audioBuffer.numberOfChannels); ch++) {
       const channelData = audioBuffer.getChannelData(ch);
       for (let i = 0; i < chunkSize; i++) {
@@ -326,7 +326,7 @@ async function encodeAudioFrames(
         const fadeGain = computeFadeAlpha(elapsed, clipDuration, clip.audioFadeIn, clip.audioFadeOut);
         sample *= fadeGain;
 
-        interleaved[i * AUDIO_CHANNELS + ch] = sample;
+        planarData[ch * chunkSize + i] = sample;
       }
     }
 
@@ -336,7 +336,7 @@ async function encodeAudioFrames(
       numberOfFrames: chunkSize,
       numberOfChannels: AUDIO_CHANNELS,
       timestamp: audioTimeUs,
-      data: buildPlanarData(interleaved, chunkSize, AUDIO_CHANNELS),
+      data: planarData,
     });
 
     encoder.encode(audioData);
@@ -392,19 +392,4 @@ function computeFadeAlpha(elapsed: number, duration: number, fadeIn: number, fad
     alpha = Math.min(alpha, (duration - elapsed) / fadeOut);
   }
   return Math.max(0, Math.min(1, alpha));
-}
-
-/** Convert interleaved float32 to planar format (required by f32-planar AudioData). */
-function buildPlanarData(
-  interleaved: Float32Array,
-  frames: number,
-  channels: number,
-): Float32Array<ArrayBuffer> {
-  const planar = new Float32Array(new ArrayBuffer(frames * channels * 4));
-  for (let ch = 0; ch < channels; ch++) {
-    for (let i = 0; i < frames; i++) {
-      planar[ch * frames + i] = interleaved[i * channels + ch];
-    }
-  }
-  return planar;
 }

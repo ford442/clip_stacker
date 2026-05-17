@@ -37,6 +37,8 @@ export function normaliseBaseName(filename: string): string {
   for (const suffix of sorted) {
     const lower = base.toLowerCase();
     const sfxLower = suffix.toLowerCase();
+    // Case-insensitive match: compare lowercase versions, then slice using
+    // the original suffix length (equal to the matched region's length).
     if (lower.endsWith(sfxLower)) {
       base = base.slice(0, base.length - suffix.length);
       break; // remove at most one suffix

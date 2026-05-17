@@ -398,14 +398,10 @@ function getTimelineClips(clips: Clip[], groups: ClipGroup[]): Clip[] {
 
 /**
  * After swapping two adjacent clips at indices i and j (j = i+1),
- * re-map the transition that was "afterClipIndex = j" to "afterClipIndex = i"
- * and vice-versa.
+ * transitions are positional and stay at their slots — no remapping needed.
+ * Users can adjust transition types after reordering via the TransitionEditor.
  */
-function reindexAfterSwap(transitions: ClipTransition[], i: number, j: number): ClipTransition[] {
-  return transitions.map((t) => {
-    if (t.afterClipIndex === i + 1) return { ...t, afterClipIndex: j + 1 };
-    if (t.afterClipIndex === j + 1) return { ...t, afterClipIndex: i + 1 };
-    return t;
-  });
+function reindexAfterSwap(transitions: ClipTransition[], _i: number, _j: number): ClipTransition[] {
+  return transitions;
 }
 
