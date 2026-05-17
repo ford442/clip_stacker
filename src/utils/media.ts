@@ -73,3 +73,80 @@ export function createClipId(): string {
     `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`
   );
 }
+
+const THUMB_W = 96;
+const THUMB_H = 54;
+
+export async function extractThumbnails(
+  objectUrl: string,
+  duration: number,
+  trimStart: number,
+  trimEnd: number,
+  count: number,
+): Promise<string[]> {
+  if (count <= 0) return [];
+
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.muted = true;
+    video.preload = 'auto';
+
+    const canvas = document.createElement('canvas');
+    canvas.width = THUMB_W;
+    canvas.height = THUMB_H;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) { resolve([]); return; }
+
+    const end = isNaN(trimEnd) ? duration : Math.min(trimEnd, duration);
+    const start = Math.max(0, trimStart);
+    const range = Math.max(0.1, end - start);
+    const times = Array.from({ length: count }, (_, j) =>
+      start + (range * (j + 0.5)) / count,
+    );
+
+    const thumbnails: string[] = [];
+    let frameIndex = 0;
+    let done = false;
+    let seekTimeoutId: ReturnType<typeof setTimeout> | null = null;
+    const overallTimeout = setTimeout(() => finish(), 30_000);
+
+    function finish() {
+      if (done) return;
+      done = true;
+      if (seekTimeoutId) clearTimeout(seekTimeoutId);
+      clearTimeout(overallTimeout);
+      video.src = '';
+      resolve(thumbnails);
+    }
+
+    function captureFrame() {
+      try {
+        ctx!.drawImage(video, 0, 0, THUMB_W, THUMB_H);
+        thumbnails.push(canvas.toDataURL('image/jpeg', 0.5));
+      } catch { /* skip frame on error */ }
+    }
+
+    function seekToNext() {
+      if (frameIndex >= times.length) { finish(); return; }
+      if (seekTimeoutId) clearTimeout(seekTimeoutId);
+      seekTimeoutId = setTimeout(() => {
+        captureFrame();
+        frameIndex++;
+        seekToNext();
+      }, 1500);
+      video.currentTime = times[frameIndex];
+    }
+
+    video.addEventListener('error', finish);
+    video.addEventListener('loadedmetadata', () => seekToNext(), { once: true });
+    video.addEventListener('seeked', () => {
+      if (done) return;
+      if (seekTimeoutId) clearTimeout(seekTimeoutId);
+      captureFrame();
+      frameIndex++;
+      seekToNext();
+    });
+
+    video.src = objectUrl;
+  });
+}
