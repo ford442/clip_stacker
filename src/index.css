@@ -93,8 +93,7 @@ input {
   padding: 0.35rem 0.45rem;
 }
 
-.clip-list,
-.timeline {
+.clip-list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -102,17 +101,127 @@ input {
   gap: 0.5rem;
 }
 
-.clip-item,
-.timeline-item {
+.clip-item {
   border: 1px solid var(--border);
   border-radius: 8px;
   background: #0d1322;
   padding: 0.65rem;
 }
 
-.clip-item.selected,
-.timeline-item.selected {
+.clip-item.selected {
   border-color: var(--accent);
+}
+
+/* ---- Horizontal timeline track ---- */
+.timeline-track {
+  display: flex;
+  overflow-x: auto;
+  gap: 3px;
+  padding: 2px 0 4px;
+}
+
+.timeline-clip {
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #0b1020;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+}
+
+.timeline-clip.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.timeline-thumbs {
+  height: 54px;
+  display: flex;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: #07090f;
+}
+
+.timeline-thumbs.is-loading {
+  background: repeating-linear-gradient(
+    90deg,
+    #0d1322 0px,
+    #0d1322 12px,
+    #131c30 12px,
+    #131c30 24px
+  );
+  animation: tl-shimmer 1s linear infinite;
+}
+
+@keyframes tl-shimmer {
+  from { background-position-x: 0; }
+  to { background-position-x: 24px; }
+}
+
+.timeline-thumbs img {
+  height: 54px;
+  width: 96px;
+  object-fit: cover;
+  display: block;
+  flex-shrink: 0;
+}
+
+.thumb-audio {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.4rem;
+  background: linear-gradient(135deg, #1a263a 0%, #1e1a33 100%);
+  color: var(--muted);
+}
+
+.timeline-clip-footer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 5px;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 0.62rem;
+  height: 24px;
+  flex-shrink: 0;
+}
+
+.timeline-clip-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+}
+
+.timeline-clip-dur {
+  color: var(--muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.timeline-clip-btns {
+  display: inline-flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.timeline-clip-btns button {
+  padding: 0 5px;
+  font-size: 0.65rem;
+  border-radius: 4px;
+  height: 18px;
+  line-height: 1;
+}
+
+.timeline-clip-btns button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
 }
 
 .row {
@@ -139,11 +248,3 @@ audio {
   color: var(--muted);
 }
 
-.timeline-buttons {
-  display: inline-flex;
-  gap: 0.35rem;
-}
-
-.timeline-buttons button {
-  padding: 0.2rem 0.45rem;
-}
