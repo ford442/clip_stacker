@@ -16,7 +16,7 @@ export function StorageRow({ onSaveRemote, onLoadRemote }: Props) {
         Contabo storage endpoint
         <input
           type="url"
-          placeholder="https://.../contabo_storage_manager/projects"
+          placeholder="https://storage.example.com/webhook/clip-stacker"
           value={endpoint}
           onChange={(e) => setEndpoint(e.target.value)}
         />

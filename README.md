@@ -88,9 +88,30 @@ clip_stacker/
 
 Remote save/load expects an endpoint compatible with:
 
-- `POST /contabo_storage_manager/projects` with body `{ "name": "...", "payload": { ...project... } }`
-- `GET /contabo_storage_manager/projects?name=...` returning `{ "payload": { ...project... } }`
+- `POST <endpoint>` with body `{ "name": "...", "payload": { ...project... } }`  
+  Response: `{ "payload": { ...project... } }` on success
+- `GET <endpoint>?name=...` returning `{ "payload": { ...project... } }`
 
-If your `contabo_storage_manager` deployment uses a different route shape, enter the correct endpoint URL in the app before saving/loading.
-If your deployment requires authentication, provide an API key or bearer token in the app's optional auth token field.
+**Canonical endpoint path:** `/webhook/clip-stacker`
+
+Example full URL: `https://storage.example.com/webhook/clip-stacker`
+
+### Authentication
+
+Auth is optional and handled via `Authorization: Bearer <token>` header. If your deployment requires authentication, provide an API key or bearer token in the app's optional auth token field. The client automatically prefixes the token with `Bearer` if not already present.
+
+### Errors
+
+If save/load fails:
+- Non-2xx responses are caught and displayed in the app status: `Remote save failed (status)` or `Remote load failed (status)`
+- Network errors also bubble up as error messages in the status text
+
+### Setup with contabo_storage_manager
+
+To use this with [ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager):
+
+1. Deploy `contabo_storage_manager` with the `/webhook/clip-stacker` endpoint implemented
+2. In the app, enter the full URL to your deployment's `/webhook/clip-stacker` path
+3. (Optional) Provide a Bearer token if your deployment requires authentication
+4. Use "Save remote" and "Load remote" buttons to persist projects
 

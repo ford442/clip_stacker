@@ -105,11 +105,27 @@ npm run preview     # preview production build at localhost:4173
 npm run deploy      # build + SFTP upload to 1ink.us
 ```
 
-## Development Workflow
+## Remote Storage Integration
 
-1. Branch from main
-2. `npm install` to ensure dependencies
-3. `npm run dev` for hot reload
-4. Make changes, test in browser
-5. `npm run build` to verify production build
-6. Push and open PR
+The app includes a `ContaboStorageManagerClient` (`src/utils/project.ts`) for saving and loading project metadata to a remote endpoint.
+
+### Protocol
+
+- **Save:** `POST <endpoint>` with body `{ "name": "...", "payload": { ...project... } }`
+- **Load:** `GET <endpoint>?name=...` expects response `{ "payload": { ...project... } }`
+
+### Authentication
+
+Optional `Authorization: Bearer <token>` header. The client automatically prefixes raw tokens with `Bearer`.
+
+### Canonical Endpoint
+
+The backend (`ford442/contabo_storage_manager`) implements `/webhook/clip-stacker`.
+
+Full URL example: `https://storage.example.com/webhook/clip-stacker`
+
+### Error Handling
+
+- Non-2xx responses throw: `Remote save failed (status)` or `Remote load failed (status)`
+- Errors propagate to `App.tsx` handlers which display them in `status` state
+- See `handleSaveRemote` and `handleLoadRemote` in `App.tsx` for implementation
