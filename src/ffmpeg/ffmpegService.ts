@@ -77,8 +77,9 @@ async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
-  // This should never be reached due to the explicit throw on final attempt
-  throw new Error('toBlobURLWithRetry: Loop terminated unexpectedly');
+  // TypeScript requires this for control flow analysis: while we know the loop either returns
+  // or throws on the final attempt, TypeScript can't verify this without an explicit statement here.
+  throw new Error('toBlobURLWithRetry: Unexpected - loop should always return or throw');
 }
 
 export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
