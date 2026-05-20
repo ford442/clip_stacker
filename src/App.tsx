@@ -202,13 +202,17 @@ export function App() {
     async (file: File) => {
       try {
         const parsed = JSON.parse(await file.text());
-        const { clips: updatedClips, transitions: loadedTransitions } = applyProjectData(parsed, clips);
+        const { clips: updatedClips, transitions: loadedTransitions, skippedClipCount } = applyProjectData(parsed, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
           setSelectedClipId(updatedClips[updatedClips.length - 1].id);
         }
         setTransitions(loadedTransitions);
-        setStatus('Project JSON loaded (matching clips applied).');
+        let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
+        if (skippedClipCount > 0) {
+          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — original media files not found.`;
+        }
+        setStatus(msg);
       } catch (error) {
         setStatus(`Could not load project: ${(error as Error).message}`);
       }
@@ -235,13 +239,17 @@ export function App() {
       try {
         const client = new ContaboStorageManagerClient(endpoint, authToken);
         const payload = await client.load(projectName || 'default-project');
-        const { clips: updatedClips, transitions: loadedTransitions } = applyProjectData(payload, clips);
+        const { clips: updatedClips, transitions: loadedTransitions, skippedClipCount } = applyProjectData(payload, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
           setSelectedClipId(updatedClips[updatedClips.length - 1].id);
         }
         setTransitions(loadedTransitions);
-        setStatus('Project loaded from contabo_storage_manager endpoint.');
+        let msg = `Project loaded from contabo_storage_manager endpoint (${updatedClips.length} clips applied).`;
+        if (skippedClipCount > 0) {
+          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — original media files not found.`;
+        }
+        setStatus(msg);
       } catch (error) {
         setStatus((error as Error).message);
       }

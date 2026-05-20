@@ -216,7 +216,18 @@ async function encodeVideoFrames(
           const elapsed = Math.max(0, mediaTime - trimStart);
           const timestamp = startTimeUs + Math.round(elapsed * 1_000_000);
 
-          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          // Clear and fill canvas with black for letterboxing
+          ctx.fillStyle = '#000';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw video with letterboxing to preserve aspect ratio
+          const destRect = calculateLetterboxRect(
+            video.videoWidth || 1280,
+            video.videoHeight || 720,
+            canvas.width,
+            canvas.height,
+          );
+          ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
           applyFadeOverlay(ctx, canvas, elapsed, clipDuration, clip.videoFadeIn, clip.videoFadeOut);
 
           const frame = new VideoFrame(canvas, {
@@ -246,7 +257,18 @@ async function encodeVideoFrames(
         const elapsed = t - trimStart;
         const timestamp = startTimeUs + Math.round(elapsed * 1_000_000);
 
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        // Clear and fill canvas with black for letterboxing
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw video with letterboxing to preserve aspect ratio
+        const destRect = calculateLetterboxRect(
+          video.videoWidth || 1280,
+          video.videoHeight || 720,
+          canvas.width,
+          canvas.height,
+        );
+        ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
         applyFadeOverlay(ctx, canvas, elapsed, clipDuration, clip.videoFadeIn, clip.videoFadeOut);
 
         const frame = new VideoFrame(canvas, {
@@ -281,9 +303,9 @@ async function encodeAudioFrames(
   try {
     const response = await fetch(clip.objectUrl);
     arrayBuffer = await response.arrayBuffer();
-  } catch {
-    // If fetching fails (e.g., revoked URL), write silence
-    return startTimeUs + Math.round(clipDuration * 1_000_000);
+  } catch (error) {
+    // If fetching fails, throw error to trigger FFmpeg fallback
+    throw new Error(`Failed to fetch audio for clip "${clip.title}": ${(error as Error).message}`);
   }
 
   const audioCtx = new OfflineAudioContext(
@@ -355,7 +377,7 @@ async function encodeAudioFrames(
 
 function waitForSeeked(video: HTMLVideoElement): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (!isNaN(video.readyState) && video.readyState >= 2) {
+    if (!isNaN(video.readyState) && video.readyState >= 2 && !video.seeking) {
       resolve();
       return;
     }
@@ -368,6 +390,36 @@ function waitForSeeked(video: HTMLVideoElement): Promise<void> {
     video.addEventListener('seeked', onSeeked, { once: true });
     video.addEventListener('error', onError, { once: true });
   });
+}
+
+function calculateLetterboxRect(
+  videoWidth: number,
+  videoHeight: number,
+  canvasWidth: number,
+  canvasHeight: number,
+): { x: number; y: number; width: number; height: number } {
+  // Calculate aspect ratios
+  const videoAspect = videoWidth / videoHeight;
+  const canvasAspect = canvasWidth / canvasHeight;
+
+  let destWidth: number;
+  let destHeight: number;
+
+  if (videoAspect > canvasAspect) {
+    // Video is wider — fit to canvas width
+    destWidth = canvasWidth;
+    destHeight = canvasWidth / videoAspect;
+  } else {
+    // Video is taller — fit to canvas height
+    destHeight = canvasHeight;
+    destWidth = canvasHeight * videoAspect;
+  }
+
+  // Center in canvas
+  const x = (canvasWidth - destWidth) / 2;
+  const y = (canvasHeight - destHeight) / 2;
+
+  return { x, y, width: destWidth, height: destHeight };
 }
 
 function applyFadeOverlay(

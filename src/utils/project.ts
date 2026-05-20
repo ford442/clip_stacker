@@ -47,17 +47,21 @@ export function serializeProject(clips: Clip[], transitions: ClipTransition[] = 
 export function applyProjectData(
   project: Project,
   clips: Clip[],
-): { clips: Clip[]; transitions: ClipTransition[] } {
+): { clips: Clip[]; transitions: ClipTransition[]; skippedClipCount: number } {
   if (!project || !Array.isArray(project.clips)) {
     throw new Error('Project file is invalid.');
   }
 
   const byName = new Map(clips.map((clip) => [clip.file.name, clip]));
   const mapped: Clip[] = [];
+  let skippedCount = 0;
 
   for (const savedClip of project.clips) {
     const liveClip = byName.get(savedClip.fileName);
-    if (!liveClip) continue;
+    if (!liveClip) {
+      skippedCount++;
+      continue;
+    }
 
     liveClip.title = savedClip.title || liveClip.title;
     liveClip.trimStart = Number(savedClip.trimStart ?? liveClip.trimStart);
@@ -78,7 +82,7 @@ export function applyProjectData(
       }))
     : [];
 
-  return { clips: mapped, transitions };
+  return { clips: mapped, transitions, skippedClipCount: skippedCount };
 }
 
 export class ContaboStorageManagerClient {
