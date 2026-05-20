@@ -377,7 +377,7 @@ async function encodeAudioFrames(
 
 function waitForSeeked(video: HTMLVideoElement): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (!isNaN(video.readyState) && video.readyState >= 2 && !video.seeking) {
+    if (video.readyState >= 2 && !video.seeking) {
       resolve();
       return;
     }

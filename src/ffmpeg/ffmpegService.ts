@@ -77,7 +77,7 @@ async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
-  throw new Error('Unexpected error in toBlobURLWithRetry');
+  throw new Error('toBlobURLWithRetry: Unexpected exit - this should never happen');
 }
 
 export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
