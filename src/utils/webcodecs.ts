@@ -222,10 +222,10 @@ async function encodeVideoFrames(
           
           // Draw video with letterboxing to preserve aspect ratio
           const destRect = calculateLetterboxRect(
-            video.videoWidth || 1280,
-            video.videoHeight || 720,
-            canvas.width,
-            canvas.height,
+            video.videoWidth || TARGET_WIDTH,
+            video.videoHeight || TARGET_HEIGHT,
+            TARGET_WIDTH,
+            TARGET_HEIGHT,
           );
           ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
           applyFadeOverlay(ctx, canvas, elapsed, clipDuration, clip.videoFadeIn, clip.videoFadeOut);
@@ -263,10 +263,10 @@ async function encodeVideoFrames(
         
         // Draw video with letterboxing to preserve aspect ratio
         const destRect = calculateLetterboxRect(
-          video.videoWidth || 1280,
-          video.videoHeight || 720,
-          canvas.width,
-          canvas.height,
+          video.videoWidth || TARGET_WIDTH,
+          video.videoHeight || TARGET_HEIGHT,
+          TARGET_WIDTH,
+          TARGET_HEIGHT,
         );
         ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
         applyFadeOverlay(ctx, canvas, elapsed, clipDuration, clip.videoFadeIn, clip.videoFadeOut);

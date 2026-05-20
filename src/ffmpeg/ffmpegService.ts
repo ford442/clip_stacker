@@ -58,7 +58,7 @@ function buildSingleClipFilter(clip: Clip): string {
 
 /**
  * Load a URL as a blob with retry logic for network resilience.
- * Retries up to 3 times with exponential backoff.
+ * Retries up to 3 times with exponential backoff (2s, 4s delays between attempts).
  */
 async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string> {
   const maxRetries = 3;
@@ -69,7 +69,7 @@ async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string
       if (attempt === maxRetries) {
         throw new Error(`Failed to load ${url} after ${maxRetries} retries: ${(error as Error).message}`);
       }
-      const delayMs = Math.pow(2, attempt) * 1000; // exponential backoff: 2s, 4s, 8s
+      const delayMs = Math.pow(2, attempt) * 1000; // exponential backoff: 2s (attempt 1), 4s (attempt 2)
       console.warn(
         `Failed to load ${url} (attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`,
         error,
@@ -77,7 +77,8 @@ async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
-  throw new Error('toBlobURLWithRetry: Unexpected exit - this should never happen');
+  // This should never be reached due to the explicit throw on final attempt
+  throw new Error('toBlobURLWithRetry: Loop terminated unexpectedly');
 }
 
 export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
