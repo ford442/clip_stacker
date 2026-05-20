@@ -38,14 +38,18 @@ export async function hybridMergeClips(
   const useWebCodecs = !forceFFmpeg && (await isWebCodecsAvailable());
 
   if (useWebCodecs) {
-    try {
-      onStatus('GPU path selected (WebCodecs + hardware H.264)...');
-      const blob = await encodeClipsWithWebCodecs(clips, settings, onStatus);
-      return { blob, path: 'webcodecs' };
-    } catch (err) {
-      onStatus(
-        `GPU encode failed (${(err as Error).message}). Falling back to FFmpeg...`,
-      );
+    // Check if transitions are active — WebCodecs path doesn't support them
+    const hasActiveTransitions = transitions.some((t) => t.type !== 'none' && t.duration > 0);
+    if (!hasActiveTransitions) {
+      try {
+        onStatus('GPU path selected (WebCodecs + hardware H.264)...');
+        const blob = await encodeClipsWithWebCodecs(clips, settings, onStatus);
+        return { blob, path: 'webcodecs' };
+      } catch (err) {
+        onStatus(
+          `GPU encode failed (${(err as Error).message}). Falling back to FFmpeg...`,
+        );
+      }
     }
   }
 

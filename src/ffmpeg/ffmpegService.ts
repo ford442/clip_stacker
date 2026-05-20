@@ -56,6 +56,32 @@ function buildSingleClipFilter(clip: Clip): string {
   return parts.join(';');
 }
 
+/**
+ * Load a URL as a blob with retry logic for network resilience.
+ * Retries up to 3 times with exponential backoff (2s, 4s delays between attempts).
+ */
+async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string> {
+  const maxRetries = 3;
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await toBlobURL(url, mimeType);
+    } catch (error) {
+      if (attempt === maxRetries) {
+        throw new Error(`Failed to load ${url} after ${maxRetries} retries: ${(error as Error).message}`);
+      }
+      const delayMs = Math.pow(2, attempt) * 1000; // exponential backoff: 2s (attempt 1), 4s (attempt 2)
+      console.warn(
+        `Failed to load ${url} (attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`,
+        error,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  // TypeScript requires this for control flow analysis: while we know the loop either returns
+  // or throws on the final attempt, TypeScript can't verify this without an explicit statement here.
+  throw new Error('toBlobURLWithRetry: Unexpected - loop should always return or throw');
+}
+
 export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
   if (ffmpegInstance) return ffmpegInstance;
 
@@ -65,10 +91,16 @@ export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
   });
 
   const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-  });
+  onStatus('Loading FFmpeg core (this may take a moment)...');
+  
+  try {
+    await ffmpeg.load({
+      coreURL: await toBlobURLWithRetry(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURLWithRetry(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+  } catch (error) {
+    throw new Error(`FFmpeg load failed: ${(error as Error).message}`);
+  }
 
   ffmpegInstance = ffmpeg;
   return ffmpeg;
