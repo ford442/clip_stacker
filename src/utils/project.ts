@@ -35,6 +35,7 @@ export function serializeProject(clips: Clip[], transitions: ClipTransition[] = 
       audioFadeIn: clip.audioFadeIn,
       audioFadeOut: clip.audioFadeOut,
       fileName: clip.file.name,
+      ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
     })),
     transitions: transitions.map((t): SerializedTransition => ({
       afterClipIndex: t.afterClipIndex,
@@ -70,6 +71,7 @@ export function applyProjectData(
     liveClip.videoFadeOut = Number(savedClip.videoFadeOut ?? liveClip.videoFadeOut);
     liveClip.audioFadeIn = Number(savedClip.audioFadeIn ?? liveClip.audioFadeIn);
     liveClip.audioFadeOut = Number(savedClip.audioFadeOut ?? liveClip.audioFadeOut);
+    if (savedClip.remoteAudioUrl) liveClip.remoteAudioUrl = savedClip.remoteAudioUrl;
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
   }
@@ -120,5 +122,33 @@ export class ContaboStorageManagerClient {
     if (!response.ok) throw new Error(`Remote load failed (${response.status})`);
     const result = (await response.json()) as { payload: Project };
     return result.payload;
+  }
+
+  private get mediaEndpoint(): string {
+    return this.endpoint.replace(/\/*$/, '') + '/media';
+  }
+
+  /**
+   * Upload a binary media blob (e.g. a WAV file) to the remote media endpoint.
+   * The media endpoint is derived by appending `/media` to the base endpoint.
+   * Expects the server to respond with `{ "url": "<public-url>" }`.
+   */
+  async uploadMedia(name: string, blob: Blob, mimeType = 'audio/wav'): Promise<string> {
+    const authHeader = this.getAuthHeader();
+    const headers: Record<string, string> = {};
+    if (authHeader) headers.authorization = authHeader;
+
+    const formData = new FormData();
+    formData.append('name', name);
+    formData.append('file', new File([blob], name, { type: mimeType }));
+
+    const response = await fetch(this.mediaEndpoint, {
+      method: 'POST',
+      headers,
+      body: formData,
+    });
+    if (!response.ok) throw new Error(`Media upload failed (${response.status})`);
+    const result = (await response.json()) as { url: string };
+    return result.url;
   }
 }
