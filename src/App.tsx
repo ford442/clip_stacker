@@ -278,15 +278,18 @@ export function App() {
           setStatus('Uploading WAV to remote storage...');
           const client = new ContaboStorageManagerClient(storageEndpoint, storageAuthToken);
           remoteUrl = await client.uploadMedia(wavFileName, wavBlob);
-          setClips((prev) =>
-            prev.map((c) => (c.id === selectedClip.id ? { ...c, remoteAudioUrl: remoteUrl } : c)),
-          );
-          setStatus(`Audio extracted and uploaded. Remote URL stored in clip.`);
         } catch (uploadError) {
           setStatus(
             `Audio extracted but upload failed: ${(uploadError as Error).message}. Downloading locally.`,
           );
         }
+      }
+
+      // Update clip state after all async operations complete.
+      if (remoteUrl) {
+        setClips((prev) =>
+          prev.map((c) => (c.id === selectedClip.id ? { ...c, remoteAudioUrl: remoteUrl } : c)),
+        );
       }
 
       // Always trigger a local download of the WAV.
@@ -297,7 +300,9 @@ export function App() {
       anchor.click();
       URL.revokeObjectURL(url);
 
-      if (!storageEndpoint && !remoteUrl) {
+      if (remoteUrl) {
+        setStatus(`Audio extracted and uploaded. Remote URL stored in clip.`);
+      } else if (!storageEndpoint) {
         setStatus(`Audio extracted and downloaded as "${wavFileName}".`);
       }
     } catch (error) {

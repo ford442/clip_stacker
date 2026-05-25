@@ -27,7 +27,7 @@ export function StorageRow({ endpoint, authToken, onEndpointChange, onAuthTokenC
         Auth token (optional)
         <input
           type="password"
-          placeholder="****** or API key"
+          placeholder="Bearer token or API key"
           value={authToken}
           onChange={(e) => onAuthTokenChange(e.target.value)}
         />
