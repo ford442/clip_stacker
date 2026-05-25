@@ -20,6 +20,21 @@ export interface Clip {
   groupVariant?: 'A' | 'B';
   /** URL of the remotely stored extracted WAV for this clip */
   remoteAudioUrl?: string;
+  // ---------------------------------------------------------------------------
+  // Picture-in-Picture / compositing layout (only used when layerIndex > 0)
+  // ---------------------------------------------------------------------------
+  /** Stacking order: 0 = base layer (sequential), 1+ = overlay on top of base. */
+  layerIndex?: number;
+  /** Overlay X position in pixels from the top-left of the output canvas. */
+  x?: number;
+  /** Overlay Y position in pixels from the top-left of the output canvas. */
+  y?: number;
+  /** Overlay width in pixels; 0 means preserve the original clip width. */
+  width?: number;
+  /** Overlay height in pixels; 0 means preserve the original clip height. */
+  height?: number;
+  /** Overlay opacity from 0.0 (transparent) to 1.0 (fully opaque). */
+  opacity?: number;
 }
 
 export interface SerializedClip {
@@ -36,6 +51,13 @@ export interface SerializedClip {
   fileName: string;
   /** URL of the remotely stored extracted WAV for this clip */
   remoteAudioUrl?: string;
+  /** PiP / compositing layout properties */
+  layerIndex?: number;
+  x?: number;
+  y?: number;
+  width?: number;
+  height?: number;
+  opacity?: number;
 }
 
 export type TransitionType = 'none' | 'dissolve' | 'motion';

@@ -36,6 +36,16 @@ export function serializeProject(clips: Clip[], transitions: ClipTransition[] = 
       audioFadeOut: clip.audioFadeOut,
       fileName: clip.file.name,
       ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
+      ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1)
+        ? {
+            layerIndex: clip.layerIndex ?? 0,
+            x: clip.x ?? 0,
+            y: clip.y ?? 0,
+            width: clip.width ?? 0,
+            height: clip.height ?? 0,
+            opacity: clip.opacity ?? 1,
+          }
+        : {}),
     })),
     transitions: transitions.map((t): SerializedTransition => ({
       afterClipIndex: t.afterClipIndex,
@@ -72,6 +82,12 @@ export function applyProjectData(
     liveClip.audioFadeIn = Number(savedClip.audioFadeIn ?? liveClip.audioFadeIn);
     liveClip.audioFadeOut = Number(savedClip.audioFadeOut ?? liveClip.audioFadeOut);
     if (savedClip.remoteAudioUrl) liveClip.remoteAudioUrl = savedClip.remoteAudioUrl;
+    if (savedClip.layerIndex != null) liveClip.layerIndex = Number(savedClip.layerIndex);
+    if (savedClip.x != null) liveClip.x = Number(savedClip.x);
+    if (savedClip.y != null) liveClip.y = Number(savedClip.y);
+    if (savedClip.width != null) liveClip.width = Number(savedClip.width);
+    if (savedClip.height != null) liveClip.height = Number(savedClip.height);
+    if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
   }

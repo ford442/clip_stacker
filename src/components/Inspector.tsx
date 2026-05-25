@@ -10,6 +10,13 @@ interface ClipValues {
   videoFadeOut: string;
   audioFadeIn: string;
   audioFadeOut: string;
+  // PiP / compositing layout
+  layerIndex: string;
+  x: string;
+  y: string;
+  width: string;
+  height: string;
+  opacity: string;
 }
 
 interface Props {
@@ -34,6 +41,12 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
     videoFadeOut: '0',
     audioFadeIn: '0',
     audioFadeOut: '0',
+    layerIndex: '0',
+    x: '0',
+    y: '0',
+    width: '0',
+    height: '0',
+    opacity: '1',
   });
 
   useEffect(() => {
@@ -46,6 +59,12 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
       videoFadeOut: String(clip.videoFadeOut),
       audioFadeIn: String(clip.audioFadeIn),
       audioFadeOut: String(clip.audioFadeOut),
+      layerIndex: String(clip.layerIndex ?? 0),
+      x: String(clip.x ?? 0),
+      y: String(clip.y ?? 0),
+      width: String(clip.width ?? 0),
+      height: String(clip.height ?? 0),
+      opacity: String(clip.opacity ?? 1),
     });
   }, [clip]);
 
@@ -172,6 +191,74 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           <div className="muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem', wordBreak: 'break-all' }}>
             Remote WAV: <a href={clip.remoteAudioUrl} target="_blank" rel="noreferrer">{clip.remoteAudioUrl}</a>
           </div>
+        )}
+        {clip.kind === 'video' && (
+          <>
+            <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Picture-in-Picture</div>
+            <label title="0 = base layer (sequential concatenation). 1 or higher = overlay on top of the base video.">
+              Layer index
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={values.layerIndex}
+                onChange={(e) => update('layerIndex', e.target.value)}
+              />
+            </label>
+            {Number(values.layerIndex) > 0 && (
+              <>
+                <label title="Horizontal position of the overlay in pixels from the left edge of the canvas.">
+                  X offset (px)
+                  <input
+                    type="number"
+                    step="1"
+                    value={values.x}
+                    onChange={(e) => update('x', e.target.value)}
+                  />
+                </label>
+                <label title="Vertical position of the overlay in pixels from the top edge of the canvas.">
+                  Y offset (px)
+                  <input
+                    type="number"
+                    step="1"
+                    value={values.y}
+                    onChange={(e) => update('y', e.target.value)}
+                  />
+                </label>
+                <label title="Width of the overlay in pixels. Enter 0 to keep the clip's original width.">
+                  Width (px, 0=auto)
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={values.width}
+                    onChange={(e) => update('width', e.target.value)}
+                  />
+                </label>
+                <label title="Height of the overlay in pixels. Enter 0 to keep the clip's original height.">
+                  Height (px, 0=auto)
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={values.height}
+                    onChange={(e) => update('height', e.target.value)}
+                  />
+                </label>
+                <label title="Opacity of the overlay from 0.0 (transparent) to 1.0 (fully opaque).">
+                  Opacity (0–1)
+                  <input
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={values.opacity}
+                    onChange={(e) => update('opacity', e.target.value)}
+                  />
+                </label>
+              </>
+            )}
+          </>
         )}
       </div>
     );
