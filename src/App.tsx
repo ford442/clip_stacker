@@ -11,6 +11,7 @@ import {
 import { findMatchingClipIndex } from './utils/clipMatching';
 import { reindexTransitions } from './utils/transitions';
 import { hybridMergeClips } from './utils/hybrid-encoder';
+import { extractAudioToWav } from './ffmpeg/ffmpegService';
 import { Toolbar } from './components/Toolbar';
 import { StorageRow } from './components/StorageRow';
 import { ClipLibrary } from './components/ClipLibrary';
@@ -29,6 +30,8 @@ export function App() {
   const [status, setStatus] = useState('');
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [encoderPath, setEncoderPath] = useState<string>('');
+  const [storageEndpoint, setStorageEndpoint] = useState('');
+  const [storageAuthToken, setStorageAuthToken] = useState('');
 
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
 
@@ -257,6 +260,51 @@ export function App() {
     [clips],
   );
 
+  const handleExtractAudio = useCallback(async () => {
+    if (!selectedClip) return;
+    if (selectedClip.kind !== 'video') {
+      setStatus('Audio extraction is only available for video clips.');
+      return;
+    }
+
+    try {
+      const wavBlob = await extractAudioToWav(selectedClip, setStatus);
+      const baseName = selectedClip.file.name.replace(/\.[^.]+$/, '');
+      const wavFileName = `${baseName}.wav`;
+
+      let remoteUrl: string | undefined;
+      if (storageEndpoint) {
+        try {
+          setStatus('Uploading WAV to remote storage...');
+          const client = new ContaboStorageManagerClient(storageEndpoint, storageAuthToken);
+          remoteUrl = await client.uploadMedia(wavFileName, wavBlob);
+          setClips((prev) =>
+            prev.map((c) => (c.id === selectedClip.id ? { ...c, remoteAudioUrl: remoteUrl } : c)),
+          );
+          setStatus(`Audio extracted and uploaded. Remote URL stored in clip.`);
+        } catch (uploadError) {
+          setStatus(
+            `Audio extracted but upload failed: ${(uploadError as Error).message}. Downloading locally.`,
+          );
+        }
+      }
+
+      // Always trigger a local download of the WAV.
+      const url = URL.createObjectURL(wavBlob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = wavFileName;
+      anchor.click();
+      URL.revokeObjectURL(url);
+
+      if (!storageEndpoint && !remoteUrl) {
+        setStatus(`Audio extracted and downloaded as "${wavFileName}".`);
+      }
+    } catch (error) {
+      setStatus(`Audio extraction failed: ${(error as Error).message}`);
+    }
+  }, [selectedClip, storageEndpoint, storageAuthToken]);
+
   // ---------------------------------------------------------------------------
   // Inspector
   // ---------------------------------------------------------------------------
@@ -347,7 +395,14 @@ export function App() {
           forceFFmpeg={forceFFmpeg}
           onToggleForceFFmpeg={setForceFFmpeg}
         />
-        <StorageRow onSaveRemote={handleSaveRemote} onLoadRemote={handleLoadRemote} />
+        <StorageRow
+          endpoint={storageEndpoint}
+          authToken={storageAuthToken}
+          onEndpointChange={setStorageEndpoint}
+          onAuthTokenChange={setStorageAuthToken}
+          onSaveRemote={handleSaveRemote}
+          onLoadRemote={handleLoadRemote}
+        />
       </section>
 
       <section className="layout-grid">
@@ -364,6 +419,7 @@ export function App() {
           exportSettings={exportSettings}
           onChange={handleInspectorChange}
           onExportSettingsChange={setExportSettings}
+          onExtractAudio={handleExtractAudio}
         />
       </section>
 

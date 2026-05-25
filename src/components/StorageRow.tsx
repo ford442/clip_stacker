@@ -1,13 +1,15 @@
 import { useState } from 'react';
 
 interface Props {
+  endpoint: string;
+  authToken: string;
+  onEndpointChange: (value: string) => void;
+  onAuthTokenChange: (value: string) => void;
   onSaveRemote: (endpoint: string, authToken: string, projectName: string) => void;
   onLoadRemote: (endpoint: string, authToken: string, projectName: string) => void;
 }
 
-export function StorageRow({ onSaveRemote, onLoadRemote }: Props) {
-  const [endpoint, setEndpoint] = useState('');
-  const [authToken, setAuthToken] = useState('');
+export function StorageRow({ endpoint, authToken, onEndpointChange, onAuthTokenChange, onSaveRemote, onLoadRemote }: Props) {
   const [projectName, setProjectName] = useState('default-project');
 
   return (
@@ -18,16 +20,16 @@ export function StorageRow({ onSaveRemote, onLoadRemote }: Props) {
           type="url"
           placeholder="https://storage.example.com/webhook/clip-stacker"
           value={endpoint}
-          onChange={(e) => setEndpoint(e.target.value)}
+          onChange={(e) => onEndpointChange(e.target.value)}
         />
       </label>
       <label>
         Auth token (optional)
         <input
           type="password"
-          placeholder="Bearer token or API key"
+          placeholder="****** or API key"
           value={authToken}
-          onChange={(e) => setAuthToken(e.target.value)}
+          onChange={(e) => onAuthTokenChange(e.target.value)}
         />
       </label>
       <label>

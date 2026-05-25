@@ -17,13 +17,14 @@ interface Props {
   exportSettings: ExportSettings;
   onChange: (values: ClipValues) => void;
   onExportSettingsChange: (settings: ExportSettings) => void;
+  onExtractAudio?: () => void;
 }
 
 type Tab = 'clip' | 'export';
 
 const PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'] as const;
 
-export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange }: Props) {
+export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange, onExtractAudio }: Props) {
   const [tab, setTab] = useState<Tab>('clip');
   const [values, setValues] = useState<ClipValues>({
     title: '',
@@ -153,6 +154,25 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
             onChange={(e) => update('audioFadeOut', e.target.value)}
           />
         </label>
+        {clip.kind === 'video' && onExtractAudio && (
+          <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Audio extraction</div>
+        )}
+        {clip.kind === 'video' && onExtractAudio && (
+          <button
+            type="button"
+            className="btn-secondary"
+            style={{ marginTop: '0.25rem' }}
+            onClick={onExtractAudio}
+            title="Extract audio from this video clip to a WAV file. If a remote storage endpoint is configured, the WAV will also be uploaded there."
+          >
+            🎵 Extract Audio to WAV
+          </button>
+        )}
+        {clip.remoteAudioUrl && (
+          <div className="muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem', wordBreak: 'break-all' }}>
+            Remote WAV: <a href={clip.remoteAudioUrl} target="_blank" rel="noreferrer">{clip.remoteAudioUrl}</a>
+          </div>
+        )}
       </div>
     );
   };

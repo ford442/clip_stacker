@@ -212,6 +212,53 @@ async function mergeClipsWithTransitions(
   ]);
 }
 
+export async function extractAudioToWav(clip: Clip, onStatus: StatusCallback): Promise<Blob> {
+  const ffmpeg = await ensureFfmpeg(onStatus);
+
+  const ext = getSafeExtension(clip.file.name, 'mp4');
+  const inputName = `audio-extract-input.${ext}`;
+  const outputName = 'audio-extract-output.wav';
+
+  // Clean up any leftover files from a previous extraction run.
+  for (const name of [inputName, outputName]) {
+    try { await ffmpeg.deleteFile(name); } catch { /* ignore */ }
+  }
+
+  onStatus(`Extracting audio from "${clip.title}"...`);
+  await ffmpeg.writeFile(inputName, await fetchFile(clip.file));
+
+  const args: string[] = [];
+
+  // Seek before input for fast container-level seek when trimStart is set.
+  if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
+  args.push('-i', inputName);
+  if (Number.isFinite(clip.trimEnd)) {
+    args.push('-t', String(clip.trimEnd - clip.trimStart));
+  }
+
+  args.push(
+    '-vn',                  // drop video stream
+    '-acodec', 'pcm_s16le', // PCM 16-bit little-endian (WAV)
+    '-ar', '44100',         // 44.1 kHz sample rate
+    '-ac', '2',             // stereo
+    outputName,
+  );
+
+  await ffmpeg.exec(args);
+
+  const output = (await ffmpeg.readFile(outputName)) as Uint8Array;
+  // Copy to a plain ArrayBuffer so Blob constructor accepts it regardless of
+  // whether FFmpeg's backing buffer is a SharedArrayBuffer.
+  const plain = new Uint8Array(output).buffer as ArrayBuffer;
+
+  // Clean up extraction files.
+  try { await ffmpeg.deleteFile(inputName); } catch { /* ignore */ }
+  try { await ffmpeg.deleteFile(outputName); } catch { /* ignore */ }
+
+  onStatus('Audio extraction complete.');
+  return new Blob([plain], { type: 'audio/wav' });
+}
+
 export async function mergeClips(
   clips: Clip[],
   transitions: ClipTransition[] = [],

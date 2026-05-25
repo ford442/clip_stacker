@@ -18,6 +18,8 @@ export interface Clip {
   groupId?: string;
   /** Which variant slot this clip occupies within its group */
   groupVariant?: 'A' | 'B';
+  /** URL of the remotely stored extracted WAV for this clip */
+  remoteAudioUrl?: string;
 }
 
 export interface SerializedClip {
@@ -32,6 +34,8 @@ export interface SerializedClip {
   audioFadeIn: number;
   audioFadeOut: number;
   fileName: string;
+  /** URL of the remotely stored extracted WAV for this clip */
+  remoteAudioUrl?: string;
 }
 
 export type TransitionType = 'none' | 'dissolve' | 'motion';
