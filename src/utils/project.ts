@@ -1,4 +1,4 @@
-import type { Clip, Project, SerializedClip, ClipTransition, SerializedTransition } from '../types';
+import type { Clip, Project, SerializedClip, ClipTransition, SerializedTransition, TextOverlay } from '../types';
 import { MIN_CLIP_DURATION } from './media';
 
 const FADE_SAFETY_MARGIN = 0.01;
@@ -21,7 +21,11 @@ export function sanitizeClipAdjustments(clip: Clip): void {
   clip.audioFadeOut = Math.min(Math.max(0, clip.audioFadeOut), maxFade);
 }
 
-export function serializeProject(clips: Clip[], transitions: ClipTransition[] = []): Project {
+export function serializeProject(
+  clips: Clip[],
+  transitions: ClipTransition[] = [],
+  textOverlays: TextOverlay[] = [],
+): Project {
   return {
     clips: clips.map((clip): SerializedClip => ({
       id: clip.id,
@@ -52,13 +56,14 @@ export function serializeProject(clips: Clip[], transitions: ClipTransition[] = 
       type: t.type,
       duration: t.duration,
     })),
+    ...(textOverlays.length > 0 ? { textOverlays } : {}),
   };
 }
 
 export function applyProjectData(
   project: Project,
   clips: Clip[],
-): { clips: Clip[]; transitions: ClipTransition[]; skippedClipCount: number } {
+): { clips: Clip[]; transitions: ClipTransition[]; textOverlays: TextOverlay[]; skippedClipCount: number } {
   if (!project || !Array.isArray(project.clips)) {
     throw new Error('Project file is invalid.');
   }
@@ -100,7 +105,22 @@ export function applyProjectData(
       }))
     : [];
 
-  return { clips: mapped, transitions, skippedClipCount: skippedCount };
+  const textOverlays: TextOverlay[] = Array.isArray(project.textOverlays)
+    ? project.textOverlays.map((o) => ({
+        id: String(o.id ?? ''),
+        text: String(o.text ?? ''),
+        fontsize: Number(o.fontsize ?? 40),
+        fontcolor: String(o.fontcolor ?? '#ffffff'),
+        x: Number(o.x ?? 50),
+        y: Number(o.y ?? 650),
+        scrolling: Boolean(o.scrolling),
+        scrollSpeed: Number(o.scrollSpeed ?? 100),
+        box: Boolean(o.box),
+        boxColor: String(o.boxColor ?? 'black@0.5'),
+      }))
+    : [];
+
+  return { clips: mapped, transitions, textOverlays, skippedClipCount: skippedCount };
 }
 
 export class ContaboStorageManagerClient {

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { Clip, ClipGroup, ClipTransition, ExportSettings } from './types';
+import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from './types';
 import { DEFAULT_EXPORT_SETTINGS } from './types';
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from './utils/media';
 import {
@@ -19,11 +19,13 @@ import { Inspector } from './components/Inspector';
 import type { ClipValues } from './components/Inspector';
 import { Preview } from './components/Preview';
 import { Timeline } from './components/Timeline';
+import { TextOverlayPanel } from './components/TextOverlayPanel';
 
 export function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [clipGroups, setClipGroups] = useState<ClipGroup[]>([]);
   const [transitions, setTransitions] = useState<ClipTransition[]>([]);
+  const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [exportSettings, setExportSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
   const [forceFFmpeg, setForceFFmpeg] = useState(false);
@@ -172,6 +174,7 @@ export function App() {
         exportSettings,
         setStatus,
         forceFFmpeg,
+        textOverlays,
       );
       const url = URL.createObjectURL(result.blob);
       setOutputUrl(url);
@@ -190,7 +193,7 @@ export function App() {
 
   const handleSaveProject = useCallback(() => {
     const timelineClips = getTimelineClips(clips, clipGroups);
-    const payload = JSON.stringify(serializeProject(timelineClips, transitions), null, 2);
+    const payload = JSON.stringify(serializeProject(timelineClips, transitions, textOverlays), null, 2);
     const blob = new Blob([payload], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -205,12 +208,13 @@ export function App() {
     async (file: File) => {
       try {
         const parsed = JSON.parse(await file.text());
-        const { clips: updatedClips, transitions: loadedTransitions, skippedClipCount } = applyProjectData(parsed, clips);
+        const { clips: updatedClips, transitions: loadedTransitions, textOverlays: loadedOverlays, skippedClipCount } = applyProjectData(parsed, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
           setSelectedClipId(updatedClips[updatedClips.length - 1].id);
         }
         setTransitions(loadedTransitions);
+        setTextOverlays(loadedOverlays);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — original media files not found.`;
@@ -228,13 +232,13 @@ export function App() {
       try {
         const timelineClips = getTimelineClips(clips, clipGroups);
         const client = new ContaboStorageManagerClient(endpoint, authToken);
-        await client.save(projectName || 'default-project', serializeProject(timelineClips, transitions));
+        await client.save(projectName || 'default-project', serializeProject(timelineClips, transitions, textOverlays));
         setStatus('Project saved to contabo_storage_manager endpoint.');
       } catch (error) {
         setStatus((error as Error).message);
       }
     },
-    [clips, clipGroups, transitions],
+    [clips, clipGroups, transitions, textOverlays],
   );
 
   const handleLoadRemote = useCallback(
@@ -242,12 +246,13 @@ export function App() {
       try {
         const client = new ContaboStorageManagerClient(endpoint, authToken);
         const payload = await client.load(projectName || 'default-project');
-        const { clips: updatedClips, transitions: loadedTransitions, skippedClipCount } = applyProjectData(payload, clips);
+        const { clips: updatedClips, transitions: loadedTransitions, textOverlays: loadedOverlays, skippedClipCount } = applyProjectData(payload, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
           setSelectedClipId(updatedClips[updatedClips.length - 1].id);
         }
         setTransitions(loadedTransitions);
+        setTextOverlays(loadedOverlays);
         let msg = `Project loaded from contabo_storage_manager endpoint (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — original media files not found.`;
@@ -387,6 +392,34 @@ export function App() {
     });
   }, []);
 
+  // ---------------------------------------------------------------------------
+  // Text overlay management
+  // ---------------------------------------------------------------------------
+
+  const handleAddTextOverlay = useCallback(() => {
+    const newOverlay: TextOverlay = {
+      id: createClipId(),
+      text: 'Add your text here',
+      fontsize: 40,
+      fontcolor: '#ffffff',
+      x: 50,
+      y: 650,
+      scrolling: false,
+      scrollSpeed: 100,
+      box: true,
+      boxColor: 'black@0.5',
+    };
+    setTextOverlays((prev) => [...prev, newOverlay]);
+  }, []);
+
+  const handleUpdateTextOverlay = useCallback((overlay: TextOverlay) => {
+    setTextOverlays((prev) => prev.map((o) => (o.id === overlay.id ? overlay : o)));
+  }, []);
+
+  const handleDeleteTextOverlay = useCallback((id: string) => {
+    setTextOverlays((prev) => prev.filter((o) => o.id !== id));
+  }, []);
+
   // Sync transitions when clips list changes (ensure valid indices)
   const timelineClips = getTimelineClips(clips, clipGroups);
 
@@ -448,6 +481,13 @@ export function App() {
         onMoveUp={handleMoveUp}
         onMoveDown={handleMoveDown}
         onTransitionUpdate={handleTransitionUpdate}
+      />
+
+      <TextOverlayPanel
+        overlays={textOverlays}
+        onAdd={handleAddTextOverlay}
+        onUpdate={handleUpdateTextOverlay}
+        onDelete={handleDeleteTextOverlay}
       />
     </main>
   );

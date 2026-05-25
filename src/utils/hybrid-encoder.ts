@@ -7,7 +7,7 @@
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */
 
-import type { Clip, ExportSettings, ClipTransition } from '../types';
+import type { Clip, ExportSettings, ClipTransition, TextOverlay } from '../types';
 import type { StatusCallback } from '../ffmpeg/ffmpegService';
 import { isWebCodecsAvailable, encodeClipsWithWebCodecs } from './webcodecs';
 import { mergeClips } from '../ffmpeg/ffmpegService';
@@ -22,11 +22,12 @@ export interface HybridEncodeResult {
 /**
  * Merge clips using the best available encoder.
  *
- * @param clips       - Ordered list of clips to merge
- * @param transitions - Optional transitions between clips
- * @param settings    - Export quality settings
- * @param onStatus    - Status callback for progress updates
- * @param forceFFmpeg - Set to true to bypass WebCodecs detection
+ * @param clips        - Ordered list of clips to merge
+ * @param transitions  - Optional transitions between clips
+ * @param settings     - Export quality settings
+ * @param onStatus     - Status callback for progress updates
+ * @param forceFFmpeg  - Set to true to bypass WebCodecs detection
+ * @param textOverlays - Optional text overlays / tickers to burn into the output
  */
 export async function hybridMergeClips(
   clips: Clip[],
@@ -34,14 +35,16 @@ export async function hybridMergeClips(
   settings: ExportSettings,
   onStatus: StatusCallback,
   forceFFmpeg = false,
+  textOverlays: TextOverlay[] = [],
 ): Promise<HybridEncodeResult> {
   const useWebCodecs = !forceFFmpeg && (await isWebCodecsAvailable());
 
   if (useWebCodecs) {
-    // Check if transitions or PiP overlays are active — WebCodecs path doesn't support them
+    // Check if transitions, PiP overlays, or text overlays are active — WebCodecs path doesn't support them
     const hasActiveTransitions = transitions.some((t) => t.type !== 'none' && t.duration > 0);
     const hasPipClips = clips.some((c) => (c.layerIndex ?? 0) > 0);
-    if (!hasActiveTransitions && !hasPipClips) {
+    const hasTextOverlays = textOverlays.length > 0;
+    if (!hasActiveTransitions && !hasPipClips && !hasTextOverlays) {
       try {
         onStatus('GPU path selected (WebCodecs + hardware H.264)...');
         const blob = await encodeClipsWithWebCodecs(clips, settings, onStatus);
@@ -54,6 +57,7 @@ export async function hybridMergeClips(
     }
   }
 
-  const blob = await mergeClips(clips, transitions, settings, onStatus);
+  const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays);
   return { blob, path: 'ffmpeg' };
 }
+
