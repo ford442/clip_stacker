@@ -1,51 +1,127 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { ContaboStorageManagerClient } from '../utils/project';
 
 interface Props {
   endpoint: string;
   authToken: string;
-  onEndpointChange: (value: string) => void;
   onAuthTokenChange: (value: string) => void;
   onSaveRemote: (endpoint: string, authToken: string, projectName: string) => void;
   onLoadRemote: (endpoint: string, authToken: string, projectName: string) => void;
 }
 
-export function StorageRow({ endpoint, authToken, onEndpointChange, onAuthTokenChange, onSaveRemote, onLoadRemote }: Props) {
+export function StorageRow({ endpoint, authToken, onAuthTokenChange, onSaveRemote, onLoadRemote }: Props) {
   const [projectName, setProjectName] = useState('default-project');
+  const [projects, setProjects] = useState<{ name: string; modified: number }[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState('');
+
+  const fetchProjects = useCallback(async () => {
+    if (!endpoint) {
+      setListError('Enter an endpoint URL first.');
+      return;
+    }
+    setLoading(true);
+    setListError('');
+    try {
+      const client = new ContaboStorageManagerClient(endpoint, authToken);
+      const list = await client.list();
+      setProjects(list);
+    } catch (error) {
+      setListError((error as Error).message);
+      setProjects([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [endpoint, authToken]);
+
+  const handleDelete = useCallback(async (name: string) => {
+    if (!confirm(`Delete project "${name}"?`)) return;
+    try {
+      const client = new ContaboStorageManagerClient(endpoint, authToken);
+      await client.delete(name);
+      setProjects((prev) => prev.filter((p) => p.name !== name));
+    } catch (error) {
+      setListError((error as Error).message);
+    }
+  }, [endpoint, authToken]);
+
+  const fmtDate = (ts: number) => {
+    try {
+      return new Date(ts * 1000).toLocaleString();
+    } catch {
+      return '';
+    }
+  };
 
   return (
     <div className="storage-row">
-      <label>
-        Contabo storage endpoint
-        <input
-          type="url"
-          placeholder="https://storage.example.com/webhook/clip-stacker"
-          value={endpoint}
-          onChange={(e) => onEndpointChange(e.target.value)}
-        />
-      </label>
-      <label>
-        Auth token (optional)
-        <input
-          type="password"
-          placeholder="Bearer token or API key"
-          value={authToken}
-          onChange={(e) => onAuthTokenChange(e.target.value)}
-        />
-      </label>
-      <label>
-        Project name
-        <input
-          type="text"
-          value={projectName}
-          onChange={(e) => setProjectName(e.target.value)}
-        />
-      </label>
-      <button type="button" onClick={() => onSaveRemote(endpoint, authToken, projectName)}>
-        Save remote
-      </button>
-      <button type="button" onClick={() => onLoadRemote(endpoint, authToken, projectName)}>
-        Load remote
-      </button>
+      <div className="storage-config">
+        <label>
+          Auth token (optional)
+          <input
+            type="password"
+            placeholder="Bearer token or API key"
+            value={authToken}
+            onChange={(e) => onAuthTokenChange(e.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="storage-actions">
+        <label>
+          Project name
+          <input
+            type="text"
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+          />
+        </label>
+        <button type="button" onClick={() => onSaveRemote(endpoint, authToken, projectName)}>
+          Save remote
+        </button>
+        <button type="button" onClick={() => onLoadRemote(endpoint, authToken, projectName)}>
+          Load remote
+        </button>
+        <button type="button" onClick={fetchProjects} disabled={loading}>
+          {loading ? 'Refreshing…' : 'Refresh list'}
+        </button>
+      </div>
+
+      {listError && <p className="storage-error">{listError}</p>}
+
+      {projects.length > 0 && (
+        <div className="storage-project-list">
+          <h3>Saved projects</h3>
+          <ul>
+            {projects.map((p) => (
+              <li
+                key={p.name}
+                className={p.name === projectName ? 'selected' : ''}
+                onClick={() => setProjectName(p.name)}
+                title="Click to select"
+              >
+                <span className="project-name">{p.name}</span>
+                <span className="project-date">{fmtDate(p.modified)}</span>
+                <button
+                  type="button"
+                  className="project-delete-btn"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDelete(p.name);
+                  }}
+                  title="Delete project"
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {projects.length === 0 && !loading && !listError && endpoint && (
+        <p className="storage-hint">No saved projects found. Click "Refresh list" after saving.</p>
+      )}
     </div>
   );
 }

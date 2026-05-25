@@ -89,8 +89,11 @@ clip_stacker/
 Remote save/load expects an endpoint compatible with:
 
 - `POST <endpoint>` with body `{ "name": "...", "payload": { ...project... } }`  
-  Response: `{ "payload": { ...project... } }` on success
+  Response: `{ "status": "success", "name": "..." }` on success
 - `GET <endpoint>?name=...` returning `{ "payload": { ...project... } }`
+- `GET <endpoint>` (no name) returning `{ "projects": [{ "name": "...", "modified": <timestamp> }, ...] }`
+- `DELETE <endpoint>?name=...` returning `{ "status": "success" }`
+- `POST <endpoint>/media` with `multipart/form-data` (`file`, `name`) returning `{ "url": "..." }`
 
 **Canonical endpoint path:** `/webhook/clip-stacker`
 

@@ -160,6 +160,25 @@ export class ContaboStorageManagerClient {
     return result.payload;
   }
 
+  async list(): Promise<{ name: string; modified: number }[]> {
+    const authHeader = this.getAuthHeader();
+    const response = await fetch(this.endpoint, {
+      headers: authHeader ? { authorization: authHeader } : undefined,
+    });
+    if (!response.ok) throw new Error(`Remote list failed (${response.status})`);
+    const result = (await response.json()) as { projects: { name: string; modified: number }[] };
+    return result.projects ?? [];
+  }
+
+  async delete(name: string): Promise<void> {
+    const authHeader = this.getAuthHeader();
+    const response = await fetch(`${this.endpoint}?name=${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      headers: authHeader ? { authorization: authHeader } : undefined,
+    });
+    if (!response.ok) throw new Error(`Remote delete failed (${response.status})`);
+  }
+
   private get mediaEndpoint(): string {
     return this.endpoint.replace(/\/*$/, '') + '/media';
   }

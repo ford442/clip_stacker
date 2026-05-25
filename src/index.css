@@ -958,11 +958,126 @@ audio {
 .storage-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
+  gap: 0.75rem;
+  align-items: flex-start;
   margin-top: 0.75rem;
   padding-top: 0.75rem;
   border-top: 1px solid var(--border);
+}
+
+.storage-config,
+.storage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.storage-config label,
+.storage-actions label {
+  min-width: 220px;
+  flex: 1;
+}
+
+.storage-actions label {
+  min-width: 160px;
+  max-width: 220px;
+}
+
+.storage-error {
+  width: 100%;
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
+.storage-hint {
+  width: 100%;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-style: italic;
+}
+
+.storage-project-list {
+  width: 100%;
+  margin-top: 0.25rem;
+}
+
+.storage-project-list h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  opacity: 0.8;
+}
+
+.storage-project-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.storage-project-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(6, 9, 15, 0.65);
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.storage-project-list li:hover {
+  background: var(--panel-hover);
+  border-color: var(--border-active);
+}
+
+.storage-project-list li.selected {
+  border-color: var(--gold);
+  background: var(--gold-dim);
+}
+
+.project-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.project-date {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.project-delete-btn {
+  padding: 0 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--danger);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.project-delete-btn:hover {
+  opacity: 1;
+  background: rgba(248, 113, 113, 0.12);
+  border-color: rgba(248, 113, 113, 0.3);
 }
 
 /* ============================================================

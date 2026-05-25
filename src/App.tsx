@@ -40,7 +40,7 @@ export function App() {
   const [status, setStatus] = useState('');
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [encoderPath, setEncoderPath] = useState<string>('');
-  const [storageEndpoint, setStorageEndpoint] = useState('');
+  const [storageEndpoint, setStorageEndpoint] = useState('https://storage.noahcohn.com/webhook/clip-stacker');
   const [storageAuthToken, setStorageAuthToken] = useState('');
 
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
@@ -471,7 +471,6 @@ export function App() {
         <StorageRow
           endpoint={storageEndpoint}
           authToken={storageAuthToken}
-          onEndpointChange={setStorageEndpoint}
           onAuthTokenChange={setStorageAuthToken}
           onSaveRemote={handleSaveRemote}
           onLoadRemote={handleLoadRemote}
