@@ -53,6 +53,8 @@ npm run deploy
 
 Runs `npm run build` then uploads `dist/` to `test.1ink.us/clip-stacker` via SFTP using `deploy.py`.
 
+For Apache deployments, `public/.htaccess` is copied into `dist/` during the build so the deployed `/clip-stacker/` directory serves the required COOP/COEP headers for FFmpeg WASM. nginx deployments still need the equivalent headers configured in the server's location block.
+
 ## Project Structure
 
 ```
@@ -61,6 +63,8 @@ clip_stacker/
 ├── vite.config.ts         # Vite configuration (CORS headers, optimizeDeps)
 ├── tsconfig.json          # TypeScript configuration
 ├── package.json           # Dependencies and scripts
+├── public/
+│   └── .htaccess          # Apache headers for SharedArrayBuffer/FFmpeg WASM
 ├── deploy.py              # SFTP deployment script
 ├── git.sh                 # Git helper script
 ├── src/
@@ -117,4 +121,3 @@ To use this with [ford442/contabo_storage_manager](https://github.com/ford442/co
 2. In the app, enter the full URL to your deployment's `/webhook/clip-stacker` path
 3. (Optional) Provide a Bearer token if your deployment requires authentication
 4. Use "Save remote" and "Load remote" buttons to persist projects
-
