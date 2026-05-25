@@ -54,6 +54,13 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
     onChange(next);
   };
 
+  /** Nudge a numeric field by `delta` seconds, clamped to ≥ 0. */
+  const nudge = (field: 'trimStart' | 'trimEnd', delta: number) => {
+    const current = parseFloat(values[field]) || 0;
+    const next = Math.max(0, parseFloat((current + delta).toFixed(3)));
+    update(field, String(next));
+  };
+
   const updateExport = (field: keyof ExportSettings, value: string | number) => {
     onExportSettingsChange({ ...exportSettings, [field]: value });
   };
@@ -73,20 +80,36 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           <input
             type="number"
             min="0"
-            step="0.1"
+            step="0.01"
             value={values.trimStart}
             onChange={(e) => update('trimStart', e.target.value)}
           />
+          <div className="nudge-row">
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimStart', -0.5)} title="−0.5 s">−0.5</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimStart', -0.1)} title="−0.1 s">−0.1</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimStart', -0.01)} title="−0.01 s">−0.01</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimStart', +0.01)} title="+0.01 s">+0.01</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimStart', +0.1)} title="+0.1 s">+0.1</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimStart', +0.5)} title="+0.5 s">+0.5</button>
+          </div>
         </label>
         <label>
           Trim end (s, optional)
           <input
             type="number"
             min="0"
-            step="0.1"
+            step="0.01"
             value={values.trimEnd}
             onChange={(e) => update('trimEnd', e.target.value)}
           />
+          <div className="nudge-row">
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimEnd', -0.5)} title="−0.5 s">−0.5</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimEnd', -0.1)} title="−0.1 s">−0.1</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimEnd', -0.01)} title="−0.01 s">−0.01</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimEnd', +0.01)} title="+0.01 s">+0.01</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimEnd', +0.1)} title="+0.1 s">+0.1</button>
+            <button type="button" className="nudge-btn" onClick={() => nudge('trimEnd', +0.5)} title="+0.5 s">+0.5</button>
+          </div>
         </label>
         <div className="inspector-group-label">Video fades</div>
         <label>
