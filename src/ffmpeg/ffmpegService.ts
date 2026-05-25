@@ -592,3 +592,122 @@ export async function mergeClips(
   return new Blob([plain], { type: 'video/mp4' });
 }
 
+// ---------------------------------------------------------------------------
+// Hybrid pipeline: mux a pre-rendered video blob with clip audio
+// ---------------------------------------------------------------------------
+
+/**
+ * Mux a pre-rendered video blob (e.g., from MediaRecorder canvas capture) with
+ * the audio tracks from the original source clips.
+ *
+ * This is the final step of the hybrid Canvas/WebGPU rendering pipeline:
+ *   Canvas compositing → MediaRecorder capture → muxVideoWithAudio → final MP4
+ *
+ * Audio from each clip is trimmed, faded (if configured), and concatenated in
+ * order before being muxed with the video stream.  The video stream is copied
+ * without re-encoding to preserve quality from the capture stage.
+ *
+ * @param videoBlob  - Video-only blob from the MediaRecorder canvas capture.
+ * @param clips      - Original source clips; their audio tracks are extracted and muxed.
+ * @param settings   - Export quality settings (used for audio bitrate).
+ * @param onStatus   - Status callback for progress messages.
+ */
+export async function muxVideoWithAudio(
+  videoBlob: Blob,
+  clips: Clip[],
+  settings: ExportSettings,
+  onStatus: StatusCallback,
+): Promise<Blob> {
+  if (clips.length === 0) throw new Error('No clips provided for audio muxing.');
+
+  const ffmpeg = await ensureFfmpeg(onStatus);
+  onStatus('Preparing audio mux...');
+
+  // Clean up any leftover files from a previous mux run.
+  for (const entry of await ffmpeg.listDir('/')) {
+    if (entry.isDir) continue;
+    if (
+      entry.name.startsWith('mux_audio_') ||
+      entry.name === 'mux_canvas_video.mp4' ||
+      entry.name === 'mux_canvas_video.webm' ||
+      entry.name === 'mux_output.mp4'
+    ) {
+      await ffmpeg.deleteFile(entry.name);
+    }
+  }
+
+  // Write the canvas-captured video to the virtual filesystem.
+  const videoExt = videoBlob.type.includes('mp4') ? 'mp4' : 'webm';
+  const videoVfsName = `mux_canvas_video.${videoExt}`;
+  onStatus('Writing canvas video to FFmpeg...');
+  await ffmpeg.writeFile(videoVfsName, new Uint8Array(await videoBlob.arrayBuffer()));
+
+  // Write each clip's source file for audio extraction.
+  const audioVfsNames: string[] = [];
+  for (const [i, clip] of clips.entries()) {
+    const ext = getSafeExtension(clip.file.name, clip.kind === 'video' ? 'mp4' : 'mp3');
+    const name = `mux_audio_${i}.${ext}`;
+    await ffmpeg.writeFile(name, await fetchFile(clip.file));
+    audioVfsNames.push(name);
+  }
+
+  // Build a filter_complex that trims, fades, and concatenates all audio tracks.
+  // Input 0 is the canvas video; inputs 1..N are the clip files for audio.
+  const filterParts: string[] = [];
+  const streamLabels: string[] = [];
+
+  for (const [i, clip] of clips.entries()) {
+    const inputIdx = i + 1; // 0 = canvas video
+    const trimStart = clip.trimStart;
+    const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
+    const duration = getClipDuration(clip);
+    const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
+
+    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+    if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
+    if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
+    const label = `[amux${i}]`;
+    af += label;
+    filterParts.push(af);
+    streamLabels.push(label);
+  }
+
+  filterParts.push(
+    `${streamLabels.join('')}concat=n=${streamLabels.length}:v=0:a=1[aout]`,
+  );
+
+  const filterComplex = filterParts.join(';');
+
+  // Build the ffmpeg argument list.
+  const inputArgs: string[] = ['-i', videoVfsName];
+  for (const name of audioVfsNames) {
+    inputArgs.push('-i', name);
+  }
+
+  onStatus('Muxing audio with canvas video...');
+  await ffmpeg.exec([
+    ...inputArgs,
+    '-filter_complex', filterComplex,
+    '-map', '0:v',
+    '-map', '[aout]',
+    '-c:v', 'copy',         // preserve the canvas-captured video as-is
+    '-c:a', 'aac',
+    '-b:a', '192k',         // ExportSettings has no audioBitrate field; 192 kbps matches the existing FFmpeg path
+    '-movflags', '+faststart',
+    'mux_output.mp4',
+  ]);
+
+  const output = (await ffmpeg.readFile('mux_output.mp4')) as Uint8Array;
+  const plain = new Uint8Array(output).buffer as ArrayBuffer;
+
+  // Clean up.
+  try { await ffmpeg.deleteFile(videoVfsName); } catch { /* ignore */ }
+  for (const name of audioVfsNames) {
+    try { await ffmpeg.deleteFile(name); } catch { /* ignore */ }
+  }
+  try { await ffmpeg.deleteFile('mux_output.mp4'); } catch { /* ignore */ }
+
+  onStatus('Audio mux complete.');
+  return new Blob([plain], { type: 'video/mp4' });
+}
+
