@@ -334,6 +334,12 @@ export function App() {
             videoFadeOut: Number(values.videoFadeOut || 0),
             audioFadeIn: Number(values.audioFadeIn || 0),
             audioFadeOut: Number(values.audioFadeOut || 0),
+            layerIndex: Math.max(0, Math.round(Number(values.layerIndex || 0))),
+            x: Number(values.x || 0),
+            y: Number(values.y || 0),
+            width: Math.max(0, Number(values.width || 0)),
+            height: Math.max(0, Number(values.height || 0)),
+            opacity: Math.min(1, Math.max(0, Number(values.opacity ?? 1))),
           };
           sanitizeClipAdjustments(updated);
           return updated;
