@@ -1,6 +1,6 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import type { Clip, ExportSettings, ClipTransition } from '../types';
+import type { Clip, ExportSettings, ClipTransition, TextOverlay } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { getClipDuration } from '../utils/project';
 import { buildTransitionFilterComplex } from '../utils/transitions';
@@ -9,7 +9,17 @@ const DEFAULT_VIDEO_SIZE = '1280x720';
 const OUTPUT_WIDTH = 1280;
 const OUTPUT_HEIGHT = 720;
 
+/**
+ * CDN URL for Roboto Regular TTF.
+ * FFmpeg WASM has no system fonts, so we fetch this at render time and write
+ * it to the virtual filesystem as 'roboto.ttf'.
+ */
+const FONT_CDN_URL =
+  'https://cdn.jsdelivr.net/gh/google/fonts@main/apache/roboto/static/Roboto-Regular.ttf';
+const FONT_VIRTUAL_NAME = 'roboto.ttf';
+
 let ffmpegInstance: FFmpeg | null = null;
+let fontLoaded = false;
 
 export type StatusCallback = (message: string) => void;
 
@@ -87,6 +97,9 @@ async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string
 export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
   if (ffmpegInstance) return ffmpegInstance;
 
+  // Reset font state whenever a new FFmpeg instance is created.
+  fontLoaded = false;
+
   const ffmpeg = new FFmpeg();
   ffmpeg.on('log', ({ message }) => {
     if (message.includes('time=')) onStatus(`Rendering... ${message}`);
@@ -107,6 +120,49 @@ export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
   ffmpegInstance = ffmpeg;
   return ffmpeg;
 }
+
+/**
+ * Fetch the Roboto Regular TTF font and write it to the FFmpeg virtual filesystem.
+ * Called automatically before any render that uses text overlays.
+ * Subsequent calls are no-ops once the font is loaded for the current FFmpeg instance.
+ */
+async function ensureFont(ffmpeg: FFmpeg, onStatus: StatusCallback): Promise<void> {
+  if (fontLoaded) return;
+  onStatus('Loading font for text overlays...');
+  try {
+    const fontData = await fetchFile(FONT_CDN_URL);
+    await ffmpeg.writeFile(FONT_VIRTUAL_NAME, fontData);
+    fontLoaded = true;
+  } catch (err) {
+    throw new Error(`Failed to load font for text overlays: ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Build a single `drawtext=...` filter expression for one TextOverlay.
+ * The overlay's text is written to a named temp file to avoid escaping issues.
+ */
+function buildDrawtextFilter(overlay: TextOverlay): string {
+  const x = overlay.scrolling
+    ? `w+tw-(t*${overlay.scrollSpeed})`
+    : String(overlay.x);
+
+  const parts: string[] = [
+    `fontfile=${FONT_VIRTUAL_NAME}`,
+    `textfile=tol_${overlay.id}.txt`,
+    `x=${x}`,
+    `y=${overlay.y}`,
+    `fontsize=${overlay.fontsize}`,
+    `fontcolor=${overlay.fontcolor}`,
+  ];
+
+  if (overlay.box) {
+    parts.push(`box=1`, `boxcolor=${overlay.boxColor}`);
+  }
+
+  return `drawtext=${parts.join(':')}`;
+}
+
 
 // Lossless path: all clips are clean video — use the concat demuxer with -c copy.
 async function mergeClipsLossless(ffmpeg: FFmpeg, clips: Clip[], onStatus: StatusCallback): Promise<void> {
@@ -420,6 +476,7 @@ export async function mergeClips(
   transitions: ClipTransition[] = [],
   settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
   onStatus: StatusCallback,
+  textOverlays: TextOverlay[] = [],
 ): Promise<Blob> {
   if (clips.length === 0) throw new Error('Upload clips before rendering.');
 
@@ -432,7 +489,9 @@ export async function mergeClips(
     if (
       entry.name.startsWith('input-') ||
       entry.name.startsWith('intermediate-') ||
+      entry.name.startsWith('tol_') ||
       entry.name === 'stacked.mp4' ||
+      entry.name === 'stacked_final.mp4' ||
       entry.name === 'concat_list.txt'
     ) {
       await ffmpeg.deleteFile(entry.name);
@@ -490,7 +549,43 @@ export async function mergeClips(
     }
   }
 
-  const output = (await ffmpeg.readFile('stacked.mp4')) as Uint8Array;
+  // ── Text overlay post-processing ──────────────────────────────────────────
+  // Apply drawtext filters on top of the composed stacked.mp4 when overlays exist.
+  let finalFileName = 'stacked.mp4';
+
+  if (textOverlays.length > 0) {
+    await ensureFont(ffmpeg, onStatus);
+
+    // Write each overlay's text to a dedicated temp file to avoid escaping issues.
+    for (const overlay of textOverlays) {
+      await ffmpeg.writeFile(`tol_${overlay.id}.txt`, overlay.text);
+    }
+
+    const vfFilter = textOverlays.map(buildDrawtextFilter).join(',');
+    onStatus('Applying text overlays...');
+
+    await ffmpeg.exec([
+      '-i', 'stacked.mp4',
+      '-vf', vfFilter,
+      '-c:v', 'libx264',
+      '-crf', String(settings.crf),
+      '-preset', settings.preset,
+      '-pix_fmt', 'yuv420p',
+      '-c:a', 'copy',
+      'stacked_final.mp4',
+    ]);
+
+    // Clean up temp text files.
+    for (const overlay of textOverlays) {
+      try { await ffmpeg.deleteFile(`tol_${overlay.id}.txt`); } catch { /* ignore */ }
+    }
+
+    try { await ffmpeg.deleteFile('stacked.mp4'); } catch { /* ignore */ }
+    finalFileName = 'stacked_final.mp4';
+  }
+
+  const output = (await ffmpeg.readFile(finalFileName)) as Uint8Array;
+  try { await ffmpeg.deleteFile(finalFileName); } catch { /* ignore */ }
   // Copy to a plain ArrayBuffer so Blob constructor accepts it regardless of
   // whether FFmpeg's backing buffer is a SharedArrayBuffer.
   const plain = new Uint8Array(output).buffer as ArrayBuffer;

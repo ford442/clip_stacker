@@ -102,7 +102,35 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   videoBitrate: 8_000_000,
 };
 
+/**
+ * A text overlay (caption, ticker, title) rendered via FFmpeg's drawtext filter.
+ * All overlays are independent of clips and applied to the final composed video.
+ */
+export interface TextOverlay {
+  /** Unique identifier */
+  id: string;
+  /** Text content to display */
+  text: string;
+  /** Font size in pixels */
+  fontsize: number;
+  /** Font color — any FFmpeg color value: name ('white'), hex ('#ffffff'), or '0xRRGGBB' */
+  fontcolor: string;
+  /** X position in pixels from left (ignored for scrolling text, which starts off-screen right) */
+  x: number;
+  /** Y position in pixels from top */
+  y: number;
+  /** When true the text scrolls right-to-left (news-ticker style) */
+  scrolling: boolean;
+  /** Horizontal scroll speed in pixels per second (only used when scrolling is true) */
+  scrollSpeed: number;
+  /** Whether to draw a filled background box behind the text */
+  box: boolean;
+  /** Box color — supports alpha, e.g. 'black@0.5' or '0x000000@0.5' */
+  boxColor: string;
+}
+
 export interface Project {
   clips: SerializedClip[];
   transitions?: SerializedTransition[];
+  textOverlays?: TextOverlay[];
 }
