@@ -267,10 +267,13 @@ export function App() {
       return;
     }
 
+    // Capture id and filename at the start so they remain stable across awaits.
+    const clipId = selectedClip.id;
+    const baseName = selectedClip.file.name.replace(/\.[^.]+$/, '');
+    const wavFileName = `${baseName}.wav`;
+
     try {
       const wavBlob = await extractAudioToWav(selectedClip, setStatus);
-      const baseName = selectedClip.file.name.replace(/\.[^.]+$/, '');
-      const wavFileName = `${baseName}.wav`;
 
       let remoteUrl: string | undefined;
       if (storageEndpoint) {
@@ -288,17 +291,20 @@ export function App() {
       // Update clip state after all async operations complete.
       if (remoteUrl) {
         setClips((prev) =>
-          prev.map((c) => (c.id === selectedClip.id ? { ...c, remoteAudioUrl: remoteUrl } : c)),
+          prev.map((c) => (c.id === clipId ? { ...c, remoteAudioUrl: remoteUrl } : c)),
         );
       }
 
       // Always trigger a local download of the WAV.
       const url = URL.createObjectURL(wavBlob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = wavFileName;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      try {
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = wavFileName;
+        anchor.click();
+      } finally {
+        URL.revokeObjectURL(url);
+      }
 
       if (remoteUrl) {
         setStatus(`Audio extracted and uploaded. Remote URL stored in clip.`);

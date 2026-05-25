@@ -124,6 +124,10 @@ export class ContaboStorageManagerClient {
     return result.payload;
   }
 
+  private get mediaEndpoint(): string {
+    return this.endpoint.replace(/\/*$/, '') + '/media';
+  }
+
   /**
    * Upload a binary media blob (e.g. a WAV file) to the remote media endpoint.
    * The media endpoint is derived by appending `/media` to the base endpoint.
@@ -134,13 +138,11 @@ export class ContaboStorageManagerClient {
     const headers: Record<string, string> = {};
     if (authHeader) headers.authorization = authHeader;
 
-    const mediaEndpoint = this.endpoint.replace(/\/*$/, '') + '/media';
-
     const formData = new FormData();
     formData.append('name', name);
     formData.append('file', new File([blob], name, { type: mimeType }));
 
-    const response = await fetch(mediaEndpoint, {
+    const response = await fetch(this.mediaEndpoint, {
       method: 'POST',
       headers,
       body: formData,
