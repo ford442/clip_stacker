@@ -19,7 +19,7 @@ export function WaveformCanvas({ peaks, height = 54 }: Props) {
     const container = containerRef.current;
     if (!canvas || !container) return;
 
-    const dpr = window.devicePixelRatio ?? 1;
+    const dpr = window.devicePixelRatio || 1;
     const cssWidth = container.clientWidth || 200;
     const cssHeight = height;
 
