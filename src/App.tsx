@@ -29,6 +29,14 @@ export function App() {
   const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
   const [exportSettings, setExportSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
   const [forceFFmpeg, setForceFFmpeg] = useState(false);
+  const [useCanvasRenderer, setUseCanvasRenderer] = useState(false);
+  const [audioReactive, setAudioReactive] = useState(true);
+
+  /** Toggle canvas renderer; canvas and forceFFmpeg are mutually exclusive. */
+  const handleToggleCanvasRenderer = useCallback((v: boolean) => {
+    setUseCanvasRenderer(v);
+    if (v) setForceFFmpeg(false); // canvas overrides CPU-only mode
+  }, []);
   const [status, setStatus] = useState('');
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [encoderPath, setEncoderPath] = useState<string>('');
@@ -175,17 +183,23 @@ export function App() {
         setStatus,
         forceFFmpeg,
         textOverlays,
+        useCanvasRenderer,
+        audioReactive,
       );
       const url = URL.createObjectURL(result.blob);
       setOutputUrl(url);
       setEncoderPath(result.path);
-      setStatus(
-        `Render complete via ${result.path === 'webcodecs' ? '⚡ GPU (WebCodecs)' : '🖥 FFmpeg'}. Download your merged MP4.`,
-      );
+      const pathLabel =
+        result.path === 'canvas'
+          ? '🎨 Canvas (audio-reactive)'
+          : result.path === 'webcodecs'
+          ? '⚡ GPU (WebCodecs)'
+          : '🖥 FFmpeg';
+      setStatus(`Render complete via ${pathLabel}. Download your merged MP4.`);
     } catch (error) {
       setStatus(`Render failed: ${(error as Error).message}`);
     }
-  }, [clips, clipGroups, transitions, exportSettings, forceFFmpeg]);
+  }, [clips, clipGroups, transitions, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive]);
 
   // ---------------------------------------------------------------------------
   // Project save / load
@@ -430,7 +444,12 @@ export function App() {
         <p>Upload, trim, reorder, fade, and merge clips into one MP4.</p>
         {encoderPath && (
           <span className="encoder-used-badge">
-            Last render: {encoderPath === 'webcodecs' ? '⚡ GPU (WebCodecs)' : '🖥 FFmpeg'}
+            Last render:{' '}
+            {encoderPath === 'canvas'
+              ? '🎨 Canvas (audio-reactive)'
+              : encoderPath === 'webcodecs'
+              ? '⚡ GPU (WebCodecs)'
+              : '🖥 FFmpeg'}
           </span>
         )}
       </header>
@@ -444,6 +463,10 @@ export function App() {
           status={status}
           forceFFmpeg={forceFFmpeg}
           onToggleForceFFmpeg={setForceFFmpeg}
+          useCanvasRenderer={useCanvasRenderer}
+          onToggleCanvasRenderer={handleToggleCanvasRenderer}
+          audioReactive={audioReactive}
+          onToggleAudioReactive={setAudioReactive}
         />
         <StorageRow
           endpoint={storageEndpoint}

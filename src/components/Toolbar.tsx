@@ -10,6 +10,12 @@ interface Props {
   status: string;
   forceFFmpeg: boolean;
   onToggleForceFFmpeg: (v: boolean) => void;
+  /** Enable the canvas renderer path (audio-reactive compositing). */
+  useCanvasRenderer: boolean;
+  onToggleCanvasRenderer: (v: boolean) => void;
+  /** Enable audio-reactive visual effects in the canvas renderer. */
+  audioReactive: boolean;
+  onToggleAudioReactive: (v: boolean) => void;
 }
 
 export function Toolbar({
@@ -20,6 +26,10 @@ export function Toolbar({
   status,
   forceFFmpeg,
   onToggleForceFFmpeg,
+  useCanvasRenderer,
+  onToggleCanvasRenderer,
+  audioReactive,
+  onToggleAudioReactive,
 }: Props) {
   const clipInputRef = useRef<HTMLInputElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
@@ -42,9 +52,16 @@ export function Toolbar({
   };
 
   const gpuAvailable = caps?.hardwareH264 && caps?.webcodecs;
-  const gpuLabel = gpuAvailable ? '⚡ GPU' : '🖥 CPU';
+  const mediaRecorderAvailable = caps?.mediaRecorderMp4 ?? typeof MediaRecorder !== 'undefined';
+
+  const gpuLabel = useCanvasRenderer
+    ? '🎨 Canvas'
+    : gpuAvailable
+    ? '⚡ GPU'
+    : '🖥 CPU';
+
   const gpuTitle = caps
-    ? `WebCodecs: ${caps.webcodecs ? 'yes' : 'no'} · Hardware H.264: ${caps.hardwareH264 ? 'yes' : 'no'} · WebGPU: ${caps.webgpu ? 'yes' : 'no'}`
+    ? `WebCodecs: ${caps.webcodecs ? 'yes' : 'no'} · Hardware H.264: ${caps.hardwareH264 ? 'yes' : 'no'} · WebGPU: ${caps.webgpu ? 'yes' : 'no'} · MediaRecorder: ${caps.mediaRecorderMp4 ? 'yes' : 'no'}`
     : 'Detecting capabilities...';
 
   return (
@@ -77,10 +94,36 @@ export function Toolbar({
           onChange={handleProjectFileChange}
         />
 
-        {/* Encoder toggle */}
+        {/* Encoder / renderer controls */}
         <div className="encoder-badge" title={gpuTitle}>
           <span className="encoder-indicator">{gpuLabel}</span>
-          {gpuAvailable && (
+
+          {/* Canvas renderer toggle (requires MediaRecorder) */}
+          {mediaRecorderAvailable && (
+            <label className="encoder-toggle-label" title="Use canvas compositor with audio-reactive effects">
+              <input
+                type="checkbox"
+                checked={useCanvasRenderer}
+                onChange={(e) => onToggleCanvasRenderer(e.target.checked)}
+              />
+              Canvas
+            </label>
+          )}
+
+          {/* Audio-reactive sub-toggle (only shown when canvas is active) */}
+          {useCanvasRenderer && (
+            <label className="encoder-toggle-label" title="Enable audio-reactive visual effects (bass-driven glow)">
+              <input
+                type="checkbox"
+                checked={audioReactive}
+                onChange={(e) => onToggleAudioReactive(e.target.checked)}
+              />
+              Audio FX
+            </label>
+          )}
+
+          {/* Force CPU toggle (hidden when canvas renderer is selected) */}
+          {gpuAvailable && !useCanvasRenderer && (
             <label className="encoder-toggle-label">
               <input
                 type="checkbox"
@@ -98,4 +141,3 @@ export function Toolbar({
     </>
   );
 }
-
