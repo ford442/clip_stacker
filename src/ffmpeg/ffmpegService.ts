@@ -315,7 +315,7 @@ export function buildPipFilterComplex(clips: Clip[]): string {
     const isLast = o === overlayEntries.length - 1;
     const outV = isLast ? 'vout' : `vcomp${o}`;
 
-    parts.push(`[${currentV}][v${idx}]overlay=${x}:${y}[${outV}]`);
+    parts.push(`[${currentV}][v${idx}]overlay=${x}:${y}:eof_action=pass[${outV}]`);
     currentV = outV;
     audioStreams.push(`a${idx}`);
   }
@@ -327,7 +327,7 @@ export function buildPipFilterComplex(clips: Clip[]): string {
 
   // ── Phase 4: mix audio ───────────────────────────────────────────────────────
   if (audioStreams.length === 1) {
-    parts.push(`[${audioStreams[0]}]acopy[aout]`);
+    parts.push(`[${audioStreams[0]}]anull[aout]`);
   } else {
     const audioInputs = audioStreams.map((s) => `[${s}]`).join('');
     parts.push(`${audioInputs}amix=inputs=${audioStreams.length}:normalize=0[aout]`);

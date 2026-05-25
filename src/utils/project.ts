@@ -36,9 +36,9 @@ export function serializeProject(clips: Clip[], transitions: ClipTransition[] = 
       audioFadeOut: clip.audioFadeOut,
       fileName: clip.file.name,
       ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
-      ...((clip.layerIndex ?? 0) > 0
+      ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1)
         ? {
-            layerIndex: clip.layerIndex,
+            layerIndex: clip.layerIndex ?? 0,
             x: clip.x ?? 0,
             y: clip.y ?? 0,
             width: clip.width ?? 0,
