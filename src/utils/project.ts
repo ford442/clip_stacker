@@ -87,10 +87,28 @@ interface SerializeProjectOptions {
   mediaClient?: ContaboStorageManagerClient;
 }
 
+function inferKind(savedClip: SerializedClip, file: File): ClipKind {
+  if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
+  if (file.type.startsWith('audio/')) return 'audio';
+  if (file.type.startsWith('video/')) return 'video';
+  if (/\.(wav|mp3)$/i.test(file.name)) return 'audio';
+  return 'video';
+}
+
+function sanitizeUploadFileName(fileName: string): string {
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
 async function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ''));
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error(`Could not read media file: ${file.name}`));
+        return;
+      }
+      resolve(reader.result);
+    };
     reader.onerror = () => reject(new Error(`Could not read media file: ${file.name}`));
     reader.readAsDataURL(file);
   });
@@ -107,16 +125,17 @@ export async function serializeProjectWithMedia(
   const project = serializeProject(clips, transitions, textOverlays, clipGroups);
   if (mediaMode === 'metadata') return project;
 
+  const clipById = new Map(clips.map((clip) => [clip.id, clip]));
   const enrichedClips: SerializedClip[] = [];
-  for (let index = 0; index < clips.length; index++) {
-    const clip = clips[index];
-    const serialized = project.clips[index];
+  for (const serialized of project.clips) {
+    const clip = clipById.get(serialized.id);
+    if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
     const updated: SerializedClip = { ...serialized };
     if (mediaMode === 'embed') {
       updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
     } else if (mediaMode === 'remote') {
       if (!options.mediaClient) throw new Error('Remote save requires a storage endpoint.');
-      const uploadName = `${clip.id}-${clip.file.name}`;
+      const uploadName = `${clip.id}-${sanitizeUploadFileName(clip.file.name)}`;
       updated.sourceMediaUrl = await options.mediaClient.uploadMedia(uploadName, clip.file, clip.file.type || 'application/octet-stream');
     }
     enrichedClips.push(updated);
@@ -142,31 +161,27 @@ export async function applyProjectData(
   let skippedCount = 0;
   const skippedClipFileNames: string[] = [];
 
-  const inferKind = (savedClip: SerializedClip, file: File): ClipKind => {
-    if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
-    if (file.type.startsWith('audio/')) return 'audio';
-    if (file.type.startsWith('video/')) return 'video';
-    if (/\.(wav|mp3)$/i.test(file.name)) return 'audio';
-    return 'video';
-  };
-
   for (const savedClip of project.clips) {
     let liveClip = byName.get(savedClip.fileName);
     if (!liveClip && (savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl)) {
       try {
-        const mediaResponse = await fetch(savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl || '');
+        const mediaUrl = savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl;
+        if (!mediaUrl) throw new Error('No media URL available');
+        const mediaResponse = await fetch(mediaUrl);
         if (!mediaResponse.ok) throw new Error(`Media download failed (${mediaResponse.status})`);
         const blob = await mediaResponse.blob();
-        const fileType = savedClip.fileType || blob.type || 'application/octet-stream';
+        const fileType = blob.type || savedClip.fileType || 'application/octet-stream';
         const file = new File([blob], savedClip.fileName, { type: fileType });
         const { duration, objectUrl } = await getMediaInfo(file);
+        const restoredDuration = Number(savedClip.duration);
+        const effectiveDuration = Number.isFinite(restoredDuration) ? restoredDuration : duration;
         liveClip = {
-          id: savedClip.id || createClipId(),
+          id: createClipId(),
           file,
           objectUrl,
           title: savedClip.title || savedClip.fileName,
           kind: inferKind(savedClip, file),
-          duration: Math.max(MIN_CLIP_DURATION, Number(savedClip.duration ?? duration) || duration),
+          duration: Math.max(MIN_CLIP_DURATION, effectiveDuration),
           trimStart: 0,
           trimEnd: NaN,
           videoFadeIn: 0,
@@ -174,7 +189,8 @@ export async function applyProjectData(
           audioFadeIn: 0,
           audioFadeOut: 0,
         };
-      } catch {
+      } catch (error) {
+        console.warn(`Could not restore media for "${savedClip.fileName}"`, error);
         liveClip = undefined;
       }
     }

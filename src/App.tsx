@@ -21,6 +21,11 @@ import { Preview } from './components/Preview';
 import { Timeline } from './components/Timeline';
 import { TextOverlayPanel } from './components/TextOverlayPanel';
 
+function formatSkippedClipMessage(names: string[]): string {
+  if (names.length <= 3) return names.join(', ');
+  return `${names.slice(0, 3).join(', ')}, and ${names.length - 3} more`;
+}
+
 export function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [clipGroups, setClipGroups] = useState<ClipGroup[]>([]);
@@ -246,7 +251,7 @@ export function App() {
         setTextOverlays(loadedOverlays);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
-          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${skippedClipFileNames.join(', ')}.`;
+          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
         }
         setStatus(msg);
       } catch (error) {
@@ -296,7 +301,7 @@ export function App() {
         setTextOverlays(loadedOverlays);
         let msg = `Project loaded from contabo_storage_manager endpoint (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
-          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${skippedClipFileNames.join(', ')}.`;
+          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
         }
         setStatus(msg);
       } catch (error) {
