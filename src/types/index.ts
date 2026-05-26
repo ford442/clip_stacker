@@ -49,6 +49,12 @@ export interface SerializedClip {
   audioFadeIn: number;
   audioFadeOut: number;
   fileName: string;
+  /** MIME type of the original source media file (if known) */
+  fileType?: string;
+  /** Data URL containing the source media bytes for local project portability */
+  sourceMediaDataUrl?: string;
+  /** Remote URL containing the source media bytes for remote project portability */
+  sourceMediaUrl?: string;
   /** Group ID for A/B comparison */
   groupId?: string;
   /** Which variant slot this clip occupies within its group */

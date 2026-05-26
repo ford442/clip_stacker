@@ -10,8 +10,8 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - Reorder clips in a timeline editor
 - Apply per-clip fade in/out controls for video and audio
 - Merge timeline into one MP4 via FFmpeg (WebAssembly, fully in-browser)
-- Save/load project metadata locally as JSON
-- Save/load project metadata remotely via a contabo_storage_manager-compatible HTTP endpoint ([ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager))
+- Save/load projects locally as JSON with embedded source media
+- Save/load projects remotely via a contabo_storage_manager-compatible HTTP endpoint with uploaded source media ([ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager))
 
 ## Tech Stack
 

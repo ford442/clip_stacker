@@ -4,7 +4,7 @@ import { DEFAULT_EXPORT_SETTINGS } from './types';
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from './utils/media';
 import {
   sanitizeClipAdjustments,
-  serializeProject,
+  serializeProjectWithMedia,
   applyProjectData,
   ContaboStorageManagerClient,
 } from './utils/project';
@@ -205,16 +205,24 @@ export function App() {
   // Project save / load
   // ---------------------------------------------------------------------------
 
-  const handleSaveProject = useCallback(() => {
-    const payload = JSON.stringify(serializeProject(clips, transitions, textOverlays, clipGroups), null, 2);
-    const blob = new Blob([payload], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement('a');
-    anchor.href = url;
-    anchor.download = 'clip_stacker-project.json';
-    anchor.click();
-    URL.revokeObjectURL(url);
-    setStatus('Project JSON exported.');
+  const handleSaveProject = useCallback(async () => {
+    try {
+      setStatus('Exporting project JSON with source media...');
+      const project = await serializeProjectWithMedia(clips, transitions, textOverlays, clipGroups, {
+        mediaMode: 'embed',
+      });
+      const payload = JSON.stringify(project, null, 2);
+      const blob = new Blob([payload], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = 'clip_stacker-project.json';
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setStatus('Project JSON exported with source media.');
+    } catch (error) {
+      setStatus(`Could not export project: ${(error as Error).message}`);
+    }
   }, [clips, clipGroups, transitions, textOverlays]);
 
   const handleLoadProject = useCallback(
@@ -227,7 +235,8 @@ export function App() {
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
           skippedClipCount,
-        } = applyProjectData(parsed, clips);
+          skippedClipFileNames,
+        } = await applyProjectData(parsed, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
           setClipGroups(loadedClipGroups);
@@ -237,7 +246,7 @@ export function App() {
         setTextOverlays(loadedOverlays);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
-          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — original media files not found.`;
+          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${skippedClipFileNames.join(', ')}.`;
         }
         setStatus(msg);
       } catch (error) {
@@ -250,8 +259,13 @@ export function App() {
   const handleSaveRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
       try {
+        setStatus('Uploading project and source media...');
         const client = new ContaboStorageManagerClient(endpoint, authToken);
-        await client.save(projectName || 'default-project', serializeProject(clips, transitions, textOverlays, clipGroups));
+        const project = await serializeProjectWithMedia(clips, transitions, textOverlays, clipGroups, {
+          mediaMode: 'remote',
+          mediaClient: client,
+        });
+        await client.save(projectName || 'default-project', project);
         setStatus('Project saved to contabo_storage_manager endpoint.');
       } catch (error) {
         setStatus((error as Error).message);
@@ -271,7 +285,8 @@ export function App() {
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
           skippedClipCount,
-        } = applyProjectData(payload, clips);
+          skippedClipFileNames,
+        } = await applyProjectData(payload, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
           setClipGroups(loadedClipGroups);
@@ -281,7 +296,7 @@ export function App() {
         setTextOverlays(loadedOverlays);
         let msg = `Project loaded from contabo_storage_manager endpoint (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
-          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — original media files not found.`;
+          msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${skippedClipFileNames.join(', ')}.`;
         }
         setStatus(msg);
       } catch (error) {
