@@ -232,8 +232,6 @@ export function App() {
           setClips(updatedClips);
           setClipGroups(loadedClipGroups);
           setSelectedClipId(updatedClips[updatedClips.length - 1].id);
-        } else {
-          setClipGroups(loadedClipGroups);
         }
         setTransitions(loadedTransitions);
         setTextOverlays(loadedOverlays);
@@ -278,8 +276,6 @@ export function App() {
           setClips(updatedClips);
           setClipGroups(loadedClipGroups);
           setSelectedClipId(updatedClips[updatedClips.length - 1].id);
-        } else {
-          setClipGroups(loadedClipGroups);
         }
         setTransitions(loadedTransitions);
         setTextOverlays(loadedOverlays);
