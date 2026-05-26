@@ -1,6 +1,7 @@
 import type {
   Clip,
   ClipGroup,
+  ClipKind,
   Project,
   SerializedClip,
   SerializedTransition,
@@ -8,7 +9,7 @@ import type {
   ClipTransition,
   SerializedClipGroup,
 } from '../types';
-import { MIN_CLIP_DURATION } from './media';
+import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
 
 const FADE_SAFETY_MARGIN = 0.01;
 
@@ -49,6 +50,7 @@ export function serializeProject(
       audioFadeIn: clip.audioFadeIn,
       audioFadeOut: clip.audioFadeOut,
       fileName: clip.file.name,
+      fileType: clip.file.type || undefined,
       ...(clip.groupId ? { groupId: clip.groupId } : {}),
       ...(clip.groupVariant ? { groupVariant: clip.groupVariant } : {}),
       ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
@@ -80,10 +82,76 @@ export function serializeProject(
   };
 }
 
+interface SerializeProjectOptions {
+  mediaMode?: 'metadata' | 'embed' | 'remote';
+  mediaClient?: ContaboStorageManagerClient;
+}
+
+function inferKind(savedClip: SerializedClip, file: File): ClipKind {
+  if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
+  if (file.type.startsWith('audio/')) return 'audio';
+  if (file.type.startsWith('video/')) return 'video';
+  if (/\.(wav|mp3)$/i.test(file.name)) return 'audio';
+  return 'video';
+}
+
+function sanitizeUploadFileName(fileName: string): string {
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+async function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error(`Could not read media file: ${file.name}`));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.onerror = () => reject(new Error(`Could not read media file: ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function serializeProjectWithMedia(
+  clips: Clip[],
+  transitions: ClipTransition[] = [],
+  textOverlays: TextOverlay[] = [],
+  clipGroups: ClipGroup[] = [],
+  options: SerializeProjectOptions = {},
+): Promise<Project> {
+  const mediaMode = options.mediaMode ?? 'metadata';
+  const project = serializeProject(clips, transitions, textOverlays, clipGroups);
+  if (mediaMode === 'metadata') return project;
+
+  const clipById = new Map(clips.map((clip) => [clip.id, clip]));
+  const enrichedClips: SerializedClip[] = [];
+  for (const serialized of project.clips) {
+    const clip = clipById.get(serialized.id);
+    if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
+    const updated: SerializedClip = { ...serialized };
+    if (mediaMode === 'embed') {
+      updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
+    } else if (mediaMode === 'remote') {
+      if (!options.mediaClient) throw new Error('Remote save requires a storage endpoint.');
+      const uploadName = `${clip.id}-${sanitizeUploadFileName(clip.file.name)}`;
+      updated.sourceMediaUrl = await options.mediaClient.uploadMedia(uploadName, clip.file, clip.file.type || 'application/octet-stream');
+    }
+    enrichedClips.push(updated);
+  }
+
+  return { ...project, clips: enrichedClips };
+}
+
 export function applyProjectData(
   project: Project,
   clips: Clip[],
-): { clips: Clip[]; clipGroups: ClipGroup[]; transitions: ClipTransition[]; textOverlays: TextOverlay[]; skippedClipCount: number } {
+): Promise<{ clips: Clip[]; clipGroups: ClipGroup[]; transitions: ClipTransition[]; textOverlays: TextOverlay[]; skippedClipCount: number; skippedClipFileNames: string[] }>;
+export async function applyProjectData(
+  project: Project,
+  clips: Clip[],
+): Promise<{ clips: Clip[]; clipGroups: ClipGroup[]; transitions: ClipTransition[]; textOverlays: TextOverlay[]; skippedClipCount: number; skippedClipFileNames: string[] }> {
   if (!project || !Array.isArray(project.clips)) {
     throw new Error('Project file is invalid.');
   }
@@ -91,11 +159,44 @@ export function applyProjectData(
   const byName = new Map(clips.map((clip) => [clip.file.name, clip]));
   const mapped: Clip[] = [];
   let skippedCount = 0;
+  const skippedClipFileNames: string[] = [];
 
   for (const savedClip of project.clips) {
-    const liveClip = byName.get(savedClip.fileName);
+    let liveClip = byName.get(savedClip.fileName);
+    if (!liveClip && (savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl)) {
+      try {
+        const mediaUrl = savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl;
+        if (!mediaUrl) throw new Error('No media URL available');
+        const mediaResponse = await fetch(mediaUrl);
+        if (!mediaResponse.ok) throw new Error(`Media download failed (${mediaResponse.status})`);
+        const blob = await mediaResponse.blob();
+        const fileType = blob.type || savedClip.fileType || 'application/octet-stream';
+        const file = new File([blob], savedClip.fileName, { type: fileType });
+        const { duration, objectUrl } = await getMediaInfo(file);
+        const restoredDuration = Number(savedClip.duration);
+        const effectiveDuration = Number.isFinite(restoredDuration) ? restoredDuration : duration;
+        liveClip = {
+          id: createClipId(),
+          file,
+          objectUrl,
+          title: savedClip.title || savedClip.fileName,
+          kind: inferKind(savedClip, file),
+          duration: Math.max(MIN_CLIP_DURATION, effectiveDuration),
+          trimStart: 0,
+          trimEnd: NaN,
+          videoFadeIn: 0,
+          videoFadeOut: 0,
+          audioFadeIn: 0,
+          audioFadeOut: 0,
+        };
+      } catch (error) {
+        console.warn(`Could not restore media for "${savedClip.fileName}"`, error);
+        liveClip = undefined;
+      }
+    }
     if (!liveClip) {
       skippedCount++;
+      skippedClipFileNames.push(savedClip.fileName);
       continue;
     }
 
@@ -167,7 +268,7 @@ export function applyProjectData(
       }))
     : [];
 
-  return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount };
+  return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount, skippedClipFileNames };
 }
 
 export class ContaboStorageManagerClient {
