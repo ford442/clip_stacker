@@ -206,8 +206,7 @@ export function App() {
   // ---------------------------------------------------------------------------
 
   const handleSaveProject = useCallback(() => {
-    const timelineClips = getTimelineClips(clips, clipGroups);
-    const payload = JSON.stringify(serializeProject(timelineClips, transitions, textOverlays), null, 2);
+    const payload = JSON.stringify(serializeProject(clips, transitions, textOverlays, clipGroups), null, 2);
     const blob = new Blob([payload], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
@@ -216,15 +215,22 @@ export function App() {
     anchor.click();
     URL.revokeObjectURL(url);
     setStatus('Project JSON exported.');
-  }, [clips, clipGroups, transitions]);
+  }, [clips, clipGroups, transitions, textOverlays]);
 
   const handleLoadProject = useCallback(
     async (file: File) => {
       try {
         const parsed = JSON.parse(await file.text());
-        const { clips: updatedClips, transitions: loadedTransitions, textOverlays: loadedOverlays, skippedClipCount } = applyProjectData(parsed, clips);
+        const {
+          clips: updatedClips,
+          clipGroups: loadedClipGroups,
+          transitions: loadedTransitions,
+          textOverlays: loadedOverlays,
+          skippedClipCount,
+        } = applyProjectData(parsed, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
+          setClipGroups(loadedClipGroups);
           setSelectedClipId(updatedClips[updatedClips.length - 1].id);
         }
         setTransitions(loadedTransitions);
@@ -244,9 +250,8 @@ export function App() {
   const handleSaveRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
       try {
-        const timelineClips = getTimelineClips(clips, clipGroups);
         const client = new ContaboStorageManagerClient(endpoint, authToken);
-        await client.save(projectName || 'default-project', serializeProject(timelineClips, transitions, textOverlays));
+        await client.save(projectName || 'default-project', serializeProject(clips, transitions, textOverlays, clipGroups));
         setStatus('Project saved to contabo_storage_manager endpoint.');
       } catch (error) {
         setStatus((error as Error).message);
@@ -260,9 +265,16 @@ export function App() {
       try {
         const client = new ContaboStorageManagerClient(endpoint, authToken);
         const payload = await client.load(projectName || 'default-project');
-        const { clips: updatedClips, transitions: loadedTransitions, textOverlays: loadedOverlays, skippedClipCount } = applyProjectData(payload, clips);
+        const {
+          clips: updatedClips,
+          clipGroups: loadedClipGroups,
+          transitions: loadedTransitions,
+          textOverlays: loadedOverlays,
+          skippedClipCount,
+        } = applyProjectData(payload, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
+          setClipGroups(loadedClipGroups);
           setSelectedClipId(updatedClips[updatedClips.length - 1].id);
         }
         setTransitions(loadedTransitions);
@@ -547,4 +559,3 @@ function getTimelineClips(clips: Clip[], groups: ClipGroup[]): Clip[] {
 function reindexAfterSwap(transitions: ClipTransition[], _i: number, _j: number): ClipTransition[] {
   return transitions;
 }
-
