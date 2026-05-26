@@ -204,7 +204,7 @@ export function App() {
     } catch (error) {
       setStatus(`Render failed: ${(error as Error).message}`);
     }
-  }, [clips, clipGroups, transitions, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive]);
+  }, [clips, clipGroups, transitions, exportSettings, forceFFmpeg, textOverlays, useCanvasRenderer, audioReactive]);
 
   // ---------------------------------------------------------------------------
   // Project save / load
