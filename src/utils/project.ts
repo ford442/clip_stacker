@@ -1,4 +1,13 @@
-import type { Clip, Project, SerializedClip, ClipTransition, SerializedTransition, TextOverlay } from '../types';
+import type {
+  Clip,
+  ClipGroup,
+  Project,
+  SerializedClip,
+  SerializedTransition,
+  TextOverlay,
+  ClipTransition,
+  SerializedClipGroup,
+} from '../types';
 import { MIN_CLIP_DURATION } from './media';
 
 const FADE_SAFETY_MARGIN = 0.01;
@@ -25,6 +34,7 @@ export function serializeProject(
   clips: Clip[],
   transitions: ClipTransition[] = [],
   textOverlays: TextOverlay[] = [],
+  clipGroups: ClipGroup[] = [],
 ): Project {
   return {
     clips: clips.map((clip): SerializedClip => ({
@@ -39,6 +49,8 @@ export function serializeProject(
       audioFadeIn: clip.audioFadeIn,
       audioFadeOut: clip.audioFadeOut,
       fileName: clip.file.name,
+      ...(clip.groupId ? { groupId: clip.groupId } : {}),
+      ...(clip.groupVariant ? { groupVariant: clip.groupVariant } : {}),
       ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
       ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1)
         ? {
@@ -56,6 +68,14 @@ export function serializeProject(
       type: t.type,
       duration: t.duration,
     })),
+    ...(clipGroups.length > 0
+    ? {
+        clipGroups: clipGroups.map((group): SerializedClipGroup => ({
+          id: group.id,
+          activeVariant: group.activeVariant,
+        })),
+      }
+    : {}),
     ...(textOverlays.length > 0 ? { textOverlays } : {}),
   };
 }
@@ -63,7 +83,7 @@ export function serializeProject(
 export function applyProjectData(
   project: Project,
   clips: Clip[],
-): { clips: Clip[]; transitions: ClipTransition[]; textOverlays: TextOverlay[]; skippedClipCount: number } {
+): { clips: Clip[]; clipGroups: ClipGroup[]; transitions: ClipTransition[]; textOverlays: TextOverlay[]; skippedClipCount: number } {
   if (!project || !Array.isArray(project.clips)) {
     throw new Error('Project file is invalid.');
   }
@@ -86,6 +106,8 @@ export function applyProjectData(
     liveClip.videoFadeOut = Number(savedClip.videoFadeOut ?? liveClip.videoFadeOut);
     liveClip.audioFadeIn = Number(savedClip.audioFadeIn ?? liveClip.audioFadeIn);
     liveClip.audioFadeOut = Number(savedClip.audioFadeOut ?? liveClip.audioFadeOut);
+    liveClip.groupId = savedClip.groupId;
+    liveClip.groupVariant = savedClip.groupVariant;
     if (savedClip.remoteAudioUrl) liveClip.remoteAudioUrl = savedClip.remoteAudioUrl;
     if (savedClip.layerIndex != null) liveClip.layerIndex = Number(savedClip.layerIndex);
     if (savedClip.x != null) liveClip.x = Number(savedClip.x);
@@ -95,6 +117,31 @@ export function applyProjectData(
     if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
+  }
+
+  const activeVariantByGroupId = new Map<string, 'A' | 'B'>(
+    Array.isArray(project.clipGroups)
+      ? project.clipGroups
+          .filter((group): group is SerializedClipGroup => Boolean(group?.id))
+          .map((group) => [group.id, group.activeVariant === 'B' ? 'B' : 'A'])
+      : [],
+  );
+  const clipGroupsById = new Map<string, ClipGroup>();
+  const clipGroups: ClipGroup[] = [];
+
+  for (const clip of mapped) {
+    if (!clip.groupId || !clip.groupVariant) continue;
+    let group = clipGroupsById.get(clip.groupId);
+    if (!group) {
+      group = {
+        id: clip.groupId,
+        variants: { A: null, B: null },
+        activeVariant: activeVariantByGroupId.get(clip.groupId) ?? 'A',
+      };
+      clipGroupsById.set(clip.groupId, group);
+      clipGroups.push(group);
+    }
+    group.variants[clip.groupVariant] = clip;
   }
 
   const transitions: ClipTransition[] = Array.isArray(project.transitions)
@@ -120,7 +167,7 @@ export function applyProjectData(
       }))
     : [];
 
-  return { clips: mapped, transitions, textOverlays, skippedClipCount: skippedCount };
+  return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount };
 }
 
 export class ContaboStorageManagerClient {

@@ -49,6 +49,10 @@ export interface SerializedClip {
   audioFadeIn: number;
   audioFadeOut: number;
   fileName: string;
+  /** Group ID for A/B comparison */
+  groupId?: string;
+  /** Which variant slot this clip occupies within its group */
+  groupVariant?: 'A' | 'B';
   /** URL of the remotely stored extracted WAV for this clip */
   remoteAudioUrl?: string;
   /** PiP / compositing layout properties */
@@ -129,8 +133,14 @@ export interface TextOverlay {
   boxColor: string;
 }
 
+export interface SerializedClipGroup {
+  id: string;
+  activeVariant: 'A' | 'B';
+}
+
 export interface Project {
   clips: SerializedClip[];
+  clipGroups?: SerializedClipGroup[];
   transitions?: SerializedTransition[];
   textOverlays?: TextOverlay[];
 }
