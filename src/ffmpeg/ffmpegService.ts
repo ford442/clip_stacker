@@ -1,6 +1,6 @@
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { fetchFile, toBlobURL } from '@ffmpeg/util';
-import type { Clip, ExportSettings, ClipTransition, TextOverlay } from '../types';
+import type { Clip, ExportSettings, ClipTransition, TextOverlay, RenderPlan } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { getClipDuration } from '../utils/project';
 import { buildTransitionFilterComplex } from '../utils/transitions';
@@ -592,6 +592,75 @@ export async function extractAudioToWav(clip: Clip, onStatus: StatusCallback): P
   return new Blob([plain], { type: 'audio/wav' });
 }
 
+/**
+ * Analyze clips, transitions, and overlays to determine which rendering path will be used.
+ * Returns a description of the plan and whether re-encoding will occur.
+ *
+ * Decision logic (in order):
+ * 1. If any clip has layerIndex > 0 → PiP/compositing (re-encode)
+ * 2. If any transitions are active → transitions path (re-encode)
+ * 3. If any text overlays → text overlays path (re-encode)
+ * 4. If any clip needs effects (fades or audio-only) → two-pass re-encode
+ * 5. Otherwise → lossless concat (fast, no quality loss)
+ */
+export function calculateRenderPlan(
+  clips: Clip[],
+  transitions: ClipTransition[] = [],
+  textOverlays: TextOverlay[] = [],
+): RenderPlan {
+  // Check for PiP clips
+  const hasPipClips = clips.some((c) => (c.layerIndex ?? 0) > 0);
+  if (hasPipClips) {
+    return {
+      path: 'pip',
+      reason: 'Picture-in-Picture compositing detected',
+      willReencode: true,
+      description: 'Re-encoding with PiP compositing (re-encode)',
+    };
+  }
+
+  // Check for transitions
+  const activeTransitions = transitions.filter((t) => t.type !== 'none' && t.duration > 0);
+  if (activeTransitions.length > 0) {
+    return {
+      path: 'transitions',
+      reason: `${activeTransitions.length} transition${activeTransitions.length > 1 ? 's' : ''} enabled`,
+      willReencode: true,
+      description: 'Re-encoding with transitions (re-encode)',
+    };
+  }
+
+  // Check for text overlays
+  if (textOverlays.length > 0) {
+    return {
+      path: 'textoverlays',
+      reason: `${textOverlays.length} text overlay${textOverlays.length > 1 ? 's' : ''} present`,
+      willReencode: true,
+      description: 'Re-encoding with text overlays (re-encode)',
+    };
+  }
+
+  // Check for clips that need effects
+  const effectClips = clips.filter(clipNeedsEffects);
+  if (effectClips.length > 0) {
+    const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
+    return {
+      path: 'effects-reencoding',
+      reason: `${effectClips.length > 1 ? 'Clips' : 'Clip'} ${titles} ${effectClips.length > 1 ? 'have' : 'has'} fades`,
+      willReencode: true,
+      description: `Re-encoding ${titles} with CRF 18 (medium preset)`,
+    };
+  }
+
+  // All clips are clean video with no effects
+  return {
+    path: 'lossless-concat',
+    reason: 'All clips are clean video with no effects',
+    willReencode: false,
+    description: 'Lossless concat (fast, no quality loss)',
+  };
+}
+
 export async function mergeClips(
   clips: Clip[],
   transitions: ClipTransition[] = [],
@@ -634,6 +703,9 @@ export async function mergeClips(
     emitProgress(onProgress, 'Preparing media', prepProgress, false);
   }
 
+  const renderPlan = calculateRenderPlan(workingClips, transitions, textOverlays);
+  onStatus(`Render plan: ${renderPlan.description} (${renderPlan.reason})`);
+
   const activeTransitions = transitions.filter((t) => t.type !== 'none' && t.duration > 0);
   const effectClips = workingClips.filter(clipNeedsEffects);
   const hasPipClips = workingClips.some((c) => (c.layerIndex ?? 0) > 0);
@@ -642,11 +714,11 @@ export async function mergeClips(
 
   if (hasPipClips) {
     // PiP / compositing path — overlay clips on top of the base layer
-    onStatus('FFmpeg path: PiP compositing (re-encode).');
+    onStatus(`FFmpeg path: ${renderPlan.description}`);
     await mergeClipsWithCompositing(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
   } else if (transitionFilterComplex) {
     // Single-pass filter_complex render covering all clips + transitions
-    onStatus('FFmpeg path: transitions enabled (re-encode).');
+    onStatus(`FFmpeg path: ${renderPlan.description}`);
     await mergeClipsWithTransitions(
       ffmpeg,
       workingClips,
@@ -657,12 +729,19 @@ export async function mergeClips(
       totalDuration,
       onProgress,
     );
-  } else if (effectClips.length === 0) {
+  } else if (effectClips.length === 0 && textOverlays.length === 0) {
+    // Lossless path with no post-processing
+    onStatus(`FFmpeg path: ${renderPlan.description}`);
+    await mergeClipsLossless(ffmpeg, workingClips, onStatus, onProgress);
+  } else if (effectClips.length === 0 && textOverlays.length > 0) {
+    // Lossless concat followed by text overlay re-encoding
+    onStatus(`FFmpeg path: lossless concat + text overlays (re-encode)`);
     await mergeClipsLossless(ffmpeg, workingClips, onStatus, onProgress);
   } else {
+    // Two-pass re-encoding for effects
     const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
     onStatus(
-      `Note: Re-encoding ${titles} with CRF ${settings.crf} (${settings.preset} preset). Starting export...`,
+      `FFmpeg path: ${renderPlan.description} with CRF ${settings.crf} (${settings.preset} preset). Starting export...`,
     );
     emitProgress(onProgress, 'FFmpeg re-encode (two-pass)', 0.12, false);
     await new Promise((r) => setTimeout(r, 1500));

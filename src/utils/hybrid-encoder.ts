@@ -10,10 +10,10 @@
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */
 
-import type { Clip, ExportSettings, ClipTransition, TextOverlay } from '../types';
+import type { Clip, ExportSettings, ClipTransition, TextOverlay, RenderPlan } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { isWebCodecsAvailable, encodeClipsWithWebCodecs } from './webcodecs';
-import { mergeClips } from '../ffmpeg/ffmpegService';
+import { mergeClips, calculateRenderPlan } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 
 export type EncoderPath = 'webcodecs' | 'ffmpeg' | 'canvas';
@@ -21,6 +21,7 @@ export type EncoderPath = 'webcodecs' | 'ffmpeg' | 'canvas';
 export interface HybridEncodeResult {
   blob: Blob;
   path: EncoderPath;
+  renderPlan?: RenderPlan;
 }
 
 /**
@@ -86,5 +87,6 @@ export async function hybridMergeClips(
   // -- FFmpeg path (default / fallback) -------------------------------------
   onProgress?.({ stage: 'FFmpeg path selected', progress: 0, indeterminate: false });
   const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress);
-  return { blob, path: 'ffmpeg' };
+  const renderPlan = calculateRenderPlan(clips, transitions, textOverlays);
+  return { blob, path: 'ffmpeg', renderPlan };
 }
