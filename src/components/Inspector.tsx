@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Clip, ExportSettings } from '../types';
-import { DEFAULT_EXPORT_SETTINGS } from '../types';
+import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS } from '../types';
+import { sanitizeFilename } from '../utils/filename';
 
 interface ClipValues {
   title: string;
@@ -267,6 +268,42 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
 
   const renderExportTab = () => (
     <div className="inspector-fields">
+      <div className="inspector-group-label">Output filename</div>
+      <label title="Output filename (without .mp4 extension)">
+        Filename
+        <input
+          type="text"
+          value={exportSettings.filename}
+          onChange={(e) => updateExport('filename', e.target.value)}
+          placeholder="stacked"
+        />
+      </label>
+      <p className="inspector-hint">
+        {sanitizeFilename(exportSettings.filename)}
+      </p>
+
+      <div className="inspector-group-label">Quality preset</div>
+      <label>
+        Preset
+        <select
+          value={EXPORT_PRESETS.find(p => p.crf === exportSettings.crf && p.preset === exportSettings.preset)?.name || 'custom'}
+          onChange={(e) => {
+            if (e.target.value === 'custom') return;
+            const preset = EXPORT_PRESETS.find(p => p.name === e.target.value);
+            if (preset) {
+              updateExport('crf', preset.crf);
+              updateExport('preset', preset.preset);
+              updateExport('videoBitrate', preset.videoBitrate);
+            }
+          }}
+        >
+          {EXPORT_PRESETS.map((p) => (
+            <option key={p.name} value={p.name}>{p.label}</option>
+          ))}
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+
       <div className="inspector-group-label">FFmpeg quality</div>
       <label title="Constant Rate Factor: 0 = lossless, 51 = worst. Recommended: 15–25.">
         CRF ({exportSettings.crf})

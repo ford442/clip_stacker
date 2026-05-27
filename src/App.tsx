@@ -795,7 +795,7 @@ export function App() {
           onToggleVariant={handleToggleVariant}
           onDelete={handleDeleteClip}
         />
-        <Preview clip={selectedClip} outputUrl={outputUrl} />
+        <Preview clip={selectedClip} outputUrl={outputUrl} exportFilename={exportSettings.filename} />
         <Inspector
           clip={selectedClip}
           exportSettings={exportSettings}

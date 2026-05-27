@@ -104,13 +104,56 @@ export interface ExportSettings {
   preset: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium' | 'slow' | 'slower' | 'veryslow';
   /** Target video bitrate in bits/s for the WebCodecs path (0 = auto). */
   videoBitrate: number;
+  /** Output filename (without extension; .mp4 is automatically appended). */
+  filename: string;
 }
 
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   crf: 18,
   preset: 'medium',
   videoBitrate: 8_000_000,
+  filename: 'stacked',
 };
+
+/** Preset definitions for common export scenarios. */
+export interface ExportPreset {
+  name: string;
+  label: string;
+  crf: number;
+  preset: ExportSettings['preset'];
+  videoBitrate: number;
+}
+
+export const EXPORT_PRESETS: ExportPreset[] = [
+  {
+    name: 'fast',
+    label: 'Fast (CRF 23, ultrafast)',
+    crf: 23,
+    preset: 'ultrafast',
+    videoBitrate: 5_000_000,
+  },
+  {
+    name: 'balanced',
+    label: 'Balanced (CRF 18, medium)',
+    crf: 18,
+    preset: 'medium',
+    videoBitrate: 8_000_000,
+  },
+  {
+    name: 'high',
+    label: 'High Quality (CRF 15, slow)',
+    crf: 15,
+    preset: 'slow',
+    videoBitrate: 12_000_000,
+  },
+  {
+    name: 'archive',
+    label: 'Archive (CRF 8, veryslow)',
+    crf: 8,
+    preset: 'veryslow',
+    videoBitrate: 20_000_000,
+  },
+];
 
 /**
  * A text overlay (caption, ticker, title) rendered via FFmpeg's drawtext filter.
