@@ -424,6 +424,26 @@ export function App() {
     setTransitions((prev) => reindexAfterSwap(prev, index, index + 1));
   }, []);
 
+  /**
+   * Drag-and-drop reorder: move clip at `fromIndex` to be inserted before
+   * position `insertBefore` in the original array (0 = before first clip,
+   * clips.length = after last clip).  Transitions stay positional (slots).
+   */
+  const handleReorder = useCallback((fromIndex: number, insertBefore: number) => {
+    // No-op when the clip would remain in its current position:
+    // insertBefore === fromIndex means "insert before itself",
+    // insertBefore === fromIndex + 1 means "insert after itself" — both are identity moves.
+    if (insertBefore === fromIndex || insertBefore === fromIndex + 1) return;
+    setClips((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      const target = insertBefore > fromIndex ? insertBefore - 1 : insertBefore;
+      next.splice(target, 0, moved);
+      return next;
+    });
+    // Transitions are positional (slot-based) so no index remapping is needed.
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Clip deletion
   // ---------------------------------------------------------------------------
@@ -595,6 +615,7 @@ export function App() {
         onSelect={setSelectedClipId}
         onMoveUp={handleMoveUp}
         onMoveDown={handleMoveDown}
+        onReorder={handleReorder}
         onTransitionUpdate={handleTransitionUpdate}
         onDelete={handleDeleteClip}
       />
