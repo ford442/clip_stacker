@@ -231,7 +231,7 @@ export async function serializeProjectWithMedia(
             });
             break;
           }
-          throw new Error(`Upload aborted for "${clip.file.name}": ${uploadError.message}`);
+          throw new Error(`Upload aborted at clip ${index}/${total}: ${uploadError.message}`);
         }
       }
     }
@@ -483,8 +483,8 @@ export class ContaboStorageManagerClient {
           }
           onProgress?.(1);
           resolve(result.url);
-        } catch {
-          reject(new Error('Media upload failed (invalid JSON response)'));
+        } catch (error) {
+          reject(new Error(`Media upload failed (invalid JSON response: ${(error as Error).message})`));
         }
       };
 

@@ -17,6 +17,13 @@ interface Props {
     status: 'pending' | 'uploading' | 'uploaded' | 'failed' | 'skipped';
     error?: string;
   }[];
+  pendingRemoteUploadError: {
+    fileName: string;
+    index: number;
+    total: number;
+    error: string;
+  } | null;
+  onResolveRemoteUploadError: (action: 'retry' | 'skip' | 'abort') => void;
 }
 
 export function StorageRow({
@@ -27,6 +34,8 @@ export function StorageRow({
   onLoadRemote,
   isRemoteSaving,
   remoteUploadItems,
+  pendingRemoteUploadError,
+  onResolveRemoteUploadError,
 }: Props) {
   const [projectName, setProjectName] = useState('default-project');
   const [projects, setProjects] = useState<{ name: string; modified: number }[]>([]);
@@ -136,6 +145,21 @@ export function StorageRow({
               );
             })}
           </ul>
+        </div>
+      )}
+
+      {pendingRemoteUploadError && (
+        <div className="storage-upload-error-actions" role="alert">
+          <p>
+            Upload failed for clip {pendingRemoteUploadError.index}/{pendingRemoteUploadError.total}:{' '}
+            {pendingRemoteUploadError.fileName}
+          </p>
+          <p className="storage-upload-error-detail">{pendingRemoteUploadError.error}</p>
+          <div className="storage-upload-error-buttons">
+            <button type="button" onClick={() => onResolveRemoteUploadError('retry')}>Retry this file</button>
+            <button type="button" onClick={() => onResolveRemoteUploadError('skip')}>Skip and continue</button>
+            <button type="button" onClick={() => onResolveRemoteUploadError('abort')}>Cancel save</button>
+          </div>
         </div>
       )}
 

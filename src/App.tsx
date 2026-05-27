@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay, RenderPlan } from './types';
 import { DEFAULT_EXPORT_SETTINGS } from './types';
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from './utils/media';
@@ -37,6 +37,13 @@ type RemoteUploadItem = {
   error?: string;
 };
 
+type PendingRemoteUploadError = {
+  fileName: string;
+  index: number;
+  total: number;
+  error: string;
+};
+
 export function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [clipGroups, setClipGroups] = useState<ClipGroup[]>([]);
@@ -66,8 +73,16 @@ export function App() {
   const [storageAuthToken, setStorageAuthToken] = useState('');
   const [isRemoteSaving, setIsRemoteSaving] = useState(false);
   const [remoteUploadItems, setRemoteUploadItems] = useState<RemoteUploadItem[]>([]);
+  const [pendingRemoteUploadError, setPendingRemoteUploadError] = useState<PendingRemoteUploadError | null>(null);
+  const pendingRemoteUploadResolver = useRef<((action: 'retry' | 'skip' | 'abort') => void) | null>(null);
 
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
+
+  const resolveRemoteUploadError = useCallback((action: 'retry' | 'skip' | 'abort') => {
+    pendingRemoteUploadResolver.current?.(action);
+    pendingRemoteUploadResolver.current = null;
+    setPendingRemoteUploadError(null);
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Clip management helpers
@@ -367,28 +382,32 @@ export function App() {
               setStatus(`Skipped clip ${index}/${total}: ${fileName}`);
             }
           },
-          onRemoteUploadError: async ({ fileName, index, total, error }) => {
-            const decision = prompt(
-              `Failed uploading clip ${index}/${total} "${fileName}": ${error.message}\n\nType "retry" to retry, "skip" to continue without this file, or "abort" to cancel remote save.`,
-              'retry',
-            );
-            const normalized = decision?.trim().toLowerCase();
-            if (normalized === 'skip') return 'skip';
-            if (normalized === 'abort' || normalized === 'cancel') return 'abort';
-            return 'retry';
-          },
+          onRemoteUploadError: async ({ fileName, index, total, error }) =>
+            await new Promise<'retry' | 'skip' | 'abort'>((resolve) => {
+              pendingRemoteUploadResolver.current = resolve;
+              setPendingRemoteUploadError({
+                fileName,
+                index,
+                total,
+                error: error.message,
+              });
+            }),
         });
         await client.save(projectName || 'default-project', project);
         const uploadedCount = project.clips.filter((clip) => Boolean(clip.sourceMediaUrl)).length;
         const failedCount = project.clips.length - uploadedCount;
         if (failedCount > 0) {
-          setStatus(`Saved with ${uploadedCount}/${project.clips.length} media files (${failedCount} failed — use local fallback).`);
+          setStatus(
+            `Saved with ${uploadedCount}/${project.clips.length} media files (${failedCount} failed - project saved without those sourceMediaUrls; use local files as fallback).`,
+          );
         } else {
           setStatus(`Saved with ${uploadedCount}/${project.clips.length} media files.`);
         }
       } catch (error) {
         setStatus((error as Error).message);
       } finally {
+        pendingRemoteUploadResolver.current = null;
+        setPendingRemoteUploadError(null);
         setIsRemoteSaving(false);
       }
     },
@@ -711,6 +730,8 @@ export function App() {
           onLoadRemote={handleLoadRemote}
           isRemoteSaving={isRemoteSaving}
           remoteUploadItems={remoteUploadItems}
+          pendingRemoteUploadError={pendingRemoteUploadError}
+          onResolveRemoteUploadError={resolveRemoteUploadError}
         />
       </section>
 

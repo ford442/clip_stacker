@@ -1154,6 +1154,31 @@ audio {
   color: var(--danger);
 }
 
+.storage-upload-error-actions {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--danger) 70%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.storage-upload-error-actions p {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.storage-upload-error-detail {
+  margin-top: 0.2rem !important;
+  color: var(--muted);
+}
+
+.storage-upload-error-buttons {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .storage-project-list {
   width: 100%;
   margin-top: 0.25rem;
