@@ -70,8 +70,8 @@ All app state (`clips`, `selectedClipId`, `status`, `outputUrl`) lives in `App.t
 - **Rendering Decision Logic** (priority order):
   1. **PiP Compositing** (re-encode): Any clip has `layerIndex > 0` (overlays on base layer)
   2. **Transitions** (re-encode): Any transition is active (type ≠ 'none' and duration > 0)
-  3. **Clip Effects** (re-encode): Any clip has audio-only kind OR has fades (videoFadeIn/Out, audioFadeIn/Out > 0)
-  4. **Text Overlays** (re-encode): Any text overlays present (applied as post-processing after lossless concat)
+  3. **Text Overlays** (re-encode): Any text overlays present (applied as post-processing after lossless concat)
+  4. **Clip Effects** (re-encode): Any clip has audio-only kind OR has fades (videoFadeIn/Out, audioFadeIn/Out > 0)
   5. **Lossless Concat** (fast, no quality loss): All clips are plain video with no effects, transitions, PiP, or overlays
 - Users see the render plan via status message before/during render: "Render plan: [description] ([reason])"
 - The `calculateRenderPlan()` function analyzes clips and returns a `RenderPlan` object describing which path will be used and why

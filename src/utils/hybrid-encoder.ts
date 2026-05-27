@@ -89,6 +89,6 @@ export async function hybridMergeClips(
   // -- FFmpeg path (default / fallback) -------------------------------------
   onProgress?.({ stage: 'FFmpeg path selected', progress: 0, indeterminate: false });
   const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress, forceReencode);
-  const renderPlan = calculateRenderPlan(clips, transitions, textOverlays);
+  const renderPlan = calculateRenderPlan(clips, transitions, textOverlays, settings);
   return { blob, path: 'ffmpeg', renderPlan };
 }

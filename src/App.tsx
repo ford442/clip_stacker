@@ -195,7 +195,7 @@ export function App() {
       setProgressIndeterminate(false);
       
       // Calculate render plan before starting
-      const plan = calculateRenderPlan(timelineClips, transitions, textOverlays);
+      const plan = calculateRenderPlan(timelineClips, transitions, textOverlays, exportSettings);
       setRenderPlan(plan);
       setStatus(`Render plan: ${plan.description} (${plan.reason})`);
       
