@@ -88,8 +88,8 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
   };
 
   const currentPresetName = useMemo(() => {
-    return EXPORT_PRESETS.find(p => p.crf === exportSettings.crf && p.preset === exportSettings.preset)?.name || 'custom';
-  }, [exportSettings.crf, exportSettings.preset]);
+    return EXPORT_PRESETS.find(p => p.crf === exportSettings.crf && p.preset === exportSettings.preset && p.videoBitrate === exportSettings.videoBitrate)?.name || 'custom';
+  }, [exportSettings.crf, exportSettings.preset, exportSettings.videoBitrate]);
 
   const renderClipTab = () => {
     if (!clip) {
@@ -295,9 +295,12 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
             if (e.target.value === 'custom') return;
             const preset = EXPORT_PRESETS.find(p => p.name === e.target.value);
             if (preset) {
-              updateExport('crf', preset.crf);
-              updateExport('preset', preset.preset);
-              updateExport('videoBitrate', preset.videoBitrate);
+              onExportSettingsChange({
+                ...exportSettings,
+                crf: preset.crf,
+                preset: preset.preset,
+                videoBitrate: preset.videoBitrate,
+              });
             }
           }}
         >
