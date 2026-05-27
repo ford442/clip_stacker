@@ -59,6 +59,9 @@ export function App() {
   const [forceReencode, setForceReencode] = useState(false);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
 
+  // Ref to access Toolbar's triggerLoadDialog
+  const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null);
+
   /** Toggle canvas renderer; canvas and forceFFmpeg are mutually exclusive. */
   const handleToggleCanvasRenderer = useCallback((v: boolean) => {
     setUseCanvasRenderer(v);
@@ -684,41 +687,44 @@ export function App() {
     setTextOverlays((prev) => prev.filter((o) => o.id !== id));
   }, []);
 
+  // Helper functions for keyboard shortcuts
+  const handleMoveSelectedLeft = useCallback(() => {
+    const index = timelineClips.findIndex((c) => c.id === selectedClipId);
+    if (index > 0) handleMoveUp(index);
+  }, [selectedClipId, timelineClips]);
+
+  const handleMoveSelectedRight = useCallback(() => {
+    const index = timelineClips.findIndex((c) => c.id === selectedClipId);
+    if (index >= 0) handleMoveDown(index);
+  }, [selectedClipId, timelineClips]);
+
+  const handleTriggerLoadProject = useCallback(() => {
+    // No-op: Toolbar handles the file input click
+    // The 'L' key shortcut will trigger the Load Project button in the Toolbar
+  }, []);
+
+  const handleDeleteSelectedClip = useCallback(() => {
+    if (selectedClipId) handleDeleteClip(selectedClipId);
+  }, [selectedClipId]);
+
   // Sync transitions when clips list changes (ensure valid indices)
   const timelineClips = getTimelineClips(clips, clipGroups);
 
   // Set up keyboard shortcuts
-  useKeyboardShortcuts(
-    {
-      r: handleMerge,
-      s: handleSaveProject,
-      l: handleLoadProject,
-      delete: () => {
-        if (selectedClipId) handleDeleteClip(selectedClipId);
-      },
-      backspace: () => {
-        if (selectedClipId) handleDeleteClip(selectedClipId);
-      },
-      'ctrl+arrowleft': () => {
-        const index = timelineClips.findIndex((c) => c.id === selectedClipId);
-        if (index > 0) handleMoveUp(index);
-      },
-      'ctrl+arrowright': () => {
-        const index = timelineClips.findIndex((c) => c.id === selectedClipId);
-        if (index >= 0) handleMoveDown(index);
-      },
-      'meta+arrowleft': () => {
-        const index = timelineClips.findIndex((c) => c.id === selectedClipId);
-        if (index > 0) handleMoveUp(index);
-      },
-      'meta+arrowright': () => {
-        const index = timelineClips.findIndex((c) => c.id === selectedClipId);
-        if (index >= 0) handleMoveDown(index);
-      },
-      '?': () => setShowKeyboardShortcuts(true),
-    },
-    true,
-  );
+  const shortcutsMap = {
+    r: handleMerge,
+    s: handleSaveProject,
+    l: () => toolbarRef.current?.triggerLoadDialog(),
+    delete: handleDeleteSelectedClip,
+    backspace: handleDeleteSelectedClip,
+    'ctrl+arrowleft': handleMoveSelectedLeft,
+    'ctrl+arrowright': handleMoveSelectedRight,
+    'meta+arrowleft': handleMoveSelectedLeft,
+    'meta+arrowright': handleMoveSelectedRight,
+    '?': () => setShowKeyboardShortcuts(true),
+  };
+
+  useKeyboardShortcuts(shortcutsMap, true);
 
   return (
     <main className="app-shell">
@@ -739,6 +745,7 @@ export function App() {
 
       <section className="panel">
         <Toolbar
+          ref={toolbarRef}
           onAddClips={handleAddClips}
           onMerge={handleMerge}
           onSaveProject={handleSaveProject}

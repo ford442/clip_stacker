@@ -125,7 +125,7 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
       {clips.length === 0 && activeGroups.length === 0 && (
         <p className="muted">No clips yet. Add clips above.</p>
       )}
-      <ul className="clip-list">
+      <ul className="clip-list" role="listbox" aria-label="Clip library">
         {activeGroups.map(renderGroup)}
         {ungroupedClips.map(renderSingleClip)}
       </ul>

@@ -243,7 +243,7 @@ select:focus-visible {
 }
 
 /* Alternative focus style for elements with borders */
-button:focus-visible:not(:focus-visible:invalid),
+button:focus-visible,
 .button-like:focus-visible {
   box-shadow: 0 0 0 3px var(--gold-dim), inset 0 0 0 1px var(--gold);
   border-color: var(--gold);
