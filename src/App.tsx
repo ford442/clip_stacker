@@ -695,7 +695,11 @@ export function App() {
 
   const handleMoveSelectedRight = useCallback(() => {
     const index = timelineClips.findIndex((c) => c.id === selectedClipId);
-    if (index >= 0 && index < timelineClips.length - 1) handleReorder(index, index + 2);
+    if (index >= 0 && index < timelineClips.length - 1) {
+      // Move one position to the right: swap with the next clip
+      // After removal, we insert before the position that was originally index+2
+      handleReorder(index, index + 2);
+    }
   }, [selectedClipId, timelineClips, handleReorder]);
 
   const handleDeleteSelectedClip = useCallback(() => {

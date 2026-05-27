@@ -34,8 +34,8 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
           onSelect(clip.id);
         }
       }}
-      role="option"
-      aria-selected={clip.id === selectedClipId}
+      role="listitem"
+      aria-label={`Clip: ${clip.title}, ${clip.kind.toUpperCase()}`}
       tabIndex={0}
     >
       <div className="row">
@@ -84,8 +84,8 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
                  onSelect(clip.id);
                }
              }}
-             role="option"
-             aria-selected={isSelected}
+             role="listitem"
+             aria-label={`Variant ${slot}: ${clip.title}`}
              tabIndex={0}
            >
              <div className="row">
@@ -139,7 +139,7 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
       {clips.length === 0 && activeGroups.length === 0 && (
         <p className="muted">No clips yet. Add clips above.</p>
       )}
-      <ul className="clip-list" role="listbox" aria-label="Clip library">
+      <ul className="clip-list" role="list" aria-label="Clip library">
         {activeGroups.map(renderGroup)}
         {ungroupedClips.map(renderSingleClip)}
       </ul>

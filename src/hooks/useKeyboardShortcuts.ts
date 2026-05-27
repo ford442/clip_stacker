@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 export interface KeyboardShortcutMap {
   [key: string]: () => void;
@@ -13,6 +13,13 @@ export function useKeyboardShortcuts(
   shortcuts: KeyboardShortcutMap,
   enabled: boolean = true,
 ) {
+  const shortcutsRef = useRef(shortcuts);
+
+  // Update the ref whenever shortcuts change, without re-adding listeners
+  useEffect(() => {
+    shortcutsRef.current = shortcuts;
+  }, [shortcuts]);
+
   useEffect(() => {
     if (!enabled) return;
 
@@ -40,17 +47,17 @@ export function useKeyboardShortcuts(
 
       const shortcutKey = [...mods, e.key.toLowerCase()].join('+');
 
-      if (shortcutKey in shortcuts) {
+      if (shortcutKey in shortcutsRef.current) {
         // For media elements, let Space through to browser default (play/pause)
         if (isMediaElement && e.key === ' ') {
           return;
         }
         e.preventDefault();
-        shortcuts[shortcutKey]();
+        shortcutsRef.current[shortcutKey]();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [shortcuts, enabled]);
+  }, [enabled]);
 }

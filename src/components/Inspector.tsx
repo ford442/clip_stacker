@@ -69,29 +69,6 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
     });
   }, [clip]);
 
-  // Keyboard support: Tab to toggle between inspector tabs
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Tab' && !e.shiftKey && inspectorRef.current?.contains(document.activeElement as Node)) {
-        // Allow Tab to toggle inspector tabs when on the last tab button
-        const tabButtons = inspectorRef.current?.querySelectorAll('.inspector-tab');
-        if (tabButtons && tabButtons.length > 0) {
-          const isLastTab = document.activeElement === tabButtons[tabButtons.length - 1];
-          if (isLastTab) {
-            e.preventDefault();
-            setTab(tab === 'clip' ? 'export' : 'clip');
-            (tabButtons[0] as HTMLElement).focus();
-          }
-        }
-      }
-    };
-    const panel = inspectorRef.current;
-    if (panel) {
-      panel.addEventListener('keydown', handleKeyDown);
-      return () => panel.removeEventListener('keydown', handleKeyDown);
-    }
-  }, [tab]);
-
   const update = (field: keyof ClipValues, value: string) => {
     const next = { ...values, [field]: value };
     setValues(next);
