@@ -40,6 +40,8 @@ export function useKeyboardShortcuts(
       }
 
       // Construct shortcut key from modifiers + key
+      // Note: Both Ctrl (Windows/Linux) and Cmd/Meta (Mac) are normalized to 'ctrl'
+      // for cross-platform consistency. This means 'ctrl+key' works on all platforms.
       const mods: string[] = [];
       if (e.ctrlKey || e.metaKey) mods.push('ctrl');
       if (e.shiftKey) mods.push('shift');

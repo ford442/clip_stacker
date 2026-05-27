@@ -10,9 +10,9 @@ const SHORTCUTS = [
   { key: 'Delete / Backspace', description: 'Delete selected clip' },
   { key: 'Arrow Left (with Ctrl/Cmd)', description: 'Move selected clip left' },
   { key: 'Arrow Right (with Ctrl/Cmd)', description: 'Move selected clip right' },
-  { key: 'Tab', description: 'Toggle Inspector tab' },
   { key: 'Space', description: 'Play/pause preview (when focused)' },
   { key: 'Escape', description: 'Close modals' },
+  { key: 'Enter / Space (in library)', description: 'Select clip' },
 ];
 
 export function KeyboardShortcutsModal({ isOpen, onClose }: Props) {

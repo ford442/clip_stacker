@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay, RenderPlan } from './types';
 import { DEFAULT_EXPORT_SETTINGS } from './types';
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from './utils/media';
@@ -696,8 +696,7 @@ export function App() {
   const handleMoveSelectedRight = useCallback(() => {
     const index = timelineClips.findIndex((c) => c.id === selectedClipId);
     if (index >= 0 && index < timelineClips.length - 1) {
-      // Move one position to the right: swap with the next clip
-      // After removal, we insert before the position that was originally index+2
+      // Move one position to the right
       handleReorder(index, index + 2);
     }
   }, [selectedClipId, timelineClips, handleReorder]);
@@ -709,19 +708,28 @@ export function App() {
   // Sync transitions when clips list changes (ensure valid indices)
   const timelineClips = getTimelineClips(clips, clipGroups);
 
-  // Set up keyboard shortcuts
-  const shortcutsMap = {
-    r: handleMerge,
-    s: handleSaveProject,
-    l: () => toolbarRef.current?.triggerLoadDialog(),
-    delete: handleDeleteSelectedClip,
-    backspace: handleDeleteSelectedClip,
-    'ctrl+arrowleft': handleMoveSelectedLeft,
-    'ctrl+arrowright': handleMoveSelectedRight,
-    'meta+arrowleft': handleMoveSelectedLeft,
-    'meta+arrowright': handleMoveSelectedRight,
-    '?': () => setShowKeyboardShortcuts(true),
-  };
+  // Set up keyboard shortcuts with memoization to avoid unnecessary re-renders
+  const shortcutsMap = useMemo(
+    () => ({
+      r: handleMerge,
+      s: handleSaveProject,
+      l: () => toolbarRef.current?.triggerLoadDialog(),
+      delete: handleDeleteSelectedClip,
+      backspace: handleDeleteSelectedClip,
+      'ctrl+arrowleft': handleMoveSelectedLeft,
+      'ctrl+arrowright': handleMoveSelectedRight,
+      'meta+arrowleft': handleMoveSelectedLeft,
+      'meta+arrowright': handleMoveSelectedRight,
+      '?': () => setShowKeyboardShortcuts(true),
+    }),
+    [
+      handleMerge,
+      handleSaveProject,
+      handleDeleteSelectedClip,
+      handleMoveSelectedLeft,
+      handleMoveSelectedRight,
+    ],
+  );
 
   useKeyboardShortcuts(shortcutsMap, true);
 
