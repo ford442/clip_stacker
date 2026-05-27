@@ -32,6 +32,16 @@ type Tab = 'clip' | 'export';
 
 const PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'] as const;
 
+/**
+ * Find the preset that matches the given export settings.
+ * Returns the preset name if found, otherwise returns 'custom'.
+ */
+function findMatchingPreset(settings: ExportSettings): string {
+  return EXPORT_PRESETS.find(
+    p => p.crf === settings.crf && p.preset === settings.preset && p.videoBitrate === settings.videoBitrate
+  )?.name || 'custom';
+}
+
 export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange, onExtractAudio }: Props) {
   const [tab, setTab] = useState<Tab>('clip');
   const inspectorRef = useRef<HTMLDivElement>(null);
@@ -88,7 +98,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
   };
 
   const currentPresetName = useMemo(() => {
-    return EXPORT_PRESETS.find(p => p.crf === exportSettings.crf && p.preset === exportSettings.preset && p.videoBitrate === exportSettings.videoBitrate)?.name || 'custom';
+    return findMatchingPreset(exportSettings);
   }, [exportSettings.crf, exportSettings.preset, exportSettings.videoBitrate]);
 
   const renderClipTab = () => {

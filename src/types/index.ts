@@ -117,10 +117,15 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
 
 /** Preset definitions for common export scenarios. */
 export interface ExportPreset {
+  /** Unique identifier for the preset (e.g., 'fast', 'balanced'). Used for programmatic lookup. */
   name: string;
+  /** User-friendly label displayed in the UI (e.g., "Fast (CRF 23, ultrafast)"). */
   label: string;
+  /** H.264 Constant Rate Factor value (0-51; lower = higher quality). */
   crf: number;
+  /** libx264 preset for encoding speed/quality tradeoff. */
   preset: ExportSettings['preset'];
+  /** Target video bitrate in bits/s for WebCodecs path. */
   videoBitrate: number;
 }
 
