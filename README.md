@@ -10,8 +10,23 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - Reorder clips in a timeline editor
 - Apply per-clip fade in/out controls for video and audio
 - Merge timeline into one MP4 via FFmpeg (WebAssembly, fully in-browser)
+- **Intelligent render plan**: Before rendering, see whether the merge will be lossless concat (fast, no quality loss) or re-encoding, with the specific reason
 - Save/load projects locally as JSON with embedded source media
 - Save/load projects remotely via a contabo_storage_manager-compatible HTTP endpoint with uploaded source media ([ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager))
+
+## Rendering Strategy
+
+When you click "Render", the app automatically decides whether to use **lossless concat** (fast) or **re-encoding** (necessary for effects). The render plan is displayed before and during rendering so you know what to expect:
+
+- **Lossless concat** (fast, no quality loss): All clips are plain video with no fades, transitions, Picture-in-Picture, or text overlays
+- **Re-encoding** (when needed for):
+  - Fades on any clip (videoFadeIn/Out or audioFadeIn/Out)
+  - Audio-only clips (WAV/MP3)
+  - Transitions between clips
+  - Picture-in-Picture overlays (layerIndex > 0)
+  - Text overlays (captions, tickers, titles)
+
+The app shows you the plan and reason before rendering starts, so you understand why a "simple" merge might take longer or look slightly different.
 
 ## Tech Stack
 

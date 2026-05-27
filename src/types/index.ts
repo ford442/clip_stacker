@@ -150,3 +150,18 @@ export interface Project {
   transitions?: SerializedTransition[];
   textOverlays?: TextOverlay[];
 }
+
+/**
+ * Describes which rendering path will be used and why.
+ * Exposed before/during render to help users understand performance implications.
+ */
+export interface RenderPlan {
+  /** Which rendering strategy will be used */
+  path: 'lossless-concat' | 'effects-reencoding' | 'transitions' | 'pip' | 'textoverlays';
+  /** Brief human-readable reason (e.g., "Clip has 0.5s fade", "Transitions enabled") */
+  reason: string;
+  /** Whether re-encoding will occur (lossless = false, others = true) */
+  willReencode: boolean;
+  /** User-friendly description for UI display */
+  description: string;
+}

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrowserCapabilities } from '../utils/feature-detector';
+import type { RenderPlan } from '../types';
 import { detectCapabilities } from '../utils/feature-detector';
 import { ProgressBar } from './ProgressBar';
 
@@ -17,10 +18,14 @@ interface Props {
   /** Enable audio-reactive visual effects in the canvas renderer. */
   audioReactive: boolean;
   onToggleAudioReactive: (v: boolean) => void;
+  /** Force re-encoding even when lossless concat would be available. */
+  forceReencode: boolean;
+  onToggleForceReencode: (v: boolean) => void;
   progressStage: string;
   progressValue: number | null;
   progressIndeterminate: boolean;
   isRendering: boolean;
+  renderPlan?: RenderPlan | null;
 }
 
 export function Toolbar({
@@ -35,10 +40,13 @@ export function Toolbar({
   onToggleCanvasRenderer,
   audioReactive,
   onToggleAudioReactive,
+  forceReencode,
+  onToggleForceReencode,
   progressStage,
   progressValue,
   progressIndeterminate,
   isRendering,
+  renderPlan,
 }: Props) {
   const clipInputRef = useRef<HTMLInputElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
@@ -142,6 +150,16 @@ export function Toolbar({
               Force CPU
             </label>
           )}
+
+          {/* Force re-encode toggle */}
+          <label className="encoder-toggle-label" title="Force re-encoding even when lossless concat is available">
+            <input
+              type="checkbox"
+              checked={forceReencode}
+              onChange={(e) => onToggleForceReencode(e.target.checked)}
+            />
+            Force re-encode
+          </label>
         </div>
       </div>
       {isRendering && (
@@ -150,6 +168,11 @@ export function Toolbar({
           progress={progressValue}
           indeterminate={progressIndeterminate}
         />
+      )}
+      {renderPlan && !isRendering && (
+        <p className="render-plan-info">
+          Render plan: {renderPlan.description} ({renderPlan.reason})
+        </p>
       )}
       <p aria-live="polite" style={{ minHeight: '1.4rem', color: 'var(--muted)', margin: '0.5rem 0 0' }}>
         {status}

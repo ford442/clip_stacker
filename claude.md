@@ -67,9 +67,14 @@ All app state (`clips`, `selectedClipId`, `status`, `outputUrl`) lives in `App.t
 ### FFmpeg Service (`src/ffmpeg/ffmpegService.ts`)
 - Singleton FFmpeg instance (loaded once, reused across renders)
 - Loads FFmpeg core from `https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd` via `toBlobURL`
-- Two rendering paths:
-  1. **Lossless concat**: all clips are plain video with no fades → uses `concat` demuxer with `-c copy`
-  2. **Two-pass encode**: any clip has fades or is audio-only → Pass 1 re-encodes each clip to h264/aac, Pass 2 concatenates intermediates with `-c copy`
+- **Rendering Decision Logic** (priority order):
+  1. **PiP Compositing** (re-encode): Any clip has `layerIndex > 0` (overlays on base layer)
+  2. **Transitions** (re-encode): Any transition is active (type ≠ 'none' and duration > 0)
+  3. **Text Overlays** (re-encode): Any text overlays present (applied as post-processing after lossless concat)
+  4. **Clip Effects** (re-encode): Any clip has audio-only kind OR has fades (videoFadeIn/Out, audioFadeIn/Out > 0)
+  5. **Lossless Concat** (fast, no quality loss): All clips are plain video with no effects, transitions, PiP, or overlays
+- Users see the render plan via status message before/during render: "Render plan: [description] ([reason])"
+- The `calculateRenderPlan()` function analyzes clips and returns a `RenderPlan` object describing which path will be used and why
 
 ### FFmpeg WASM + Vite Setup
 - `@ffmpeg/ffmpeg` and `@ffmpeg/util` are excluded from Vite's `optimizeDeps`
