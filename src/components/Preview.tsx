@@ -1,12 +1,15 @@
 import type { Clip } from '../types';
+import { sanitizeFilename } from '../utils/filename';
 
 interface Props {
   clip: Clip | null;
   outputUrl: string | null;
+  exportFilename?: string;
 }
 
-export function Preview({ clip, outputUrl }: Props) {
+export function Preview({ clip, outputUrl, exportFilename }: Props) {
   if (outputUrl) {
+    const downloadFilename = exportFilename ? sanitizeFilename(exportFilename) : 'stacked.mp4';
     return (
       <section className="panel">
         <h2>Preview</h2>
@@ -15,7 +18,7 @@ export function Preview({ clip, outputUrl }: Props) {
           src={outputUrl}
           aria-label="Rendered output video preview. Press space to play/pause."
         />
-        <a href={outputUrl} download="stacked.mp4">
+        <a href={outputUrl} download={downloadFilename}>
           Download merged MP4
         </a>
       </section>
