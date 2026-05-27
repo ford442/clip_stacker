@@ -16,7 +16,8 @@
     "resolveJsonModule": true,
     "allowJs": true,
     "checkJs": false,
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": ["vitest/globals"]
   },
   "include": ["src/**/*", "*.ts", "vite.config.ts"],
   "exclude": ["node_modules", "dist"]
