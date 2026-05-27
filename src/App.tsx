@@ -13,6 +13,7 @@ import { reindexTransitions } from './utils/transitions';
 import { hybridMergeClips } from './utils/hybrid-encoder';
 import { extractAudioToWav, calculateRenderPlan } from './ffmpeg/ffmpegService';
 import type { RenderProgressUpdate } from './ffmpeg/ffmpegService';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { Toolbar } from './components/Toolbar';
 import { StorageRow } from './components/StorageRow';
 import { ClipLibrary } from './components/ClipLibrary';
@@ -21,6 +22,7 @@ import type { ClipValues } from './components/Inspector';
 import { Preview } from './components/Preview';
 import { Timeline } from './components/Timeline';
 import { TextOverlayPanel } from './components/TextOverlayPanel';
+import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(', ');
@@ -55,6 +57,7 @@ export function App() {
   const [useCanvasRenderer, setUseCanvasRenderer] = useState(false);
   const [audioReactive, setAudioReactive] = useState(true);
   const [forceReencode, setForceReencode] = useState(false);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
 
   /** Toggle canvas renderer; canvas and forceFFmpeg are mutually exclusive. */
   const handleToggleCanvasRenderer = useCallback((v: boolean) => {
@@ -684,6 +687,39 @@ export function App() {
   // Sync transitions when clips list changes (ensure valid indices)
   const timelineClips = getTimelineClips(clips, clipGroups);
 
+  // Set up keyboard shortcuts
+  useKeyboardShortcuts(
+    {
+      r: handleMerge,
+      s: handleSaveProject,
+      l: handleLoadProject,
+      delete: () => {
+        if (selectedClipId) handleDeleteClip(selectedClipId);
+      },
+      backspace: () => {
+        if (selectedClipId) handleDeleteClip(selectedClipId);
+      },
+      'ctrl+arrowleft': () => {
+        const index = timelineClips.findIndex((c) => c.id === selectedClipId);
+        if (index > 0) handleMoveUp(index);
+      },
+      'ctrl+arrowright': () => {
+        const index = timelineClips.findIndex((c) => c.id === selectedClipId);
+        if (index >= 0) handleMoveDown(index);
+      },
+      'meta+arrowleft': () => {
+        const index = timelineClips.findIndex((c) => c.id === selectedClipId);
+        if (index > 0) handleMoveUp(index);
+      },
+      'meta+arrowright': () => {
+        const index = timelineClips.findIndex((c) => c.id === selectedClipId);
+        if (index >= 0) handleMoveDown(index);
+      },
+      '?': () => setShowKeyboardShortcuts(true),
+    },
+    true,
+  );
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -707,6 +743,7 @@ export function App() {
           onMerge={handleMerge}
           onSaveProject={handleSaveProject}
           onLoadProject={handleLoadProject}
+          onShowKeyboardShortcuts={() => setShowKeyboardShortcuts(true)}
           status={status}
           forceFFmpeg={forceFFmpeg}
           onToggleForceFFmpeg={setForceFFmpeg}
@@ -771,6 +808,11 @@ export function App() {
         onAdd={handleAddTextOverlay}
         onUpdate={handleUpdateTextOverlay}
         onDelete={handleDeleteTextOverlay}
+      />
+
+      <KeyboardShortcutsModal
+        isOpen={showKeyboardShortcuts}
+        onClose={() => setShowKeyboardShortcuts(false)}
       />
     </main>
   );

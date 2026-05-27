@@ -10,7 +10,11 @@ export function Preview({ clip, outputUrl }: Props) {
     return (
       <section className="panel">
         <h2>Preview</h2>
-        <video controls src={outputUrl} />
+        <video
+          controls
+          src={outputUrl}
+          aria-label="Rendered output video preview. Press space to play/pause."
+        />
         <a href={outputUrl} download="stacked.mp4">
           Download merged MP4
         </a>
@@ -31,9 +35,17 @@ export function Preview({ clip, outputUrl }: Props) {
     <section className="panel">
       <h2>Preview</h2>
       {clip.kind === 'video' ? (
-        <video controls src={clip.objectUrl} />
+        <video
+          controls
+          src={clip.objectUrl}
+          aria-label={`Preview of ${clip.title} video. Press space to play/pause.`}
+        />
       ) : (
-        <audio controls src={clip.objectUrl} />
+        <audio
+          controls
+          src={clip.objectUrl}
+          aria-label={`Preview of ${clip.title} audio. Press space to play/pause.`}
+        />
       )}
     </section>
   );

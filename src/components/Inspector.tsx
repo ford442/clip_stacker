@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Clip, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 
@@ -33,6 +33,7 @@ const PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium
 
 export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange, onExtractAudio }: Props) {
   const [tab, setTab] = useState<Tab>('clip');
+  const inspectorRef = useRef<HTMLDivElement>(null);
   const [values, setValues] = useState<ClipValues>({
     title: '',
     trimStart: '0',
@@ -67,6 +68,31 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
       opacity: String(clip.opacity ?? 1),
     });
   }, [clip]);
+
+  // Keyboard support: Tab to toggle between inspector tabs
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Tab' && !e.shiftKey && inspectorRef.current?.contains(document.activeElement as Node)) {
+        // Allow Tab to toggle inspector tabs
+        const activeElement = document.activeElement as HTMLElement;
+        const tabButtons = inspectorRef.current?.querySelectorAll('.inspector-tab');
+        if (tabButtons && tabButtons.length > 0) {
+          const isLastTab = activeElement === tabButtons[tabButtons.length - 1];
+          if (isLastTab) {
+            // When tabbing from the last tab button, toggle to the first tab
+            e.preventDefault();
+            setTab(tab === 'clip' ? 'export' : 'clip');
+            (tabButtons[0] as HTMLElement).focus();
+          }
+        }
+      }
+    };
+    const panel = inspectorRef.current;
+    if (panel) {
+      panel.addEventListener('keydown', handleKeyDown);
+      return () => panel.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [tab]);
 
   const update = (field: keyof ClipValues, value: string) => {
     const next = { ...values, [field]: value };
@@ -318,12 +344,15 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
   );
 
   return (
-    <section className="panel inspector-panel">
+    <section className="panel inspector-panel" ref={inspectorRef}>
       <div className="inspector-tabs">
         <button
           type="button"
           className={`inspector-tab${tab === 'clip' ? ' active' : ''}`}
           onClick={() => setTab('clip')}
+          aria-label="Clip tab"
+          aria-selected={tab === 'clip'}
+          role="tab"
         >
           Clip
         </button>
@@ -331,6 +360,9 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           type="button"
           className={`inspector-tab${tab === 'export' ? ' active' : ''}`}
           onClick={() => setTab('export')}
+          aria-label="Export tab"
+          aria-selected={tab === 'export'}
+          role="tab"
         >
           Export
         </button>

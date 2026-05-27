@@ -9,6 +9,7 @@ interface Props {
   onMerge: () => void;
   onSaveProject: () => void;
   onLoadProject: (file: File) => void;
+  onShowKeyboardShortcuts?: () => void;
   status: string;
   forceFFmpeg: boolean;
   onToggleForceFFmpeg: (v: boolean) => void;
@@ -33,6 +34,7 @@ export function Toolbar({
   onMerge,
   onSaveProject,
   onLoadProject,
+  onShowKeyboardShortcuts,
   status,
   forceFFmpeg,
   onToggleForceFFmpeg,
@@ -94,13 +96,29 @@ export function Toolbar({
             onChange={handleClipChange}
           />
         </label>
-        <button type="button" className="btn-primary" onClick={onMerge}>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onMerge}
+          aria-keyshortcuts="r"
+          title="Render merge (R)"
+        >
           ▶ Render
         </button>
-        <button type="button" onClick={onSaveProject}>
+        <button
+          type="button"
+          onClick={onSaveProject}
+          aria-keyshortcuts="s"
+          title="Save local project (S)"
+        >
           Save project
         </button>
-        <button type="button" onClick={() => projectFileInputRef.current?.click()}>
+        <button
+          type="button"
+          onClick={() => projectFileInputRef.current?.click()}
+          aria-keyshortcuts="l"
+          title="Load local project (L)"
+        >
           Load project
         </button>
         <input
@@ -110,6 +128,14 @@ export function Toolbar({
           hidden
           onChange={handleProjectFileChange}
         />
+        <button
+          type="button"
+          onClick={onShowKeyboardShortcuts}
+          aria-keyshortcuts="?"
+          title="Show keyboard shortcuts (?)"
+        >
+          ⌨️ Help
+        </button>
 
         {/* Encoder / renderer controls */}
         <div className="encoder-badge" title={gpuTitle}>
