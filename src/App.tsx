@@ -330,9 +330,10 @@ export function App() {
     try {
       await resetFFmpegInstance();
       const memoryStatus = getMemoryStatus();
-      setStatus(memoryStatus 
+      const message = memoryStatus 
         ? `FFmpeg instance reset. Memory: ${memoryStatus}`
-        : 'FFmpeg instance reset.');
+        : 'FFmpeg instance reset.';
+      setStatus(message);
     } catch (err) {
       setStatus(`Error resetting FFmpeg: ${(err as Error).message}`);
     }
@@ -746,7 +747,7 @@ export function App() {
   }, []);
 
   // Helper functions for keyboard shortcuts
-  // Memoize timeline clips computation to avoid recomputation during rapid key presses
+  // Memoize timeline clips computation to avoid unnecessary recalculation during re-renders
   const timelineClips = useMemo(() => getTimelineClips(clips, clipGroups), [clips, clipGroups]);
 
   const handleMoveSelectedLeft = useCallback(() => {
