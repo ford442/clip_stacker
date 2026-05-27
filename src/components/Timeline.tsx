@@ -14,6 +14,7 @@ interface Props {
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
+  onDelete: (id: string) => void;
 }
 
 function effectiveDur(clip: Clip): number {
@@ -124,6 +125,7 @@ export function Timeline({
   onMoveDown,
   onReorder,
   onTransitionUpdate,
+  onDelete,
 }: Props) {
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
@@ -297,7 +299,7 @@ export function Timeline({
             }
           }}
         >
-          {clips.map((clip, index) => {
+           {clips.map((clip, index) => {
             const dur = effectiveDur(clip);
             const thumbs = thumbMap[clip.id];
             const waves = waveMap[clip.id];
@@ -306,7 +308,6 @@ export function Timeline({
             const transition = index > 0 ? transMap.get(index) : undefined;
 
             // Show insertion indicator before this clip when it is the drop target
-            // (suppress when dropping would leave the clip in its current position)
             const showIndicatorBefore =
               dropTargetIndex === index &&
               dragIndex !== null &&
@@ -346,8 +347,11 @@ export function Timeline({
                     </button>
                   )}
 
+                  {/* === MAIN CLIP CONTENT (Combined) === */}
                   <div
-                    className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${clip.id === selectedClipId ? ' selected' : ''}`}
+                    className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
+                      clip.id === selectedClipId ? ' selected' : ''
+                    }`}
                     style={{ flex: `${dur} 0 0px` }}
                     onClick={() => onSelect(clip.id)}
                     title={clip.title}
@@ -373,11 +377,16 @@ export function Timeline({
                         role="img"
                         aria-label="Drag handle — drag to reorder clip"
                         title="Drag to reorder"
-                      >⠿</span>
+                      >
+                        ⠿
+                      </span>
+
                       <span className="timeline-clip-label">
                         {index + 1}. {clip.title}
                       </span>
+
                       <span className="timeline-clip-dur">{dur.toFixed(1)}s</span>
+
                       <span className="timeline-clip-btns">
                         <button
                           type="button"
@@ -394,6 +403,15 @@ export function Timeline({
                           aria-label="Move clip right"
                         >
                           →
+                        </button>
+                        <button
+                          type="button"
+                          className="project-delete-btn"
+                          onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+                          title="Delete clip"
+                          aria-label="Delete clip"
+                        >
+                          ×
                         </button>
                       </span>
                     </div>

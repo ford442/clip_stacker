@@ -7,9 +7,10 @@ interface Props {
   clipGroups: ClipGroup[];
   onSelect: (id: string) => void;
   onToggleVariant: (groupId: string, variant: 'A' | 'B') => void;
+  onDelete: (id: string) => void;
 }
 
-export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onToggleVariant }: Props) {
+export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onToggleVariant, onDelete }: Props) {
   // Build a map from clip id → its group (if any)
   const groupByClipId = new Map<string, ClipGroup>();
   for (const group of clipGroups) {
@@ -31,6 +32,14 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
       <div className="row">
         <strong className="clip-title">{clip.title}</strong>
         <span className="muted">{clip.kind.toUpperCase()}</span>
+        <button
+          type="button"
+          className="project-delete-btn"
+          onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+          title="Delete clip"
+        >
+          ×
+        </button>
       </div>
       <div className="muted">
         {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
@@ -70,6 +79,14 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
                   title={isActive ? 'On timeline' : 'Add to timeline'}
                 >
                   {isActive ? '● Timeline' : 'Use'}
+                </button>
+                <button
+                  type="button"
+                  className="project-delete-btn"
+                  onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+                  title="Delete clip"
+                >
+                  ×
                 </button>
               </div>
               <div className="muted">
