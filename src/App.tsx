@@ -298,8 +298,9 @@ export function App() {
   }, [clips, clipGroups, transitions, textOverlays, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive, forceReencode, outputUrl]);
 
   const handleMerge = useCallback(async () => {
-    // Check if high memory usage is detected
-    if (isHighMemoryUsage(clips)) {
+    // Check if high memory usage is detected based on actual timeline clips
+    const timelineClipsForMemoryCheck = getTimelineClips(clips, clipGroups);
+    if (isHighMemoryUsage(timelineClipsForMemoryCheck)) {
       // Show warning modal; actual render happens in handleMemoryWarningConfirm
       pendingRenderRef.current = performRender;
       setShowMemoryWarning(true);
@@ -308,7 +309,7 @@ export function App() {
 
     // Otherwise, proceed directly
     await performRender();
-  }, [clips, performRender]);
+  }, [clips, clipGroups, performRender]);
 
   const handleMemoryWarningConfirm = useCallback(() => {
     setShowMemoryWarning(false);
@@ -329,10 +330,9 @@ export function App() {
     try {
       await resetFFmpegInstance();
       const memoryStatus = getMemoryStatus();
-      const msg = memoryStatus 
+      setStatus(memoryStatus 
         ? `FFmpeg instance reset. Memory: ${memoryStatus}`
-        : 'FFmpeg instance reset.';
-      setStatus(msg);
+        : 'FFmpeg instance reset.');
     } catch (err) {
       setStatus(`Error resetting FFmpeg: ${(err as Error).message}`);
     }
@@ -745,10 +745,10 @@ export function App() {
     setTextOverlays((prev) => prev.filter((o) => o.id !== id));
   }, []);
 
-  // Compute timeline clips here before using them in helper functions
-  const timelineClips = getTimelineClips(clips, clipGroups);
-
   // Helper functions for keyboard shortcuts
+  // Memoize timeline clips computation to avoid recomputation during rapid key presses
+  const timelineClips = useMemo(() => getTimelineClips(clips, clipGroups), [clips, clipGroups]);
+
   const handleMoveSelectedLeft = useCallback(() => {
     const index = timelineClips.findIndex((c) => c.id === selectedClipId);
     if (index > 0) handleReorder(index, index - 1);

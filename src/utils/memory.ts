@@ -1,6 +1,12 @@
 import type { Clip } from '../types';
 
 /**
+ * Default memory usage threshold for warning the user.
+ * Set to 2 GB, a conservative limit for browser-based video editing.
+ */
+export const DEFAULT_MEMORY_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
+
+/**
  * Get the current memory usage from the browser's performance API if available.
  * (Chrome/Edge only; returns null on other browsers)
  */
@@ -69,8 +75,9 @@ export function estimateRenderMemoryUsage(clips: Clip[]): number {
 /**
  * Check if estimated render memory usage will be high (> threshold).
  * Returns true if estimated usage exceeds the threshold.
+ * Uses the default 2GB threshold unless a custom threshold is provided.
  */
-export function isHighMemoryUsage(clips: Clip[], thresholdBytes = 2 * 1024 * 1024 * 1024): boolean {
+export function isHighMemoryUsage(clips: Clip[], thresholdBytes = DEFAULT_MEMORY_THRESHOLD_BYTES): boolean {
   return estimateRenderMemoryUsage(clips) > thresholdBytes;
 }
 
