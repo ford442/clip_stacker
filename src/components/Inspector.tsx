@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
 import type { Clip, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS } from '../types';
 import { sanitizeFilename } from '../utils/filename';
@@ -182,9 +182,10 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
         completedWaves.current.add(clip.id);
         setWaveMap((prev) => ({ ...prev, [clip.id]: peaks }));
       },
-      () => {
+      (error) => {
         generatingWaves.current.delete(clip.id);
         completedWaves.current.add(clip.id);
+        console.warn(`Could not extract waveform for "${clip.title}".`, error);
       },
     );
   }, [clip]);
@@ -428,9 +429,9 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           <details
             className="inspector-disclosure"
             open={hasAdvancedLayout || advancedOpen}
-            onToggle={(e) => {
+            onToggle={(e: SyntheticEvent<HTMLDetailsElement>) => {
               if (hasAdvancedLayout) return;
-              setAdvancedOpen((e.currentTarget as HTMLDetailsElement).open);
+              setAdvancedOpen(e.currentTarget.open);
             }}
           >
             <summary>Advanced layout (PiP){hasAdvancedLayout ? ' • active' : ''}</summary>
