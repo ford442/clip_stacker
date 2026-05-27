@@ -28,8 +28,15 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
       key={clip.id}
       className={`clip-item${clip.id === selectedClipId ? ' selected' : ''}`}
       onClick={() => onSelect(clip.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(clip.id);
+        }
+      }}
       role="option"
       aria-selected={clip.id === selectedClipId}
+      tabIndex={0}
     >
       <div className="row">
         <strong className="clip-title">{clip.title}</strong>
@@ -71,8 +78,15 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
              key={slot}
              className={`clip-item clip-variant${isSelected ? ' selected' : ''}${isActive ? ' variant-active' : ''}`}
              onClick={() => onSelect(clip.id)}
+             onKeyDown={(e) => {
+               if (e.key === 'Enter' || e.key === ' ') {
+                 e.preventDefault();
+                 onSelect(clip.id);
+               }
+             }}
              role="option"
              aria-selected={isSelected}
+             tabIndex={0}
            >
              <div className="row">
                <span className="variant-badge">{slot}</span>

@@ -690,22 +690,17 @@ export function App() {
   // Helper functions for keyboard shortcuts
   const handleMoveSelectedLeft = useCallback(() => {
     const index = timelineClips.findIndex((c) => c.id === selectedClipId);
-    if (index > 0) handleMoveUp(index);
-  }, [selectedClipId, timelineClips]);
+    if (index > 0) handleReorder(index, index - 1);
+  }, [selectedClipId, timelineClips, handleReorder]);
 
   const handleMoveSelectedRight = useCallback(() => {
     const index = timelineClips.findIndex((c) => c.id === selectedClipId);
-    if (index >= 0) handleMoveDown(index);
-  }, [selectedClipId, timelineClips]);
-
-  const handleTriggerLoadProject = useCallback(() => {
-    // No-op: Toolbar handles the file input click
-    // The 'L' key shortcut will trigger the Load Project button in the Toolbar
-  }, []);
+    if (index >= 0 && index < timelineClips.length - 1) handleReorder(index, index + 2);
+  }, [selectedClipId, timelineClips, handleReorder]);
 
   const handleDeleteSelectedClip = useCallback(() => {
     if (selectedClipId) handleDeleteClip(selectedClipId);
-  }, [selectedClipId]);
+  }, [selectedClipId, handleDeleteClip]);
 
   // Sync transitions when clips list changes (ensure valid indices)
   const timelineClips = getTimelineClips(clips, clipGroups);
