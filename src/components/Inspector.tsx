@@ -43,6 +43,10 @@ const DEFAULT_LAYOUT_VALUES = {
   height: 0,
   opacity: 1,
 } as const;
+const MIN_INSPECTOR_THUMBNAILS = 4;
+const MAX_INSPECTOR_THUMBNAILS = 8;
+const SECONDS_PER_INSPECTOR_THUMBNAIL = 3;
+const INSPECTOR_WAVEFORM_SAMPLES = 120;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -165,7 +169,10 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
     if (clip.kind === 'video') {
       if (completedThumbs.current.has(clip.id) || generatingThumbs.current.has(clip.id)) return;
       generatingThumbs.current.add(clip.id);
-      const count = Math.max(4, Math.min(8, Math.ceil(clip.duration / 3)));
+      const count = Math.max(
+        MIN_INSPECTOR_THUMBNAILS,
+        Math.min(MAX_INSPECTOR_THUMBNAILS, Math.ceil(clip.duration / SECONDS_PER_INSPECTOR_THUMBNAIL)),
+      );
       extractThumbnails(clip.objectUrl, clip.duration, 0, clip.duration, count).then((thumbs) => {
         generatingThumbs.current.delete(clip.id);
         completedThumbs.current.add(clip.id);
@@ -176,7 +183,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
 
     if (completedWaves.current.has(clip.id) || generatingWaves.current.has(clip.id)) return;
     generatingWaves.current.add(clip.id);
-    extractWaveformPeaks(clip.objectUrl, 120).then(
+    extractWaveformPeaks(clip.objectUrl, INSPECTOR_WAVEFORM_SAMPLES).then(
       (peaks) => {
         generatingWaves.current.delete(clip.id);
         completedWaves.current.add(clip.id);
@@ -293,7 +300,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
             </label>
           </div>
           <p className="inspector-hint">
-            Drag the trim sliders over the preview strip for quick visual alignment.
+            Drag the trim sliders to align with the preview strip for precise trimming.
           </p>
         </div>
         <label>
