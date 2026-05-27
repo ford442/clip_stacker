@@ -425,6 +425,66 @@ export function App() {
   }, []);
 
   // ---------------------------------------------------------------------------
+  // Clip deletion
+  // ---------------------------------------------------------------------------
+
+  const handleDeleteClip = useCallback(
+    (clipId: string) => {
+      // Find the clip
+      const clipIndex = clips.findIndex((c) => c.id === clipId);
+      if (clipIndex < 0) return;
+      const clipToDelete = clips[clipIndex];
+
+      // Confirm deletion
+      const clipTitle = clipToDelete.title || clipToDelete.file.name;
+      if (!window.confirm(`Delete clip "${clipTitle}"?`)) {
+        return;
+      }
+
+      // Revoke the object URL to free memory
+      URL.revokeObjectURL(clipToDelete.objectUrl);
+
+      // Get the timeline index before removing the clip (for transition reindexing)
+      const timelineClipsBeforeDeletion = getTimelineClips(clips, clipGroups);
+      const timelineIndex = timelineClipsBeforeDeletion.findIndex((c) => c.id === clipId);
+
+      // Remove the clip from the clips array
+      setClips((prev) => prev.filter((c) => c.id !== clipId));
+
+      // Handle A/B group cleanup
+      if (clipToDelete.groupId) {
+        setClipGroups((prev) =>
+          prev
+            .map((group) => {
+              if (group.id !== clipToDelete.groupId) return group;
+              // Set the variant to null
+              const updated =
+                clipToDelete.groupVariant === 'A'
+                  ? { ...group, variants: { ...group.variants, A: null } }
+                  : { ...group, variants: { ...group.variants, B: null } };
+              return updated;
+            })
+            // Remove groups where both variants are now null
+            .filter((g) => g.variants.A !== null || g.variants.B !== null),
+        );
+      }
+
+      // Clear selection if the deleted clip was selected
+      if (selectedClipId === clipId) {
+        setSelectedClipId(null);
+      }
+
+      // Reindex transitions if the clip was on the timeline
+      if (timelineIndex >= 0) {
+        setTransitions((prev) => reindexTransitions(prev, timelineIndex));
+      }
+
+      setStatus(`Deleted "${clipTitle}".`);
+    },
+    [clips, clipGroups, selectedClipId],
+  );
+
+  // ---------------------------------------------------------------------------
   // Transition management
   // ---------------------------------------------------------------------------
 
@@ -516,6 +576,7 @@ export function App() {
           clipGroups={clipGroups}
           onSelect={setSelectedClipId}
           onToggleVariant={handleToggleVariant}
+          onDelete={handleDeleteClip}
         />
         <Preview clip={selectedClip} outputUrl={outputUrl} />
         <Inspector
@@ -535,6 +596,7 @@ export function App() {
         onMoveUp={handleMoveUp}
         onMoveDown={handleMoveDown}
         onTransitionUpdate={handleTransitionUpdate}
+        onDelete={handleDeleteClip}
       />
 
       <TextOverlayPanel

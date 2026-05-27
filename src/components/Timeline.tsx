@@ -13,6 +13,7 @@ interface Props {
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
+  onDelete: (id: string) => void;
 }
 
 function effectiveDur(clip: Clip): number {
@@ -122,6 +123,7 @@ export function Timeline({
   onMoveUp,
   onMoveDown,
   onTransitionUpdate,
+  onDelete,
 }: Props) {
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
@@ -265,6 +267,15 @@ export function Timeline({
                         aria-label="Move clip right"
                       >
                         →
+                      </button>
+                      <button
+                        type="button"
+                        className="project-delete-btn"
+                        onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+                        title="Delete clip"
+                        aria-label="Delete clip"
+                      >
+                        ×
                       </button>
                     </span>
                   </div>
