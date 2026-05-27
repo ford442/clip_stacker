@@ -99,7 +99,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
 
   const currentPresetName = useMemo(() => {
     return findMatchingPreset(exportSettings);
-  }, [exportSettings.crf, exportSettings.preset, exportSettings.videoBitrate]);
+  }, [exportSettings]);
 
   const renderClipTab = () => {
     if (!clip) {
