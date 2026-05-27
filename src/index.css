@@ -1097,6 +1097,88 @@ audio {
   font-style: italic;
 }
 
+.storage-upload-list {
+  width: 100%;
+}
+
+.storage-upload-list h3 {
+  margin: 0 0 0.4rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  opacity: 0.8;
+}
+
+.storage-upload-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+
+.storage-upload-list li {
+  display: grid;
+  gap: 0.15rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(6, 9, 15, 0.65);
+}
+
+.upload-state-uploaded {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+.upload-state-failed {
+  border-color: color-mix(in srgb, var(--danger) 70%, transparent);
+}
+
+.upload-state-skipped {
+  border-color: color-mix(in srgb, var(--warning) 70%, transparent);
+}
+
+.upload-item-name {
+  font-size: 0.82rem;
+}
+
+.upload-item-status {
+  font-size: 0.74rem;
+  color: var(--muted);
+}
+
+.upload-item-error {
+  font-size: 0.74rem;
+  color: var(--danger);
+}
+
+.storage-upload-error-actions {
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--danger) 70%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+
+.storage-upload-error-actions p {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.storage-upload-error-detail {
+  margin-top: 0.2rem !important;
+  color: var(--muted);
+}
+
+.storage-upload-error-buttons {
+  margin-top: 0.4rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .storage-project-list {
   width: 100%;
   margin-top: 0.25rem;

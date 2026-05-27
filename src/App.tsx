@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay, RenderPlan } from './types';
 import { DEFAULT_EXPORT_SETTINGS } from './types';
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from './utils/media';
@@ -27,6 +27,23 @@ function formatSkippedClipMessage(names: string[]): string {
   return `${names.slice(0, 3).join(', ')}, and ${names.length - 3} more`;
 }
 
+type RemoteUploadItem = {
+  clipId: string;
+  fileName: string;
+  index: number;
+  total: number;
+  progress: number;
+  status: 'pending' | 'uploading' | 'uploaded' | 'failed' | 'skipped';
+  error?: string;
+};
+
+type PendingRemoteUploadError = {
+  fileName: string;
+  index: number;
+  total: number;
+  error: string;
+};
+
 export function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [clipGroups, setClipGroups] = useState<ClipGroup[]>([]);
@@ -54,8 +71,18 @@ export function App() {
   const [renderPlan, setRenderPlan] = useState<RenderPlan | null>(null);
   const [storageEndpoint, setStorageEndpoint] = useState('https://storage.noahcohn.com/webhook/clip-stacker');
   const [storageAuthToken, setStorageAuthToken] = useState('');
+  const [isRemoteSaving, setIsRemoteSaving] = useState(false);
+  const [remoteUploadItems, setRemoteUploadItems] = useState<RemoteUploadItem[]>([]);
+  const [pendingRemoteUploadError, setPendingRemoteUploadError] = useState<PendingRemoteUploadError | null>(null);
+  const pendingRemoteUploadResolver = useRef<((action: 'retry' | 'skip' | 'abort') => void) | null>(null);
 
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
+
+  const resolveRemoteUploadError = useCallback((action: 'retry' | 'skip' | 'abort') => {
+    pendingRemoteUploadResolver.current?.(action);
+    pendingRemoteUploadResolver.current = null;
+    setPendingRemoteUploadError(null);
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Clip management helpers
@@ -305,16 +332,83 @@ export function App() {
   const handleSaveRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
       try {
-        setStatus('Uploading project and source media...');
+        setIsRemoteSaving(true);
+        setRemoteUploadItems(
+          clips.map((clip, i) => ({
+            clipId: clip.id,
+            fileName: clip.file.name,
+            index: i + 1,
+            total: clips.length,
+            progress: 0,
+            status: 'pending',
+          })),
+        );
+        setStatus(
+          clips.length > 0
+            ? `Uploading clip 1/${clips.length}: ${clips[0].file.name} (0%)`
+            : 'Saving project to remote storage...',
+        );
         const client = new ContaboStorageManagerClient(endpoint, authToken);
         const project = await serializeProjectWithMedia(clips, transitions, textOverlays, clipGroups, {
           mediaMode: 'remote',
           mediaClient: client,
+          onRemoteUploadProgress: ({ clipId, fileName, index, total, progress, status: uploadStatus, message }) => {
+            setRemoteUploadItems((prev) => {
+              const next = [...prev];
+              const existingIndex = next.findIndex((item) => item.clipId === clipId);
+              const updated: RemoteUploadItem = {
+                clipId,
+                fileName,
+                index,
+                total,
+                progress,
+                status: uploadStatus,
+                error: message,
+              };
+              if (existingIndex >= 0) next[existingIndex] = updated;
+              else next.push(updated);
+              next.sort((a, b) => a.index - b.index);
+              return next;
+            });
+
+            if (uploadStatus === 'uploading' || uploadStatus === 'uploaded') {
+              const percent = Math.round(progress * 100);
+              setStatus(
+                `${uploadStatus === 'uploaded' ? 'Uploaded' : 'Uploading'} clip ${index}/${total}: ${fileName} (${percent}%)`,
+              );
+            } else if (uploadStatus === 'failed') {
+              setStatus(`Upload failed for clip ${index}/${total}: ${fileName}. Choose retry, skip, or abort.`);
+            } else if (uploadStatus === 'skipped') {
+              setStatus(`Skipped clip ${index}/${total}: ${fileName}`);
+            }
+          },
+          onRemoteUploadError: async ({ fileName, index, total, error }) =>
+            await new Promise<'retry' | 'skip' | 'abort'>((resolve) => {
+              pendingRemoteUploadResolver.current = resolve;
+              setPendingRemoteUploadError({
+                fileName,
+                index,
+                total,
+                error: error.message,
+              });
+            }),
         });
         await client.save(projectName || 'default-project', project);
-        setStatus('Project saved to contabo_storage_manager endpoint.');
+        const uploadedCount = project.clips.filter((clip) => Boolean(clip.sourceMediaUrl)).length;
+        const failedCount = project.clips.length - uploadedCount;
+        if (failedCount > 0) {
+          setStatus(
+            `Saved with ${uploadedCount}/${project.clips.length} media files (${failedCount} failed - project saved without those sourceMediaUrls; use local files as fallback).`,
+          );
+        } else {
+          setStatus(`Saved with ${uploadedCount}/${project.clips.length} media files.`);
+        }
       } catch (error) {
         setStatus((error as Error).message);
+      } finally {
+        pendingRemoteUploadResolver.current = null;
+        setPendingRemoteUploadError(null);
+        setIsRemoteSaving(false);
       }
     },
     [clips, clipGroups, transitions, textOverlays],
@@ -634,6 +728,10 @@ export function App() {
           onAuthTokenChange={setStorageAuthToken}
           onSaveRemote={handleSaveRemote}
           onLoadRemote={handleLoadRemote}
+          isRemoteSaving={isRemoteSaving}
+          remoteUploadItems={remoteUploadItems}
+          pendingRemoteUploadError={pendingRemoteUploadError}
+          onResolveRemoteUploadError={resolveRemoteUploadError}
         />
       </section>
 
