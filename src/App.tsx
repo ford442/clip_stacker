@@ -219,6 +219,7 @@ export function App() {
         useCanvasRenderer,
         audioReactive,
         forceReencode,
+        plan,
       );
       const url = URL.createObjectURL(result.blob);
       setOutputUrl(url);
