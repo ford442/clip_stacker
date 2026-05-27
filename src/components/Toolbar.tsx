@@ -170,7 +170,7 @@ export function Toolbar({
         />
       )}
       {renderPlan && !isRendering && (
-        <p style={{ minHeight: '1.4rem', color: 'var(--muted)', margin: '0.5rem 0 0', fontSize: '0.9rem', fontStyle: 'italic' }}>
+        <p className="render-plan-info">
           Render plan: {renderPlan.description} ({renderPlan.reason})
         </p>
       )}

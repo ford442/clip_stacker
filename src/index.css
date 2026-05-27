@@ -165,6 +165,14 @@ body {
   align-items: center;
 }
 
+.render-plan-info {
+  min-height: 1.4rem;
+  color: var(--muted);
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
 .btn-primary {
   background: linear-gradient(135deg, #b8901f 0%, #c9a227 40%, #e8c84b 100%);
   border: 1px solid var(--gold);

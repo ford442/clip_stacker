@@ -681,8 +681,6 @@ export function calculateRenderPlan(
   // Check for clips that need effects
   const effectClips = clips.filter(clipNeedsEffects);
   if (effectClips.length > 0) {
-    const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
-    
     // Count audio and fade clips in a single pass
     let audioClipCount = 0;
     let fadeClipCount = 0;
@@ -703,6 +701,7 @@ export function calculateRenderPlan(
       reasonDetail = `${fadeClipCount > 1 ? 'have' : 'has'} fades`;
     }
     
+    const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
     return {
       path: 'effects-reencoding',
       reason: `${effectClips.length > 1 ? 'Clips' : 'Clip'} ${titles} ${reasonDetail}`,
