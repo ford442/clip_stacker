@@ -192,7 +192,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
       (error) => {
         generatingWaves.current.delete(clip.id);
         completedWaves.current.add(clip.id);
-        console.warn(`Could not extract waveform for "${clip.title}".`, error);
+        console.warn(`Could not extract waveform for clip "${clip.title}" (${clip.id}).`, error);
       },
     );
   }, [clip]);
