@@ -11,6 +11,7 @@ interface Props {
   onLoadProject: (file: File) => void;
   onTriggerLoadDialog?: () => void;
   onShowKeyboardShortcuts?: () => void;
+  onDebugResetFFmpeg?: () => void;
   status: string;
   forceFFmpeg: boolean;
   onToggleForceFFmpeg: (v: boolean) => void;
@@ -38,6 +39,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     onLoadProject,
     onTriggerLoadDialog,
     onShowKeyboardShortcuts,
+    onDebugResetFFmpeg,
     status,
     forceFFmpeg,
     onToggleForceFFmpeg,
@@ -152,6 +154,18 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
         >
           ⌨️ Help
         </button>
+
+        {/* Debug reset button (shown only when available) */}
+        {onDebugResetFFmpeg && (
+          <button
+            type="button"
+            onClick={onDebugResetFFmpeg}
+            title="Reset FFmpeg instance (debug/memory recovery)"
+            style={{ opacity: 0.6, fontSize: '0.85em' }}
+          >
+            🔄 Reset FFmpeg
+          </button>
+        )}
 
         {/* Encoder / renderer controls */}
         <div className="encoder-badge" title={gpuTitle}>

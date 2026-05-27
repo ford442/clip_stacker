@@ -11,8 +11,9 @@ import {
 import { findMatchingClipIndex } from './utils/clipMatching';
 import { reindexTransitions } from './utils/transitions';
 import { hybridMergeClips } from './utils/hybrid-encoder';
-import { extractAudioToWav, calculateRenderPlan } from './ffmpeg/ffmpegService';
+import { extractAudioToWav, calculateRenderPlan, aggressiveCleanupFFmpegVFS, resetFFmpegInstance } from './ffmpeg/ffmpegService';
 import type { RenderProgressUpdate } from './ffmpeg/ffmpegService';
+import { isHighMemoryUsage, getMemoryStatus, formatBytes } from './utils/memory';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { Toolbar } from './components/Toolbar';
 import { StorageRow } from './components/StorageRow';
@@ -23,6 +24,7 @@ import { Preview } from './components/Preview';
 import { Timeline } from './components/Timeline';
 import { TextOverlayPanel } from './components/TextOverlayPanel';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+import { MemoryWarningModal } from './components/MemoryWarningModal';
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(', ');
@@ -58,6 +60,8 @@ export function App() {
   const [audioReactive, setAudioReactive] = useState(true);
   const [forceReencode, setForceReencode] = useState(false);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+  const [showMemoryWarning, setShowMemoryWarning] = useState(false);
+  const pendingRenderRef = useRef<(() => Promise<void>) | null>(null);
 
   // Ref to access Toolbar's triggerLoadDialog
   const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null);
@@ -212,7 +216,7 @@ export function App() {
   // Render / merge
   // ---------------------------------------------------------------------------
 
-  const handleMerge = useCallback(async () => {
+  const performRender = useCallback(async () => {
     // Resolve which clips are on the timeline (active variants for grouped clips)
     const timelineClips = getTimelineClips(clips, clipGroups);
     if (timelineClips.length === 0) {
@@ -220,8 +224,14 @@ export function App() {
       return;
     }
     try {
+      // Clean up previous render output URL before starting a new render
+      if (outputUrl) {
+        URL.revokeObjectURL(outputUrl);
+      }
+
       setEncoderPath('');
       setRenderPlan(null);
+      setOutputUrl(null);
       setIsRendering(true);
       setProgressStage('Preparing render');
       setProgressValue(0);
@@ -273,12 +283,60 @@ export function App() {
       setProgressStage(`Render complete via ${pathLabel}`);
       setProgressValue(1);
       setProgressIndeterminate(false);
+
+      // Aggressively clean up FFmpeg VFS after successful render
+      try {
+        await aggressiveCleanupFFmpegVFS(setStatus);
+      } catch (err) {
+        console.warn('Error during FFmpeg cleanup:', err);
+      }
     } catch (error) {
       setStatus(`Render failed: ${(error as Error).message}`);
     } finally {
       setIsRendering(false);
     }
-  }, [clips, clipGroups, transitions, textOverlays, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive, forceReencode]);
+  }, [clips, clipGroups, transitions, textOverlays, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive, forceReencode, outputUrl]);
+
+  const handleMerge = useCallback(async () => {
+    // Check if high memory usage is detected
+    if (isHighMemoryUsage(clips)) {
+      // Show warning modal; actual render happens in handleMemoryWarningConfirm
+      pendingRenderRef.current = performRender;
+      setShowMemoryWarning(true);
+      return;
+    }
+
+    // Otherwise, proceed directly
+    await performRender();
+  }, [clips, performRender]);
+
+  const handleMemoryWarningConfirm = useCallback(() => {
+    setShowMemoryWarning(false);
+    if (pendingRenderRef.current) {
+      pendingRenderRef.current();
+      pendingRenderRef.current = null;
+    }
+  }, []);
+
+  const handleMemoryWarningCancel = useCallback(() => {
+    setShowMemoryWarning(false);
+    pendingRenderRef.current = null;
+    setStatus('Render cancelled.');
+  }, []);
+
+  const handleDebugResetFFmpeg = useCallback(async () => {
+    setStatus('Resetting FFmpeg instance (debug action)...');
+    try {
+      await resetFFmpegInstance();
+      const memoryStatus = getMemoryStatus();
+      const msg = memoryStatus 
+        ? `FFmpeg instance reset. Memory: ${memoryStatus}`
+        : 'FFmpeg instance reset.';
+      setStatus(msg);
+    } catch (err) {
+      setStatus(`Error resetting FFmpeg: ${(err as Error).message}`);
+    }
+  }, []);
 
   // ---------------------------------------------------------------------------
   // Project save / load
@@ -687,6 +745,9 @@ export function App() {
     setTextOverlays((prev) => prev.filter((o) => o.id !== id));
   }, []);
 
+  // Compute timeline clips here before using them in helper functions
+  const timelineClips = getTimelineClips(clips, clipGroups);
+
   // Helper functions for keyboard shortcuts
   const handleMoveSelectedLeft = useCallback(() => {
     const index = timelineClips.findIndex((c) => c.id === selectedClipId);
@@ -704,9 +765,6 @@ export function App() {
   const handleDeleteSelectedClip = useCallback(() => {
     if (selectedClipId) handleDeleteClip(selectedClipId);
   }, [selectedClipId, handleDeleteClip]);
-
-  // Sync transitions when clips list changes (ensure valid indices)
-  const timelineClips = getTimelineClips(clips, clipGroups);
 
   // Set up keyboard shortcuts with memoization to avoid unnecessary re-renders
   const shortcutsMap = useMemo(
@@ -758,6 +816,7 @@ export function App() {
           onSaveProject={handleSaveProject}
           onLoadProject={handleLoadProject}
           onShowKeyboardShortcuts={() => setShowKeyboardShortcuts(true)}
+          onDebugResetFFmpeg={handleDebugResetFFmpeg}
           status={status}
           forceFFmpeg={forceFFmpeg}
           onToggleForceFFmpeg={setForceFFmpeg}
@@ -827,6 +886,13 @@ export function App() {
       <KeyboardShortcutsModal
         isOpen={showKeyboardShortcuts}
         onClose={() => setShowKeyboardShortcuts(false)}
+      />
+
+      <MemoryWarningModal
+        isOpen={showMemoryWarning}
+        clips={clips}
+        onConfirm={handleMemoryWarningConfirm}
+        onCancel={handleMemoryWarningCancel}
       />
     </main>
   );
