@@ -36,6 +36,7 @@ export interface HybridEncodeResult {
  * @param useCanvas      - Set to true to use the canvas renderer path (enables
  *                         audio-reactive effects); requires MediaRecorder support
  * @param audioReactive  - Enable audio-reactive visual effects in the canvas path
+ * @param forceReencode  - Set to true to force re-encoding even for lossless concat cases
  */
 export async function hybridMergeClips(
   clips: Clip[],
@@ -47,6 +48,7 @@ export async function hybridMergeClips(
   textOverlays: TextOverlay[] = [],
   useCanvas = false,
   audioReactive = true,
+  forceReencode = false,
 ): Promise<HybridEncodeResult> {
   // -- Canvas renderer path --------------------------------------------------
   if (useCanvas && typeof MediaRecorder !== 'undefined') {
@@ -86,7 +88,7 @@ export async function hybridMergeClips(
 
   // -- FFmpeg path (default / fallback) -------------------------------------
   onProgress?.({ stage: 'FFmpeg path selected', progress: 0, indeterminate: false });
-  const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress);
+  const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress, forceReencode);
   const renderPlan = calculateRenderPlan(clips, transitions, textOverlays);
   return { blob, path: 'ffmpeg', renderPlan };
 }

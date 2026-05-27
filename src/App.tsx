@@ -37,6 +37,7 @@ export function App() {
   const [forceFFmpeg, setForceFFmpeg] = useState(false);
   const [useCanvasRenderer, setUseCanvasRenderer] = useState(false);
   const [audioReactive, setAudioReactive] = useState(true);
+  const [forceReencode, setForceReencode] = useState(false);
 
   /** Toggle canvas renderer; canvas and forceFFmpeg are mutually exclusive. */
   const handleToggleCanvasRenderer = useCallback((v: boolean) => {
@@ -217,6 +218,7 @@ export function App() {
         textOverlays,
         useCanvasRenderer,
         audioReactive,
+        forceReencode,
       );
       const url = URL.createObjectURL(result.blob);
       setOutputUrl(url);
@@ -242,7 +244,7 @@ export function App() {
     } finally {
       setIsRendering(false);
     }
-  }, [clips, clipGroups, transitions, textOverlays, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive]);
+  }, [clips, clipGroups, transitions, textOverlays, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive, forceReencode]);
 
   // ---------------------------------------------------------------------------
   // Project save / load
@@ -617,6 +619,8 @@ export function App() {
           onToggleCanvasRenderer={handleToggleCanvasRenderer}
           audioReactive={audioReactive}
           onToggleAudioReactive={setAudioReactive}
+          forceReencode={forceReencode}
+          onToggleForceReencode={setForceReencode}
           progressStage={progressStage}
           progressValue={progressValue}
           progressIndeterminate={progressIndeterminate}

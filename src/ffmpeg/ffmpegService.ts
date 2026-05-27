@@ -668,6 +668,7 @@ export async function mergeClips(
   onStatus: StatusCallback,
   textOverlays: TextOverlay[] = [],
   onProgress?: ProgressCallback,
+  forceReencode = false,
 ): Promise<Blob> {
   if (clips.length === 0) throw new Error('Upload clips before rendering.');
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
@@ -704,7 +705,19 @@ export async function mergeClips(
   }
 
   const renderPlan = calculateRenderPlan(workingClips, transitions, textOverlays);
-  onStatus(`Render plan: ${renderPlan.description} (${renderPlan.reason})`);
+  
+  // If force re-encode is enabled and we would otherwise use lossless concat, override to re-encode
+  let effectivePlan = renderPlan;
+  if (forceReencode && renderPlan.path === 'lossless-concat') {
+    effectivePlan = {
+      path: 'effects-reencoding',
+      reason: 'Force re-encode enabled',
+      willReencode: true,
+      description: 'Forced re-encoding (CRF 18, medium preset)',
+    };
+  }
+  
+  onStatus(`Render plan: ${effectivePlan.description} (${effectivePlan.reason})`);
 
   const activeTransitions = transitions.filter((t) => t.type !== 'none' && t.duration > 0);
   const effectClips = workingClips.filter(clipNeedsEffects);
@@ -712,13 +725,16 @@ export async function mergeClips(
   const transitionFilterComplex =
     activeTransitions.length > 0 ? buildTransitionFilterComplex(workingClips, activeTransitions) : null;
 
+  // If force re-encode is enabled, skip lossless path and go straight to re-encoding
+  const shouldForceReencodeNow = forceReencode && !hasPipClips && !transitionFilterComplex && effectClips.length === 0 && textOverlays.length === 0;
+
   if (hasPipClips) {
     // PiP / compositing path — overlay clips on top of the base layer
-    onStatus(`FFmpeg path: ${renderPlan.description}`);
+    onStatus(`FFmpeg path: ${effectivePlan.description}`);
     await mergeClipsWithCompositing(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
   } else if (transitionFilterComplex) {
     // Single-pass filter_complex render covering all clips + transitions
-    onStatus(`FFmpeg path: ${renderPlan.description}`);
+    onStatus(`FFmpeg path: ${effectivePlan.description}`);
     await mergeClipsWithTransitions(
       ffmpeg,
       workingClips,
@@ -729,9 +745,40 @@ export async function mergeClips(
       totalDuration,
       onProgress,
     );
+  } else if (shouldForceReencodeNow) {
+    // Force re-encode even though lossless would be used
+    onStatus(
+      `FFmpeg path: ${effectivePlan.description} with CRF ${settings.crf} (${settings.preset} preset). Starting export...`,
+    );
+    emitProgress(onProgress, 'FFmpeg re-encode (two-pass)', 0.12, false);
+    await new Promise((r) => setTimeout(r, 1500));
+
+    const intermediates: string[] = [];
+    const pass1TotalDuration = workingClips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
+    let pass1ElapsedDuration = 0;
+    for (const [index, clip] of workingClips.entries()) {
+      const clipDuration = getClipDuration(clip);
+      const localStart = pass1TotalDuration > 0 ? pass1ElapsedDuration / pass1TotalDuration : index / workingClips.length;
+      const localEnd = pass1TotalDuration > 0 ? (pass1ElapsedDuration + clipDuration) / pass1TotalDuration : (index + 1) / workingClips.length;
+      const rangeStart = PASS1_PROGRESS_START + localStart * (PASS1_PROGRESS_END - PASS1_PROGRESS_START);
+      const rangeEnd = PASS1_PROGRESS_START + localEnd * (PASS1_PROGRESS_END - PASS1_PROGRESS_START);
+      intermediates.push(await processClipPass1(
+        ffmpeg,
+        clip,
+        index,
+        workingClips.length,
+        settings,
+        onStatus,
+        onProgress,
+        rangeStart,
+        rangeEnd,
+      ));
+      pass1ElapsedDuration += clipDuration;
+    }
+    await mergeClipsPass2(ffmpeg, intermediates, onStatus, totalDuration, onProgress);
   } else if (effectClips.length === 0 && textOverlays.length === 0) {
     // Lossless path with no post-processing
-    onStatus(`FFmpeg path: ${renderPlan.description}`);
+    onStatus(`FFmpeg path: ${effectivePlan.description}`);
     await mergeClipsLossless(ffmpeg, workingClips, onStatus, onProgress);
   } else if (effectClips.length === 0 && textOverlays.length > 0) {
     // Lossless concat followed by text overlay re-encoding
@@ -741,7 +788,7 @@ export async function mergeClips(
     // Two-pass re-encoding for effects
     const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
     onStatus(
-      `FFmpeg path: ${renderPlan.description} with CRF ${settings.crf} (${settings.preset} preset). Starting export...`,
+      `FFmpeg path: ${effectivePlan.description} with CRF ${settings.crf} (${settings.preset} preset). Starting export...`,
     );
     emitProgress(onProgress, 'FFmpeg re-encode (two-pass)', 0.12, false);
     await new Promise((r) => setTimeout(r, 1500));
