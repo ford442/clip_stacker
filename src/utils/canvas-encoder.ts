@@ -21,6 +21,9 @@ import { getClipDuration } from './project';
 import { CanvasRenderer } from './canvas-renderer';
 import { startCanvasCapture } from './media-recorder-encoder';
 
+const CANVAS_RENDER_START = 0.02;
+const CANVAS_RENDER_RANGE = 0.83;
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -58,7 +61,7 @@ export async function encodeClipsWithCanvas(
   const totalDuration = clips.reduce((sum, c) => sum + getClipDuration(c), 0);
 
   onStatus('Canvas render started (real-time playback)...');
-  onProgress?.({ stage: 'Canvas render (real-time playback)', progress: 0.02, indeterminate: false });
+  onProgress?.({ stage: 'Canvas render (real-time playback)', progress: CANVAS_RENDER_START, indeterminate: false });
 
   try {
     await renderer.renderClips(clips, (progress) => {
@@ -70,7 +73,7 @@ export async function encodeClipsWithCanvas(
         : 0;
       onProgress?.({
         stage: `Canvas render: ${progress.clipTitle}`,
-        progress: 0.02 + normalized * 0.83,
+        progress: CANVAS_RENDER_START + normalized * CANVAS_RENDER_RANGE,
         indeterminate: totalDuration <= 0,
       });
       onStatus(

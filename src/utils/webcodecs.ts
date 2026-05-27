@@ -20,6 +20,13 @@ const TARGET_FPS = 30;
 const AUDIO_SAMPLE_RATE = 44100;
 const AUDIO_CHANNELS = 2;
 const AUDIO_FRAME_SIZE = 1024; // AAC standard
+const WEBCODECS_PROGRESS_START = 0.05;
+const WEBCODECS_PROGRESS_RANGE = 0.85;
+
+function mapWebCodecsProgress(elapsedDuration: number, totalDuration: number): number | undefined {
+  if (totalDuration <= 0) return undefined;
+  return WEBCODECS_PROGRESS_START + (elapsedDuration / totalDuration) * WEBCODECS_PROGRESS_RANGE;
+}
 
 // ---------------------------------------------------------------------------
 // Type declarations for APIs not yet present in all TS DOM libs
@@ -131,7 +138,7 @@ export async function encodeClipsWithWebCodecs(
     onStatus(`GPU encode [${i + 1}/${clips.length}]: "${clip.title}"...`);
     onProgress?.({
       stage: `GPU encode: ${clip.title}`,
-      progress: totalDuration > 0 ? 0.05 + (elapsedDuration / totalDuration) * 0.85 : undefined,
+      progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
       indeterminate: totalDuration <= 0,
     });
 
@@ -153,7 +160,7 @@ export async function encodeClipsWithWebCodecs(
     elapsedDuration += clipDuration;
     onProgress?.({
       stage: `GPU encode: ${clip.title}`,
-      progress: totalDuration > 0 ? 0.05 + (elapsedDuration / totalDuration) * 0.85 : undefined,
+      progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
       indeterminate: totalDuration <= 0,
     });
   }

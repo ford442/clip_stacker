@@ -8,6 +8,8 @@ import { buildTransitionFilterComplex } from '../utils/transitions';
 const DEFAULT_VIDEO_SIZE = '1280x720';
 const OUTPUT_WIDTH = 1280;
 const OUTPUT_HEIGHT = 720;
+const PASS1_PROGRESS_START = 0.12;
+const PASS1_PROGRESS_END = 0.85;
 
 /**
  * CDN URL for Roboto Regular TTF.
@@ -80,9 +82,7 @@ async function execWithFfmpegProgress(
   try {
     await ffmpeg.exec(args);
   } finally {
-    if (activeFfmpegLogProgress === context) {
-      activeFfmpegLogProgress = previousContext;
-    }
+    activeFfmpegLogProgress = previousContext;
   }
 }
 
@@ -674,8 +674,8 @@ export async function mergeClips(
       const clipDuration = getClipDuration(clip);
       const localStart = pass1TotalDuration > 0 ? pass1ElapsedDuration / pass1TotalDuration : index / workingClips.length;
       const localEnd = pass1TotalDuration > 0 ? (pass1ElapsedDuration + clipDuration) / pass1TotalDuration : (index + 1) / workingClips.length;
-      const rangeStart = 0.12 + localStart * (0.85 - 0.12);
-      const rangeEnd = 0.12 + localEnd * (0.85 - 0.12);
+      const rangeStart = PASS1_PROGRESS_START + localStart * (PASS1_PROGRESS_END - PASS1_PROGRESS_START);
+      const rangeEnd = PASS1_PROGRESS_START + localEnd * (PASS1_PROGRESS_END - PASS1_PROGRESS_START);
       intermediates.push(await processClipPass1(
         ffmpeg,
         clip,

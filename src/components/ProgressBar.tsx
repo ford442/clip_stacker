@@ -7,6 +7,7 @@ interface Props {
 export function ProgressBar({ stage, progress, indeterminate }: Props) {
   const normalized = typeof progress === 'number' ? Math.max(0, Math.min(1, progress)) : null;
   const pct = normalized === null ? null : Math.round(normalized * 100);
+  const showIndeterminate = indeterminate || pct === null;
 
   return (
     <div className="render-progress" aria-live="polite">
@@ -15,14 +16,14 @@ export function ProgressBar({ stage, progress, indeterminate }: Props) {
         <span>{pct === null ? 'Working…' : `${pct}%`}</span>
       </div>
       <div
-        className={`render-progress-track ${indeterminate ? 'is-indeterminate' : ''}`}
+        className={`render-progress-track ${showIndeterminate ? 'is-indeterminate' : ''}`}
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={pct ?? undefined}
         aria-label={stage}
       >
-        {!indeterminate && (
+        {!showIndeterminate && (
           <div className="render-progress-fill" style={{ width: `${pct ?? 0}%` }} />
         )}
       </div>
