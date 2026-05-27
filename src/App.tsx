@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from './types';
+import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay, RenderPlan } from './types';
 import { DEFAULT_EXPORT_SETTINGS } from './types';
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from './utils/media';
 import {
@@ -11,7 +11,7 @@ import {
 import { findMatchingClipIndex } from './utils/clipMatching';
 import { reindexTransitions } from './utils/transitions';
 import { hybridMergeClips } from './utils/hybrid-encoder';
-import { extractAudioToWav } from './ffmpeg/ffmpegService';
+import { extractAudioToWav, calculateRenderPlan } from './ffmpeg/ffmpegService';
 import type { RenderProgressUpdate } from './ffmpeg/ffmpegService';
 import { Toolbar } from './components/Toolbar';
 import { StorageRow } from './components/StorageRow';
@@ -50,6 +50,7 @@ export function App() {
   const [isRendering, setIsRendering] = useState(false);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [encoderPath, setEncoderPath] = useState<string>('');
+  const [renderPlan, setRenderPlan] = useState<RenderPlan | null>(null);
   const [storageEndpoint, setStorageEndpoint] = useState('https://storage.noahcohn.com/webhook/clip-stacker');
   const [storageAuthToken, setStorageAuthToken] = useState('');
 
@@ -186,10 +187,17 @@ export function App() {
     }
     try {
       setEncoderPath('');
+      setRenderPlan(null);
       setIsRendering(true);
       setProgressStage('Preparing render');
       setProgressValue(0);
       setProgressIndeterminate(false);
+      
+      // Calculate render plan before starting
+      const plan = calculateRenderPlan(timelineClips, transitions, textOverlays);
+      setRenderPlan(plan);
+      setStatus(`Render plan: ${plan.description} (${plan.reason})`);
+      
       const handleProgress = (update: RenderProgressUpdate) => {
         setProgressStage(update.stage);
         setProgressIndeterminate(update.indeterminate === true);
@@ -213,6 +221,12 @@ export function App() {
       const url = URL.createObjectURL(result.blob);
       setOutputUrl(url);
       setEncoderPath(result.path);
+      
+      // Update render plan if available from FFmpeg path
+      if (result.renderPlan) {
+        setRenderPlan(result.renderPlan);
+      }
+      
       const pathLabel =
         result.path === 'canvas'
           ? '🎨 Canvas (audio-reactive)'
@@ -228,7 +242,7 @@ export function App() {
     } finally {
       setIsRendering(false);
     }
-  }, [clips, clipGroups, transitions, exportSettings, forceFFmpeg, textOverlays, useCanvasRenderer, audioReactive]);
+  }, [clips, clipGroups, transitions, textOverlays, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive]);
 
   // ---------------------------------------------------------------------------
   // Project save / load
@@ -607,6 +621,7 @@ export function App() {
           progressValue={progressValue}
           progressIndeterminate={progressIndeterminate}
           isRendering={isRendering}
+          renderPlan={renderPlan}
         />
         <StorageRow
           endpoint={storageEndpoint}

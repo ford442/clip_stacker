@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrowserCapabilities } from '../utils/feature-detector';
+import type { RenderPlan } from '../types';
 import { detectCapabilities } from '../utils/feature-detector';
 import { ProgressBar } from './ProgressBar';
 
@@ -21,6 +22,7 @@ interface Props {
   progressValue: number | null;
   progressIndeterminate: boolean;
   isRendering: boolean;
+  renderPlan?: RenderPlan | null;
 }
 
 export function Toolbar({
@@ -39,6 +41,7 @@ export function Toolbar({
   progressValue,
   progressIndeterminate,
   isRendering,
+  renderPlan,
 }: Props) {
   const clipInputRef = useRef<HTMLInputElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
@@ -150,6 +153,11 @@ export function Toolbar({
           progress={progressValue}
           indeterminate={progressIndeterminate}
         />
+      )}
+      {renderPlan && !isRendering && (
+        <p style={{ minHeight: '1.4rem', color: 'var(--muted)', margin: '0.5rem 0 0', fontSize: '0.9rem', fontStyle: 'italic' }}>
+          Render plan: {renderPlan.description} ({renderPlan.reason})
+        </p>
       )}
       <p aria-live="polite" style={{ minHeight: '1.4rem', color: 'var(--muted)', margin: '0.5rem 0 0' }}>
         {status}
