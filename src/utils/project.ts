@@ -85,6 +85,26 @@ export function serializeProject(
 interface SerializeProjectOptions {
   mediaMode?: 'metadata' | 'embed' | 'remote';
   mediaClient?: ContaboStorageManagerClient;
+  onRemoteUploadProgress?: (event: RemoteUploadProgressEvent) => void;
+  onRemoteUploadError?: (
+    event: RemoteUploadErrorEvent,
+  ) => Promise<'retry' | 'skip' | 'abort'> | 'retry' | 'skip' | 'abort';
+}
+
+export interface RemoteUploadProgressEvent {
+  clipId: string;
+  fileName: string;
+  index: number;
+  total: number;
+  progress: number;
+  status: 'uploading' | 'uploaded' | 'failed' | 'skipped';
+  message?: string;
+}
+
+export interface RemoteUploadErrorEvent extends RemoteUploadProgressEvent {
+  error: Error;
+  attempt: number;
+  status: 'failed';
 }
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
@@ -127,7 +147,10 @@ export async function serializeProjectWithMedia(
 
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));
   const enrichedClips: SerializedClip[] = [];
-  for (const serialized of project.clips) {
+  const total = project.clips.length;
+  for (let i = 0; i < project.clips.length; i++) {
+    const serialized = project.clips[i];
+    const index = i + 1;
     const clip = clipById.get(serialized.id);
     if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
     const updated: SerializedClip = { ...serialized };
@@ -136,7 +159,81 @@ export async function serializeProjectWithMedia(
     } else if (mediaMode === 'remote') {
       if (!options.mediaClient) throw new Error('Remote save requires a storage endpoint.');
       const uploadName = `${clip.id}-${sanitizeUploadFileName(clip.file.name)}`;
-      updated.sourceMediaUrl = await options.mediaClient.uploadMedia(uploadName, clip.file, clip.file.type || 'application/octet-stream');
+      let attempt = 0;
+      while (true) {
+        attempt += 1;
+        options.onRemoteUploadProgress?.({
+          clipId: clip.id,
+          fileName: clip.file.name,
+          index,
+          total,
+          progress: 0,
+          status: 'uploading',
+        });
+        try {
+          updated.sourceMediaUrl = await options.mediaClient.uploadMedia(
+            uploadName,
+            clip.file,
+            clip.file.type || 'application/octet-stream',
+            (progress) =>
+              options.onRemoteUploadProgress?.({
+                clipId: clip.id,
+                fileName: clip.file.name,
+                index,
+                total,
+                progress,
+                status: 'uploading',
+              }),
+          );
+          options.onRemoteUploadProgress?.({
+            clipId: clip.id,
+            fileName: clip.file.name,
+            index,
+            total,
+            progress: 1,
+            status: 'uploaded',
+          });
+          break;
+        } catch (error) {
+          const uploadError = error as Error;
+          options.onRemoteUploadProgress?.({
+            clipId: clip.id,
+            fileName: clip.file.name,
+            index,
+            total,
+            progress: 0,
+            status: 'failed',
+            message: uploadError.message,
+          });
+          const action = options.onRemoteUploadError
+            ? await options.onRemoteUploadError({
+                clipId: clip.id,
+                fileName: clip.file.name,
+                index,
+                total,
+                progress: 0,
+                status: 'failed',
+                message: uploadError.message,
+                error: uploadError,
+                attempt,
+              })
+            : 'abort';
+          if (action === 'retry') continue;
+          if (action === 'skip') {
+            options.onRemoteUploadProgress?.({
+              clipId: clip.id,
+              fileName: clip.file.name,
+              index,
+              total,
+              progress: 0,
+              status: 'skipped',
+              message: uploadError.message,
+            });
+            break;
+          }
+          throw new Error(`Upload aborted for "${clip.file.name}": ${uploadError.message}`);
+        }
+      }
     }
     enrichedClips.push(updated);
   }
@@ -336,7 +433,12 @@ export class ContaboStorageManagerClient {
    * The media endpoint is derived by appending `/media` to the base endpoint.
    * Expects the server to respond with `{ "url": "<public-url>" }`.
    */
-  async uploadMedia(name: string, blob: Blob, mimeType = 'audio/wav'): Promise<string> {
+  async uploadMedia(
+    name: string,
+    blob: Blob,
+    mimeType = 'audio/wav',
+    onProgress?: (progress: number) => void,
+  ): Promise<string> {
     const authHeader = this.getAuthHeader();
     const headers: Record<string, string> = {};
     if (authHeader) headers.authorization = authHeader;
@@ -345,13 +447,48 @@ export class ContaboStorageManagerClient {
     formData.append('name', name);
     formData.append('file', new File([blob], name, { type: mimeType }));
 
-    const response = await fetch(this.mediaEndpoint, {
-      method: 'POST',
-      headers,
-      body: formData,
+    if (typeof XMLHttpRequest === 'undefined') {
+      const response = await fetch(this.mediaEndpoint, {
+        method: 'POST',
+        headers,
+        body: formData,
+      });
+      if (!response.ok) throw new Error(`Media upload failed (${response.status})`);
+      const result = (await response.json()) as { url: string };
+      onProgress?.(1);
+      return result.url;
+    }
+
+    return await new Promise<string>((resolve, reject) => {
+      const request = new XMLHttpRequest();
+      request.open('POST', this.mediaEndpoint);
+      if (authHeader) request.setRequestHeader('authorization', authHeader);
+
+      request.upload.onprogress = (event) => {
+        if (!event.lengthComputable) return;
+        onProgress?.(Math.max(0, Math.min(1, event.loaded / event.total)));
+      };
+
+      request.onerror = () => reject(new Error('Media upload failed (network error)'));
+      request.onload = () => {
+        if (request.status < 200 || request.status >= 300) {
+          reject(new Error(`Media upload failed (${request.status})`));
+          return;
+        }
+        try {
+          const result = JSON.parse(request.responseText) as { url?: string };
+          if (!result.url) {
+            reject(new Error('Media upload failed (invalid response)'));
+            return;
+          }
+          onProgress?.(1);
+          resolve(result.url);
+        } catch {
+          reject(new Error('Media upload failed (invalid JSON response)'));
+        }
+      };
+
+      request.send(formData);
     });
-    if (!response.ok) throw new Error(`Media upload failed (${response.status})`);
-    const result = (await response.json()) as { url: string };
-    return result.url;
   }
 }
