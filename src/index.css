@@ -761,6 +761,48 @@ audio {
   cursor: not-allowed;
 }
 
+/* ── Drag handle ────────────────────────────────────────── */
+.timeline-drag-handle {
+  cursor: grab;
+  color: rgba(201, 162, 39, 0.45);
+  font-size: 0.75rem;
+  flex-shrink: 0;
+  user-select: none;
+  padding: 0 2px;
+  line-height: 1;
+  touch-action: none;
+}
+
+.timeline-drag-handle:active {
+  cursor: grabbing;
+}
+
+/* ── Dragging state ─────────────────────────────────────── */
+.timeline-clip-wrapper.is-dragging {
+  opacity: 0.45;
+}
+
+.timeline-clip-wrapper.is-dragging .timeline-clip {
+  border-style: dashed;
+}
+
+/* ── Drop insertion indicator ───────────────────────────── */
+.timeline-drop-indicator {
+  width: 3px;
+  border-radius: 2px;
+  background: var(--gold);
+  flex-shrink: 0;
+  align-self: stretch;
+  min-height: 60px;
+  box-shadow: 0 0 8px var(--gold-glow);
+  animation: drop-indicator-pulse 0.5s ease-in-out infinite alternate;
+}
+
+@keyframes drop-indicator-pulse {
+  from { opacity: 0.7; }
+  to   { opacity: 1; }
+}
+
 /* ============================================================
    Transition zones
    ============================================================ */
