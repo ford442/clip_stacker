@@ -11,7 +11,7 @@
  */
 
 import type { Clip, ExportSettings, ClipTransition, TextOverlay } from '../types';
-import type { StatusCallback } from '../ffmpeg/ffmpegService';
+import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { isWebCodecsAvailable, encodeClipsWithWebCodecs } from './webcodecs';
 import { mergeClips } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
@@ -41,6 +41,7 @@ export async function hybridMergeClips(
   transitions: ClipTransition[],
   settings: ExportSettings,
   onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
   forceFFmpeg = false,
   textOverlays: TextOverlay[] = [],
   useCanvas = false,
@@ -50,7 +51,8 @@ export async function hybridMergeClips(
   if (useCanvas && typeof MediaRecorder !== 'undefined') {
     try {
       onStatus('Canvas renderer path selected (audio-reactive compositing)...');
-      const blob = await encodeClipsWithCanvas(clips, settings, onStatus, audioReactive);
+      onProgress?.({ stage: 'Canvas renderer selected', progress: 0, indeterminate: false });
+      const blob = await encodeClipsWithCanvas(clips, settings, onStatus, audioReactive, onProgress);
       return { blob, path: 'canvas' };
     } catch (err) {
       onStatus(
@@ -70,7 +72,8 @@ export async function hybridMergeClips(
     if (!hasActiveTransitions && !hasPipClips && !hasTextOverlays) {
       try {
         onStatus('GPU path selected (WebCodecs + hardware H.264)...');
-        const blob = await encodeClipsWithWebCodecs(clips, settings, onStatus);
+        onProgress?.({ stage: 'GPU path selected (WebCodecs)', progress: 0, indeterminate: false });
+        const blob = await encodeClipsWithWebCodecs(clips, settings, onStatus, onProgress);
         return { blob, path: 'webcodecs' };
       } catch (err) {
         onStatus(
@@ -81,6 +84,7 @@ export async function hybridMergeClips(
   }
 
   // -- FFmpeg path (default / fallback) -------------------------------------
-  const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays);
+  onProgress?.({ stage: 'FFmpeg path selected', progress: 0, indeterminate: false });
+  const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress);
   return { blob, path: 'ffmpeg' };
 }

@@ -12,6 +12,7 @@ import { findMatchingClipIndex } from './utils/clipMatching';
 import { reindexTransitions } from './utils/transitions';
 import { hybridMergeClips } from './utils/hybrid-encoder';
 import { extractAudioToWav } from './ffmpeg/ffmpegService';
+import type { RenderProgressUpdate } from './ffmpeg/ffmpegService';
 import { Toolbar } from './components/Toolbar';
 import { StorageRow } from './components/StorageRow';
 import { ClipLibrary } from './components/ClipLibrary';
@@ -43,6 +44,10 @@ export function App() {
     if (v) setForceFFmpeg(false); // canvas overrides CPU-only mode
   }, []);
   const [status, setStatus] = useState('');
+  const [progressStage, setProgressStage] = useState('');
+  const [progressValue, setProgressValue] = useState<number | null>(null);
+  const [progressIndeterminate, setProgressIndeterminate] = useState(false);
+  const [isRendering, setIsRendering] = useState(false);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [encoderPath, setEncoderPath] = useState<string>('');
   const [storageEndpoint, setStorageEndpoint] = useState('https://storage.noahcohn.com/webhook/clip-stacker');
@@ -181,11 +186,25 @@ export function App() {
     }
     try {
       setEncoderPath('');
+      setIsRendering(true);
+      setProgressStage('Preparing render');
+      setProgressValue(0);
+      setProgressIndeterminate(false);
+      const handleProgress = (update: RenderProgressUpdate) => {
+        setProgressStage(update.stage);
+        setProgressIndeterminate(update.indeterminate === true);
+        if (typeof update.progress === 'number') {
+          setProgressValue(Math.max(0, Math.min(1, update.progress)));
+        } else {
+          setProgressValue(null);
+        }
+      };
       const result = await hybridMergeClips(
         timelineClips,
         transitions,
         exportSettings,
         setStatus,
+        handleProgress,
         forceFFmpeg,
         textOverlays,
         useCanvasRenderer,
@@ -201,8 +220,13 @@ export function App() {
           ? '⚡ GPU (WebCodecs)'
           : '🖥 FFmpeg';
       setStatus(`Render complete via ${pathLabel}. Download your merged MP4.`);
+      setProgressStage(`Render complete via ${pathLabel}`);
+      setProgressValue(1);
+      setProgressIndeterminate(false);
     } catch (error) {
       setStatus(`Render failed: ${(error as Error).message}`);
+    } finally {
+      setIsRendering(false);
     }
   }, [clips, clipGroups, transitions, exportSettings, forceFFmpeg, textOverlays, useCanvasRenderer, audioReactive]);
 
@@ -579,6 +603,10 @@ export function App() {
           onToggleCanvasRenderer={handleToggleCanvasRenderer}
           audioReactive={audioReactive}
           onToggleAudioReactive={setAudioReactive}
+          progressStage={progressStage}
+          progressValue={progressValue}
+          progressIndeterminate={progressIndeterminate}
+          isRendering={isRendering}
         />
         <StorageRow
           endpoint={storageEndpoint}

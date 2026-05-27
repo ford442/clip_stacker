@@ -15,11 +15,14 @@
  */
 
 import type { Clip, ExportSettings } from '../types';
-import type { StatusCallback } from '../ffmpeg/ffmpegService';
+import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { getClipDuration } from './project';
 import { CanvasRenderer } from './canvas-renderer';
 import { startCanvasCapture } from './media-recorder-encoder';
+
+const CANVAS_RENDER_START = 0.02;
+const CANVAS_RENDER_RANGE = 0.83;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -38,10 +41,12 @@ export async function encodeClipsWithCanvas(
   settings: ExportSettings,
   onStatus: StatusCallback,
   audioReactive = true,
+  onProgress?: ProgressCallback,
 ): Promise<Blob> {
   if (clips.length === 0) throw new Error('No clips to render.');
 
   onStatus('Initializing canvas renderer...');
+  onProgress?.({ stage: 'Initializing canvas renderer', progress: 0, indeterminate: false });
 
   // Create an off-screen canvas (not attached to DOM; capture still works).
   const canvas = document.createElement('canvas');
@@ -56,12 +61,21 @@ export async function encodeClipsWithCanvas(
   const totalDuration = clips.reduce((sum, c) => sum + getClipDuration(c), 0);
 
   onStatus('Canvas render started (real-time playback)...');
+  onProgress?.({ stage: 'Canvas render (real-time playback)', progress: CANVAS_RENDER_START, indeterminate: false });
 
   try {
     await renderer.renderClips(clips, (progress) => {
       const pct = totalDuration > 0
         ? Math.round((progress.totalElapsed / totalDuration) * 100)
         : 0;
+      const normalized = totalDuration > 0
+        ? Math.max(0, Math.min(1, progress.totalElapsed / totalDuration))
+        : 0;
+      onProgress?.({
+        stage: `Canvas render: ${progress.clipTitle}`,
+        progress: CANVAS_RENDER_START + normalized * CANVAS_RENDER_RANGE,
+        indeterminate: totalDuration <= 0,
+      });
       onStatus(
         `Canvas render [${progress.clipIndex + 1}/${progress.totalClips}]: ` +
         `"${progress.clipTitle}" (${pct}%)${audioReactive ? ' 🎵' : ''}`,
@@ -74,8 +88,10 @@ export async function encodeClipsWithCanvas(
   }
 
   onStatus('Finalizing canvas capture...');
+  onProgress?.({ stage: 'Finalizing canvas capture', progress: 0.87, indeterminate: false });
   const videoBlob = await captureHandle.stop();
 
   onStatus('Muxing with high-quality audio...');
-  return muxVideoWithAudio(videoBlob, clips, settings, onStatus);
+  onProgress?.({ stage: 'Muxing with high-quality audio', progress: 0.88, indeterminate: false });
+  return muxVideoWithAudio(videoBlob, clips, settings, onStatus, onProgress);
 }

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrowserCapabilities } from '../utils/feature-detector';
 import { detectCapabilities } from '../utils/feature-detector';
+import { ProgressBar } from './ProgressBar';
 
 interface Props {
   onAddClips: (files: File[]) => void;
@@ -16,6 +17,10 @@ interface Props {
   /** Enable audio-reactive visual effects in the canvas renderer. */
   audioReactive: boolean;
   onToggleAudioReactive: (v: boolean) => void;
+  progressStage: string;
+  progressValue: number | null;
+  progressIndeterminate: boolean;
+  isRendering: boolean;
 }
 
 export function Toolbar({
@@ -30,6 +35,10 @@ export function Toolbar({
   onToggleCanvasRenderer,
   audioReactive,
   onToggleAudioReactive,
+  progressStage,
+  progressValue,
+  progressIndeterminate,
+  isRendering,
 }: Props) {
   const clipInputRef = useRef<HTMLInputElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
@@ -135,6 +144,13 @@ export function Toolbar({
           )}
         </div>
       </div>
+      {isRendering && (
+        <ProgressBar
+          stage={progressStage}
+          progress={progressValue}
+          indeterminate={progressIndeterminate}
+        />
+      )}
       <p aria-live="polite" style={{ minHeight: '1.4rem', color: 'var(--muted)', margin: '0.5rem 0 0' }}>
         {status}
       </p>

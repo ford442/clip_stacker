@@ -8,6 +8,8 @@ import { buildTransitionFilterComplex } from '../utils/transitions';
 const DEFAULT_VIDEO_SIZE = '1280x720';
 const OUTPUT_WIDTH = 1280;
 const OUTPUT_HEIGHT = 720;
+const PASS1_PROGRESS_START = 0.12;
+const PASS1_PROGRESS_END = 0.85;
 
 /**
  * CDN URL for Roboto Regular TTF.
@@ -22,6 +24,67 @@ let ffmpegInstance: FFmpeg | null = null;
 let fontLoaded = false;
 
 export type StatusCallback = (message: string) => void;
+export interface RenderProgressUpdate {
+  stage: string;
+  /** 0..1 when known; undefined for indeterminate progress. */
+  progress?: number;
+  indeterminate?: boolean;
+}
+export type ProgressCallback = (update: RenderProgressUpdate) => void;
+
+interface FfmpegLogProgressContext {
+  stage: string;
+  totalDuration: number;
+  rangeStart: number;
+  rangeEnd: number;
+  onProgress?: ProgressCallback;
+}
+
+let activeFfmpegLogProgress: FfmpegLogProgressContext | null = null;
+
+function clampProgress(progress: number): number {
+  return Math.max(0, Math.min(1, progress));
+}
+
+function emitProgress(
+  onProgress: ProgressCallback | undefined,
+  stage: string,
+  progress?: number,
+  indeterminate = false,
+): void {
+  if (!onProgress) return;
+  onProgress({
+    stage,
+    progress: typeof progress === 'number' ? clampProgress(progress) : undefined,
+    indeterminate: indeterminate || typeof progress !== 'number',
+  });
+}
+
+function parseFfmpegTimeSeconds(message: string): number | null {
+  const match = /time=(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(message);
+  if (!match) return null;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  const seconds = Number(match[3]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+    return null;
+  }
+  return hours * 3600 + minutes * 60 + seconds;
+}
+
+async function execWithFfmpegProgress(
+  ffmpeg: FFmpeg,
+  args: string[],
+  context: FfmpegLogProgressContext,
+): Promise<void> {
+  const previousContext = activeFfmpegLogProgress;
+  activeFfmpegLogProgress = context;
+  try {
+    await ffmpeg.exec(args);
+  } finally {
+    activeFfmpegLogProgress = previousContext;
+  }
+}
 
 function clipNeedsEffects(clip: Clip): boolean {
   if (clip.kind === 'audio') return true;
@@ -102,7 +165,21 @@ export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
 
   const ffmpeg = new FFmpeg();
   ffmpeg.on('log', ({ message }) => {
-    if (message.includes('time=')) onStatus(`Rendering... ${message}`);
+    if (!message.includes('time=')) return;
+    onStatus(`Rendering... ${message}`);
+
+    const context = activeFfmpegLogProgress;
+    if (!context) return;
+
+    const seconds = parseFfmpegTimeSeconds(message);
+    if (seconds === null || context.totalDuration <= 0) {
+      emitProgress(context.onProgress, context.stage, undefined, true);
+      return;
+    }
+
+    const local = clampProgress(seconds / context.totalDuration);
+    const progress = context.rangeStart + (context.rangeEnd - context.rangeStart) * local;
+    emitProgress(context.onProgress, context.stage, progress, false);
   });
 
   const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
@@ -165,7 +242,12 @@ function buildDrawtextFilter(overlay: TextOverlay): string {
 
 
 // Lossless path: all clips are clean video — use the concat demuxer with -c copy.
-async function mergeClipsLossless(ffmpeg: FFmpeg, clips: Clip[], onStatus: StatusCallback): Promise<void> {
+async function mergeClipsLossless(
+  ffmpeg: FFmpeg,
+  clips: Clip[],
+  onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
+): Promise<void> {
   const listLines = clips.map((clip) => {
     const lines = [`file '${clip.inputName}'`];
     if (clip.trimStart > 0) lines.push(`inpoint ${clip.trimStart}`);
@@ -174,8 +256,10 @@ async function mergeClipsLossless(ffmpeg: FFmpeg, clips: Clip[], onStatus: Statu
   });
   await ffmpeg.writeFile('concat_list.txt', listLines.join('\n'));
 
-  onStatus('Concatenating (lossless)...');
+  onStatus('FFmpeg path: lossless concat (stream copy).');
+  emitProgress(onProgress, 'FFmpeg lossless concat', 0.25, false);
   await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4']);
+  emitProgress(onProgress, 'FFmpeg lossless concat', 0.9, false);
   await ffmpeg.deleteFile('concat_list.txt');
 }
 
@@ -187,12 +271,16 @@ async function processClipPass1(
   total: number,
   settings: ExportSettings,
   onStatus: StatusCallback,
+  onProgress: ProgressCallback | undefined,
+  rangeStart: number,
+  rangeEnd: number,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
+  const clipDuration = getClipDuration(clip);
 
   if (clipNeedsEffects(clip)) {
     onStatus(`Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}"...`);
-    await ffmpeg.exec([
+    await execWithFfmpegProgress(ffmpeg, [
       '-i', clip.inputName!,
       '-filter_complex', buildSingleClipFilter(clip),
       '-map', '[vout]',
@@ -205,7 +293,13 @@ async function processClipPass1(
       '-c:a', 'aac',
       '-b:a', '192k',
       outName,
-    ]);
+    ], {
+      stage: `Pass 1: ${clip.title}`,
+      totalDuration: clipDuration,
+      rangeStart,
+      rangeEnd,
+      onProgress,
+    });
   } else {
     // -ss before -i triggers a fast container-level seek; -t is duration from that point.
     onStatus(`Pass 1 [${index + 1}/${total}]: Trimming "${clip.title}" (lossless)...`);
@@ -215,6 +309,7 @@ async function processClipPass1(
     if (Number.isFinite(clip.trimEnd)) args.push('-t', String(clip.trimEnd - clip.trimStart));
     args.push('-c', 'copy', outName);
     await ffmpeg.exec(args);
+    emitProgress(onProgress, `Pass 1: ${clip.title}`, rangeEnd, false);
   }
 
   return outName;
@@ -225,12 +320,20 @@ async function mergeClipsPass2(
   ffmpeg: FFmpeg,
   intermediateNames: string[],
   onStatus: StatusCallback,
+  totalDuration: number,
+  onProgress?: ProgressCallback,
 ): Promise<void> {
   const concatList = intermediateNames.map((n) => `file '${n}'`).join('\n');
   await ffmpeg.writeFile('concat_list.txt', concatList);
 
   onStatus('Pass 2: Final concatenation...');
-  await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4']);
+  await execWithFfmpegProgress(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4'], {
+    stage: 'Pass 2: Final concatenation',
+    totalDuration,
+    rangeStart: 0.85,
+    rangeEnd: 0.95,
+    onProgress,
+  });
 
   await ffmpeg.deleteFile('concat_list.txt');
   for (const name of intermediateNames) {
@@ -246,15 +349,18 @@ async function mergeClipsWithTransitions(
   settings: ExportSettings,
   filterComplex: string,
   onStatus: StatusCallback,
+  totalDuration: number,
+  onProgress?: ProgressCallback,
 ): Promise<void> {
   onStatus('Building transition render...');
+  emitProgress(onProgress, 'FFmpeg transition render', 0.15, false);
 
   const inputArgs: string[] = [];
   for (const clip of clips) {
     inputArgs.push('-i', clip.inputName!);
   }
 
-  await ffmpeg.exec([
+  await execWithFfmpegProgress(ffmpeg, [
     ...inputArgs,
     '-filter_complex', filterComplex,
     '-map', '[vout]',
@@ -267,7 +373,13 @@ async function mergeClipsWithTransitions(
     '-c:a', 'aac',
     '-b:a', '192k',
     'stacked.mp4',
-  ]);
+  ], {
+    stage: 'FFmpeg transition render',
+    totalDuration,
+    rangeStart: 0.15,
+    rangeEnd: 0.95,
+    onProgress,
+  });
 }
 
 /**
@@ -398,8 +510,11 @@ async function mergeClipsWithCompositing(
   clips: Clip[],
   settings: ExportSettings,
   onStatus: StatusCallback,
+  totalDuration: number,
+  onProgress?: ProgressCallback,
 ): Promise<void> {
   onStatus('Building PiP/compositing render...');
+  emitProgress(onProgress, 'FFmpeg PiP/compositing render', 0.15, false);
 
   const filterComplex = buildPipFilterComplex(clips);
 
@@ -408,7 +523,7 @@ async function mergeClipsWithCompositing(
     inputArgs.push('-i', clip.inputName!);
   }
 
-  await ffmpeg.exec([
+  await execWithFfmpegProgress(ffmpeg, [
     ...inputArgs,
     '-filter_complex', filterComplex,
     '-map', '[vout]',
@@ -421,7 +536,13 @@ async function mergeClipsWithCompositing(
     '-c:a', 'aac',
     '-b:a', '192k',
     'stacked.mp4',
-  ]);
+  ], {
+    stage: 'FFmpeg PiP/compositing render',
+    totalDuration,
+    rangeStart: 0.15,
+    rangeEnd: 0.95,
+    onProgress,
+  });
 }
 
 export async function extractAudioToWav(clip: Clip, onStatus: StatusCallback): Promise<Blob> {
@@ -477,11 +598,14 @@ export async function mergeClips(
   settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
   onStatus: StatusCallback,
   textOverlays: TextOverlay[] = [],
+  onProgress?: ProgressCallback,
 ): Promise<Blob> {
   if (clips.length === 0) throw new Error('Upload clips before rendering.');
+  const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
 
   const ffmpeg = await ensureFfmpeg(onStatus);
   onStatus('Preparing media...');
+  emitProgress(onProgress, 'Preparing media', 0.02, false);
 
   // Clean up leftover files from a previous run.
   for (const entry of await ffmpeg.listDir('/')) {
@@ -504,8 +628,10 @@ export async function mergeClips(
     inputName: `input-${index}.${getSafeExtension(clip.file.name, clip.kind === 'video' ? 'mp4' : 'mp3')}`,
   }));
 
-  for (const clip of workingClips) {
+  for (const [index, clip] of workingClips.entries()) {
     await ffmpeg.writeFile(clip.inputName!, await fetchFile(clip.file));
+    const prepProgress = 0.03 + ((index + 1) / workingClips.length) * 0.09;
+    emitProgress(onProgress, 'Preparing media', prepProgress, false);
   }
 
   const activeTransitions = transitions.filter((t) => t.type !== 'none' && t.duration > 0);
@@ -516,9 +642,11 @@ export async function mergeClips(
 
   if (hasPipClips) {
     // PiP / compositing path — overlay clips on top of the base layer
-    await mergeClipsWithCompositing(ffmpeg, workingClips, settings, onStatus);
+    onStatus('FFmpeg path: PiP compositing (re-encode).');
+    await mergeClipsWithCompositing(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
   } else if (transitionFilterComplex) {
     // Single-pass filter_complex render covering all clips + transitions
+    onStatus('FFmpeg path: transitions enabled (re-encode).');
     await mergeClipsWithTransitions(
       ffmpeg,
       workingClips,
@@ -526,21 +654,42 @@ export async function mergeClips(
       settings,
       transitionFilterComplex,
       onStatus,
+      totalDuration,
+      onProgress,
     );
   } else if (effectClips.length === 0) {
-    await mergeClipsLossless(ffmpeg, workingClips, onStatus);
+    await mergeClipsLossless(ffmpeg, workingClips, onStatus, onProgress);
   } else {
     const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
     onStatus(
       `Note: Re-encoding ${titles} with CRF ${settings.crf} (${settings.preset} preset). Starting export...`,
     );
+    emitProgress(onProgress, 'FFmpeg re-encode (two-pass)', 0.12, false);
     await new Promise((r) => setTimeout(r, 1500));
 
     const intermediates: string[] = [];
+    const pass1TotalDuration = workingClips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
+    let pass1ElapsedDuration = 0;
     for (const [index, clip] of workingClips.entries()) {
-      intermediates.push(await processClipPass1(ffmpeg, clip, index, workingClips.length, settings, onStatus));
+      const clipDuration = getClipDuration(clip);
+      const localStart = pass1TotalDuration > 0 ? pass1ElapsedDuration / pass1TotalDuration : index / workingClips.length;
+      const localEnd = pass1TotalDuration > 0 ? (pass1ElapsedDuration + clipDuration) / pass1TotalDuration : (index + 1) / workingClips.length;
+      const rangeStart = PASS1_PROGRESS_START + localStart * (PASS1_PROGRESS_END - PASS1_PROGRESS_START);
+      const rangeEnd = PASS1_PROGRESS_START + localEnd * (PASS1_PROGRESS_END - PASS1_PROGRESS_START);
+      intermediates.push(await processClipPass1(
+        ffmpeg,
+        clip,
+        index,
+        workingClips.length,
+        settings,
+        onStatus,
+        onProgress,
+        rangeStart,
+        rangeEnd,
+      ));
+      pass1ElapsedDuration += clipDuration;
     }
-    await mergeClipsPass2(ffmpeg, intermediates, onStatus);
+    await mergeClipsPass2(ffmpeg, intermediates, onStatus, totalDuration, onProgress);
   }
 
   for (const clip of workingClips) {
@@ -563,8 +712,9 @@ export async function mergeClips(
 
     const vfFilter = textOverlays.map(buildDrawtextFilter).join(',');
     onStatus('Applying text overlays...');
+    emitProgress(onProgress, 'Applying text overlays', 0.95, false);
 
-    await ffmpeg.exec([
+    await execWithFfmpegProgress(ffmpeg, [
       '-i', 'stacked.mp4',
       '-vf', vfFilter,
       '-c:v', 'libx264',
@@ -573,7 +723,13 @@ export async function mergeClips(
       '-pix_fmt', 'yuv420p',
       '-c:a', 'copy',
       'stacked_final.mp4',
-    ]);
+    ], {
+      stage: 'Applying text overlays',
+      totalDuration,
+      rangeStart: 0.95,
+      rangeEnd: 0.99,
+      onProgress,
+    });
 
     // Clean up temp text files.
     for (const overlay of textOverlays) {
@@ -589,6 +745,7 @@ export async function mergeClips(
   // Copy to a plain ArrayBuffer so Blob constructor accepts it regardless of
   // whether FFmpeg's backing buffer is a SharedArrayBuffer.
   const plain = new Uint8Array(output).buffer as ArrayBuffer;
+  emitProgress(onProgress, 'Render finalizing', 1, false);
   return new Blob([plain], { type: 'video/mp4' });
 }
 
@@ -617,11 +774,13 @@ export async function muxVideoWithAudio(
   clips: Clip[],
   settings: ExportSettings,
   onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
 ): Promise<Blob> {
   if (clips.length === 0) throw new Error('No clips provided for audio muxing.');
 
   const ffmpeg = await ensureFfmpeg(onStatus);
   onStatus('Preparing audio mux...');
+  emitProgress(onProgress, 'Audio mux preparation', 0.86, false);
 
   // Clean up any leftover files from a previous mux run.
   for (const entry of await ffmpeg.listDir('/')) {
@@ -649,6 +808,8 @@ export async function muxVideoWithAudio(
     const name = `mux_audio_${i}.${ext}`;
     await ffmpeg.writeFile(name, await fetchFile(clip.file));
     audioVfsNames.push(name);
+    const prepProgress = 0.87 + ((i + 1) / clips.length) * 0.04;
+    emitProgress(onProgress, 'Audio mux preparation', prepProgress, false);
   }
 
   // Build a filter_complex that trims, fades, and concatenates all audio tracks.
@@ -685,7 +846,8 @@ export async function muxVideoWithAudio(
   }
 
   onStatus('Muxing audio with canvas video...');
-  await ffmpeg.exec([
+  const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
+  await execWithFfmpegProgress(ffmpeg, [
     ...inputArgs,
     '-filter_complex', filterComplex,
     '-map', '0:v',
@@ -695,7 +857,13 @@ export async function muxVideoWithAudio(
     '-b:a', '192k',         // ExportSettings has no audioBitrate field; 192 kbps matches the existing FFmpeg path
     '-movflags', '+faststart',
     'mux_output.mp4',
-  ]);
+  ], {
+    stage: 'Muxing audio with canvas video',
+    totalDuration,
+    rangeStart: 0.91,
+    rangeEnd: 0.995,
+    onProgress,
+  });
 
   const output = (await ffmpeg.readFile('mux_output.mp4')) as Uint8Array;
   const plain = new Uint8Array(output).buffer as ArrayBuffer;
@@ -708,6 +876,6 @@ export async function muxVideoWithAudio(
   try { await ffmpeg.deleteFile('mux_output.mp4'); } catch { /* ignore */ }
 
   onStatus('Audio mux complete.');
+  emitProgress(onProgress, 'Audio mux complete', 1, false);
   return new Blob([plain], { type: 'video/mp4' });
 }
-

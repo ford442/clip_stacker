@@ -11,7 +11,7 @@
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import type { Clip } from '../types';
 import type { ExportSettings } from '../types';
-import type { StatusCallback } from '../ffmpeg/ffmpegService';
+import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { getClipDuration } from './project';
 
 const TARGET_WIDTH = 1280;
@@ -20,6 +20,13 @@ const TARGET_FPS = 30;
 const AUDIO_SAMPLE_RATE = 44100;
 const AUDIO_CHANNELS = 2;
 const AUDIO_FRAME_SIZE = 1024; // AAC standard
+const WEBCODECS_PROGRESS_START = 0.05;
+const WEBCODECS_PROGRESS_RANGE = 0.85;
+
+function mapWebCodecsProgress(elapsedDuration: number, totalDuration: number): number | undefined {
+  if (totalDuration <= 0) return undefined;
+  return WEBCODECS_PROGRESS_START + (elapsedDuration / totalDuration) * WEBCODECS_PROGRESS_RANGE;
+}
 
 // ---------------------------------------------------------------------------
 // Type declarations for APIs not yet present in all TS DOM libs
@@ -75,8 +82,10 @@ export async function encodeClipsWithWebCodecs(
   clips: Clip[],
   settings: ExportSettings,
   onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
 ): Promise<Blob> {
   onStatus('Initializing GPU encoder...');
+  onProgress?.({ stage: 'Initializing GPU encoder', progress: 0, indeterminate: false });
 
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
@@ -121,10 +130,17 @@ export async function encodeClipsWithWebCodecs(
 
   let videoTimeUs = 0;
   let audioTimeUs = 0;
+  const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
+  let elapsedDuration = 0;
 
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i];
     onStatus(`GPU encode [${i + 1}/${clips.length}]: "${clip.title}"...`);
+    onProgress?.({
+      stage: `GPU encode: ${clip.title}`,
+      progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
+      indeterminate: totalDuration <= 0,
+    });
 
     const clipDuration = getClipDuration(clip);
 
@@ -141,9 +157,16 @@ export async function encodeClipsWithWebCodecs(
     // Encode audio frames
     audioTimeUs = await encodeAudioFrames(audioEncoder, clip, audioTimeUs, clipDuration);
     if (audioError) throw audioError;
+    elapsedDuration += clipDuration;
+    onProgress?.({
+      stage: `GPU encode: ${clip.title}`,
+      progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
+      indeterminate: totalDuration <= 0,
+    });
   }
 
   onStatus('Flushing encoders...');
+  onProgress?.({ stage: 'Flushing GPU encoders', progress: 0.93, indeterminate: false });
   await videoEncoder.flush();
   await audioEncoder.flush();
 
@@ -151,6 +174,7 @@ export async function encodeClipsWithWebCodecs(
   if (audioError) throw audioError;
 
   muxer.finalize();
+  onProgress?.({ stage: 'Finalizing GPU output', progress: 1, indeterminate: false });
 
   const { buffer } = muxer.target as ArrayBufferTarget;
   return new Blob([buffer], { type: 'video/mp4' });
