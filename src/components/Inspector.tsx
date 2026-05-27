@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import type { Clip, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS } from '../types';
 import { sanitizeFilename } from '../utils/filename';
@@ -86,6 +86,10 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
   const updateExport = (field: keyof ExportSettings, value: string | number) => {
     onExportSettingsChange({ ...exportSettings, [field]: value });
   };
+
+  const currentPresetName = useMemo(() => {
+    return EXPORT_PRESETS.find(p => p.crf === exportSettings.crf && p.preset === exportSettings.preset)?.name || 'custom';
+  }, [exportSettings.crf, exportSettings.preset]);
 
   const renderClipTab = () => {
     if (!clip) {
@@ -286,7 +290,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
       <label>
         Preset
         <select
-          value={EXPORT_PRESETS.find(p => p.crf === exportSettings.crf && p.preset === exportSettings.preset)?.name || 'custom'}
+          value={currentPresetName}
           onChange={(e) => {
             if (e.target.value === 'custom') return;
             const preset = EXPORT_PRESETS.find(p => p.name === e.target.value);
