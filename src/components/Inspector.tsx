@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
 import type { Clip, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS } from '../types';
 import { sanitizeFilename } from '../utils/filename';
+import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
+import { extractWaveformPeaks } from '../utils/waveform';
+import { WaveformCanvas } from './WaveformCanvas';
 
 interface ClipValues {
   title: string;
@@ -32,6 +35,70 @@ type Tab = 'clip' | 'export';
 
 const PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'] as const;
 
+const DEFAULT_LAYOUT_VALUES = {
+  layerIndex: 0,
+  x: 0,
+  y: 0,
+  width: 0,
+  height: 0,
+  opacity: 1,
+} as const;
+const MIN_INSPECTOR_THUMBNAILS = 4;
+const MAX_INSPECTOR_THUMBNAILS = 8;
+const SECONDS_PER_INSPECTOR_THUMBNAIL = 3;
+const INSPECTOR_WAVEFORM_SAMPLES = 120;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function parseNumber(value: string, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function formatSeconds(value: number): string {
+  return String(Number(value.toFixed(2)));
+}
+
+function hasAdvancedLayoutValues(values: Pick<ClipValues, 'layerIndex' | 'x' | 'y' | 'width' | 'height' | 'opacity'>): boolean {
+  return (
+    parseNumber(values.layerIndex, 0) > DEFAULT_LAYOUT_VALUES.layerIndex ||
+    parseNumber(values.x, 0) !== DEFAULT_LAYOUT_VALUES.x ||
+    parseNumber(values.y, 0) !== DEFAULT_LAYOUT_VALUES.y ||
+    parseNumber(values.width, 0) !== DEFAULT_LAYOUT_VALUES.width ||
+    parseNumber(values.height, 0) !== DEFAULT_LAYOUT_VALUES.height ||
+    parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity
+  );
+}
+
+function FadePreview({
+  value,
+  duration,
+  direction,
+  tone,
+}: {
+  value: number;
+  duration: number;
+  direction: 'in' | 'out';
+  tone: 'video' | 'audio';
+}) {
+  const ratio = duration > 0 ? clamp(value / duration, 0, 1) : 0;
+  const size = Math.max(ratio * 100, value > 0 ? 8 : 0);
+
+  return (
+    <div className={`inspector-fade-preview inspector-fade-preview--${tone}`} aria-hidden="true">
+      <div className={`inspector-fade-preview-bar inspector-fade-preview-bar--${direction}`}>
+        <span
+          className="inspector-fade-preview-fill"
+          style={{ width: `${size}%` }}
+        />
+      </div>
+      <span className="inspector-fade-preview-label">{Math.round(ratio * 100)}%</span>
+    </div>
+  );
+}
+
 /**
  * Find the preset that matches the given export settings.
  * Returns the preset name if found, otherwise returns 'custom'.
@@ -45,6 +112,13 @@ function findMatchingPreset(settings: ExportSettings): string {
 export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange, onExtractAudio }: Props) {
   const [tab, setTab] = useState<Tab>('clip');
   const inspectorRef = useRef<HTMLDivElement>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
+  const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
+  const generatingThumbs = useRef<Set<string>>(new Set());
+  const completedThumbs = useRef<Set<string>>(new Set());
+  const generatingWaves = useRef<Set<string>>(new Set());
+  const completedWaves = useRef<Set<string>>(new Set());
   const [values, setValues] = useState<ClipValues>({
     title: '',
     trimStart: '0',
@@ -78,12 +152,59 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
       height: String(clip.height ?? 0),
       opacity: String(clip.opacity ?? 1),
     });
+    setAdvancedOpen(
+      hasAdvancedLayoutValues({
+        layerIndex: String(clip.layerIndex ?? 0),
+        x: String(clip.x ?? 0),
+        y: String(clip.y ?? 0),
+        width: String(clip.width ?? 0),
+        height: String(clip.height ?? 0),
+        opacity: String(clip.opacity ?? 1),
+      }),
+    );
   }, [clip]);
 
-  const update = (field: keyof ClipValues, value: string) => {
-    const next = { ...values, [field]: value };
+  useEffect(() => {
+    if (!clip) return;
+    if (clip.kind === 'video') {
+      if (completedThumbs.current.has(clip.id) || generatingThumbs.current.has(clip.id)) return;
+      generatingThumbs.current.add(clip.id);
+      const count = Math.max(
+        MIN_INSPECTOR_THUMBNAILS,
+        Math.min(MAX_INSPECTOR_THUMBNAILS, Math.ceil(clip.duration / SECONDS_PER_INSPECTOR_THUMBNAIL)),
+      );
+      extractThumbnails(clip.objectUrl, clip.duration, 0, clip.duration, count).then((thumbs) => {
+        generatingThumbs.current.delete(clip.id);
+        completedThumbs.current.add(clip.id);
+        setThumbMap((prev) => ({ ...prev, [clip.id]: thumbs }));
+      });
+      return;
+    }
+
+    if (completedWaves.current.has(clip.id) || generatingWaves.current.has(clip.id)) return;
+    generatingWaves.current.add(clip.id);
+    extractWaveformPeaks(clip.objectUrl, INSPECTOR_WAVEFORM_SAMPLES).then(
+      (peaks) => {
+        generatingWaves.current.delete(clip.id);
+        completedWaves.current.add(clip.id);
+        setWaveMap((prev) => ({ ...prev, [clip.id]: peaks }));
+      },
+      (error) => {
+        generatingWaves.current.delete(clip.id);
+        completedWaves.current.add(clip.id);
+        console.warn(`Could not extract waveform for clip "${clip.title}" (${clip.id}).`, error);
+      },
+    );
+  }, [clip]);
+
+  const applyValues = (patch: Partial<ClipValues>) => {
+    const next = { ...values, ...patch };
     setValues(next);
     onChange(next);
+  };
+
+  const update = (field: keyof ClipValues, value: string) => {
+    applyValues({ [field]: value } as Partial<ClipValues>);
   };
 
   /** Nudge a numeric field by `delta` seconds, clamped to ≥ 0. */
@@ -101,6 +222,30 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
     return findMatchingPreset(exportSettings);
   }, [exportSettings]);
 
+  const hasAdvancedLayout = useMemo(() => hasAdvancedLayoutValues(values), [values]);
+  const trimDuration = clip ? Math.max(MIN_CLIP_DURATION, clip.duration) : MIN_CLIP_DURATION;
+  const trimStart = clip ? clamp(parseNumber(values.trimStart, 0), 0, Math.max(0, trimDuration - MIN_CLIP_DURATION)) : 0;
+  const trimEnd = clip
+    ? clamp(values.trimEnd === '' ? trimDuration : parseNumber(values.trimEnd, trimDuration), trimStart + MIN_CLIP_DURATION, trimDuration)
+    : trimDuration;
+  const clipPreviewDuration = Math.max(MIN_CLIP_DURATION, trimEnd - trimStart);
+  const trimStartPct = (trimStart / trimDuration) * 100;
+  const trimEndPct = (trimEnd / trimDuration) * 100;
+  const currentThumbs = clip ? thumbMap[clip.id] : undefined;
+  const currentWave = clip ? waveMap[clip.id] : undefined;
+
+  const updateTrimStart = (nextStart: number) => {
+    if (!clip) return;
+    const clampedStart = clamp(nextStart, 0, Math.max(0, trimEnd - MIN_CLIP_DURATION));
+    applyValues({ trimStart: formatSeconds(clampedStart) });
+  };
+
+  const updateTrimEnd = (nextEnd: number) => {
+    if (!clip) return;
+    const clampedEnd = clamp(nextEnd, trimStart + MIN_CLIP_DURATION, trimDuration);
+    applyValues({ trimEnd: clampedEnd >= trimDuration - 0.005 ? '' : formatSeconds(clampedEnd) });
+  };
+
   const renderClipTab = () => {
     if (!clip) {
       return <div className="muted">Select a clip to edit trim and fades.</div>;
@@ -111,6 +256,53 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           Clip title
           <input type="text" value={values.title} onChange={(e) => update('title', e.target.value)} />
         </label>
+        <div className="inspector-group-label">Trim</div>
+        <div className="inspector-trim-visual-group">
+          <div className="inspector-trim-visual">
+            {clip.kind === 'video' ? (
+              <div className={`timeline-thumbs inspector-trim-media${currentThumbs ? '' : ' is-loading'}`}>
+                {currentThumbs?.map((src, index) => <img key={index} src={src} alt="" />) ?? null}
+              </div>
+            ) : (
+              <div className={`timeline-waveform inspector-trim-media${currentWave ? '' : ' is-loading'}`}>
+                {currentWave ? <WaveformCanvas peaks={currentWave} height={54} /> : <span className="waveform-loading-icon">♫</span>}
+              </div>
+            )}
+            <div className="inspector-trim-mask" style={{ width: `${trimStartPct}%` }} />
+            <div className="inspector-trim-mask inspector-trim-mask--right" style={{ width: `${100 - trimEndPct}%` }} />
+            <div
+              className="inspector-trim-window"
+              style={{ left: `${trimStartPct}%`, width: `${Math.max(0, trimEndPct - trimStartPct)}%` }}
+            />
+          </div>
+          <div className="inspector-trim-sliders">
+            <label className="inspector-trim-slider">
+              Start {trimStart.toFixed(2)}s
+              <input
+                type="range"
+                min="0"
+                max={Math.max(0, trimDuration - MIN_CLIP_DURATION)}
+                step="0.01"
+                value={trimStart}
+                onChange={(e) => updateTrimStart(Number(e.target.value))}
+              />
+            </label>
+            <label className="inspector-trim-slider">
+              End {trimEnd.toFixed(2)}s
+              <input
+                type="range"
+                min={MIN_CLIP_DURATION}
+                max={trimDuration}
+                step="0.01"
+                value={trimEnd}
+                onChange={(e) => updateTrimEnd(Number(e.target.value))}
+              />
+            </label>
+          </div>
+          <p className="inspector-hint">
+            Drag the trim sliders to align with the preview strip for precise trimming.
+          </p>
+        </div>
         <label>
           Trim start (s)
           <input
@@ -148,47 +340,79 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           </div>
         </label>
         <div className="inspector-group-label">Video fades</div>
-        <label>
-          Fade in (s)
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            value={values.videoFadeIn}
-            onChange={(e) => update('videoFadeIn', e.target.value)}
+        <div className="inspector-field-with-preview">
+          <label>
+            Fade in (s)
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={values.videoFadeIn}
+              onChange={(e) => update('videoFadeIn', e.target.value)}
+            />
+          </label>
+          <FadePreview
+            value={clamp(parseNumber(values.videoFadeIn, 0), 0, clipPreviewDuration / 2)}
+            duration={clipPreviewDuration}
+            direction="in"
+            tone="video"
           />
-        </label>
-        <label>
-          Fade out (s)
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            value={values.videoFadeOut}
-            onChange={(e) => update('videoFadeOut', e.target.value)}
+        </div>
+        <div className="inspector-field-with-preview">
+          <label>
+            Fade out (s)
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={values.videoFadeOut}
+              onChange={(e) => update('videoFadeOut', e.target.value)}
+            />
+          </label>
+          <FadePreview
+            value={clamp(parseNumber(values.videoFadeOut, 0), 0, clipPreviewDuration / 2)}
+            duration={clipPreviewDuration}
+            direction="out"
+            tone="video"
           />
-        </label>
+        </div>
         <div className="inspector-group-label">Audio fades</div>
-        <label>
-          Fade in (s)
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            value={values.audioFadeIn}
-            onChange={(e) => update('audioFadeIn', e.target.value)}
+        <div className="inspector-field-with-preview">
+          <label>
+            Fade in (s)
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={values.audioFadeIn}
+              onChange={(e) => update('audioFadeIn', e.target.value)}
+            />
+          </label>
+          <FadePreview
+            value={clamp(parseNumber(values.audioFadeIn, 0), 0, clipPreviewDuration / 2)}
+            duration={clipPreviewDuration}
+            direction="in"
+            tone="audio"
           />
-        </label>
-        <label>
-          Fade out (s)
-          <input
-            type="number"
-            min="0"
-            step="0.1"
-            value={values.audioFadeOut}
-            onChange={(e) => update('audioFadeOut', e.target.value)}
+        </div>
+        <div className="inspector-field-with-preview">
+          <label>
+            Fade out (s)
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={values.audioFadeOut}
+              onChange={(e) => update('audioFadeOut', e.target.value)}
+            />
+          </label>
+          <FadePreview
+            value={clamp(parseNumber(values.audioFadeOut, 0), 0, clipPreviewDuration / 2)}
+            duration={clipPreviewDuration}
+            direction="out"
+            tone="audio"
           />
-        </label>
+        </div>
         {clip.kind === 'video' && onExtractAudio && (
           <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Audio extraction</div>
         )}
@@ -209,72 +433,77 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           </div>
         )}
         {clip.kind === 'video' && (
-          <>
-            <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Picture-in-Picture</div>
-            <label title="0 = base layer (sequential concatenation). 1 or higher = overlay on top of the base video.">
-              Layer index
-              <input
-                type="number"
-                min="0"
-                step="1"
-                value={values.layerIndex}
-                onChange={(e) => update('layerIndex', e.target.value)}
-              />
-            </label>
-            {Number(values.layerIndex) > 0 && (
-              <>
-                <label title="Horizontal position of the overlay in pixels from the left edge of the canvas.">
-                  X offset (px)
-                  <input
-                    type="number"
-                    step="1"
-                    value={values.x}
-                    onChange={(e) => update('x', e.target.value)}
-                  />
-                </label>
-                <label title="Vertical position of the overlay in pixels from the top edge of the canvas.">
-                  Y offset (px)
-                  <input
-                    type="number"
-                    step="1"
-                    value={values.y}
-                    onChange={(e) => update('y', e.target.value)}
-                  />
-                </label>
-                <label title="Width of the overlay in pixels. Enter 0 to keep the clip's original width.">
-                  Width (px, 0=auto)
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={values.width}
-                    onChange={(e) => update('width', e.target.value)}
-                  />
-                </label>
-                <label title="Height of the overlay in pixels. Enter 0 to keep the clip's original height.">
-                  Height (px, 0=auto)
-                  <input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={values.height}
-                    onChange={(e) => update('height', e.target.value)}
-                  />
-                </label>
-                <label title="Opacity of the overlay from 0.0 (transparent) to 1.0 (fully opaque).">
-                  Opacity (0–1)
-                  <input
-                    type="number"
-                    min="0"
-                    max="1"
-                    step="0.05"
-                    value={values.opacity}
-                    onChange={(e) => update('opacity', e.target.value)}
-                  />
-                </label>
-              </>
-            )}
-          </>
+          <details
+            className="inspector-disclosure"
+            open={hasAdvancedLayout || advancedOpen}
+            onToggle={(e: SyntheticEvent<HTMLDetailsElement>) => {
+              if (hasAdvancedLayout) return;
+              setAdvancedOpen(e.currentTarget.open);
+            }}
+          >
+            <summary>Advanced layout (PiP){hasAdvancedLayout ? ' • active' : ''}</summary>
+            <div className="inspector-disclosure-content">
+              <label title="0 = base layer (sequential concatenation). 1 or higher = overlay on top of the base video.">
+                Layer index
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={values.layerIndex}
+                  onChange={(e) => update('layerIndex', e.target.value)}
+                />
+              </label>
+              <label title="Horizontal position of the overlay in pixels from the left edge of the canvas.">
+                X offset (px)
+                <input
+                  type="number"
+                  step="1"
+                  value={values.x}
+                  onChange={(e) => update('x', e.target.value)}
+                />
+              </label>
+              <label title="Vertical position of the overlay in pixels from the top edge of the canvas.">
+                Y offset (px)
+                <input
+                  type="number"
+                  step="1"
+                  value={values.y}
+                  onChange={(e) => update('y', e.target.value)}
+                />
+              </label>
+              <label title="Width of the overlay in pixels. Enter 0 to keep the clip's original width.">
+                Width (px, 0=auto)
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={values.width}
+                  onChange={(e) => update('width', e.target.value)}
+                />
+              </label>
+              <label title="Height of the overlay in pixels. Enter 0 to keep the clip's original height.">
+                Height (px, 0=auto)
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={values.height}
+                  onChange={(e) => update('height', e.target.value)}
+                />
+              </label>
+              <label title="Opacity of the overlay from 0.0 (transparent) to 1.0 (fully opaque).">
+                Opacity (0–1)
+                <input
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.05"
+                  value={values.opacity}
+                  onChange={(e) => update('opacity', e.target.value)}
+                />
+              </label>
+            </div>
+          </details>
         )}
       </div>
     );
