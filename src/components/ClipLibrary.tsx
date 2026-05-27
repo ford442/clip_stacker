@@ -28,6 +28,15 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
       key={clip.id}
       className={`clip-item${clip.id === selectedClipId ? ' selected' : ''}`}
       onClick={() => onSelect(clip.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          onSelect(clip.id);
+        }
+      }}
+      role="listitem"
+      aria-label={`Clip: ${clip.title}, ${clip.kind.toUpperCase()}`}
+      tabIndex={0}
     >
       <div className="row">
         <strong className="clip-title">{clip.title}</strong>
@@ -36,7 +45,8 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
           type="button"
           className="project-delete-btn"
           onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
-          title="Delete clip"
+          title="Delete clip (Delete or Backspace key)"
+          aria-label={`Delete clip ${clip.title}`}
         >
           ×
         </button>
@@ -64,36 +74,47 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
           const isActive = active === slot;
           const isSelected = clip.id === selectedClipId;
           return (
-            <div
-              key={slot}
-              className={`clip-item clip-variant${isSelected ? ' selected' : ''}${isActive ? ' variant-active' : ''}`}
-              onClick={() => onSelect(clip.id)}
-            >
-              <div className="row">
-                <span className="variant-badge">{slot}</span>
-                <strong className="clip-title">{clip.title}</strong>
-                <button
-                  type="button"
-                  className={`variant-timeline-btn${isActive ? ' on-timeline' : ''}`}
-                  onClick={(e) => { e.stopPropagation(); onToggleVariant(group.id, slot); }}
-                  title={isActive ? 'On timeline' : 'Add to timeline'}
-                >
-                  {isActive ? '● Timeline' : 'Use'}
-                </button>
-                <button
-                  type="button"
-                  className="project-delete-btn"
-                  onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
-                  title="Delete clip"
-                >
-                  ×
-                </button>
-              </div>
-              <div className="muted">
-                {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
-                {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : 'end'}
-              </div>
-            </div>
+           <div
+             key={slot}
+             className={`clip-item clip-variant${isSelected ? ' selected' : ''}${isActive ? ' variant-active' : ''}`}
+             onClick={() => onSelect(clip.id)}
+             onKeyDown={(e) => {
+               if (e.key === 'Enter' || e.key === ' ') {
+                 e.preventDefault();
+                 onSelect(clip.id);
+               }
+             }}
+             role="listitem"
+             aria-label={`Variant ${slot}: ${clip.title}`}
+             tabIndex={0}
+           >
+             <div className="row">
+               <span className="variant-badge">{slot}</span>
+               <strong className="clip-title">{clip.title}</strong>
+               <button
+                 type="button"
+                 className={`variant-timeline-btn${isActive ? ' on-timeline' : ''}`}
+                 onClick={(e) => { e.stopPropagation(); onToggleVariant(group.id, slot); }}
+                 title={isActive ? 'On timeline' : 'Add to timeline'}
+                 aria-label={`${isActive ? 'Remove from' : 'Add to'} timeline: ${clip.title}`}
+               >
+                 {isActive ? '● Timeline' : 'Use'}
+               </button>
+               <button
+                 type="button"
+                 className="project-delete-btn"
+                 onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+                 title="Delete clip (Delete or Backspace key)"
+                 aria-label={`Delete clip ${clip.title}`}
+               >
+                 ×
+               </button>
+             </div>
+             <div className="muted">
+               {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
+               {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : 'end'}
+             </div>
+           </div>
           );
         })}
         {/* Show placeholder for missing B slot */}
@@ -118,7 +139,7 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
       {clips.length === 0 && activeGroups.length === 0 && (
         <p className="muted">No clips yet. Add clips above.</p>
       )}
-      <ul className="clip-list">
+      <ul className="clip-list" role="list" aria-label="Clip library">
         {activeGroups.map(renderGroup)}
         {ungroupedClips.map(renderSingleClip)}
       </ul>

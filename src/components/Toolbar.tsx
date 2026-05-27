@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, forwardRef } from 'react';
 import type { BrowserCapabilities } from '../utils/feature-detector';
 import type { RenderPlan } from '../types';
 import { detectCapabilities } from '../utils/feature-detector';
@@ -9,6 +9,8 @@ interface Props {
   onMerge: () => void;
   onSaveProject: () => void;
   onLoadProject: (file: File) => void;
+  onTriggerLoadDialog?: () => void;
+  onShowKeyboardShortcuts?: () => void;
   status: string;
   forceFFmpeg: boolean;
   onToggleForceFFmpeg: (v: boolean) => void;
@@ -28,29 +30,45 @@ interface Props {
   renderPlan?: RenderPlan | null;
 }
 
-export function Toolbar({
-  onAddClips,
-  onMerge,
-  onSaveProject,
-  onLoadProject,
-  status,
-  forceFFmpeg,
-  onToggleForceFFmpeg,
-  useCanvasRenderer,
-  onToggleCanvasRenderer,
-  audioReactive,
-  onToggleAudioReactive,
-  forceReencode,
-  onToggleForceReencode,
-  progressStage,
-  progressValue,
-  progressIndeterminate,
-  isRendering,
-  renderPlan,
-}: Props) {
+export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(function Toolbar(
+  {
+    onAddClips,
+    onMerge,
+    onSaveProject,
+    onLoadProject,
+    onTriggerLoadDialog,
+    onShowKeyboardShortcuts,
+    status,
+    forceFFmpeg,
+    onToggleForceFFmpeg,
+    useCanvasRenderer,
+    onToggleCanvasRenderer,
+    audioReactive,
+    onToggleAudioReactive,
+    forceReencode,
+    onToggleForceReencode,
+    progressStage,
+    progressValue,
+    progressIndeterminate,
+    isRendering,
+    renderPlan,
+  },
+  ref,
+) {
   const clipInputRef = useRef<HTMLInputElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   const [caps, setCaps] = useState<BrowserCapabilities | null>(null);
+
+  // Expose triggerLoadDialog via imperative ref
+  useEffect(() => {
+    if (ref) {
+      if (typeof ref === 'function') {
+        ref({ triggerLoadDialog: () => projectFileInputRef.current?.click() });
+      } else {
+        ref.current = { triggerLoadDialog: () => projectFileInputRef.current?.click() };
+      }
+    }
+  }, [ref]);
 
   useEffect(() => {
     detectCapabilities().then(setCaps).catch(() => {});
@@ -94,13 +112,29 @@ export function Toolbar({
             onChange={handleClipChange}
           />
         </label>
-        <button type="button" className="btn-primary" onClick={onMerge}>
+        <button
+          type="button"
+          className="btn-primary"
+          onClick={onMerge}
+          aria-keyshortcuts="r"
+          title="Render merge (R)"
+        >
           ▶ Render
         </button>
-        <button type="button" onClick={onSaveProject}>
+        <button
+          type="button"
+          onClick={onSaveProject}
+          aria-keyshortcuts="s"
+          title="Save local project (S)"
+        >
           Save project
         </button>
-        <button type="button" onClick={() => projectFileInputRef.current?.click()}>
+        <button
+          type="button"
+          onClick={() => projectFileInputRef.current?.click()}
+          aria-keyshortcuts="l"
+          title="Load local project (L)"
+        >
           Load project
         </button>
         <input
@@ -110,6 +144,14 @@ export function Toolbar({
           hidden
           onChange={handleProjectFileChange}
         />
+        <button
+          type="button"
+          onClick={onShowKeyboardShortcuts}
+          aria-keyshortcuts="?"
+          title="Show keyboard shortcuts (?)"
+        >
+          ⌨️ Help
+        </button>
 
         {/* Encoder / renderer controls */}
         <div className="encoder-badge" title={gpuTitle}>
@@ -179,4 +221,4 @@ export function Toolbar({
       </p>
     </>
   );
-}
+});

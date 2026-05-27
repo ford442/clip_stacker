@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay, RenderPlan } from './types';
 import { DEFAULT_EXPORT_SETTINGS } from './types';
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from './utils/media';
@@ -13,6 +13,7 @@ import { reindexTransitions } from './utils/transitions';
 import { hybridMergeClips } from './utils/hybrid-encoder';
 import { extractAudioToWav, calculateRenderPlan } from './ffmpeg/ffmpegService';
 import type { RenderProgressUpdate } from './ffmpeg/ffmpegService';
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 import { Toolbar } from './components/Toolbar';
 import { StorageRow } from './components/StorageRow';
 import { ClipLibrary } from './components/ClipLibrary';
@@ -21,6 +22,7 @@ import type { ClipValues } from './components/Inspector';
 import { Preview } from './components/Preview';
 import { Timeline } from './components/Timeline';
 import { TextOverlayPanel } from './components/TextOverlayPanel';
+import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(', ');
@@ -55,6 +57,10 @@ export function App() {
   const [useCanvasRenderer, setUseCanvasRenderer] = useState(false);
   const [audioReactive, setAudioReactive] = useState(true);
   const [forceReencode, setForceReencode] = useState(false);
+  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+
+  // Ref to access Toolbar's triggerLoadDialog
+  const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null);
 
   /** Toggle canvas renderer; canvas and forceFFmpeg are mutually exclusive. */
   const handleToggleCanvasRenderer = useCallback((v: boolean) => {
@@ -681,8 +687,51 @@ export function App() {
     setTextOverlays((prev) => prev.filter((o) => o.id !== id));
   }, []);
 
+  // Helper functions for keyboard shortcuts
+  const handleMoveSelectedLeft = useCallback(() => {
+    const index = timelineClips.findIndex((c) => c.id === selectedClipId);
+    if (index > 0) handleReorder(index, index - 1);
+  }, [selectedClipId, timelineClips, handleReorder]);
+
+  const handleMoveSelectedRight = useCallback(() => {
+    const index = timelineClips.findIndex((c) => c.id === selectedClipId);
+    if (index >= 0 && index < timelineClips.length - 1) {
+      // Move one position to the right
+      handleReorder(index, index + 2);
+    }
+  }, [selectedClipId, timelineClips, handleReorder]);
+
+  const handleDeleteSelectedClip = useCallback(() => {
+    if (selectedClipId) handleDeleteClip(selectedClipId);
+  }, [selectedClipId, handleDeleteClip]);
+
   // Sync transitions when clips list changes (ensure valid indices)
   const timelineClips = getTimelineClips(clips, clipGroups);
+
+  // Set up keyboard shortcuts with memoization to avoid unnecessary re-renders
+  const shortcutsMap = useMemo(
+    () => ({
+      r: handleMerge,
+      s: handleSaveProject,
+      l: () => toolbarRef.current?.triggerLoadDialog(),
+      delete: handleDeleteSelectedClip,
+      backspace: handleDeleteSelectedClip,
+      'ctrl+arrowleft': handleMoveSelectedLeft,
+      'ctrl+arrowright': handleMoveSelectedRight,
+      'meta+arrowleft': handleMoveSelectedLeft,
+      'meta+arrowright': handleMoveSelectedRight,
+      '?': () => setShowKeyboardShortcuts(true),
+    }),
+    [
+      handleMerge,
+      handleSaveProject,
+      handleDeleteSelectedClip,
+      handleMoveSelectedLeft,
+      handleMoveSelectedRight,
+    ],
+  );
+
+  useKeyboardShortcuts(shortcutsMap, true);
 
   return (
     <main className="app-shell">
@@ -703,10 +752,12 @@ export function App() {
 
       <section className="panel">
         <Toolbar
+          ref={toolbarRef}
           onAddClips={handleAddClips}
           onMerge={handleMerge}
           onSaveProject={handleSaveProject}
           onLoadProject={handleLoadProject}
+          onShowKeyboardShortcuts={() => setShowKeyboardShortcuts(true)}
           status={status}
           forceFFmpeg={forceFFmpeg}
           onToggleForceFFmpeg={setForceFFmpeg}
@@ -771,6 +822,11 @@ export function App() {
         onAdd={handleAddTextOverlay}
         onUpdate={handleUpdateTextOverlay}
         onDelete={handleDeleteTextOverlay}
+      />
+
+      <KeyboardShortcutsModal
+        isOpen={showKeyboardShortcuts}
+        onClose={() => setShowKeyboardShortcuts(false)}
       />
     </main>
   );

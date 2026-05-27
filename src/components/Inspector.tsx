@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Clip, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 
@@ -33,6 +33,7 @@ const PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium
 
 export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange, onExtractAudio }: Props) {
   const [tab, setTab] = useState<Tab>('clip');
+  const inspectorRef = useRef<HTMLDivElement>(null);
   const [values, setValues] = useState<ClipValues>({
     title: '',
     trimStart: '0',
@@ -318,12 +319,15 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
   );
 
   return (
-    <section className="panel inspector-panel">
+    <section className="panel inspector-panel" ref={inspectorRef}>
       <div className="inspector-tabs">
         <button
           type="button"
           className={`inspector-tab${tab === 'clip' ? ' active' : ''}`}
           onClick={() => setTab('clip')}
+          aria-label="Clip tab"
+          aria-selected={tab === 'clip'}
+          role="tab"
         >
           Clip
         </button>
@@ -331,6 +335,9 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           type="button"
           className={`inspector-tab${tab === 'export' ? ' active' : ''}`}
           onClick={() => setTab('export')}
+          aria-label="Export tab"
+          aria-selected={tab === 'export'}
+          role="tab"
         >
           Export
         </button>
