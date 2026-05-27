@@ -1008,3 +1008,58 @@ export async function muxVideoWithAudio(
   emitProgress(onProgress, 'Audio mux complete', 1, false);
   return new Blob([plain], { type: 'video/mp4' });
 }
+
+// ---------------------------------------------------------------------------
+// Memory management and cleanup
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggressively clean up the FFmpeg virtual filesystem.
+ * Lists all files in the VFS and deletes them.
+ * Called after successful render to reclaim memory.
+ */
+export async function aggressiveCleanupFFmpegVFS(onStatus?: StatusCallback): Promise<void> {
+  if (!ffmpegInstance) return;
+
+  try {
+    if (onStatus) onStatus('Cleaning up FFmpeg temporary files...');
+    const files = await ffmpegInstance.listDir('/');
+    for (const entry of files) {
+      if (!entry.isDir) {
+        try {
+          await ffmpegInstance.deleteFile(entry.name);
+        } catch {
+          /* ignore individual file deletion errors */
+        }
+      }
+    }
+    if (onStatus) onStatus('FFmpeg temporary files cleaned up.');
+  } catch (err) {
+    // Log but don't throw — cleanup failures shouldn't crash the app
+    console.warn('Error during aggressive FFmpeg cleanup:', err);
+  }
+}
+
+/**
+ * Reset the FFmpeg instance entirely, terminating the current instance
+ * and forcing a fresh initialization on the next render.
+ * This is a nuclear option for freeing all FFmpeg-related memory.
+ * Useful when the instance encounters errors or memory pressure is too high.
+ */
+export async function resetFFmpegInstance(): Promise<void> {
+  if (ffmpegInstance) {
+    try {
+      // Attempt to clean up VFS first
+      await aggressiveCleanupFFmpegVFS();
+    } catch {
+      /* ignore */
+    }
+
+    // Clear the instance reference; it will be garbage collected and a new one
+    // will be created on the next ensureFfmpeg() call.
+    ffmpegInstance = null;
+  }
+
+  // Reset font state for the next instance
+  fontLoaded = false;
+}
