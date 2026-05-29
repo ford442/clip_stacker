@@ -52,6 +52,9 @@ export async function hybridMergeClips(
   forceReencode = false,
   renderPlan?: RenderPlan,
 ): Promise<HybridEncodeResult> {
+  let canvasFailure: string | null = null;
+  let webcodecsFailure: string | null = null;
+
   // -- Canvas renderer path --------------------------------------------------
   if (useCanvas && typeof MediaRecorder !== 'undefined') {
     try {
@@ -60,9 +63,8 @@ export async function hybridMergeClips(
       const blob = await encodeClipsWithCanvas(clips, settings, onStatus, audioReactive, onProgress);
       return { blob, path: 'canvas' };
     } catch (err) {
-      onStatus(
-        `Canvas render failed (${(err as Error).message}). Falling back to FFmpeg...`,
-      );
+      canvasFailure = (err as Error).message;
+      onStatus(`Canvas render failed (${canvasFailure}). Falling back to FFmpeg...`);
     }
   }
 
@@ -81,16 +83,29 @@ export async function hybridMergeClips(
         const blob = await encodeClipsWithWebCodecs(clips, settings, onStatus, onProgress);
         return { blob, path: 'webcodecs' };
       } catch (err) {
-        onStatus(
-          `GPU encode failed (${(err as Error).message}). Falling back to FFmpeg...`,
-        );
+        webcodecsFailure = (err as Error).message;
+        onStatus(`GPU encode failed (${webcodecsFailure}). Falling back to FFmpeg...`);
       }
     }
   }
 
   // -- FFmpeg path (default / fallback) -------------------------------------
   onProgress?.({ stage: 'FFmpeg path selected', progress: 0, indeterminate: false });
-  const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress, forceReencode);
-  const effectiveRenderPlan = renderPlan || calculateRenderPlan(clips, transitions, textOverlays, settings);
-  return { blob, path: 'ffmpeg', renderPlan: effectiveRenderPlan };
+  try {
+    const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress, forceReencode);
+    const effectiveRenderPlan = renderPlan || calculateRenderPlan(clips, transitions, textOverlays, settings);
+    return { blob, path: 'ffmpeg', renderPlan: effectiveRenderPlan };
+  } catch (err) {
+    // Chain prior fallback messages so the final error is maximally diagnostic.
+    if (canvasFailure || webcodecsFailure) {
+      const prev: string[] = [];
+      if (canvasFailure) prev.push(`Canvas: ${canvasFailure}`);
+      if (webcodecsFailure) prev.push(`WebCodecs: ${webcodecsFailure}`);
+      const orig = (err as Error).message;
+      const e = new Error(`${orig}\n\nPrevious encoder attempts that also failed:\n${prev.join('\n')}`);
+      (e as any).ffmpegLogs = (err as any).ffmpegLogs;
+      throw e;
+    }
+    throw err;
+  }
 }

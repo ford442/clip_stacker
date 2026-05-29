@@ -122,9 +122,16 @@ Example full URL: `https://storage.example.com/webhook/clip-stacker`
 
 Auth is optional and handled via `Authorization: Bearer <token>` header. If your deployment requires authentication, provide an API key or bearer token in the app's optional auth token field. The client automatically prefixes the token with `Bearer` if not already present.
 
-### Errors
+### Errors & Diagnostics (Never Silent)
 
-If save/load fails:
+Render and "Extract Audio" **never fail silently**. All FFmpeg `exec`/`writeFile`/`readFile` calls are wrapped; the log handler records every line (not just progress); errors are augmented with the last 25 FFmpeg logs and surfaced in the status bar + console. A **📋 Copy Debug** toolbar button exports the full context for bug reports.
+
+If a render or extract does nothing / stops with no message:
+- Check the browser console (all `[FFmpeg]` lines are now printed).
+- Immediately click **📋 Copy Debug** — it includes status, render plan, recent logs, UA, and `crossOriginIsolated`.
+- The status text will contain a section "Recent FFmpeg logs (last 25)" with the real error (e.g. missing audio stream, bad filter syntax, OOM during write).
+
+Previous save/load errors:
 - Non-2xx responses are caught and displayed in the app status: `Remote save failed (status)` or `Remote load failed (status)`
 - Network errors also bubble up as error messages in the status text
 

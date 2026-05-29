@@ -29,6 +29,8 @@ interface Props {
   progressIndeterminate: boolean;
   isRendering: boolean;
   renderPlan?: RenderPlan | null;
+  /** Optional: copy last FFmpeg logs + context for support / bug reports. */
+  onCopyDebugInfo?: () => void;
 }
 
 export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(function Toolbar(
@@ -54,6 +56,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     progressIndeterminate,
     isRendering,
     renderPlan,
+    onCopyDebugInfo,
   },
   ref,
 ) {
@@ -164,6 +167,16 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             style={{ opacity: 0.6, fontSize: '0.85em' }}
           >
             🔄 Reset FFmpeg
+          </button>
+        )}
+        {onCopyDebugInfo && (
+          <button
+            type="button"
+            onClick={onCopyDebugInfo}
+            title="Copy last FFmpeg logs + render plan + browser context (great for bug reports)"
+            style={{ opacity: 0.7, fontSize: '0.85em' }}
+          >
+            📋 Copy Debug
           </button>
         )}
 

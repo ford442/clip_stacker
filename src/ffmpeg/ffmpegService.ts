@@ -42,6 +42,48 @@ interface FfmpegLogProgressContext {
 
 let activeFfmpegLogProgress: FfmpegLogProgressContext | null = null;
 
+/** Ring buffer of the most recent FFmpeg log messages (for diagnostics on failure). */
+const MAX_LOG_BUFFER = 300;
+let ffmpegLogBuffer: string[] = [];
+let lastFfmpegErrorLog: string | null = null;
+
+/** Append a log line to the diagnostic buffer and detect obvious error patterns. */
+function recordFfmpegLog(message: string): void {
+  ffmpegLogBuffer.push(message);
+  if (ffmpegLogBuffer.length > MAX_LOG_BUFFER) {
+    ffmpegLogBuffer.shift();
+  }
+  // Capture the last line that looks like a hard failure for quick access.
+  if (/error|failed|invalid|no such|cannot|unable|does not contain|matches no streams|Output file does not/i.test(message)) {
+    lastFfmpegErrorLog = message;
+  }
+}
+
+export function getLastFfmpegLogs(count = 50): string[] {
+  return ffmpegLogBuffer.slice(-Math.max(1, count));
+}
+
+export function getLastFfmpegError(): string | null {
+  return lastFfmpegErrorLog;
+}
+
+export function clearFfmpegLogs(): void {
+  ffmpegLogBuffer = [];
+  lastFfmpegErrorLog = null;
+}
+
+/** Build a rich error that includes recent FFmpeg logs for the user/developer. */
+function buildDetailedError(operation: string, originalError: unknown): Error {
+  const recent = getLastFfmpegLogs(25).join('\n');
+  const errMsg = (originalError as Error)?.message || String(originalError);
+  const lastErr = lastFfmpegErrorLog ? `\nLast relevant FFmpeg log: ${lastFfmpegErrorLog}` : '';
+  const full = `${operation} failed: ${errMsg}${lastErr}\n\n--- Recent FFmpeg logs (last 25) ---\n${recent || '(no logs captured)'}\n--- End FFmpeg logs ---`;
+  const e = new Error(full);
+  (e as any).ffmpegLogs = getLastFfmpegLogs(50);
+  (e as any).lastFfmpegError = lastFfmpegErrorLog;
+  return e;
+}
+
 function clampProgress(progress: number): number {
   return Math.max(0, Math.min(1, progress));
 }
@@ -70,6 +112,47 @@ function parseFfmpegTimeSeconds(message: string): number | null {
     return null;
   }
   return hours * 3600 + minutes * 60 + seconds;
+}
+
+/** Safe wrapper around exec that always augments rejection with recent logs + context. */
+async function safeExec(
+  ffmpeg: FFmpeg,
+  args: string[],
+  context: FfmpegLogProgressContext | null,
+  operation: string,
+): Promise<void> {
+  try {
+    if (context) {
+      await execWithFfmpegProgress(ffmpeg, args, context);
+    } else {
+      await ffmpeg.exec(args);
+    }
+  } catch (err) {
+    throw buildDetailedError(operation, err);
+  }
+}
+
+/** Safe writeFile with diagnostics on failure (OOM, VFS full, permission, etc.). */
+async function safeWriteFile(
+  ffmpeg: FFmpeg,
+  name: string,
+  data: Uint8Array | string,
+  operation = 'writeFile',
+): Promise<void> {
+  try {
+    await ffmpeg.writeFile(name, data as any);
+  } catch (err) {
+    throw buildDetailedError(`${operation} ${name}`, err);
+  }
+}
+
+/** Safe readFile with diagnostics. */
+async function safeReadFile(ffmpeg: FFmpeg, name: string, operation = 'readFile'): Promise<Uint8Array> {
+  try {
+    return (await ffmpeg.readFile(name)) as Uint8Array;
+  } catch (err) {
+    throw buildDetailedError(`${operation} ${name}`, err);
+  }
 }
 
 async function execWithFfmpegProgress(
@@ -164,7 +247,14 @@ export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
   fontLoaded = false;
 
   const ffmpeg = new FFmpeg();
+
+  // CRITICAL: capture EVERY log line. The old filter silently dropped all errors/warnings.
   ffmpeg.on('log', ({ message }) => {
+    recordFfmpegLog(message);
+    // Always surface to console for developers (was completely invisible before).
+    console.log('[FFmpeg]', message);
+
+    // Only drive progress/status from time= lines (keep UX clean).
     if (!message.includes('time=')) return;
     onStatus(`Rendering... ${message}`);
 
@@ -180,6 +270,14 @@ export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
     const local = clampProgress(seconds / context.totalDuration);
     const progress = context.rangeStart + (context.rangeEnd - context.rangeStart) * local;
     emitProgress(context.onProgress, context.stage, progress, false);
+  });
+
+  // Also listen for the explicit error event emitted by @ffmpeg/ffmpeg in some failure modes.
+  ffmpeg.on('error', (err: any) => {
+    const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err));
+    recordFfmpegLog(`[FFmpeg ERROR EVENT] ${msg}`);
+    console.error('[FFmpeg error event]', err);
+    lastFfmpegErrorLog = msg;
   });
 
   const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
@@ -208,9 +306,11 @@ async function ensureFont(ffmpeg: FFmpeg, onStatus: StatusCallback): Promise<voi
   onStatus('Loading font for text overlays...');
   try {
     const fontData = await fetchFile(FONT_CDN_URL);
-    await ffmpeg.writeFile(FONT_VIRTUAL_NAME, fontData);
+    await safeWriteFile(ffmpeg, FONT_VIRTUAL_NAME, fontData, 'ensureFont write');
     fontLoaded = true;
   } catch (err) {
+    // If already a detailed error from safeWrite, rethrow as-is
+    if ((err as any).ffmpegLogs) throw err;
     throw new Error(`Failed to load font for text overlays: ${(err as Error).message}`);
   }
 }
@@ -254,13 +354,13 @@ async function mergeClipsLossless(
     if (Number.isFinite(clip.trimEnd)) lines.push(`outpoint ${clip.trimEnd}`);
     return lines.join('\n');
   });
-  await ffmpeg.writeFile('concat_list.txt', listLines.join('\n'));
+  await safeWriteFile(ffmpeg, 'concat_list.txt', listLines.join('\n'), 'lossless concat list');
 
   onStatus('FFmpeg path: lossless concat (stream copy).');
   emitProgress(onProgress, 'FFmpeg lossless concat', 0.25, false);
-  await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4']);
+  await safeExec(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4'], null, 'Lossless concat exec');
   emitProgress(onProgress, 'FFmpeg lossless concat', 0.9, false);
-  await ffmpeg.deleteFile('concat_list.txt');
+  try { await ffmpeg.deleteFile('concat_list.txt'); } catch { /* ignore */ }
 }
 
 // Perform two-pass re-encoding for clips with effects
@@ -317,7 +417,7 @@ async function processClipPass1(
 
   if (clipNeedsEffects(clip)) {
     onStatus(`Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}"...`);
-    await execWithFfmpegProgress(ffmpeg, [
+    await safeExec(ffmpeg, [
       '-i', clip.inputName!,
       '-filter_complex', buildSingleClipFilter(clip),
       '-map', '[vout]',
@@ -336,7 +436,7 @@ async function processClipPass1(
       rangeStart,
       rangeEnd,
       onProgress,
-    });
+    }, `Pass 1 encode for clip ${index + 1}/${total} "${clip.title}"`);
   } else {
     // -ss before -i triggers a fast container-level seek; -t is duration from that point.
     onStatus(`Pass 1 [${index + 1}/${total}]: Trimming "${clip.title}" (lossless)...`);
@@ -345,7 +445,7 @@ async function processClipPass1(
     args.push('-i', clip.inputName!);
     if (Number.isFinite(clip.trimEnd)) args.push('-t', String(clip.trimEnd - clip.trimStart));
     args.push('-c', 'copy', outName);
-    await ffmpeg.exec(args);
+    await safeExec(ffmpeg, args, null, `Pass 1 trim (lossless copy) for clip ${index + 1}/${total} "${clip.title}"`);
     emitProgress(onProgress, `Pass 1: ${clip.title}`, rangeEnd, false);
   }
 
@@ -361,18 +461,18 @@ async function mergeClipsPass2(
   onProgress?: ProgressCallback,
 ): Promise<void> {
   const concatList = intermediateNames.map((n) => `file '${n}'`).join('\n');
-  await ffmpeg.writeFile('concat_list.txt', concatList);
+  await safeWriteFile(ffmpeg, 'concat_list.txt', concatList, 'pass2 concat list');
 
   onStatus('Pass 2: Final concatenation...');
-  await execWithFfmpegProgress(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4'], {
+  await safeExec(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4'], {
     stage: 'Pass 2: Final concatenation',
     totalDuration,
     rangeStart: 0.85,
     rangeEnd: 0.95,
     onProgress,
-  });
+  }, 'Pass 2 final concat exec');
 
-  await ffmpeg.deleteFile('concat_list.txt');
+  try { await ffmpeg.deleteFile('concat_list.txt'); } catch { /* ignore */ }
   for (const name of intermediateNames) {
     await ffmpeg.deleteFile(name);
   }
@@ -397,7 +497,7 @@ async function mergeClipsWithTransitions(
     inputArgs.push('-i', clip.inputName!);
   }
 
-  await execWithFfmpegProgress(ffmpeg, [
+  await safeExec(ffmpeg, [
     ...inputArgs,
     '-filter_complex', filterComplex,
     '-map', '[vout]',
@@ -416,7 +516,7 @@ async function mergeClipsWithTransitions(
     rangeStart: 0.15,
     rangeEnd: 0.95,
     onProgress,
-  });
+  }, 'Transition filter_complex render');
 }
 
 /**
@@ -560,7 +660,7 @@ async function mergeClipsWithCompositing(
     inputArgs.push('-i', clip.inputName!);
   }
 
-  await execWithFfmpegProgress(ffmpeg, [
+  await safeExec(ffmpeg, [
     ...inputArgs,
     '-filter_complex', filterComplex,
     '-map', '[vout]',
@@ -579,15 +679,24 @@ async function mergeClipsWithCompositing(
     rangeStart: 0.15,
     rangeEnd: 0.95,
     onProgress,
-  });
+  }, 'PiP/compositing filter_complex render');
 }
 
 export async function extractAudioToWav(clip: Clip, onStatus: StatusCallback): Promise<Blob> {
+  // Start fresh log capture for this operation so any failure has clean context.
+  clearFfmpegLogs();
+
   const ffmpeg = await ensureFfmpeg(onStatus);
 
   const ext = getSafeExtension(clip.file.name, 'mp4');
   const inputName = `audio-extract-input.${ext}`;
   const outputName = 'audio-extract-output.wav';
+
+  // Pre-flight: basic sanity
+  const dur = getClipDuration(clip);
+  if (dur <= 0) {
+    throw new Error('Cannot extract audio: clip has zero or negative duration after trim.');
+  }
 
   // Clean up any leftover files from a previous extraction run.
   for (const name of [inputName, outputName]) {
@@ -595,38 +704,47 @@ export async function extractAudioToWav(clip: Clip, onStatus: StatusCallback): P
   }
 
   onStatus(`Extracting audio from "${clip.title}"...`);
-  await ffmpeg.writeFile(inputName, await fetchFile(clip.file));
 
-  const args: string[] = [];
+  try {
+    await safeWriteFile(ffmpeg, inputName, await fetchFile(clip.file), 'extract write input');
 
-  // Seek before input for fast container-level seek when trimStart is set.
-  if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
-  args.push('-i', inputName);
-  if (Number.isFinite(clip.trimEnd)) {
-    args.push('-t', String(clip.trimEnd - clip.trimStart));
+    const args: string[] = [];
+
+    // Seek before input for fast container-level seek when trimStart is set.
+    if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
+    args.push('-i', inputName);
+    if (Number.isFinite(clip.trimEnd)) {
+      args.push('-t', String(clip.trimEnd - clip.trimStart));
+    }
+
+    args.push(
+      '-vn',                  // drop video stream
+      '-acodec', 'pcm_s16le', // PCM 16-bit little-endian (WAV)
+      '-ar', '44100',         // 44.1 kHz sample rate
+      '-ac', '2',             // stereo
+      outputName,
+    );
+
+    await safeExec(ffmpeg, args, null, `Extract audio exec for "${clip.title}" (trim ${clip.trimStart}-${clip.trimEnd || 'end'})`);
+
+    const output = await safeReadFile(ffmpeg, outputName, 'extract read output');
+    // Copy to a plain ArrayBuffer so Blob constructor accepts it regardless of
+    // whether FFmpeg's backing buffer is a SharedArrayBuffer.
+    const plain = new Uint8Array(output).buffer as ArrayBuffer;
+
+    onStatus('Audio extraction complete.');
+    return new Blob([plain], { type: 'audio/wav' });
+  } catch (err) {
+    // Always attempt cleanup on failure path.
+    try { await ffmpeg.deleteFile(inputName); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile(outputName); } catch { /* ignore */ }
+    // Re-throw the (already detailed) error
+    throw err;
+  } finally {
+    // Best-effort final cleanup even on success path.
+    try { await ffmpeg.deleteFile(inputName); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile(outputName); } catch { /* ignore */ }
   }
-
-  args.push(
-    '-vn',                  // drop video stream
-    '-acodec', 'pcm_s16le', // PCM 16-bit little-endian (WAV)
-    '-ar', '44100',         // 44.1 kHz sample rate
-    '-ac', '2',             // stereo
-    outputName,
-  );
-
-  await ffmpeg.exec(args);
-
-  const output = (await ffmpeg.readFile(outputName)) as Uint8Array;
-  // Copy to a plain ArrayBuffer so Blob constructor accepts it regardless of
-  // whether FFmpeg's backing buffer is a SharedArrayBuffer.
-  const plain = new Uint8Array(output).buffer as ArrayBuffer;
-
-  // Clean up extraction files.
-  try { await ffmpeg.deleteFile(inputName); } catch { /* ignore */ }
-  try { await ffmpeg.deleteFile(outputName); } catch { /* ignore */ }
-
-  onStatus('Audio extraction complete.');
-  return new Blob([plain], { type: 'audio/wav' });
 }
 
 /**
@@ -728,6 +846,9 @@ export async function mergeClips(
   onProgress?: ProgressCallback,
   forceReencode = false,
 ): Promise<Blob> {
+  // Fresh diagnostic buffer for this render so failure messages are relevant.
+  clearFfmpegLogs();
+
   if (clips.length === 0) throw new Error('Upload clips before rendering.');
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
 
@@ -746,7 +867,7 @@ export async function mergeClips(
       entry.name === 'stacked_final.mp4' ||
       entry.name === 'concat_list.txt'
     ) {
-      await ffmpeg.deleteFile(entry.name);
+      try { await ffmpeg.deleteFile(entry.name); } catch { /* ignore */ }
     }
   }
 
@@ -757,7 +878,7 @@ export async function mergeClips(
   }));
 
   for (const [index, clip] of workingClips.entries()) {
-    await ffmpeg.writeFile(clip.inputName!, await fetchFile(clip.file));
+    await safeWriteFile(ffmpeg, clip.inputName!, await fetchFile(clip.file), `write input ${index}`);
     const prepProgress = 0.03 + ((index + 1) / workingClips.length) * 0.09;
     emitProgress(onProgress, 'Preparing media', prepProgress, false);
   }
@@ -786,44 +907,47 @@ export async function mergeClips(
   // If force re-encode is enabled, skip lossless path and go straight to re-encoding
   const shouldForceReencodeNow = forceReencode && renderPlan.path === 'lossless-concat';
 
-  if (hasPipClips) {
-    // PiP / compositing path — overlay clips on top of the base layer
-    onStatus(`FFmpeg path: ${effectivePlan.description}`);
-    await mergeClipsWithCompositing(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
-  } else if (transitionFilterComplex) {
-    // Single-pass filter_complex render covering all clips + transitions
-    onStatus(`FFmpeg path: ${effectivePlan.description}`);
-    await mergeClipsWithTransitions(
-      ffmpeg,
-      workingClips,
-      activeTransitions,
-      settings,
-      transitionFilterComplex,
-      onStatus,
-      totalDuration,
-      onProgress,
-    );
-  } else if (shouldForceReencodeNow) {
-    // Force re-encode even though lossless would be used
-    onStatus(
-      `FFmpeg path: ${effectivePlan.description}. Starting export...`,
-    );
-    await performTwoPassEncode(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
-  } else if (effectivePlan.path === 'lossless-concat') {
-    // Lossless path (text overlays will be applied afterward if present)
-    onStatus(`FFmpeg path: ${effectivePlan.description}`);
-    await mergeClipsLossless(ffmpeg, workingClips, onStatus, onProgress);
-  } else {
-    // Two-pass re-encoding for effects
-    onStatus(
-      `FFmpeg path: ${effectivePlan.description}. Starting export...`,
-    );
-    await performTwoPassEncode(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
-  }
-
-  for (const clip of workingClips) {
-    if (clip.inputName) {
-      try { await ffmpeg.deleteFile(clip.inputName); } catch { /* ignore */ }
+  try {
+    if (hasPipClips) {
+      // PiP / compositing path — overlay clips on top of the base layer
+      onStatus(`FFmpeg path: ${effectivePlan.description}`);
+      await mergeClipsWithCompositing(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
+    } else if (transitionFilterComplex) {
+      // Single-pass filter_complex render covering all clips + transitions
+      onStatus(`FFmpeg path: ${effectivePlan.description}`);
+      await mergeClipsWithTransitions(
+        ffmpeg,
+        workingClips,
+        activeTransitions,
+        settings,
+        transitionFilterComplex,
+        onStatus,
+        totalDuration,
+        onProgress,
+      );
+    } else if (shouldForceReencodeNow) {
+      // Force re-encode even though lossless would be used
+      onStatus(
+        `FFmpeg path: ${effectivePlan.description}. Starting export...`,
+      );
+      await performTwoPassEncode(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
+    } else if (effectivePlan.path === 'lossless-concat') {
+      // Lossless path (text overlays will be applied afterward if present)
+      onStatus(`FFmpeg path: ${effectivePlan.description}`);
+      await mergeClipsLossless(ffmpeg, workingClips, onStatus, onProgress);
+    } else {
+      // Two-pass re-encoding for effects
+      onStatus(
+        `FFmpeg path: ${effectivePlan.description}. Starting export...`,
+      );
+      await performTwoPassEncode(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
+    }
+  } finally {
+    // Always clean input files even if a render pass threw.
+    for (const clip of workingClips) {
+      if (clip.inputName) {
+        try { await ffmpeg.deleteFile(clip.inputName); } catch { /* ignore */ }
+      }
     }
   }
 
@@ -836,14 +960,14 @@ export async function mergeClips(
 
     // Write each overlay's text to a dedicated temp file to avoid escaping issues.
     for (const overlay of textOverlays) {
-      await ffmpeg.writeFile(`tol_${overlay.id}.txt`, overlay.text);
+      await safeWriteFile(ffmpeg, `tol_${overlay.id}.txt`, overlay.text, 'text overlay txt');
     }
 
     const vfFilter = textOverlays.map(buildDrawtextFilter).join(',');
     onStatus('Applying text overlays...');
     emitProgress(onProgress, 'Applying text overlays', 0.95, false);
 
-    await execWithFfmpegProgress(ffmpeg, [
+    await safeExec(ffmpeg, [
       '-i', 'stacked.mp4',
       '-vf', vfFilter,
       '-c:v', 'libx264',
@@ -858,7 +982,7 @@ export async function mergeClips(
       rangeStart: 0.95,
       rangeEnd: 0.99,
       onProgress,
-    });
+    }, 'Text overlay drawtext pass');
 
     // Clean up temp text files.
     for (const overlay of textOverlays) {
@@ -869,7 +993,7 @@ export async function mergeClips(
     finalFileName = 'stacked_final.mp4';
   }
 
-  const output = (await ffmpeg.readFile(finalFileName)) as Uint8Array;
+  const output = await safeReadFile(ffmpeg, finalFileName, 'final output read');
   try { await ffmpeg.deleteFile(finalFileName); } catch { /* ignore */ }
   // Copy to a plain ArrayBuffer so Blob constructor accepts it regardless of
   // whether FFmpeg's backing buffer is a SharedArrayBuffer.
@@ -928,14 +1052,14 @@ export async function muxVideoWithAudio(
   const videoExt = videoBlob.type.includes('mp4') ? 'mp4' : 'webm';
   const videoVfsName = `mux_canvas_video.${videoExt}`;
   onStatus('Writing canvas video to FFmpeg...');
-  await ffmpeg.writeFile(videoVfsName, new Uint8Array(await videoBlob.arrayBuffer()));
+  await safeWriteFile(ffmpeg, videoVfsName, new Uint8Array(await videoBlob.arrayBuffer()), 'mux write canvas video');
 
   // Write each clip's source file for audio extraction.
   const audioVfsNames: string[] = [];
   for (const [i, clip] of clips.entries()) {
     const ext = getSafeExtension(clip.file.name, clip.kind === 'video' ? 'mp4' : 'mp3');
     const name = `mux_audio_${i}.${ext}`;
-    await ffmpeg.writeFile(name, await fetchFile(clip.file));
+    await safeWriteFile(ffmpeg, name, await fetchFile(clip.file), `mux write audio ${i}`);
     audioVfsNames.push(name);
     const prepProgress = 0.87 + ((i + 1) / clips.length) * 0.04;
     emitProgress(onProgress, 'Audio mux preparation', prepProgress, false);
@@ -976,7 +1100,7 @@ export async function muxVideoWithAudio(
 
   onStatus('Muxing audio with canvas video...');
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
-  await execWithFfmpegProgress(ffmpeg, [
+  await safeExec(ffmpeg, [
     ...inputArgs,
     '-filter_complex', filterComplex,
     '-map', '0:v',
@@ -992,9 +1116,9 @@ export async function muxVideoWithAudio(
     rangeStart: 0.91,
     rangeEnd: 0.995,
     onProgress,
-  });
+  }, 'Canvas video + audio mux exec');
 
-  const output = (await ffmpeg.readFile('mux_output.mp4')) as Uint8Array;
+  const output = await safeReadFile(ffmpeg, 'mux_output.mp4', 'mux final read');
   const plain = new Uint8Array(output).buffer as ArrayBuffer;
 
   // Clean up.

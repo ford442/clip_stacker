@@ -11,7 +11,15 @@ import {
 import { findMatchingClipIndex } from './utils/clipMatching';
 import { reindexTransitions } from './utils/transitions';
 import { hybridMergeClips } from './utils/hybrid-encoder';
-import { extractAudioToWav, calculateRenderPlan, aggressiveCleanupFFmpegVFS, resetFFmpegInstance } from './ffmpeg/ffmpegService';
+import {
+  extractAudioToWav,
+  calculateRenderPlan,
+  aggressiveCleanupFFmpegVFS,
+  resetFFmpegInstance,
+  getLastFfmpegLogs,
+  getLastFfmpegError,
+  clearFfmpegLogs,
+} from './ffmpeg/ffmpegService';
 import type { RenderProgressUpdate } from './ffmpeg/ffmpegService';
 import { isHighMemoryUsage, getMemoryStatus, formatBytes } from './utils/memory';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
@@ -291,7 +299,15 @@ export function App() {
         console.warn('Error during FFmpeg cleanup:', err);
       }
     } catch (error) {
-      setStatus(`Render failed: ${(error as Error).message}`);
+      const err = error as Error;
+      // Always log the full detailed message (includes embedded FFmpeg logs from our safe wrappers).
+      console.error('Render failed (full details):', err);
+      const recentLogs = getLastFfmpegLogs(30).join('\n');
+      if (recentLogs) {
+        console.error('Last captured FFmpeg logs:\n' + recentLogs);
+      }
+      setStatus(`Render failed: ${err.message}`);
+      // Leave logs in buffer so user can click "Copy Debug Info" to grab them.
     } finally {
       setIsRendering(false);
     }
@@ -324,6 +340,42 @@ export function App() {
     pendingRenderRef.current = null;
     setStatus('Render cancelled.');
   }, []);
+
+  /** Copy rich diagnostics (status + render plan + last FFmpeg logs + browser info) to clipboard. */
+  const handleCopyDebugInfo = useCallback(async () => {
+    const lines: string[] = [];
+    lines.push(`clip_stacker debug report — ${new Date().toISOString()}`);
+    lines.push(`Status: ${status || '(empty)'}`);
+    if (renderPlan) {
+      lines.push(`Render plan: ${renderPlan.description} | ${renderPlan.reason} | willReencode=${renderPlan.willReencode}`);
+    }
+    lines.push(`Encoder last used: ${encoderPath || 'n/a'}`);
+    lines.push(`Clips on timeline: ${getTimelineClips(clips, clipGroups).length}`);
+    const lastErr = getLastFfmpegError();
+    if (lastErr) lines.push(`Last FFmpeg error log: ${lastErr}`);
+    const logs = getLastFfmpegLogs(60);
+    if (logs.length > 0) {
+      lines.push('--- Last FFmpeg logs ---');
+      lines.push(...logs);
+      lines.push('--- End logs ---');
+    } else {
+      lines.push('(no FFmpeg logs captured in buffer)');
+    }
+    lines.push(`UA: ${navigator.userAgent}`);
+    lines.push(`CrossOriginIsolated: ${window.crossOriginIsolated}`);
+    lines.push('--- End debug report ---');
+
+    const text = lines.join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      setStatus('Debug info copied to clipboard (include in bug reports).');
+    } catch {
+      // Fallback: show in console + alert the first chunk
+      console.log(text);
+      setStatus('Debug info logged to console (clipboard blocked).');
+      window.alert('Debug info in console. First 800 chars:\n\n' + text.slice(0, 800));
+    }
+  }, [status, renderPlan, encoderPath, clips, clipGroups]);
 
   const handleDebugResetFFmpeg = useCallback(async () => {
     setStatus('Resetting FFmpeg instance (debug action)...');
@@ -563,7 +615,11 @@ export function App() {
         setStatus(`Audio extracted and downloaded as "${wavFileName}".`);
       }
     } catch (error) {
-      setStatus(`Audio extraction failed: ${(error as Error).message}`);
+      const err = error as Error;
+      console.error('Audio extraction failed (full details):', err);
+      const recentLogs = getLastFfmpegLogs(20).join('\n');
+      if (recentLogs) console.error('Last FFmpeg logs for extract:\n' + recentLogs);
+      setStatus(`Audio extraction failed: ${err.message}`);
     }
   }, [selectedClip, storageEndpoint, storageAuthToken]);
 
@@ -818,6 +874,7 @@ export function App() {
           onLoadProject={handleLoadProject}
           onShowKeyboardShortcuts={() => setShowKeyboardShortcuts(true)}
           onDebugResetFFmpeg={handleDebugResetFFmpeg}
+          onCopyDebugInfo={handleCopyDebugInfo}
           status={status}
           forceFFmpeg={forceFFmpeg}
           onToggleForceFFmpeg={setForceFFmpeg}
