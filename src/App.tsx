@@ -237,23 +237,6 @@ export function App() {
       return;
     }
 
-    // Status wrapper that also tracks FFmpeg loading state.
-    const handleSetStatus = (msg: string) => {
-      setStatus(msg);
-      // Detect FFmpeg loading phase from the granular messages emitted by ensureFfmpeg.
-      const isLoadingMsg =
-        msg.startsWith('Downloading FFmpeg') ||
-        msg.startsWith('Initializing FFmpeg') ||
-        msg.startsWith('Loading FFmpeg core');
-      if (isLoadingMsg) {
-        setFfmpegLoading(true);
-        setFfmpegFailed(false);
-      } else {
-        // Once we're past loading messages, clear the loading flag.
-        setFfmpegLoading(false);
-      }
-    };
-
     try {
       // Reset FFmpeg load-failure state on a new render attempt.
       setFfmpegFailed(false);
@@ -274,7 +257,14 @@ export function App() {
       // Calculate render plan before starting
       const plan = calculateRenderPlan(timelineClips, transitions, textOverlays, exportSettings);
       setRenderPlan(plan);
-      handleSetStatus(`Render plan: ${plan.description} (${plan.reason})`);
+      setStatus(`Render plan: ${plan.description} (${plan.reason})`);
+
+      // Track FFmpeg loading phase via the exported helper so we don't couple to
+      // status message strings.
+      const trackFfmpegLoading = (msg: string) => {
+        setStatus(msg);
+        setFfmpegLoading(isFfmpegLoading());
+      };
       
       const handleProgress = (update: RenderProgressUpdate) => {
         setProgressStage(update.stage);
@@ -289,7 +279,7 @@ export function App() {
         timelineClips,
         transitions,
         exportSettings,
-        handleSetStatus,
+        trackFfmpegLoading,
         handleProgress,
         forceFFmpeg,
         textOverlays,

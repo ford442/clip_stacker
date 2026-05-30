@@ -402,7 +402,6 @@ export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
     (ffmpeg) => {
       ffmpegInstance = ffmpeg;
       ffmpegLoadingPromise = null;
-      ffmpegLoadFailed = false;
       return ffmpeg;
     },
     (err) => {
