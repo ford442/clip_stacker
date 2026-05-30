@@ -416,16 +416,20 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
             tone="audio"
           />
         </div>
-        {clip.kind === 'video' && onExtractAudio && (
+        {onExtractAudio && (
           <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Audio extraction</div>
         )}
-        {clip.kind === 'video' && onExtractAudio && (
+        {onExtractAudio && (
           <button
             type="button"
             className="btn-secondary"
             style={{ marginTop: '0.25rem' }}
             onClick={onExtractAudio}
-            title="Extract audio from this video clip to a WAV file. If a remote storage endpoint is configured, the WAV will also be uploaded there."
+            title={
+              clip.kind === 'audio'
+                ? 'Convert this audio clip to a WAV file (PCM 44.1 kHz stereo). If a remote storage endpoint is configured, the WAV will also be uploaded there.'
+                : 'Extract audio from this video clip to a WAV file. If a remote storage endpoint is configured, the WAV will also be uploaded there.'
+            }
           >
             🎵 Extract Audio to WAV
           </button>

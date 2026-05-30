@@ -800,28 +800,62 @@ async function mergeClipsWithCompositing(
   }, 'PiP/compositing filter_complex render');
 }
 
+/**
+ * Minimum size in bytes for a non-empty WAV file (44-byte RIFF header + at
+ * least one sample).  An output at or below this threshold means FFmpeg ran
+ * without error but produced no audio data — treated as a "no audio stream"
+ * failure.
+ */
+export const WAV_HEADER_MIN_BYTES = 45;
+
+/**
+ * Regex patterns that indicate the source file has no extractable audio
+ * stream, used to convert the generic FFmpeg error into a user-friendly
+ * message.
+ */
+export const NO_AUDIO_STREAM_RE =
+  /matches no streams|does not contain|no audio|Output file does not contain|Invalid audio stream/i;
+
+/**
+ * Pre-flight validation for extractAudioToWav.
+ * Returns null on success, or an error message string if validation fails.
+ * Exported for unit testing.
+ */
+export function validateExtractAudioClip(clip: Clip): string | null {
+  const rawDur = (Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration) - clip.trimStart;
+  if (rawDur <= 0) {
+    return (
+      `Cannot extract audio: clip "${clip.title}" has zero or negative duration after trim ` +
+      `(trimStart=${clip.trimStart}, trimEnd=${Number.isFinite(clip.trimEnd) ? clip.trimEnd : 'end'}, ` +
+      `duration=${clip.duration}).`
+    );
+  }
+  return null;
+}
+
 export async function extractAudioToWav(clip: Clip, onStatus: StatusCallback): Promise<Blob> {
+  // Pre-flight: fast early validation before loading FFmpeg.
+  const preflightError = validateExtractAudioClip(clip);
+  if (preflightError) throw new Error(preflightError);
+
   // Start fresh log capture for this operation so any failure has clean context.
   clearFfmpegLogs();
 
   const ffmpeg = await ensureFfmpeg(onStatus);
 
-  const ext = getSafeExtension(clip.file.name, 'mp4');
+  // For audio-only source files use the actual file extension so FFmpeg can
+  // correctly demux (e.g. mp3, aac, ogg).  Fall back to mp4 for video clips.
+  const defaultExt = clip.kind === 'audio' ? 'mp3' : 'mp4';
+  const ext = getSafeExtension(clip.file.name, defaultExt);
   const inputName = `audio-extract-input.${ext}`;
   const outputName = 'audio-extract-output.wav';
-
-  // Pre-flight: basic sanity
-  const dur = getClipDuration(clip);
-  if (dur <= 0) {
-    throw new Error('Cannot extract audio: clip has zero or negative duration after trim.');
-  }
 
   // Clean up any leftover files from a previous extraction run.
   for (const name of [inputName, outputName]) {
     try { await ffmpeg.deleteFile(name); } catch { /* ignore */ }
   }
 
-  onStatus(`Extracting audio from "${clip.title}"...`);
+  onStatus(`Writing "${clip.title}" to FFmpeg…`);
 
   try {
     await safeWriteFile(ffmpeg, inputName, await fetchFile(clip.file), 'extract write input');
@@ -836,16 +870,43 @@ export async function extractAudioToWav(clip: Clip, onStatus: StatusCallback): P
     }
 
     args.push(
-      '-vn',                  // drop video stream
+      '-map', '0:a:0',        // explicitly select the first audio stream — gives a clear
+                              // "matches no streams" error if the file has no audio
+      '-vn',                  // drop video stream (no-op for audio-only files; safe to include)
       '-acodec', 'pcm_s16le', // PCM 16-bit little-endian (WAV)
       '-ar', '44100',         // 44.1 kHz sample rate
       '-ac', '2',             // stereo
       outputName,
     );
 
-    await safeExec(ffmpeg, args, null, `Extract audio exec for "${clip.title}" (trim ${clip.trimStart}-${clip.trimEnd || 'end'})`);
+    onStatus(`Extracting audio from "${clip.title}"…`);
+
+    try {
+      await safeExec(ffmpeg, args, null, `Extract audio exec for "${clip.title}" (trim ${clip.trimStart}-${clip.trimEnd || 'end'})`);
+    } catch (execErr) {
+      // Intercept "no audio stream" errors and surface a clear user message.
+      const msg = (execErr as Error).message;
+      if (NO_AUDIO_STREAM_RE.test(msg)) {
+        throw new Error(
+          `No audio stream found in "${clip.title}". ` +
+          `The file may be video-only or use an unsupported audio codec.\n\n${msg}`,
+        );
+      }
+      throw execErr;
+    }
 
     const output = await safeReadFile(ffmpeg, outputName, 'extract read output');
+
+    // A valid WAV file with audio data must be larger than the RIFF header.
+    // An empty or header-only output means FFmpeg ran without error but wrote
+    // no audio samples — treat this as a silent failure.
+    if (output.byteLength <= WAV_HEADER_MIN_BYTES) {
+      throw new Error(
+        `Audio extraction produced an empty output for "${clip.title}". ` +
+        `The clip may contain no audio stream, or the trimmed region contains no audio data.`,
+      );
+    }
+
     // Copy to a plain ArrayBuffer so Blob constructor accepts it regardless of
     // whether FFmpeg's backing buffer is a SharedArrayBuffer.
     const plain = new Uint8Array(output).buffer as ArrayBuffer;
