@@ -12,6 +12,12 @@ interface Props {
   onTriggerLoadDialog?: () => void;
   onShowKeyboardShortcuts?: () => void;
   onDebugResetFFmpeg?: () => void;
+  /** Called when the user clicks "Retry FFmpeg load" after a failed/stuck load. */
+  onRetryFfmpegLoad?: () => void;
+  /** When true, FFmpeg is currently loading (shows spinner feedback in status). */
+  ffmpegLoading?: boolean;
+  /** When true, last FFmpeg load attempt failed — show the retry button prominently. */
+  ffmpegLoadFailed?: boolean;
   status: string;
   forceFFmpeg: boolean;
   onToggleForceFFmpeg: (v: boolean) => void;
@@ -42,6 +48,9 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     onTriggerLoadDialog,
     onShowKeyboardShortcuts,
     onDebugResetFFmpeg,
+    onRetryFfmpegLoad,
+    ffmpegLoading,
+    ffmpegLoadFailed,
     status,
     forceFFmpeg,
     onToggleForceFFmpeg,
@@ -167,6 +176,23 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             style={{ opacity: 0.6, fontSize: '0.85em' }}
           >
             🔄 Reset FFmpeg
+          </button>
+        )}
+
+        {/* Retry FFmpeg load — shown prominently when the last load failed, or during loading */}
+        {onRetryFfmpegLoad && (ffmpegLoadFailed || ffmpegLoading) && (
+          <button
+            type="button"
+            onClick={onRetryFfmpegLoad}
+            disabled={ffmpegLoading}
+            title={ffmpegLoadFailed ? 'FFmpeg failed to load — click to retry' : 'FFmpeg is loading…'}
+            style={{
+              background: ffmpegLoadFailed ? 'var(--danger, #c0392b)' : undefined,
+              color: ffmpegLoadFailed ? '#fff' : undefined,
+              fontWeight: 'bold',
+            }}
+          >
+            {ffmpegLoading ? '⏳ Loading FFmpeg…' : '⚠️ Retry FFmpeg load'}
           </button>
         )}
         {onCopyDebugInfo && (

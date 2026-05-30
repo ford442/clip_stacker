@@ -20,6 +20,8 @@ import {
   getLastFfmpegLogs,
   getLastFfmpegError,
   clearFfmpegLogs,
+  isFfmpegLoadFailed,
+  isFfmpegLoading,
 } from './ffmpeg/ffmpegService';
 import type { RenderProgressUpdate } from './ffmpeg/ffmpegService';
 import { isHighMemoryUsage, getMemoryStatus, formatBytes } from './utils/memory';
@@ -85,6 +87,8 @@ export function App() {
   const [progressValue, setProgressValue] = useState<number | null>(null);
   const [progressIndeterminate, setProgressIndeterminate] = useState(false);
   const [isRendering, setIsRendering] = useState(false);
+  const [ffmpegLoading, setFfmpegLoading] = useState(false);
+  const [ffmpegFailed, setFfmpegFailed] = useState(false);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [encoderPath, setEncoderPath] = useState<string>('');
   const [renderPlan, setRenderPlan] = useState<RenderPlan | null>(null);
@@ -232,7 +236,11 @@ export function App() {
       setStatus('Upload clips before rendering.');
       return;
     }
+
     try {
+      // Reset FFmpeg load-failure state on a new render attempt.
+      setFfmpegFailed(false);
+
       // Clean up previous render output URL before starting a new render
       if (outputUrl) {
         URL.revokeObjectURL(outputUrl);
@@ -250,6 +258,13 @@ export function App() {
       const plan = calculateRenderPlan(timelineClips, transitions, textOverlays, exportSettings);
       setRenderPlan(plan);
       setStatus(`Render plan: ${plan.description} (${plan.reason})`);
+
+      // Track FFmpeg loading phase via the exported helper so we don't couple to
+      // status message strings.
+      const trackFfmpegLoading = (msg: string) => {
+        setStatus(msg);
+        setFfmpegLoading(isFfmpegLoading());
+      };
       
       const handleProgress = (update: RenderProgressUpdate) => {
         setProgressStage(update.stage);
@@ -264,7 +279,7 @@ export function App() {
         timelineClips,
         transitions,
         exportSettings,
-        setStatus,
+        trackFfmpegLoading,
         handleProgress,
         forceFFmpeg,
         textOverlays,
@@ -308,8 +323,13 @@ export function App() {
         console.error('Last captured FFmpeg logs:\n' + recentLogs);
       }
       setStatus(`Render failed: ${err.message}`);
+      // Surface FFmpeg load failures separately so the retry button appears.
+      if (isFfmpegLoadFailed()) {
+        setFfmpegFailed(true);
+      }
       // Leave logs in buffer so user can click "Copy Debug Info" to grab them.
     } finally {
+      setFfmpegLoading(false);
       setIsRendering(false);
     }
   }, [clips, clipGroups, transitions, textOverlays, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive, forceReencode, outputUrl]);
@@ -387,6 +407,18 @@ export function App() {
         ? `FFmpeg instance reset. Memory: ${memoryStatus}`
         : 'FFmpeg instance reset.';
       setStatus(message);
+    } catch (err) {
+      setStatus(`Error resetting FFmpeg: ${(err as Error).message}`);
+    }
+  }, []);
+
+  const handleRetryFfmpegLoad = useCallback(async () => {
+    setStatus('Resetting FFmpeg and retrying load...');
+    setFfmpegFailed(false);
+    setFfmpegLoading(false);
+    try {
+      await resetFFmpegInstance();
+      setStatus('FFmpeg reset. Click Render to try again.');
     } catch (err) {
       setStatus(`Error resetting FFmpeg: ${(err as Error).message}`);
     }
@@ -956,6 +988,9 @@ export function App() {
           onLoadProject={handleLoadProject}
           onShowKeyboardShortcuts={() => setShowKeyboardShortcuts(true)}
           onDebugResetFFmpeg={handleDebugResetFFmpeg}
+          onRetryFfmpegLoad={handleRetryFfmpegLoad}
+          ffmpegLoading={ffmpegLoading}
+          ffmpegLoadFailed={ffmpegFailed}
           onCopyDebugInfo={handleCopyDebugInfo}
           status={status}
           forceFFmpeg={forceFFmpeg}

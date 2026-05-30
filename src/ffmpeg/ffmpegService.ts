@@ -23,6 +23,24 @@ const FONT_VIRTUAL_NAME = 'roboto.ttf';
 let ffmpegInstance: FFmpeg | null = null;
 let fontLoaded = false;
 
+/**
+ * In-flight promise for an ongoing ensureFfmpeg() call.
+ * Subsequent callers await this same promise instead of racing to create
+ * a second FFmpeg instance.
+ */
+let ffmpegLoadingPromise: Promise<FFmpeg> | null = null;
+
+/** True if the last load attempt failed; cleared on a successful load. */
+let ffmpegLoadFailed = false;
+
+export function isFfmpegLoadFailed(): boolean {
+  return ffmpegLoadFailed;
+}
+
+export function isFfmpegLoading(): boolean {
+  return ffmpegLoadingPromise !== null;
+}
+
 export type StatusCallback = (message: string) => void;
 export interface RenderProgressUpdate {
   stage: string;
@@ -214,24 +232,44 @@ function buildSingleClipFilter(clip: Clip): string {
   return parts.join(';');
 }
 
+/** CDN candidates for @ffmpeg/core@0.12.6 UMD assets, tried in order. */
+const FFMPEG_CORE_CDNS = [
+  'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',
+];
+
+/** Timeout (ms) for the entire ffmpeg.load() call including WASM compilation. */
+const FFMPEG_LOAD_TIMEOUT_MS = 120_000; // 2 minutes
+
 /**
- * Load a URL as a blob with retry logic for network resilience.
- * Retries up to 3 times with exponential backoff (2s, 4s delays between attempts).
+ * Attempt to fetch a URL as a blob URL, retrying up to maxRetries times with
+ * exponential backoff.  Status updates are sent via onStatus so the user sees
+ * granular progress.
  */
-async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string> {
+async function toBlobURLWithRetry(
+  url: string,
+  mimeType: string,
+  onStatus?: StatusCallback,
+  label?: string,
+): Promise<string> {
   const maxRetries = 3;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
+      if (onStatus && label) {
+        const suffix = attempt > 1 ? ` (attempt ${attempt}/${maxRetries})` : '';
+        onStatus(`Downloading ${label}${suffix}...`);
+      }
       return await toBlobURL(url, mimeType);
     } catch (error) {
       if (attempt === maxRetries) {
         throw new Error(`Failed to load ${url} after ${maxRetries} retries: ${(error as Error).message}`);
       }
-      const delayMs = Math.pow(2, attempt) * 1000; // exponential backoff: 2s (attempt 1), 4s (attempt 2)
+      const delayMs = Math.pow(2, attempt) * 1000; // exponential backoff: 2s, 4s
       console.warn(
         `Failed to load ${url} (attempt ${attempt}/${maxRetries}). Retrying in ${delayMs}ms...`,
         error,
       );
+      recordFfmpegLog(`[FFmpeg load] Download failed for ${url} (attempt ${attempt}): ${(error as Error).message}`);
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
@@ -240,9 +278,54 @@ async function toBlobURLWithRetry(url: string, mimeType: string): Promise<string
   throw new Error('toBlobURLWithRetry: Unexpected - loop should always return or throw');
 }
 
-export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
-  if (ffmpegInstance) return ffmpegInstance;
+/**
+ * Try each CDN in FFMPEG_CORE_CDNS until one succeeds.  This provides resilience
+ * against unpkg.com outages.
+ */
+async function toBlobURLWithFallback(
+  filename: string,
+  mimeType: string,
+  onStatus: StatusCallback,
+  label: string,
+): Promise<string> {
+  let lastError: Error | null = null;
+  for (const baseURL of FFMPEG_CORE_CDNS) {
+    const url = `${baseURL}/${filename}`;
+    try {
+      return await toBlobURLWithRetry(url, mimeType, onStatus, label);
+    } catch (err) {
+      lastError = err as Error;
+      recordFfmpegLog(`[FFmpeg load] CDN ${baseURL} failed for ${filename}: ${lastError.message}`);
+      console.warn(`[FFmpeg load] CDN ${baseURL} failed for ${filename}, trying next CDN...`);
+    }
+  }
+  throw new Error(
+    `Failed to download ${filename} from all CDNs. Last error: ${lastError?.message ?? 'unknown'}`,
+  );
+}
 
+/**
+ * Race a promise against a timeout.  Throws if the timeout fires first.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timed out after ${ms / 1000}s waiting for: ${label}`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+async function _doLoadFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
   // Reset font state whenever a new FFmpeg instance is created.
   fontLoaded = false;
 
@@ -280,20 +363,55 @@ export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
     lastFfmpegErrorLog = msg;
   });
 
-  const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
   onStatus('Loading FFmpeg core (this may take a moment)...');
-  
+
   try {
-    await ffmpeg.load({
-      coreURL: await toBlobURLWithRetry(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURLWithRetry(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    });
+    onStatus('Downloading FFmpeg core.js...');
+    const coreURL = await toBlobURLWithFallback('ffmpeg-core.js', 'text/javascript', onStatus, 'core.js');
+
+    onStatus('Downloading FFmpeg core.wasm...');
+    const wasmURL = await toBlobURLWithFallback('ffmpeg-core.wasm', 'application/wasm', onStatus, 'core.wasm');
+
+    onStatus('Initializing FFmpeg WASM engine...');
+    recordFfmpegLog('[FFmpeg load] Starting ffmpeg.load()...');
+    await withTimeout(
+      ffmpeg.load({ coreURL, wasmURL }),
+      FFMPEG_LOAD_TIMEOUT_MS,
+      'ffmpeg.load()',
+    );
+    recordFfmpegLog('[FFmpeg load] ffmpeg.load() completed successfully.');
   } catch (error) {
-    throw new Error(`FFmpeg load failed: ${(error as Error).message}`);
+    const msg = (error as Error).message;
+    recordFfmpegLog(`[FFmpeg load] FAILED: ${msg}`);
+    throw new Error(`FFmpeg load failed: ${msg}`);
   }
 
-  ffmpegInstance = ffmpeg;
   return ffmpeg;
+}
+
+export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
+  if (ffmpegInstance) return ffmpegInstance;
+
+  // If a load is already in-flight, join it instead of racing to start another.
+  if (ffmpegLoadingPromise) {
+    return ffmpegLoadingPromise;
+  }
+
+  ffmpegLoadFailed = false;
+  ffmpegLoadingPromise = _doLoadFfmpeg(onStatus).then(
+    (ffmpeg) => {
+      ffmpegInstance = ffmpeg;
+      ffmpegLoadingPromise = null;
+      return ffmpeg;
+    },
+    (err) => {
+      ffmpegLoadingPromise = null;
+      ffmpegLoadFailed = true;
+      throw err;
+    },
+  );
+
+  return ffmpegLoadingPromise;
 }
 
 /**
@@ -1232,6 +1350,10 @@ export async function resetFFmpegInstance(): Promise<void> {
     // will be created on the next ensureFfmpeg() call.
     ffmpegInstance = null;
   }
+
+  // Reset all loading state so the next ensureFfmpeg() starts fresh.
+  ffmpegLoadingPromise = null;
+  ffmpegLoadFailed = false;
 
   // Reset font state for the next instance
   fontLoaded = false;
