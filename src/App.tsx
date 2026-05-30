@@ -657,6 +657,74 @@ export function App() {
   );
 
   // ---------------------------------------------------------------------------
+  // RIFE frame interpolation
+  // ---------------------------------------------------------------------------
+
+  const [rifeProcessingClipId, setRifeProcessingClipId] = useState<string | null>(null);
+
+  const handleRife = useCallback(
+    async (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => {
+      if (!selectedClip || selectedClip.kind !== 'video') return;
+      if (rifeProcessingClipId) return; // Already processing
+
+      setRifeProcessingClipId(selectedClip.id);
+      setStatus('Preparing clip for RIFE…');
+
+      try {
+        // Dynamically import to keep initial bundle lean
+        const { processClipWithRIFE } = await import('./utils/huggingface');
+
+        setStatus('Sending clip to RIFE (HuggingFace)…');
+        const { blob } = await processClipWithRIFE(
+          selectedClip.file,
+          multiplier,
+          mode,
+          (event) => {
+            setStatus(event.message ?? `RIFE: ${event.stage}…`);
+          },
+        );
+
+        const processedFile = new File(
+          [blob],
+          `rife_${multiplier}x_${selectedClip.file.name}`,
+          { type: blob.type || 'video/mp4' },
+        );
+        const processedUrl = URL.createObjectURL(processedFile);
+        const { duration } = await getMediaInfo(processedFile);
+
+        setClips((prev) =>
+          prev.map((c) => {
+            if (c.id !== selectedClip.id) return c;
+            // Revoke old object URL to free memory
+            URL.revokeObjectURL(c.objectUrl);
+            return {
+              ...c,
+              file: processedFile,
+              objectUrl: processedUrl,
+              duration,
+              trimStart: 0,
+              trimEnd: NaN,
+              rifeProcessed: true,
+              rifeMultiplier: multiplier,
+              rifeMode: mode,
+              originalFps: c.originalFps ?? undefined,
+            };
+          }),
+        );
+
+        setStatus(`✨ RIFE ${multiplier}× applied to "${selectedClip.title}".`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        setStatus(`RIFE failed: ${message}`);
+        console.error('RIFE processing error:', err);
+      } finally {
+        setRifeProcessingClipId(null);
+      }
+    },
+    [selectedClip, rifeProcessingClipId],
+  );
+
+  // ---------------------------------------------------------------------------
   // Timeline reorder
   // ---------------------------------------------------------------------------
 
@@ -919,6 +987,8 @@ export function App() {
           onChange={handleInspectorChange}
           onExportSettingsChange={setExportSettings}
           onExtractAudio={handleExtractAudio}
+          onRife={handleRife}
+          rifeProcessing={rifeProcessingClipId !== null}
         />
       </section>
 

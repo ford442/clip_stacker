@@ -54,6 +54,13 @@ export function serializeProject(
       ...(clip.groupId ? { groupId: clip.groupId } : {}),
       ...(clip.groupVariant ? { groupVariant: clip.groupVariant } : {}),
       ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
+      ...(clip.rifeProcessed ? {
+        rifeProcessed: clip.rifeProcessed,
+        rifeMultiplier: clip.rifeMultiplier,
+        originalFps: clip.originalFps,
+        processedFps: clip.processedFps,
+        rifeMode: clip.rifeMode,
+      } : {}),
       ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1)
         ? {
             layerIndex: clip.layerIndex ?? 0,
@@ -307,6 +314,13 @@ export async function applyProjectData(
     liveClip.groupId = savedClip.groupId;
     liveClip.groupVariant = savedClip.groupVariant;
     if (savedClip.remoteAudioUrl) liveClip.remoteAudioUrl = savedClip.remoteAudioUrl;
+    if (savedClip.rifeProcessed) {
+      liveClip.rifeProcessed = savedClip.rifeProcessed;
+      if (savedClip.rifeMultiplier != null) liveClip.rifeMultiplier = savedClip.rifeMultiplier;
+      if (savedClip.originalFps != null) liveClip.originalFps = savedClip.originalFps;
+      if (savedClip.processedFps != null) liveClip.processedFps = savedClip.processedFps;
+      if (savedClip.rifeMode) liveClip.rifeMode = savedClip.rifeMode;
+    }
     if (savedClip.layerIndex != null) liveClip.layerIndex = Number(savedClip.layerIndex);
     if (savedClip.x != null) liveClip.x = Number(savedClip.x);
     if (savedClip.y != null) liveClip.y = Number(savedClip.y);

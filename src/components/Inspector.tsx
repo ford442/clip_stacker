@@ -29,6 +29,8 @@ interface Props {
   onChange: (values: ClipValues) => void;
   onExportSettingsChange: (settings: ExportSettings) => void;
   onExtractAudio?: () => void;
+  onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
+  rifeProcessing?: boolean;
 }
 
 type Tab = 'clip' | 'export';
@@ -109,8 +111,9 @@ function findMatchingPreset(settings: ExportSettings): string {
   )?.name || 'custom';
 }
 
-export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange, onExtractAudio }: Props) {
+export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange, onExtractAudio, onRife, rifeProcessing }: Props) {
   const [tab, setTab] = useState<Tab>('clip');
+  const [rifeMultiplier, setRifeMultiplier] = useState<2 | 4>(2);
   const inspectorRef = useRef<HTMLDivElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
@@ -431,6 +434,56 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
           <div className="muted" style={{ fontSize: '0.75rem', marginTop: '0.25rem', wordBreak: 'break-all' }}>
             Remote WAV: <a href={clip.remoteAudioUrl} target="_blank" rel="noreferrer">{clip.remoteAudioUrl}</a>
           </div>
+        )}
+        {clip.kind === 'video' && onRife && (
+          <>
+            <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Frame interpolation (RIFE)</div>
+            {clip.rifeProcessed && (
+              <div className="rife-badge" style={{ marginBottom: '0.5rem' }}>
+                {clip.rifeMode === 'boomerang' ? '🔁 Boomerang' : `✨ RIFE ${clip.rifeMultiplier ?? 2}×`}
+                {clip.processedFps ? ` · ${clip.processedFps.toFixed(1)} fps` : ''}
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <label style={{ margin: 0 }}>
+                Multiplier
+                <select
+                  value={rifeMultiplier}
+                  onChange={(e) => setRifeMultiplier(Number(e.target.value) as 2 | 4)}
+                  style={{ marginLeft: '0.4rem' }}
+                  disabled={rifeProcessing}
+                >
+                  <option value={2}>2×</option>
+                  <option value={4}>4×</option>
+                </select>
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => onRife('interpolation', rifeMultiplier)}
+                disabled={rifeProcessing}
+                title={`Apply RIFE ${rifeMultiplier}× frame interpolation to this clip (per-clip, before merging)`}
+              >
+                {rifeProcessing ? '⏳ Processing…' : `✨ Smoother (${rifeMultiplier}×)`}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => onRife('boomerang', rifeMultiplier)}
+                disabled={rifeProcessing}
+                title="Apply Boomerang (loop forward+reverse) with RIFE frame interpolation"
+              >
+                {rifeProcessing ? '⏳ Processing…' : '🔁 Boomerang'}
+              </button>
+            </div>
+            <p className="inspector-hint">
+              RIFE processes this clip individually (after trim, before merge) to avoid
+              artifacts across scene cuts. The clip in the library will be replaced with
+              the processed version.
+            </p>
+          </>
         )}
         {clip.kind === 'video' && (
           <details
