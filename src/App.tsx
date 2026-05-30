@@ -598,10 +598,6 @@ export function App() {
 
   const handleExtractAudio = useCallback(async () => {
     if (!selectedClip) return;
-    if (selectedClip.kind !== 'video') {
-      setStatus('Audio extraction is only available for video clips.');
-      return;
-    }
 
     // Capture id and filename at the start so they remain stable across awaits.
     const clipId = selectedClip.id;
@@ -643,9 +639,11 @@ export function App() {
       }
 
       if (remoteUrl) {
-        setStatus(`Audio extracted and uploaded. Remote URL stored in clip.`);
+        setStatus(`Audio extracted and uploaded as "${wavFileName}". Remote URL stored in clip.`);
       } else if (!storageEndpoint) {
         setStatus(`Audio extracted and downloaded as "${wavFileName}".`);
+      } else {
+        setStatus(`Audio extracted as "${wavFileName}".`);
       }
     } catch (error) {
       const err = error as Error;
