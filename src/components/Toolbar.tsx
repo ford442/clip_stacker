@@ -167,13 +167,12 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
           ⌨️ Help
         </button>
 
-        {/* Debug reset button (shown only when available) */}
+        {/* Reset FFmpeg — frees VFS memory and resets the engine for recovery */}
         {onDebugResetFFmpeg && (
           <button
             type="button"
             onClick={onDebugResetFFmpeg}
-            title="Reset FFmpeg instance (debug/memory recovery)"
-            style={{ opacity: 0.6, fontSize: '0.85em' }}
+            title="Reset FFmpeg engine and free VFS memory (use if renders hang or after repeated failures)"
           >
             🔄 Reset FFmpeg
           </button>
@@ -200,7 +199,6 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             type="button"
             onClick={onCopyDebugInfo}
             title="Copy last FFmpeg logs + render plan + browser context (great for bug reports)"
-            style={{ opacity: 0.7, fontSize: '0.85em' }}
           >
             📋 Copy Debug
           </button>

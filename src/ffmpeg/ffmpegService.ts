@@ -33,6 +33,13 @@ let ffmpegLoadingPromise: Promise<FFmpeg> | null = null;
 /** True if the last load attempt failed; cleared on a successful load. */
 let ffmpegLoadFailed = false;
 
+/**
+ * Monotonically increasing counter, bumped on every resetFFmpegInstance() call.
+ * Used to prevent a stale in-flight load from overwriting the state after a
+ * reset has already been issued.
+ */
+let loadGeneration = 0;
+
 export function isFfmpegLoadFailed(): boolean {
   return ffmpegLoadFailed;
 }
@@ -355,13 +362,9 @@ async function _doLoadFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
     emitProgress(context.onProgress, context.stage, progress, false);
   });
 
-  // Also listen for the explicit error event emitted by @ffmpeg/ffmpeg in some failure modes.
-  ffmpeg.on('error', (err: any) => {
-    const msg = typeof err === 'string' ? err : (err?.message || JSON.stringify(err));
-    recordFfmpegLog(`[FFmpeg ERROR EVENT] ${msg}`);
-    console.error('[FFmpeg error event]', err);
-    lastFfmpegErrorLog = msg;
-  });
+  // Capture any log lines that look like hard errors so we always have a
+  // lastFfmpegErrorLog even for cases where the error event isn't fired.
+  // (The @ffmpeg/ffmpeg typings only expose 'log' and 'progress' events.)
 
   onStatus('Loading FFmpeg core (this may take a moment)...');
 
@@ -398,15 +401,23 @@ export async function ensureFfmpeg(onStatus: StatusCallback): Promise<FFmpeg> {
   }
 
   ffmpegLoadFailed = false;
+  // Capture the current generation so stale completions (from a load that was
+  // in-flight when resetFFmpegInstance() was called) don't overwrite state.
+  const gen = loadGeneration;
   ffmpegLoadingPromise = _doLoadFfmpeg(onStatus).then(
     (ffmpeg) => {
-      ffmpegInstance = ffmpeg;
-      ffmpegLoadingPromise = null;
+      // Only apply the result if no reset was issued while we were loading.
+      if (gen === loadGeneration) {
+        ffmpegInstance = ffmpeg;
+        ffmpegLoadingPromise = null;
+      }
       return ffmpeg;
     },
     (err) => {
-      ffmpegLoadingPromise = null;
-      ffmpegLoadFailed = true;
+      if (gen === loadGeneration) {
+        ffmpegLoadingPromise = null;
+        ffmpegLoadFailed = true;
+      }
       throw err;
     },
   );
@@ -1399,6 +1410,10 @@ export async function aggressiveCleanupFFmpegVFS(onStatus?: StatusCallback): Pro
  * Useful when the instance encounters errors or memory pressure is too high.
  */
 export async function resetFFmpegInstance(): Promise<void> {
+  // Bump the generation counter so any in-flight load won't overwrite the
+  // cleared state once it eventually settles.
+  loadGeneration++;
+
   if (ffmpegInstance) {
     try {
       // Attempt to clean up VFS first
