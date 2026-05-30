@@ -21,6 +21,19 @@ export interface Clip {
   /** URL of the remotely stored extracted WAV for this clip */
   remoteAudioUrl?: string;
   // ---------------------------------------------------------------------------
+  // RIFE frame interpolation metadata
+  // ---------------------------------------------------------------------------
+  /** Whether this clip has been processed with RIFE frame interpolation */
+  rifeProcessed?: boolean;
+  /** The frame-rate multiplier used (e.g. 2 = 2×, 4 = 4×) */
+  rifeMultiplier?: number;
+  /** Original FPS of the clip before RIFE processing */
+  originalFps?: number;
+  /** FPS of the clip after RIFE processing */
+  processedFps?: number;
+  /** RIFE processing mode applied to this clip */
+  rifeMode?: 'interpolation' | 'boomerang';
+  // ---------------------------------------------------------------------------
   // Picture-in-Picture / compositing layout (only used when layerIndex > 0)
   // ---------------------------------------------------------------------------
   /** Stacking order: 0 = base layer (sequential), 1+ = overlay on top of base. */
@@ -61,6 +74,16 @@ export interface SerializedClip {
   groupVariant?: 'A' | 'B';
   /** URL of the remotely stored extracted WAV for this clip */
   remoteAudioUrl?: string;
+  /** Whether this clip has been processed with RIFE frame interpolation */
+  rifeProcessed?: boolean;
+  /** The frame-rate multiplier used (e.g. 2 = 2×, 4 = 4×) */
+  rifeMultiplier?: number;
+  /** Original FPS of the clip before RIFE processing */
+  originalFps?: number;
+  /** FPS of the clip after RIFE processing */
+  processedFps?: number;
+  /** RIFE processing mode applied to this clip */
+  rifeMode?: 'interpolation' | 'boomerang';
   /** PiP / compositing layout properties */
   layerIndex?: number;
   x?: number;

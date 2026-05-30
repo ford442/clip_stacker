@@ -748,6 +748,55 @@ export async function extractAudioToWav(clip: Clip, onStatus: StatusCallback): P
 }
 
 /**
+ * Export a trimmed video segment to an MP4 blob using lossless stream copy.
+ * Used by the RIFE integration to send the exact trimmed region to the
+ * HuggingFace frame-interpolation space (per-clip, before merge).
+ */
+export async function extractTrimmedVideoClip(clip: Clip, onStatus: StatusCallback): Promise<Blob> {
+  clearFfmpegLogs();
+
+  const ffmpeg = await ensureFfmpeg(onStatus);
+
+  const ext = getSafeExtension(clip.file.name, 'mp4');
+  const inputName = `rife-input.${ext}`;
+  const outputName = 'rife-trimmed.mp4';
+
+  const dur = getClipDuration(clip);
+  if (dur <= 0) {
+    throw new Error('Cannot extract trimmed clip: clip has zero or negative duration after trim.');
+  }
+
+  for (const name of [inputName, outputName]) {
+    try { await ffmpeg.deleteFile(name); } catch { /* ignore */ }
+  }
+
+  onStatus(`Preparing trimmed segment of "${clip.title}" for RIFE…`);
+
+  try {
+    await safeWriteFile(ffmpeg, inputName, await fetchFile(clip.file), 'rife trim write input');
+
+    const args: string[] = [];
+    if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
+    args.push('-i', inputName);
+    if (Number.isFinite(clip.trimEnd)) {
+      args.push('-t', String(clip.trimEnd - clip.trimStart));
+    }
+    args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero', outputName);
+
+    await safeExec(ffmpeg, args, null, `RIFE trim for "${clip.title}" (${clip.trimStart}-${clip.trimEnd || 'end'})`);
+
+    const output = await safeReadFile(ffmpeg, outputName, 'rife trim read output');
+    const plain = new Uint8Array(output).buffer as ArrayBuffer;
+
+    onStatus('Trimmed segment ready.');
+    return new Blob([plain], { type: 'video/mp4' });
+  } finally {
+    try { await ffmpeg.deleteFile(inputName); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile(outputName); } catch { /* ignore */ }
+  }
+}
+
+/**
  * Analyze clips, transitions, and overlays to determine which rendering path will be used.
  * Returns a description of the plan and whether re-encoding will occur.
  *

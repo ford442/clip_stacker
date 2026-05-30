@@ -54,6 +54,11 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
       <div className="muted">
         {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
         {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : 'end'}
+        {clip.rifeProcessed && (
+          <span className="rife-badge" title={`Processed with RIFE ${clip.rifeMode === 'boomerang' ? 'Boomerang' : `${clip.rifeMultiplier ?? 2}× interpolation`}`}>
+            {clip.rifeMode === 'boomerang' ? ' 🔁' : ` ✨${clip.rifeMultiplier ?? 2}×`}
+          </span>
+        )}
       </div>
     </li>
   );
@@ -113,6 +118,11 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
              <div className="muted">
                {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
                {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : 'end'}
+               {clip.rifeProcessed && (
+                 <span className="rife-badge" title={`Processed with RIFE ${clip.rifeMode === 'boomerang' ? 'Boomerang' : `${clip.rifeMultiplier ?? 2}× interpolation`}`}>
+                   {clip.rifeMode === 'boomerang' ? ' 🔁' : ` ✨${clip.rifeMultiplier ?? 2}×`}
+                 </span>
+               )}
              </div>
            </div>
           );

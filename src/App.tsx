@@ -13,6 +13,7 @@ import { reindexTransitions } from './utils/transitions';
 import { hybridMergeClips } from './utils/hybrid-encoder';
 import {
   extractAudioToWav,
+  extractTrimmedVideoClip,
   calculateRenderPlan,
   aggressiveCleanupFFmpegVFS,
   resetFFmpegInstance,
@@ -657,6 +658,87 @@ export function App() {
   );
 
   // ---------------------------------------------------------------------------
+  // RIFE frame interpolation
+  // ---------------------------------------------------------------------------
+
+  const [rifeProcessingClipId, setRifeProcessingClipId] = useState<string | null>(null);
+
+  const handleRife = useCallback(
+    async (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => {
+      if (!selectedClip || selectedClip.kind !== 'video') return;
+      if (rifeProcessingClipId) return; // Already processing
+
+      // Capture the clip's current state (including originalFps if already set)
+      // before any async work so we have a stable snapshot.
+      const clipSnapshot = selectedClip;
+
+      setRifeProcessingClipId(clipSnapshot.id);
+      setStatus('Preparing trimmed clip for RIFE…');
+
+      try {
+        // Step 1: Export the trimmed segment via FFmpeg (lossless copy).
+        // RIFE must operate on the trimmed portion only — running it on the
+        // merged video would cause morphing artifacts across scene cuts.
+        const trimmedBlob = await extractTrimmedVideoClip(clipSnapshot, setStatus);
+
+        // Step 2: Dynamically import to keep initial bundle lean
+        const { processClipWithRIFE } = await import('./utils/huggingface');
+
+        setStatus('Sending trimmed clip to RIFE (HuggingFace)…');
+        const { blob } = await processClipWithRIFE(
+          trimmedBlob,
+          multiplier,
+          mode,
+          (event) => {
+            setStatus(event.message ?? `RIFE: ${event.stage}…`);
+          },
+        );
+
+        const modeLabel = mode === 'boomerang' ? 'boomerang' : `${multiplier}x`;
+        const processedFile = new File(
+          [blob],
+          `rife_${modeLabel}_${clipSnapshot.file.name}`,
+          { type: blob.type || 'video/mp4' },
+        );
+        const processedUrl = URL.createObjectURL(processedFile);
+        const { duration } = await getMediaInfo(processedFile);
+
+        setClips((prev) =>
+          prev.map((c) => {
+            if (c.id !== clipSnapshot.id) return c;
+            // Revoke old object URL to free memory
+            URL.revokeObjectURL(c.objectUrl);
+            return {
+              ...c,
+              file: processedFile,
+              objectUrl: processedUrl,
+              duration,
+              // The processed file is already the trimmed segment — reset trim to full.
+              trimStart: 0,
+              trimEnd: NaN,
+              rifeProcessed: true,
+              rifeMultiplier: multiplier,
+              rifeMode: mode,
+              // Preserve originalFps if it was already set (e.g. from a previous run)
+              originalFps: c.originalFps,
+            };
+          }),
+        );
+
+        const modeDisplay = mode === 'boomerang' ? 'Boomerang' : `${multiplier}×`;
+        setStatus(`✨ RIFE ${modeDisplay} applied to "${clipSnapshot.title}".`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        setStatus(`RIFE failed: ${message}`);
+        console.error('RIFE processing error:', err);
+      } finally {
+        setRifeProcessingClipId(null);
+      }
+    },
+    [selectedClip, rifeProcessingClipId],
+  );
+
+  // ---------------------------------------------------------------------------
   // Timeline reorder
   // ---------------------------------------------------------------------------
 
@@ -919,6 +1001,8 @@ export function App() {
           onChange={handleInspectorChange}
           onExportSettingsChange={setExportSettings}
           onExtractAudio={handleExtractAudio}
+          onRife={handleRife}
+          rifeProcessing={rifeProcessingClipId !== null}
         />
       </section>
 
