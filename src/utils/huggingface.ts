@@ -20,8 +20,6 @@ export interface RifeProgressEvent {
 
 export interface RifeResult {
   blob: Blob;
-  /** Detected or estimated output FPS */
-  outputFps?: number;
 }
 
 /**
