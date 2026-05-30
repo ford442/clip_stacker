@@ -307,13 +307,6 @@ export function App() {
       setProgressStage(`Render complete via ${pathLabel}`);
       setProgressValue(1);
       setProgressIndeterminate(false);
-
-      // Aggressively clean up FFmpeg VFS after successful render
-      try {
-        await aggressiveCleanupFFmpegVFS(setStatus);
-      } catch (err) {
-        console.warn('Error during FFmpeg cleanup:', err);
-      }
     } catch (error) {
       const err = error as Error;
       // Always log the full detailed message (includes embedded FFmpeg logs from our safe wrappers).
@@ -331,6 +324,11 @@ export function App() {
     } finally {
       setFfmpegLoading(false);
       setIsRendering(false);
+      // Always clean up FFmpeg VFS after each render attempt (success or failure)
+      // to prevent memory pressure from accumulated temporary files.
+      aggressiveCleanupFFmpegVFS().catch((err) => {
+        console.warn('Error during FFmpeg cleanup:', err);
+      });
     }
   }, [clips, clipGroups, transitions, textOverlays, exportSettings, forceFFmpeg, useCanvasRenderer, audioReactive, forceReencode, outputUrl]);
 

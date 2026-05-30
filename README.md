@@ -135,6 +135,33 @@ Previous save/load errors:
 - Non-2xx responses are caught and displayed in the app status: `Remote save failed (status)` or `Remote load failed (status)`
 - Network errors also bubble up as error messages in the status text
 
+## Troubleshooting
+
+### Common failure modes
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| Render hangs after several merges | FFmpeg VFS memory pressure — temporary files not fully reclaimed | Click **🔄 Reset FFmpeg** then retry. The app automatically cleans VFS after every render (success or failure), but a manual reset is sometimes needed after multiple large renders. |
+| "FFmpeg load failed" / FFmpeg won't initialize | Browser network issue downloading core.wasm, or SharedArrayBuffer not available | Check `crossOriginIsolated` in the browser console. Use **⚠️ Retry FFmpeg load** button. Ensure COOP/COEP headers are set (see Deploy section). |
+| Output is corrupted or has A/V sync issues | Lossless concat on clips with mismatched parameters | Enable **Force re-encode** in the encoder controls to bypass lossless concat and re-encode everything through libx264. |
+| Render fails with "does not contain" or "matches no streams" | Audio-only clip processed through wrong path | Check that WAV/MP3 clips have the correct `kind: 'audio'` detected (visible in Inspector). |
+| FFmpeg repeatedly errors after a previous failure | Stale state in the FFmpeg WASM instance | Click **🔄 Reset FFmpeg** to tear down and rebuild the engine on the next render. |
+| "Output file does not contain any stream" | Clips have incompatible parameters (different resolution/fps) | Enable **Force re-encode** to normalize all clips to the same output format. |
+
+### Recovery workflow
+
+1. Click **📋 Copy Debug** immediately to snapshot logs, render plan, and browser context.
+2. Share the copied text in your bug report or support ticket.
+3. If renders are hanging or erroring repeatedly, click **🔄 Reset FFmpeg** to reinitialize the engine (this clears all VFS state and re-allocates the WASM worker on the next render).
+4. If FFmpeg failed to load entirely, use the **⚠️ Retry FFmpeg load** button that appears in the toolbar on a load failure.
+
+### RIFE frame interpolation failures
+
+RIFE processing uses the public HuggingFace Space `1inkusFace/RIFE`. If RIFE fails:
+- The Space may be cold-starting (usually resolves within 30 seconds — try again).
+- Large clips may time out — trim to a shorter segment before applying RIFE.
+- The Space may have queued jobs; the status bar shows upload/processing/download progress.
+
 ### Setup with contabo_storage_manager
 
 To use this with [ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager):
