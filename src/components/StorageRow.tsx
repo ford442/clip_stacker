@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { ContaboStorageManagerClient } from '../utils/project';
+import { ProgressBar } from './ProgressBar';
 
 interface Props {
   endpoint: string;
@@ -8,6 +9,10 @@ interface Props {
   onSaveRemote: (endpoint: string, authToken: string, projectName: string) => void;
   onLoadRemote: (endpoint: string, authToken: string, projectName: string) => void;
   isRemoteSaving: boolean;
+  isRemoteLoading: boolean;
+  remoteLoadStage: string;
+  remoteLoadProgress: number | null;
+  remoteLoadIndeterminate: boolean;
   remoteUploadItems: {
     clipId: string;
     fileName: string;
@@ -33,6 +38,10 @@ export function StorageRow({
   onSaveRemote,
   onLoadRemote,
   isRemoteSaving,
+  isRemoteLoading,
+  remoteLoadStage,
+  remoteLoadProgress,
+  remoteLoadIndeterminate,
   remoteUploadItems,
   pendingRemoteUploadError,
   onResolveRemoteUploadError,
@@ -103,16 +112,34 @@ export function StorageRow({
             onChange={(e) => setProjectName(e.target.value)}
           />
         </label>
-        <button type="button" onClick={() => onSaveRemote(endpoint, authToken, projectName)} disabled={isRemoteSaving}>
+        <button
+          type="button"
+          onClick={() => onSaveRemote(endpoint, authToken, projectName)}
+          disabled={isRemoteSaving || isRemoteLoading}
+        >
           {isRemoteSaving ? 'Saving…' : 'Save remote'}
         </button>
-        <button type="button" onClick={() => onLoadRemote(endpoint, authToken, projectName)}>
-          Load remote
+        <button
+          type="button"
+          onClick={() => onLoadRemote(endpoint, authToken, projectName)}
+          disabled={isRemoteLoading || isRemoteSaving}
+        >
+          {isRemoteLoading ? 'Loading…' : 'Load remote'}
         </button>
-        <button type="button" onClick={fetchProjects} disabled={loading}>
+        <button type="button" onClick={fetchProjects} disabled={loading || isRemoteLoading || isRemoteSaving}>
           {loading ? 'Refreshing…' : 'Refresh list'}
         </button>
       </div>
+
+      {isRemoteLoading && (
+        <div className="storage-load-progress">
+          <ProgressBar
+            stage={remoteLoadStage}
+            progress={remoteLoadProgress}
+            indeterminate={remoteLoadIndeterminate}
+          />
+        </div>
+      )}
 
       {listError && <p className="storage-error">{listError}</p>}
 
@@ -179,6 +206,7 @@ export function StorageRow({
                 <button
                   type="button"
                   className="project-delete-btn"
+                  disabled={isRemoteLoading || isRemoteSaving}
                   onClick={(e) => {
                     e.stopPropagation();
                     handleDelete(p.name);

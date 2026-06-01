@@ -1248,6 +1248,10 @@ audio {
   font-size: 0.8rem;
 }
 
+.storage-load-progress {
+  width: 100%;
+}
+
 .storage-hint {
   width: 100%;
   margin: 0;

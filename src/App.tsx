@@ -6,7 +6,9 @@ import {
   sanitizeClipAdjustments,
   serializeProjectWithMedia,
   applyProjectData,
+  loadRemoteProject,
   ContaboStorageManagerClient,
+  type RemoteProjectLoadProgressEvent,
 } from './utils/project';
 import { findMatchingClipIndex } from './utils/clipMatching';
 import { reindexTransitions } from './utils/transitions';
@@ -22,6 +24,7 @@ import {
   clearFfmpegLogs,
   isFfmpegLoadFailed,
   isFfmpegLoading,
+  ensureFfmpeg,
 } from './ffmpeg/ffmpegService';
 import type { RenderProgressUpdate } from './ffmpeg/ffmpegService';
 import { isHighMemoryUsage, getMemoryStatus, formatBytes } from './utils/memory';
@@ -95,9 +98,14 @@ export function App() {
   const [storageEndpoint, setStorageEndpoint] = useState('https://storage.noahcohn.com/webhook/clip-stacker');
   const [storageAuthToken, setStorageAuthToken] = useState('');
   const [isRemoteSaving, setIsRemoteSaving] = useState(false);
+  const [isRemoteLoading, setIsRemoteLoading] = useState(false);
+  const [remoteLoadStage, setRemoteLoadStage] = useState('');
+  const [remoteLoadProgress, setRemoteLoadProgress] = useState<number | null>(null);
+  const [remoteLoadIndeterminate, setRemoteLoadIndeterminate] = useState(false);
   const [remoteUploadItems, setRemoteUploadItems] = useState<RemoteUploadItem[]>([]);
   const [pendingRemoteUploadError, setPendingRemoteUploadError] = useState<PendingRemoteUploadError | null>(null);
   const pendingRemoteUploadResolver = useRef<((action: 'retry' | 'skip' | 'abort') => void) | null>(null);
+  const isRemoteLoadingRef = useRef(false);
 
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
 
@@ -315,7 +323,10 @@ export function App() {
       if (recentLogs) {
         console.error('Last captured FFmpeg logs:\n' + recentLogs);
       }
-      setStatus(`Render failed: ${err.message}`);
+      const message = /FFmpeg failed to/i.test(err.message)
+        ? err.message
+        : `Render failed: ${err.message}`;
+      setStatus(message);
       // Surface FFmpeg load failures separately so the retry button appears.
       if (isFfmpegLoadFailed()) {
         setFfmpegFailed(true);
@@ -413,12 +424,23 @@ export function App() {
   const handleRetryFfmpegLoad = useCallback(async () => {
     setStatus('Resetting FFmpeg and retrying load...');
     setFfmpegFailed(false);
-    setFfmpegLoading(false);
+    setFfmpegLoading(true);
     try {
       await resetFFmpegInstance();
-      setStatus('FFmpeg reset. Click Render to try again.');
+      await ensureFfmpeg(
+        (msg) => setStatus(msg),
+        (update) => {
+          setProgressStage(update.stage);
+          setProgressIndeterminate(update.indeterminate === true);
+        },
+      );
+      setStatus('FFmpeg loaded successfully. Click Render to start.');
     } catch (err) {
-      setStatus(`Error resetting FFmpeg: ${(err as Error).message}`);
+      const message = (err as Error).message;
+      setStatus(message);
+      setFfmpegFailed(true);
+    } finally {
+      setFfmpegLoading(false);
     }
   }, []);
 
@@ -564,9 +586,22 @@ export function App() {
 
   const handleLoadRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
+      if (isRemoteLoadingRef.current) return;
+      isRemoteLoadingRef.current = true;
+      setIsRemoteLoading(true);
+      setRemoteLoadStage('Fetching project manifest...');
+      setRemoteLoadProgress(0);
+      setRemoteLoadIndeterminate(true);
+
+      const handleRemoteLoadProgress = (event: RemoteProjectLoadProgressEvent) => {
+        setRemoteLoadStage(event.stage);
+        setRemoteLoadProgress(event.progress);
+        setRemoteLoadIndeterminate(event.indeterminate);
+        setStatus(event.stage);
+      };
+
       try {
         const client = new ContaboStorageManagerClient(endpoint, authToken);
-        const payload = await client.load(projectName || 'default-project');
         const {
           clips: updatedClips,
           clipGroups: loadedClipGroups,
@@ -574,7 +609,9 @@ export function App() {
           textOverlays: loadedOverlays,
           skippedClipCount,
           skippedClipFileNames,
-        } = await applyProjectData(payload, clips);
+        } = await loadRemoteProject(client, projectName || 'default-project', clips, {
+          onProgress: handleRemoteLoadProgress,
+        });
         if (updatedClips.length > 0) {
           setClips(updatedClips);
           setClipGroups(loadedClipGroups);
@@ -582,6 +619,9 @@ export function App() {
         }
         setTransitions(loadedTransitions);
         setTextOverlays(loadedOverlays);
+        setRemoteLoadStage('Remote project load complete');
+        setRemoteLoadProgress(1);
+        setRemoteLoadIndeterminate(false);
         let msg = `Project loaded from contabo_storage_manager endpoint (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
@@ -589,6 +629,12 @@ export function App() {
         setStatus(msg);
       } catch (error) {
         setStatus((error as Error).message);
+      } finally {
+        isRemoteLoadingRef.current = false;
+        setIsRemoteLoading(false);
+        setRemoteLoadStage('');
+        setRemoteLoadProgress(null);
+        setRemoteLoadIndeterminate(false);
       }
     },
     [clips],
@@ -1010,6 +1056,10 @@ export function App() {
           onSaveRemote={handleSaveRemote}
           onLoadRemote={handleLoadRemote}
           isRemoteSaving={isRemoteSaving}
+          isRemoteLoading={isRemoteLoading}
+          remoteLoadStage={remoteLoadStage}
+          remoteLoadProgress={remoteLoadProgress}
+          remoteLoadIndeterminate={remoteLoadIndeterminate}
           remoteUploadItems={remoteUploadItems}
           pendingRemoteUploadError={pendingRemoteUploadError}
           onResolveRemoteUploadError={resolveRemoteUploadError}

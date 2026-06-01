@@ -114,6 +114,114 @@ export interface RemoteUploadErrorEvent extends RemoteUploadProgressEvent {
   status: 'failed';
 }
 
+export interface AppliedProjectData {
+  clips: Clip[];
+  clipGroups: ClipGroup[];
+  transitions: ClipTransition[];
+  textOverlays: TextOverlay[];
+  skippedClipCount: number;
+  skippedClipFileNames: string[];
+}
+
+export interface RemoteProjectLoadProgressEvent {
+  stage: string;
+  progress: number | null;
+  indeterminate: boolean;
+  clipIndex?: number;
+  clipCount?: number;
+  fileName?: string;
+}
+
+interface ApplyProjectDataOptions {
+  onProgress?: (event: RemoteProjectLoadProgressEvent) => void;
+  remoteProgressStart?: number;
+  remoteProgressEnd?: number;
+}
+
+interface LoadRemoteProjectOptions {
+  onProgress?: (event: RemoteProjectLoadProgressEvent) => void;
+}
+
+const REMOTE_PROJECT_DOWNLOAD_PROGRESS_START = 0.08;
+const REMOTE_PROJECT_DOWNLOAD_PROGRESS_END = 0.96;
+
+function clampUnitProgress(progress: number): number {
+  return Math.max(0, Math.min(1, progress));
+}
+
+function emitRemoteProjectLoadProgress(
+  onProgress: ((event: RemoteProjectLoadProgressEvent) => void) | undefined,
+  event: RemoteProjectLoadProgressEvent,
+): void {
+  if (!onProgress) return;
+  onProgress({
+    ...event,
+    progress: typeof event.progress === 'number' ? clampUnitProgress(event.progress) : null,
+  });
+}
+
+function hasRestorableRemoteMedia(savedClip: SerializedClip): boolean {
+  return Boolean(savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl);
+}
+
+function countRemoteProjectDownloads(project: Project, clips: Clip[]): number {
+  if (!Array.isArray(project.clips)) return 0;
+  const byName = new Map(clips.map((clip) => [clip.file.name, clip]));
+  return project.clips.reduce((count, savedClip) => {
+    if (byName.has(savedClip.fileName) || !hasRestorableRemoteMedia(savedClip)) return count;
+    return count + 1;
+  }, 0);
+}
+
+function buildRemoteDownloadStage(index: number, total: number, fileName: string): string {
+  return `Downloading clip ${index} of ${total}: ${fileName}`;
+}
+
+function calculateRemoteDownloadProgress(
+  clipIndex: number,
+  clipCount: number,
+  clipProgress: number,
+  rangeStart: number,
+  rangeEnd: number,
+): number {
+  if (clipCount <= 0) return clampUnitProgress(rangeEnd);
+  const completed = (clipIndex - 1 + clampUnitProgress(clipProgress)) / clipCount;
+  return rangeStart + completed * Math.max(0, rangeEnd - rangeStart);
+}
+
+async function downloadRemoteMedia(
+  mediaUrl: string,
+  onProgress?: (progress: number, indeterminate: boolean) => void,
+): Promise<Blob> {
+  const mediaResponse = await fetch(mediaUrl);
+  if (!mediaResponse.ok) throw new Error(`Media download failed (${mediaResponse.status})`);
+
+  const contentLengthHeader = mediaResponse.headers.get('content-length');
+  const totalBytes = contentLengthHeader ? Number(contentLengthHeader) : NaN;
+  const contentType = mediaResponse.headers.get('content-type') || undefined;
+
+  if (!mediaResponse.body || !Number.isFinite(totalBytes) || totalBytes <= 0) {
+    return await mediaResponse.blob();
+  }
+
+  const reader = mediaResponse.body.getReader();
+  const chunks: BlobPart[] = [];
+  let loadedBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    const chunk = new Uint8Array(value);
+    chunks.push(chunk);
+    loadedBytes += chunk.byteLength;
+    onProgress?.(loadedBytes / totalBytes, false);
+  }
+
+  onProgress?.(1, false);
+  return new Blob(chunks, { type: contentType });
+}
+
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
   if (file.type.startsWith('audio/')) return 'audio';
@@ -248,14 +356,11 @@ export async function serializeProjectWithMedia(
   return { ...project, clips: enrichedClips };
 }
 
-export function applyProjectData(
-  project: Project,
-  clips: Clip[],
-): Promise<{ clips: Clip[]; clipGroups: ClipGroup[]; transitions: ClipTransition[]; textOverlays: TextOverlay[]; skippedClipCount: number; skippedClipFileNames: string[] }>;
 export async function applyProjectData(
   project: Project,
   clips: Clip[],
-): Promise<{ clips: Clip[]; clipGroups: ClipGroup[]; transitions: ClipTransition[]; textOverlays: TextOverlay[]; skippedClipCount: number; skippedClipFileNames: string[] }> {
+  options: ApplyProjectDataOptions = {},
+): Promise<AppliedProjectData> {
   if (!project || !Array.isArray(project.clips)) {
     throw new Error('Project file is invalid.');
   }
@@ -264,16 +369,65 @@ export async function applyProjectData(
   const mapped: Clip[] = [];
   let skippedCount = 0;
   const skippedClipFileNames: string[] = [];
+  const totalRemoteDownloads = countRemoteProjectDownloads(project, clips);
+  const remoteProgressStart = options.remoteProgressStart ?? 0;
+  const remoteProgressEnd = options.remoteProgressEnd ?? 1;
+  let remoteDownloadIndex = 0;
 
   for (const savedClip of project.clips) {
     let liveClip = byName.get(savedClip.fileName);
-    if (!liveClip && (savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl)) {
+    if (!liveClip && hasRestorableRemoteMedia(savedClip)) {
+      remoteDownloadIndex += 1;
+      const clipIndex = remoteDownloadIndex;
+      const clipCount = totalRemoteDownloads;
+      const stage = buildRemoteDownloadStage(clipIndex, clipCount, savedClip.fileName);
+      emitRemoteProjectLoadProgress(options.onProgress, {
+        stage,
+        progress: calculateRemoteDownloadProgress(
+          clipIndex,
+          clipCount,
+          0,
+          remoteProgressStart,
+          remoteProgressEnd,
+        ),
+        indeterminate: true,
+        clipIndex,
+        clipCount,
+        fileName: savedClip.fileName,
+      });
       try {
         const mediaUrl = savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl;
         if (!mediaUrl) throw new Error('No media URL available');
-        const mediaResponse = await fetch(mediaUrl);
-        if (!mediaResponse.ok) throw new Error(`Media download failed (${mediaResponse.status})`);
-        const blob = await mediaResponse.blob();
+        const blob = await downloadRemoteMedia(mediaUrl, (clipProgress, indeterminate) => {
+          emitRemoteProjectLoadProgress(options.onProgress, {
+            stage,
+            progress: calculateRemoteDownloadProgress(
+              clipIndex,
+              clipCount,
+              clipProgress,
+              remoteProgressStart,
+              remoteProgressEnd,
+            ),
+            indeterminate,
+            clipIndex,
+            clipCount,
+            fileName: savedClip.fileName,
+          });
+        });
+        emitRemoteProjectLoadProgress(options.onProgress, {
+          stage: `Preparing clip ${clipIndex} of ${clipCount}: ${savedClip.fileName}`,
+          progress: calculateRemoteDownloadProgress(
+            clipIndex,
+            clipCount,
+            1,
+            remoteProgressStart,
+            remoteProgressEnd,
+          ),
+          indeterminate: true,
+          clipIndex,
+          clipCount,
+          fileName: savedClip.fileName,
+        });
         const fileType = blob.type || savedClip.fileType || 'application/octet-stream';
         const file = new File([blob], savedClip.fileName, { type: fileType });
         const { duration, objectUrl } = await getMediaInfo(file);
@@ -380,6 +534,44 @@ export async function applyProjectData(
     : [];
 
   return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount, skippedClipFileNames };
+}
+
+export async function loadRemoteProject(
+  client: ContaboStorageManagerClient,
+  name: string,
+  clips: Clip[],
+  options: LoadRemoteProjectOptions = {},
+): Promise<AppliedProjectData> {
+  emitRemoteProjectLoadProgress(options.onProgress, {
+    stage: 'Fetching project manifest...',
+    progress: 0,
+    indeterminate: true,
+  });
+
+  const project = await client.load(name);
+  const totalRemoteDownloads = countRemoteProjectDownloads(project, clips);
+
+  if (totalRemoteDownloads === 0) {
+    emitRemoteProjectLoadProgress(options.onProgress, {
+      stage: 'Applying remote project data...',
+      progress: REMOTE_PROJECT_DOWNLOAD_PROGRESS_START,
+      indeterminate: true,
+    });
+  }
+
+  const result = await applyProjectData(project, clips, {
+    onProgress: options.onProgress,
+    remoteProgressStart: REMOTE_PROJECT_DOWNLOAD_PROGRESS_START,
+    remoteProgressEnd: REMOTE_PROJECT_DOWNLOAD_PROGRESS_END,
+  });
+
+  emitRemoteProjectLoadProgress(options.onProgress, {
+    stage: 'Remote project load complete',
+    progress: 1,
+    indeterminate: false,
+  });
+
+  return result;
 }
 
 export class ContaboStorageManagerClient {

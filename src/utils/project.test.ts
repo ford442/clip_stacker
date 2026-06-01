@@ -128,7 +128,7 @@ describe('utils/project', () => {
       ];
       const project = serializeProject(clips, transitions, [], []);
       expect(project.transitions).toHaveLength(1);
-      expect(project.transitions[0]).toEqual({
+      expect(project.transitions![0]).toEqual({
         afterClipIndex: 1,
         type: 'dissolve',
         duration: 0.5,
