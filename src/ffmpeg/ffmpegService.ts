@@ -301,6 +301,25 @@ const FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS = 45_000;
 /** Timeout (ms) for the entire ffmpeg.load() call including WASM compilation. */
 const FFMPEG_LOAD_TIMEOUT_MS = 120_000; // 2 minutes
 
+export function getFfmpegEnvironmentDiagnostics(): string[] {
+  const lines: string[] = [];
+  const globalScope = globalThis as typeof globalThis & {
+    crossOriginIsolated?: boolean;
+    SharedArrayBuffer?: typeof SharedArrayBuffer;
+  };
+
+  lines.push(`location=${typeof window !== 'undefined' ? window.location.href : 'n/a'}`);
+  lines.push(`protocol=${typeof window !== 'undefined' ? window.location.protocol : 'n/a'}`);
+  lines.push(`crossOriginIsolated=${globalScope.crossOriginIsolated === true}`);
+  lines.push(`Worker=${typeof Worker !== 'undefined'}`);
+  lines.push(`WebAssembly=${typeof WebAssembly !== 'undefined'}`);
+  lines.push(`SharedArrayBuffer=${typeof globalScope.SharedArrayBuffer !== 'undefined'}`);
+  lines.push(`hardwareConcurrency=${typeof navigator !== 'undefined' ? navigator.hardwareConcurrency ?? 'unknown' : 'n/a'}`);
+  lines.push('ffmpegClassWorkerURL=Vite bundled @ffmpeg/ffmpeg default worker');
+
+  return lines;
+}
+
 /**
  * Attempt to fetch a URL as a blob URL, retrying up to maxRetries times with
  * exponential backoff.  Status updates are sent via onStatus so the user sees
@@ -381,9 +400,10 @@ async function toBlobURLWithFallback(
 /**
  * Race a promise against a timeout.  Throws if the timeout fires first.
  */
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string, onTimeout?: () => void): Promise<T> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      onTimeout?.();
       reject(new Error(`Timed out after ${ms / 1000}s waiting for: ${label}`));
     }, ms);
     promise.then(
@@ -435,6 +455,7 @@ async function _doLoadFfmpeg(onStatus: StatusCallback, onProgress?: ProgressCall
   // (The @ffmpeg/ffmpeg typings only expose 'log' and 'progress' events.)
 
   emitLoadStatus(onStatus, onProgress, 'Loading FFmpeg core (this may take a moment)...');
+  recordFfmpegLog(`[FFmpeg load] Environment: ${getFfmpegEnvironmentDiagnostics().join('; ')}`);
 
   try {
     const coreURL = await toBlobURLWithFallback(
@@ -454,12 +475,29 @@ async function _doLoadFfmpeg(onStatus: StatusCallback, onProgress?: ProgressCall
     );
 
     emitLoadStatus(onStatus, onProgress, 'Initializing FFmpeg WASM engine...');
-    recordFfmpegLog('[FFmpeg load] Starting ffmpeg.load()...');
-    await withTimeout(
-      ffmpeg.load({ coreURL, wasmURL }),
-      FFMPEG_LOAD_TIMEOUT_MS,
-      'ffmpeg.load()',
+    recordFfmpegLog('[FFmpeg load] Starting ffmpeg.load() with Vite bundled @ffmpeg/ffmpeg default worker');
+    const loadStartedAt = Date.now();
+    const abortController = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const checkpointTimers = [5_000, 15_000, 30_000, 60_000, 90_000].map((delayMs) =>
+      setTimeout(() => {
+        const seconds = Math.round((Date.now() - loadStartedAt) / 1000);
+        const message =
+          `Still initializing FFmpeg WASM engine (${seconds}s elapsed). ` +
+          getFfmpegEnvironmentDiagnostics().join('; ');
+        recordFfmpegLog(`[FFmpeg load] ${message}`);
+        emitLoadStatus(onStatus, onProgress, message);
+      }, delayMs),
     );
+    try {
+      await withTimeout(
+        ffmpeg.load({ coreURL, wasmURL }, { signal: abortController?.signal }),
+        FFMPEG_LOAD_TIMEOUT_MS,
+        'ffmpeg.load()',
+        () => abortController?.abort(),
+      );
+    } finally {
+      checkpointTimers.forEach(clearTimeout);
+    }
     recordFfmpegLog('[FFmpeg load] ffmpeg.load() completed successfully.');
   } catch (error) {
     const msg = (error as Error).message;

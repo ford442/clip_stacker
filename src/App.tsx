@@ -21,6 +21,7 @@ import {
   resetFFmpegInstance,
   getLastFfmpegLogs,
   getLastFfmpegError,
+  getFfmpegEnvironmentDiagnostics,
   clearFfmpegLogs,
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -393,6 +394,8 @@ export function App() {
     }
     lines.push(`UA: ${navigator.userAgent}`);
     lines.push(`CrossOriginIsolated: ${window.crossOriginIsolated}`);
+    lines.push('--- FFmpeg environment ---');
+    lines.push(...getFfmpegEnvironmentDiagnostics());
     lines.push('--- End debug report ---');
 
     const text = lines.join('\n');
