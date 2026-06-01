@@ -138,6 +138,7 @@ function emitLoadStatus(
 }
 
 function getCdnLabel(baseURL: string): string {
+  if (baseURL.includes('/ffmpeg-core')) return 'local hosted FFmpeg core';
   if (baseURL.includes('cdn.jsdelivr.net')) return 'jsDelivr CDN';
   if (baseURL.includes('unpkg.com')) return 'unpkg CDN';
   try {
@@ -145,6 +146,20 @@ function getCdnLabel(baseURL: string): string {
   } catch {
     return baseURL;
   }
+}
+
+function getLocalFfmpegCoreBaseURL(): string {
+  const base =
+    typeof document !== 'undefined'
+      ? document.baseURI
+      : typeof window !== 'undefined'
+      ? window.location.href
+      : 'http://localhost/';
+  return new URL('ffmpeg-core', base).href.replace(/\/$/, '');
+}
+
+function getFfmpegCoreSources(): string[] {
+  return [getLocalFfmpegCoreBaseURL(), ...FFMPEG_CORE_CDNS];
 }
 
 function terminateFfmpegInstance(ffmpeg: FFmpeg | null, context: string): void {
@@ -289,7 +304,7 @@ function buildSingleClipFilter(clip: Clip): string {
   return parts.join(';');
 }
 
-/** CDN candidates for @ffmpeg/core@0.12.6 UMD assets, tried in order. */
+/** CDN fallbacks for @ffmpeg/core@0.12.6 UMD assets, tried after local assets. */
 const FFMPEG_CORE_CDNS = [
   'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',
   'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
@@ -315,6 +330,7 @@ export function getFfmpegEnvironmentDiagnostics(): string[] {
   lines.push(`WebAssembly=${typeof WebAssembly !== 'undefined'}`);
   lines.push(`SharedArrayBuffer=${typeof globalScope.SharedArrayBuffer !== 'undefined'}`);
   lines.push(`hardwareConcurrency=${typeof navigator !== 'undefined' ? navigator.hardwareConcurrency ?? 'unknown' : 'n/a'}`);
+  lines.push(`ffmpegCoreSources=${getFfmpegCoreSources().join(',')}`);
   lines.push('ffmpegClassWorkerURL=Vite bundled @ffmpeg/ffmpeg default worker');
 
   return lines;
@@ -363,8 +379,9 @@ async function toBlobURLWithRetry(
 }
 
 /**
- * Try each CDN in FFMPEG_CORE_CDNS until one succeeds.  This provides resilience
- * against individual CDN outages.
+ * Try the local hosted core first, then CDN fallbacks. This keeps production
+ * renders independent of third-party CDN availability while retaining a
+ * recovery path for local asset deployment mistakes.
  */
 async function toBlobURLWithFallback(
   filename: string,
@@ -374,26 +391,27 @@ async function toBlobURLWithFallback(
   label: string,
 ): Promise<string> {
   let lastError: Error | null = null;
-  for (const [index, baseURL] of FFMPEG_CORE_CDNS.entries()) {
+  const sources = getFfmpegCoreSources();
+  for (const [index, baseURL] of sources.entries()) {
     const url = `${baseURL}/${filename}`;
     const cdnLabel = getCdnLabel(baseURL);
     try {
       return await toBlobURLWithRetry(url, mimeType, onStatus, onProgress, `${label} from ${cdnLabel}`);
     } catch (err) {
       lastError = err as Error;
-      recordFfmpegLog(`[FFmpeg load] CDN ${baseURL} failed for ${filename}: ${lastError.message}`);
-      console.warn(`[FFmpeg load] CDN ${baseURL} failed for ${filename}, trying next CDN...`);
-      if (index < FFMPEG_CORE_CDNS.length - 1) {
+      recordFfmpegLog(`[FFmpeg load] Source ${baseURL} failed for ${filename}: ${lastError.message}`);
+      console.warn(`[FFmpeg load] Source ${baseURL} failed for ${filename}, trying next source...`);
+      if (index < sources.length - 1) {
         emitLoadStatus(
           onStatus,
           onProgress,
-          `${cdnLabel} failed for ${label}. Trying the next FFmpeg CDN...`,
+          `${cdnLabel} failed for ${label}. Trying the next FFmpeg source...`,
         );
       }
     }
   }
   throw new Error(
-    `Failed to download ${filename} from all CDNs. Last error: ${lastError?.message ?? 'unknown'}`,
+    `Failed to download ${filename} from local assets and all fallback CDNs. Last error: ${lastError?.message ?? 'unknown'}`,
   );
 }
 

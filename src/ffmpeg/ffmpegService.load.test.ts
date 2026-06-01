@@ -68,17 +68,17 @@ describe('FFmpeg loader', () => {
     vi.useRealTimers();
   });
 
-  it('downloads core assets from jsDelivr before any fallback CDN', async () => {
+  it('downloads locally hosted core assets before any fallback CDN', async () => {
     await ensureFfmpeg(vi.fn(), vi.fn());
 
     expect(mocked.toBlobURL).toHaveBeenNthCalledWith(
       1,
-      'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js',
+      'http://localhost:3000/ffmpeg-core/ffmpeg-core.js',
       'text/javascript',
     );
     expect(mocked.toBlobURL).toHaveBeenNthCalledWith(
       2,
-      'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm',
+      'http://localhost:3000/ffmpeg-core/ffmpeg-core.wasm',
       'application/wasm',
     );
   });
@@ -92,8 +92,8 @@ describe('FFmpeg loader', () => {
     expect(stages).toEqual(
       expect.arrayContaining([
         'Loading FFmpeg core (this may take a moment)...',
-        'Downloading FFmpeg core.js from jsDelivr CDN...',
-        'Downloading FFmpeg core.wasm from jsDelivr CDN...',
+        'Downloading FFmpeg core.js from local hosted FFmpeg core...',
+        'Downloading FFmpeg core.wasm from local hosted FFmpeg core...',
         'Initializing FFmpeg WASM engine...',
       ]),
     );
