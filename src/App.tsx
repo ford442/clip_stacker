@@ -781,7 +781,7 @@ export function App() {
         const processedFile = new File(
           [blobWithAudio],
           `rife_${modeLabel}_${clipSnapshot.file.name}`,
-          { type: blobWithAudio.type || 'video/mp4' },
+          { type: blobWithAudio.type },
         );
         const processedUrl = URL.createObjectURL(processedFile);
         const { duration } = await getMediaInfo(processedFile);
