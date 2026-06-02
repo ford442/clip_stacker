@@ -169,6 +169,30 @@ describe('FFmpeg loader', () => {
     expect(isFfmpegLoadFailed()).toBe(true);
   });
 
+  it('surfaces a readable message when the worker rejects with a string', async () => {
+    // @ffmpeg/ffmpeg's worker rejects with `error.toString()` (a plain string),
+    // not an Error. Previously this surfaced as "FAILED: undefined" because the
+    // code read `.message` off a string. The final message must carry the text.
+    vi.useFakeTimers();
+
+    const failing = mocked.createInstance();
+    failing.load.mockRejectedValue('Error: failed to import ffmpeg-core.js');
+
+    mocked.FFmpeg.mockImplementation(function MockFFmpegStringReject() {
+      return failing;
+    });
+
+    const onStatus = vi.fn();
+
+    const promise = ensureFfmpeg(onStatus, vi.fn()).catch((e) => e);
+    await vi.advanceTimersByTimeAsync(7000);
+
+    const err = await promise;
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toContain('failed to import ffmpeg-core.js');
+    expect((err as Error).message).not.toContain('undefined');
+  });
+
   it('clears failed load state so a second manual attempt can succeed', async () => {
     vi.useFakeTimers();
 

@@ -110,6 +110,29 @@ function buildDetailedError(operation: string, originalError: unknown): Error {
   return e;
 }
 
+/**
+ * Normalise an unknown thrown value into a human-readable message.
+ *
+ * @ffmpeg/ffmpeg's worker rejects with `error.toString()` (a plain string,
+ * e.g. "Error: failed to import ffmpeg-core.js"), so `(error as Error).message`
+ * is `undefined` for these — which previously surfaced as the unhelpful
+ * "FFmpeg load FAILED: undefined". Handle strings, Errors, and arbitrary
+ * objects so the diagnostics always carry something actionable.
+ */
+function extractErrorMessage(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message || error.toString();
+  if (error && typeof error === 'object') {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string' && maybeMessage) return maybeMessage;
+  }
+  try {
+    return String(error);
+  } catch {
+    return 'unknown error';
+  }
+}
+
 function clampProgress(progress: number): number {
   return Math.max(0, Math.min(1, progress));
 }
@@ -304,10 +327,22 @@ function buildSingleClipFilter(clip: Clip): string {
   return parts.join(';');
 }
 
-/** CDN fallbacks for @ffmpeg/core@0.12.6 UMD assets, tried after local assets. */
+/**
+ * CDN fallbacks for @ffmpeg/core@0.12.6 ESM assets, tried after local assets.
+ *
+ * IMPORTANT: these MUST be the ESM (`dist/esm`) build, not UMD. @ffmpeg/ffmpeg
+ * spawns its worker with `{ type: "module" }`, where `importScripts()` is
+ * unavailable. The worker therefore loads the core via
+ * `(await import(coreURL)).default`. The UMD build only assigns
+ * `createFFmpegCore` to `module.exports`/`exports`/`define`, none of which
+ * exist in a module worker, so `.default` is undefined and the worker throws
+ * "failed to import ffmpeg-core.js" (surfacing as the cryptic "FAILED:
+ * undefined"). The ESM build exposes `export default createFFmpegCore`, which
+ * is what the module worker needs.
+ */
 const FFMPEG_CORE_CDNS = [
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd',
-  'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd',
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm',
+  'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm',
 ];
 
 /** Timeout (ms) for downloading each FFmpeg core asset before trying another source. */
@@ -518,7 +553,7 @@ async function _doLoadFfmpeg(onStatus: StatusCallback, onProgress?: ProgressCall
     }
     recordFfmpegLog('[FFmpeg load] ffmpeg.load() completed successfully.');
   } catch (error) {
-    const msg = (error as Error).message;
+    const msg = extractErrorMessage(error);
     recordFfmpegLog(`[FFmpeg load] FAILED: ${msg}`);
     clearTrackedLoadingInstance(ffmpeg, true);
     // Show a concise intermediate status so the user knows this attempt failed,
