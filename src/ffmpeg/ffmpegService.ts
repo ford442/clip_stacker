@@ -1215,6 +1215,78 @@ export async function extractTrimmedVideoClip(clip: Clip, onStatus: StatusCallba
 }
 
 /**
+ * Attach the original clip audio (respecting the clip's current trim window) to
+ * a processed video blob, such as a RIFE-interpolated segment that no longer
+ * carries its own audio stream.
+ */
+export async function muxProcessedVideoWithSourceAudio(
+  videoBlob: Blob,
+  clip: Clip,
+  onStatus: StatusCallback,
+): Promise<Blob> {
+  clearFfmpegLogs();
+
+  if (clip.kind !== 'video') {
+    throw new Error('Cannot mux processed video with audio from a non-video clip.');
+  }
+
+  const ffmpeg = await ensureFfmpeg(onStatus);
+  const videoExt = videoBlob.type.includes('webm') ? 'webm' : 'mp4';
+  const videoInputName = `processed-video.${videoExt}`;
+  const sourceExt = getSafeExtension(clip.file.name, 'mp4');
+  const sourceInputName = `source-audio.${sourceExt}`;
+  const outputName = 'processed-with-audio.mp4';
+  const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
+
+  for (const name of [videoInputName, sourceInputName, outputName]) {
+    try { await ffmpeg.deleteFile(name); } catch { /* ignore */ }
+  }
+
+  onStatus(`Restoring source audio for "${clip.title}"...`);
+
+  try {
+    await safeWriteFile(
+      ffmpeg,
+      videoInputName,
+      new Uint8Array(await videoBlob.arrayBuffer()),
+      'processed video write input',
+    );
+    await safeWriteFile(
+      ffmpeg,
+      sourceInputName,
+      await fetchFile(clip.file),
+      'processed video write source audio',
+    );
+
+    const filterComplex =
+      `[1:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS[aout]`;
+
+    await safeExec(ffmpeg, [
+      '-i', videoInputName,
+      '-i', sourceInputName,
+      '-filter_complex', filterComplex,
+      '-map', '0:v:0',
+      '-map', '[aout]',
+      '-c:v', 'copy',
+      '-c:a', 'aac',
+      '-b:a', '192k',
+      '-movflags', '+faststart',
+      outputName,
+    ], null, `Mux processed video with source audio for "${clip.title}"`);
+
+    const output = await safeReadFile(ffmpeg, outputName, 'processed video read output');
+    const plain = new Uint8Array(output).buffer as ArrayBuffer;
+
+    onStatus('Source audio restored.');
+    return new Blob([plain], { type: 'video/mp4' });
+  } finally {
+    try { await ffmpeg.deleteFile(videoInputName); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile(sourceInputName); } catch { /* ignore */ }
+    try { await ffmpeg.deleteFile(outputName); } catch { /* ignore */ }
+  }
+}
+
+/**
  * Analyze clips, transitions, and overlays to determine which rendering path will be used.
  * Returns a description of the plan and whether re-encoding will occur.
  *

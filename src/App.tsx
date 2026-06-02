@@ -16,6 +16,7 @@ import { hybridMergeClips } from './utils/hybrid-encoder';
 import {
   extractAudioToWav,
   extractTrimmedVideoClip,
+  muxProcessedVideoWithSourceAudio,
   calculateRenderPlan,
   aggressiveCleanupFFmpegVFS,
   resetFFmpegInstance,
@@ -770,12 +771,17 @@ export function App() {
             setStatus(event.message ?? `RIFE: ${event.stage}…`);
           },
         );
+        const blobWithAudio = await muxProcessedVideoWithSourceAudio(
+          blob,
+          clipSnapshot,
+          setStatus,
+        );
 
         const modeLabel = mode === 'boomerang' ? 'boomerang' : `${multiplier}x`;
         const processedFile = new File(
-          [blob],
+          [blobWithAudio],
           `rife_${modeLabel}_${clipSnapshot.file.name}`,
-          { type: blob.type || 'video/mp4' },
+          { type: blobWithAudio.type || 'video/mp4' },
         );
         const processedUrl = URL.createObjectURL(processedFile);
         const { duration } = await getMediaInfo(processedFile);
