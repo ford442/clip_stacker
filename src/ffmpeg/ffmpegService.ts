@@ -284,6 +284,7 @@ async function execWithFfmpegProgress(
 
 function clipNeedsEffects(clip: Clip): boolean {
   if (clip.kind === 'audio') return true;
+  if (clip.rifeProcessed) return true;
   return clip.videoFadeIn > 0 || clip.videoFadeOut > 0 || clip.audioFadeIn > 0 || clip.audioFadeOut > 0;
 }
 
@@ -1221,7 +1222,7 @@ export async function extractTrimmedVideoClip(clip: Clip, onStatus: StatusCallba
  * 1. If any clip has layerIndex > 0 → PiP/compositing (re-encode)
  * 2. If any transitions are active → transitions path (re-encode)
  * 3. If any text overlays → text overlays path (re-encode)
- * 4. If any clip needs effects (fades or audio-only) → two-pass re-encode
+ * 4. If any clip needs effects (fades, audio-only, or RIFE) → two-pass re-encode
  * 5. Otherwise → lossless concat (fast, no quality loss)
  */
 export function calculateRenderPlan(
@@ -1268,21 +1269,30 @@ export function calculateRenderPlan(
     // Count audio and fade clips in a single pass
     let audioClipCount = 0;
     let fadeClipCount = 0;
+    let rifeClipCount = 0;
     for (const clip of effectClips) {
       if (clip.kind === 'audio') {
         audioClipCount++;
-      } else if (clip.videoFadeIn > 0 || clip.videoFadeOut > 0 || clip.audioFadeIn > 0 || clip.audioFadeOut > 0) {
+      }
+      if (clip.videoFadeIn > 0 || clip.videoFadeOut > 0 || clip.audioFadeIn > 0 || clip.audioFadeOut > 0) {
         fadeClipCount++;
+      }
+      if (clip.rifeProcessed) {
+        rifeClipCount++;
       }
     }
     
-    let reasonDetail = '';
-    if (audioClipCount > 0 && fadeClipCount > 0) {
-      reasonDetail = 'have fades and/or are audio-only';
-    } else if (audioClipCount > 0) {
-      reasonDetail = `${audioClipCount > 1 ? 'are' : 'is'} audio-only`;
-    } else {
-      reasonDetail = `${fadeClipCount > 1 ? 'have' : 'has'} fades`;
+    const reasonParts: string[] = [];
+    if (audioClipCount > 0) reasonParts.push('are audio-only');
+    if (fadeClipCount > 0) reasonParts.push('have fades');
+    if (rifeClipCount > 0) reasonParts.push('are RIFE-processed');
+
+    let reasonDetail = reasonParts.join(' and/or ');
+    if (effectClips.length === 1) {
+      reasonDetail = reasonDetail.replace(/\bare\b/g, 'is').replace(/\bhave\b/g, 'has');
+    }
+    if (!reasonDetail) {
+      reasonDetail = 'require re-encoding';
     }
     
     const titles = effectClips.map((c) => `"${c.title}"`).join(', ');
