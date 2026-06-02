@@ -72,7 +72,10 @@ function TimelineRuler({ clips, transitions }: RulerProps) {
         const firstTick = Math.ceil(clipStart / interval) * interval;
         const ticks: number[] = [];
         for (let t = firstTick; t < clipStart + dur - 0.01; t += interval) {
-          ticks.push(t);
+          // Skip the clip start since it's already shown as the start-of-clip label
+          if (t !== clipStart) {
+            ticks.push(t);
+          }
         }
 
         const hasTransition = index > 0 && transSet.has(index);
