@@ -121,14 +121,14 @@ export function buildTransitionFilterComplex(
       if (clip.videoFadeOut > 0) vf += `,fade=t=out:st=${safeVOut}:d=${clip.videoFadeOut}`;
       parts.push(`${vf}[v${i}]`);
 
-      let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+      let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
       if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
       parts.push(`${af}[a${i}]`);
     } else {
       // audio-only: black video
       parts.push(`color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${dur}[v${i}]`);
-      let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+      let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
       if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
       parts.push(`${af}[a${i}]`);

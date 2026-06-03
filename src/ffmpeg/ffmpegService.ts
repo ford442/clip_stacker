@@ -303,23 +303,21 @@ function buildSingleClipFilter(clip: Clip): string {
 
   if (clip.kind === 'video') {
     let v = `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS`;
+    v += `,scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`;
+    v += `,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0) v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
     parts.push(`${v}[vout]`);
 
-    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0) a += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
     parts.push(`${a}[aout]`);
   } else {
-    // Synthesize a black video track for audio-only clips.
-    parts.push(`color=c=black:s=${DEFAULT_VIDEO_SIZE}:d=${duration}[vsrc]`);
-    let v = `[vsrc]`;
-    if (clip.videoFadeIn > 0) v += `fade=t=in:st=0:d=${clip.videoFadeIn},`;
-    if (clip.videoFadeOut > 0) v += `fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut},`;
-    parts.push(`${v}format=yuv420p[vout]`);
+    // Synthesize a black video track for audio-only clips at the master canvas size.
+    parts.push(`color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${duration},format=yuv420p[vout]`);
 
-    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0) a += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
     parts.push(`${a}[aout]`);
@@ -772,39 +770,29 @@ async function processClipPass1(
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
 
-  if (clipNeedsEffects(clip)) {
-    onStatus(`Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}"...`);
-    await safeExec(ffmpeg, [
-      '-i', clip.inputName!,
-      '-filter_complex', buildSingleClipFilter(clip),
-      '-map', '[vout]',
-      '-map', '[aout]',
-      '-r', '30',
-      '-c:v', 'libx264',
-      '-crf', String(settings.crf),
-      '-preset', settings.preset,
-      '-pix_fmt', 'yuv420p',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      outName,
-    ], {
-      stage: `Pass 1: ${clip.title}`,
-      totalDuration: clipDuration,
-      rangeStart,
-      rangeEnd,
-      onProgress,
-    }, `Pass 1 encode for clip ${index + 1}/${total} "${clip.title}"`);
-  } else {
-    // -ss before -i triggers a fast container-level seek; -t is duration from that point.
-    onStatus(`Pass 1 [${index + 1}/${total}]: Trimming "${clip.title}" (lossless)...`);
-    const args: string[] = [];
-    if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
-    args.push('-i', clip.inputName!);
-    if (Number.isFinite(clip.trimEnd)) args.push('-t', String(clip.trimEnd - clip.trimStart));
-    args.push('-c', 'copy', outName);
-    await safeExec(ffmpeg, args, null, `Pass 1 trim (lossless copy) for clip ${index + 1}/${total} "${clip.title}"`);
-    emitProgress(onProgress, `Pass 1: ${clip.title}`, rangeEnd, false);
-  }
+  // Always re-encode through the filter to normalize all clips to OUTPUT_WIDTH x OUTPUT_HEIGHT.
+  // A lossless -c copy path would preserve native resolution and cause VLC to swap sizes mid-playback.
+  onStatus(`Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}"...`);
+  await safeExec(ffmpeg, [
+    '-i', clip.inputName!,
+    '-filter_complex', buildSingleClipFilter(clip),
+    '-map', '[vout]',
+    '-map', '[aout]',
+    '-r', '30',
+    '-c:v', 'libx264',
+    '-crf', String(settings.crf),
+    '-preset', settings.preset,
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-b:a', '192k',
+    outName,
+  ], {
+    stage: `Pass 1: ${clip.title}`,
+    totalDuration: clipDuration,
+    rangeStart,
+    rangeEnd,
+    onProgress,
+  }, `Pass 1 encode for clip ${index + 1}/${total} "${clip.title}"`);
 
   return outName;
 }
@@ -931,8 +919,8 @@ export function buildPipFilterComplex(clips: Clip[]): string {
       parts.push(`color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${dur},format=yuv420p[v${i}]`);
     }
 
-    // Audio
-    let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+    // Audio — normalize to 44100 Hz stereo so amix / concat always gets matching streams
+    let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
     parts.push(`${af}[a${i}]`);
@@ -1376,12 +1364,23 @@ export function calculateRenderPlan(
     };
   }
 
-  // All clips are clean video with no effects
+  // Multiple clips with no effects: must re-encode to normalize all clips to the same resolution.
+  // A lossless concat of clips with different native resolutions causes VLC to swap canvas size mid-playback.
+  if (clips.length > 1) {
+    return {
+      path: 'effects-reencoding',
+      reason: 'Multiple clips — normalizing to uniform canvas size',
+      willReencode: true,
+      description: `Re-encoding to ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT} (CRF ${settings.crf}, ${settings.preset} preset)`,
+    };
+  }
+
+  // Single clip, no effects — safe to stream-copy since there is no concat.
   return {
     path: 'lossless-concat',
-    reason: 'All clips are clean video with no effects',
+    reason: 'Single clean video clip with no effects',
     willReencode: false,
-    description: 'Lossless concat (fast, no quality loss)',
+    description: 'Lossless copy (fast, no quality loss)',
   };
 }
 
