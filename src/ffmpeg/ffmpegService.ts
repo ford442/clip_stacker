@@ -728,7 +728,6 @@ async function performTwoPassEncode(
   onProgress?: ProgressCallback,
 ): Promise<void> {
   emitProgress(onProgress, 'FFmpeg re-encode (two-pass)', 0.12, false);
-  await new Promise((r) => setTimeout(r, 1500));
 
   const intermediates: string[] = [];
   const pass1TotalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);

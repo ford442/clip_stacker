@@ -220,6 +220,10 @@ async function encodeVideoFrames(
     video.currentTime = trimStart;
     await waitForSeeked(video);
 
+    // Accelerate playback for faster-than-realtime frame ingestion (timestamps stay correct;
+    // output duration is unaffected). 3x is a conservative balance for decode headroom.
+    video.playbackRate = 3.0;
+
     let frameCount = 0;
 
     if (video.requestVideoFrameCallback) {
@@ -332,47 +336,70 @@ async function encodeAudioFrames(
     throw new Error(`Failed to fetch audio for clip "${clip.title}": ${(error as Error).message}`);
   }
 
-  const audioCtx = new OfflineAudioContext(
-    AUDIO_CHANNELS,
-    Math.ceil(clipDuration * AUDIO_SAMPLE_RATE),
-    AUDIO_SAMPLE_RATE,
-  );
-
-  let audioBuffer: AudioBuffer;
-  try {
-    audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
-  } catch {
-    // Non-audio or undecodable — skip audio for this clip
-    return startTimeUs + Math.round(clipDuration * 1_000_000);
-  }
-
   const trimStart = clip.trimStart;
   const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-  const trimmedLength = Math.ceil((trimEnd - trimStart) * audioBuffer.sampleRate);
+  const playDur = Math.max(0, trimEnd - trimStart);
 
-  // Feed audio to encoder in AAC frame-sized chunks
+  // Always render at canonical 44.1 kHz stereo so the AAC track duration matches video exactly.
+  // Use OfflineAudioContext + BufferSource for native-rate resampling + fade automation (fast).
+  const targetFrames = Math.ceil(playDur * AUDIO_SAMPLE_RATE);
+  const off = new OfflineAudioContext(AUDIO_CHANNELS, Math.max(1, targetFrames), AUDIO_SAMPLE_RATE);
+
+  let audioBuffer: AudioBuffer | null = null;
+  try {
+    audioBuffer = await off.decodeAudioData(arrayBuffer.slice(0)); // clone; decode may detach
+  } catch {
+    // Non-audio / video-only / undecodable → will render silence below
+    audioBuffer = null;
+  }
+
+  if (audioBuffer && audioBuffer.numberOfChannels > 0 && playDur > 0) {
+    const source = off.createBufferSource();
+    source.buffer = audioBuffer;
+    const gain = off.createGain();
+
+    // Fades via native automation (linear ramps on the gain node).
+    const fadeIn = Math.min(clip.audioFadeIn, playDur);
+    const fadeOut = Math.min(clip.audioFadeOut, playDur);
+    const safeOut = Math.max(0, playDur - fadeOut);
+
+    if (fadeIn > 0) {
+      gain.gain.setValueAtTime(0, 0);
+      gain.gain.linearRampToValueAtTime(1, fadeIn);
+    } else {
+      gain.gain.setValueAtTime(1, 0);
+    }
+    if (fadeOut > 0) {
+      gain.gain.setValueAtTime(1, safeOut);
+      gain.gain.linearRampToValueAtTime(0, playDur);
+    }
+
+    source.connect(gain);
+    gain.connect(off.destination);
+    // offset + duration in seconds on the source buffer (handles native rate conversion to context)
+    source.start(0, trimStart, playDur);
+  } else {
+    // Silence for the segment (no source connected → zeros). Still renders full duration.
+  }
+
+  const rendered: AudioBuffer = await off.startRendering();
+
+  // Now chunk the (resampled + faded + rate-normalized) rendered buffer into AudioEncoder frames.
+  // This memcopy loop is cheap; the heavy resample/fade/trim was native.
   let offset = 0;
   let audioTimeUs = startTimeUs;
   const frameUs = Math.round((AUDIO_FRAME_SIZE / AUDIO_SAMPLE_RATE) * 1_000_000);
 
-  while (offset < trimmedLength) {
-    const chunkSize = Math.min(AUDIO_FRAME_SIZE, trimmedLength - offset);
-    const srcOffset = Math.floor(trimStart * audioBuffer.sampleRate) + offset;
+  while (offset < targetFrames) {
+    const chunkSize = Math.min(AUDIO_FRAME_SIZE, targetFrames - offset);
 
-    // Build planar float32 data directly (f32-planar: each channel's samples are contiguous)
-    const planarData = new Float32Array(new ArrayBuffer(chunkSize * AUDIO_CHANNELS * 4));
-    for (let ch = 0; ch < Math.min(AUDIO_CHANNELS, audioBuffer.numberOfChannels); ch++) {
-      const channelData = audioBuffer.getChannelData(ch);
+    // Build planar float32 data (f32-planar layout)
+    const planarData = new Float32Array(chunkSize * AUDIO_CHANNELS);
+    for (let ch = 0; ch < AUDIO_CHANNELS; ch++) {
+      const chData = ch < rendered.numberOfChannels ? rendered.getChannelData(ch) : null;
       for (let i = 0; i < chunkSize; i++) {
-        const sampleIndex = srcOffset + i;
-        let sample = sampleIndex < channelData.length ? channelData[sampleIndex] : 0;
-
-        // Apply audio fades
-        const elapsed = (offset + i) / audioBuffer.sampleRate;
-        const fadeGain = computeFadeAlpha(elapsed, clipDuration, clip.audioFadeIn, clip.audioFadeOut);
-        sample *= fadeGain;
-
-        planarData[ch * chunkSize + i] = sample;
+        const s = chData ? chData[offset + i] : 0;
+        planarData[ch * chunkSize + i] = s;
       }
     }
 
