@@ -239,6 +239,31 @@ describe('utils/hybrid-encoder', () => {
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
     });
 
+    it('should skip WebCodecs if RIFE-processed clips are present', async () => {
+      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      const mockBlob = new Blob(['ffmpeg video']);
+      (mergeClips as any).mockResolvedValue(mockBlob);
+      (calculateRenderPlan as any).mockReturnValue({});
+
+      const clipsWithRife = [
+        { ...testClips[0], rifeProcessed: true },
+      ];
+
+      const result = await hybridMergeClips(
+        clipsWithRife,
+        [],
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        false,
+        [],
+        false,
+      );
+
+      expect(result.path).toBe('ffmpeg');
+      expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
+    });
+
     it('should fall back to FFmpeg if WebCodecs encode fails', async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
       (encodeClipsWithWebCodecs as any).mockRejectedValue(new Error('GPU error'));

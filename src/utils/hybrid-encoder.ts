@@ -72,11 +72,13 @@ export async function hybridMergeClips(
   const useWebCodecs = !forceFFmpeg && !useCanvas && (await isWebCodecsAvailable());
 
   if (useWebCodecs) {
-    // WebCodecs path doesn't support transitions, PiP overlays, or text overlays.
+    // WebCodecs path doesn't support transitions, PiP overlays, text overlays, or RIFE clips.
+    // RIFE clips must go through FFmpeg two-pass encode to correctly handle their audio stream.
     const hasActiveTransitions = transitions.some((t) => t.type !== 'none' && t.duration > 0);
     const hasPipClips = clips.some((c) => (c.layerIndex ?? 0) > 0);
     const hasTextOverlays = textOverlays.length > 0;
-    if (!hasActiveTransitions && !hasPipClips && !hasTextOverlays) {
+    const hasRifeClips = clips.some((c) => c.rifeProcessed);
+    if (!hasActiveTransitions && !hasPipClips && !hasTextOverlays && !hasRifeClips) {
       try {
         onStatus('GPU path selected (WebCodecs + hardware H.264)...');
         onProgress?.({ stage: 'GPU path selected (WebCodecs)', progress: 0, indeterminate: false });
