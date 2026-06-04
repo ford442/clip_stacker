@@ -696,7 +696,10 @@ function buildDrawtextFilter(overlay: TextOverlay): string {
 }
 
 
-// Lossless path: all clips are clean video — use the concat demuxer with -c copy.
+// Fast path: copy video streams (no decode/encode) but normalize audio to AAC.
+// Pure stream copy (-c copy) silently drops audio when source clips use codecs
+// incompatible with the MP4 container (e.g. Opus in WebM). Transcoding only the
+// audio track is cheap compared to video re-encode and guarantees audio output.
 async function mergeClipsLossless(
   ffmpeg: FFmpeg,
   clips: Clip[],
@@ -711,10 +714,15 @@ async function mergeClipsLossless(
   });
   await safeWriteFile(ffmpeg, 'concat_list.txt', listLines.join('\n'), 'lossless concat list');
 
-  onStatus('FFmpeg path: lossless concat (stream copy).');
-  emitProgress(onProgress, 'FFmpeg lossless concat', 0.25, false);
-  await safeExec(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', 'concat_list.txt', '-c', 'copy', 'stacked.mp4'], null, 'Lossless concat exec');
-  emitProgress(onProgress, 'FFmpeg lossless concat', 0.9, false);
+  onStatus('FFmpeg path: fast copy (video copy + audio normalize).');
+  emitProgress(onProgress, 'FFmpeg fast concat', 0.25, false);
+  await safeExec(ffmpeg, [
+    '-f', 'concat', '-safe', '0', '-i', 'concat_list.txt',
+    '-c:v', 'copy',
+    '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '192k',
+    'stacked.mp4',
+  ], null, 'Fast concat exec');
+  emitProgress(onProgress, 'FFmpeg fast concat', 0.9, false);
   try { await ffmpeg.deleteFile('concat_list.txt'); } catch { /* ignore */ }
 }
 
@@ -770,13 +778,15 @@ async function processClipPass1(
   const clipDuration = getClipDuration(clip);
 
   if (!clipNeedsEffects(clip)) {
-    // Fast path: trim + stream copy with no re-encode for clips without effects.
+    // Fast path: copy video (no decode/encode) + normalize audio to AAC.
+    // Audio must be explicitly transcoded so the intermediate has a consistent
+    // codec for concat — pure -c copy silently drops audio from non-MP4 sources.
     onStatus(`Pass 1 [${index + 1}/${total}]: Copying "${clip.title}" (no effects)...`);
     const args: string[] = [];
     if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
     args.push('-i', clip.inputName!);
     if (Number.isFinite(clip.trimEnd)) args.push('-t', String(clipDuration));
-    args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero', outName);
+    args.push('-c:v', 'copy', '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '192k', '-avoid_negative_ts', 'make_zero', outName);
     await safeExec(ffmpeg, args, {
       stage: `Pass 1: ${clip.title}`,
       totalDuration: clipDuration,
