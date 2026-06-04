@@ -769,8 +769,25 @@ async function processClipPass1(
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
 
-  // Always re-encode through the filter to normalize all clips to OUTPUT_WIDTH x OUTPUT_HEIGHT.
-  // A lossless -c copy path would preserve native resolution and cause VLC to swap sizes mid-playback.
+  if (!clipNeedsEffects(clip)) {
+    // Fast path: trim + stream copy with no re-encode for clips without effects.
+    onStatus(`Pass 1 [${index + 1}/${total}]: Copying "${clip.title}" (no effects)...`);
+    const args: string[] = [];
+    if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
+    args.push('-i', clip.inputName!);
+    if (Number.isFinite(clip.trimEnd)) args.push('-t', String(clipDuration));
+    args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero', outName);
+    await safeExec(ffmpeg, args, {
+      stage: `Pass 1: ${clip.title}`,
+      totalDuration: clipDuration,
+      rangeStart,
+      rangeEnd,
+      onProgress,
+    }, `Pass 1 copy for clip ${index + 1}/${total} "${clip.title}"`);
+    return outName;
+  }
+
+  // Re-encode path: clip has fades, is audio-only, or is RIFE-processed.
   onStatus(`Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}"...`);
   await safeExec(ffmpeg, [
     '-i', clip.inputName!,
@@ -1363,23 +1380,13 @@ export function calculateRenderPlan(
     };
   }
 
-  // Multiple clips with no effects: must re-encode to normalize all clips to the same resolution.
-  // A lossless concat of clips with different native resolutions causes VLC to swap canvas size mid-playback.
-  if (clips.length > 1) {
-    return {
-      path: 'effects-reencoding',
-      reason: 'Multiple clips — normalizing to uniform canvas size',
-      willReencode: true,
-      description: `Re-encoding to ${OUTPUT_WIDTH}x${OUTPUT_HEIGHT} (CRF ${settings.crf}, ${settings.preset} preset)`,
-    };
-  }
-
-  // Single clip, no effects — safe to stream-copy since there is no concat.
+  // All clips are clean with no effects — use fast lossless stream copy + concat.
+  // If clips have mixed native resolutions, enable "Force re-encode" in export settings.
   return {
     path: 'lossless-concat',
-    reason: 'Single clean video clip with no effects',
+    reason: clips.length === 1 ? 'Single clean video clip with no effects' : 'All clips are clean with no effects',
     willReencode: false,
-    description: 'Lossless copy (fast, no quality loss)',
+    description: 'Lossless concat (fast, no quality loss)',
   };
 }
 
