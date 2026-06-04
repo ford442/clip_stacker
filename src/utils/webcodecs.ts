@@ -348,9 +348,15 @@ async function encodeAudioFrames(
   let audioBuffer: AudioBuffer | null = null;
   try {
     audioBuffer = await off.decodeAudioData(arrayBuffer.slice(0)); // clone; decode may detach
-  } catch {
-    // Non-audio / video-only / undecodable → will render silence below
-    audioBuffer = null;
+  } catch (error) {
+    // Do not silently encode an all-zero AAC track when the browser cannot
+    // decode audio from the source container (common for video files). Throw so
+    // the hybrid pipeline falls back to the FFmpeg path, which can demux the
+    // original audio reliably.
+    const message = (error as Error)?.message || String(error);
+    throw new Error(
+      `GPU audio decode failed for clip "${clip.title}"; falling back to FFmpeg audio muxing. ${message}`,
+    );
   }
 
   if (audioBuffer && audioBuffer.numberOfChannels > 0 && playDur > 0) {

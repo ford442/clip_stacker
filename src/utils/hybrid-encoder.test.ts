@@ -152,6 +152,33 @@ describe('utils/hybrid-encoder', () => {
       expect(encodeClipsWithWebCodecs).toHaveBeenCalled();
     });
 
+    it('should fall back to FFmpeg when WebCodecs cannot decode source audio', async () => {
+      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      (encodeClipsWithWebCodecs as any).mockRejectedValue(
+        new Error('GPU audio decode failed for clip "a"; falling back to FFmpeg audio muxing.'),
+      );
+      const mockBlob = new Blob(['ffmpeg video']);
+      (mergeClips as any).mockResolvedValue(mockBlob);
+      (calculateRenderPlan as any).mockReturnValue({});
+
+      const result = await hybridMergeClips(
+        testClips,
+        [],
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        false,
+        [],
+        false,
+      );
+
+      expect(result.path).toBe('ffmpeg');
+      expect(mergeClips).toHaveBeenCalled();
+      expect(mockStatusCallback).toHaveBeenCalledWith(
+        expect.stringContaining('GPU encode failed (GPU audio decode failed'),
+      );
+    });
+
     it('should skip WebCodecs if transitions are present', async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
       const mockBlob = new Blob(['ffmpeg video']);
