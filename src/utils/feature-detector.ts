@@ -25,7 +25,17 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
     typeof VideoDecoder !== 'undefined' &&
     typeof VideoFrame !== 'undefined';
 
-  const webgpu = 'gpu' in navigator;
+  let webgpu = false;
+  if ('gpu' in navigator) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      const device = await adapter?.requestDevice();
+      webgpu = !!device;
+      device?.destroy();
+    } catch {
+      // navigator.gpu exists but adapter/device creation failed
+    }
+  }
 
   const mediaRecorderMp4 =
     typeof MediaRecorder !== 'undefined' &&
