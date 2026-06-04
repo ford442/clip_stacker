@@ -100,17 +100,14 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     e.target.value = '';
   };
 
-  const gpuAvailable = caps?.hardwareH264 && caps?.webcodecs;
   const mediaRecorderAvailable = caps?.mediaRecorderMp4 ?? typeof MediaRecorder !== 'undefined';
 
   const gpuLabel = useCanvasRenderer
     ? '🎨 Canvas'
-    : gpuAvailable
-    ? '⚡ GPU'
     : '🖥 CPU';
 
   const gpuTitle = caps
-    ? `WebCodecs: ${caps.webcodecs ? 'yes' : 'no'} · Hardware H.264: ${caps.hardwareH264 ? 'yes' : 'no'} · WebGPU: ${caps.webgpu ? 'yes' : 'no'} · MediaRecorder: ${caps.mediaRecorderMp4 ? 'yes' : 'no'}`
+    ? `Audio-safe exports use FFmpeg by default. WebCodecs: ${caps.webcodecs ? 'yes' : 'no'} · Hardware H.264: ${caps.hardwareH264 ? 'yes' : 'no'} · WebGPU: ${caps.webgpu ? 'yes' : 'no'} · MediaRecorder: ${caps.mediaRecorderMp4 ? 'yes' : 'no'}`
     : 'Detecting capabilities...';
 
   return (
@@ -229,18 +226,6 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
                 onChange={(e) => onToggleAudioReactive(e.target.checked)}
               />
               Audio FX
-            </label>
-          )}
-
-          {/* Force CPU toggle (hidden when canvas renderer is selected) */}
-          {gpuAvailable && !useCanvasRenderer && (
-            <label className="encoder-toggle-label">
-              <input
-                type="checkbox"
-                checked={forceFFmpeg}
-                onChange={(e) => onToggleForceFFmpeg(e.target.checked)}
-              />
-              Force CPU
             </label>
           )}
 

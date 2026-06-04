@@ -1,18 +1,19 @@
 /**
- * Hybrid encoder — automatically selects the best available encoding path:
+ * Hybrid encoder - automatically selects the best available encoding path:
  *
- *   1. Canvas renderer (audio-reactive) — browser compositing + MediaRecorder +
+ *   1. Canvas renderer (audio-reactive) - browser compositing + MediaRecorder +
  *      FFmpeg audio mux; unlocks audio-reactive effects and advanced compositing.
- *   2. WebCodecs (GPU H.264 + AAC)       — fastest, requires Chrome 94+ with
- *      hardware H.264 support.
- *   3. FFmpeg.wasm                        — CPU, works everywhere (default).
+ *   2. FFmpeg.wasm                        - CPU, works everywhere (default).
+ *
+ * The experimental WebCodecs path is intentionally not auto-selected. Its
+ * browser-side audio decode can silently render an empty AAC track for common
+ * video containers, while FFmpeg fails loudly and preserves source audio.
  *
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */
 
 import type { Clip, ExportSettings, ClipTransition, TextOverlay, RenderPlan } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
-import { isWebCodecsAvailable, encodeClipsWithWebCodecs } from './webcodecs';
 import { mergeClips, calculateRenderPlan } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 
@@ -53,7 +54,6 @@ export async function hybridMergeClips(
   renderPlan?: RenderPlan,
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
-  let webcodecsFailure: string | null = null;
 
   // -- Canvas renderer path --------------------------------------------------
   if (useCanvas && typeof MediaRecorder !== 'undefined') {
@@ -68,30 +68,10 @@ export async function hybridMergeClips(
     }
   }
 
-  // -- WebCodecs GPU path ----------------------------------------------------
-  const useWebCodecs = !forceFFmpeg && !useCanvas && (await isWebCodecsAvailable());
-
-  if (useWebCodecs) {
-    // WebCodecs path doesn't support transitions, PiP overlays, text overlays, or RIFE clips.
-    // RIFE clips must go through FFmpeg two-pass encode to correctly handle their audio stream.
-    const hasActiveTransitions = transitions.some((t) => t.type !== 'none' && t.duration > 0);
-    const hasPipClips = clips.some((c) => (c.layerIndex ?? 0) > 0);
-    const hasTextOverlays = textOverlays.length > 0;
-    const hasRifeClips = clips.some((c) => c.rifeProcessed);
-    if (!hasActiveTransitions && !hasPipClips && !hasTextOverlays && !hasRifeClips) {
-      try {
-        onStatus('GPU path selected (WebCodecs + hardware H.264)...');
-        onProgress?.({ stage: 'GPU path selected (WebCodecs)', progress: 0, indeterminate: false });
-        const blob = await encodeClipsWithWebCodecs(clips, settings, onStatus, onProgress);
-        return { blob, path: 'webcodecs' };
-      } catch (err) {
-        webcodecsFailure = (err as Error).message;
-        onStatus(`GPU encode failed (${webcodecsFailure}). Falling back to FFmpeg...`);
-      }
-    }
-  }
-
   // -- FFmpeg path (default / fallback) -------------------------------------
+  if (!forceFFmpeg && !useCanvas) {
+    onStatus('FFmpeg path selected for audio-preserving export...');
+  }
   onProgress?.({ stage: 'FFmpeg path selected', progress: 0, indeterminate: false });
   try {
     const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress, forceReencode);
@@ -99,10 +79,9 @@ export async function hybridMergeClips(
     return { blob, path: 'ffmpeg', renderPlan: effectiveRenderPlan };
   } catch (err) {
     // Chain prior fallback messages so the final error is maximally diagnostic.
-    if (canvasFailure || webcodecsFailure) {
+    if (canvasFailure) {
       const prev: string[] = [];
       if (canvasFailure) prev.push(`Canvas: ${canvasFailure}`);
-      if (webcodecsFailure) prev.push(`WebCodecs: ${webcodecsFailure}`);
       const orig = (err as Error).message;
       const e = new Error(`${orig}\n\nPrevious encoder attempts that also failed:\n${prev.join('\n')}`);
       (e as any).ffmpegLogs = (err as any).ffmpegLogs;

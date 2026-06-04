@@ -132,10 +132,11 @@ describe('utils/hybrid-encoder', () => {
   // WebCodecs GPU path selection logic
   // =========================================================================
   describe('WebCodecs GPU path selection logic', () => {
-    it('should use WebCodecs when available and no transitions/overlays', async () => {
+    it('should use FFmpeg by default even when WebCodecs is available', async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['gpu video']);
-      (encodeClipsWithWebCodecs as any).mockResolvedValue(mockBlob);
+      const mockBlob = new Blob(['ffmpeg video']);
+      (mergeClips as any).mockResolvedValue(mockBlob);
+      (calculateRenderPlan as any).mockReturnValue({});
 
       const result = await hybridMergeClips(
         testClips,
@@ -148,8 +149,9 @@ describe('utils/hybrid-encoder', () => {
         false, // useCanvas = false
       );
 
-      expect(result.path).toBe('webcodecs');
-      expect(encodeClipsWithWebCodecs).toHaveBeenCalled();
+      expect(result.path).toBe('ffmpeg');
+      expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
+      expect(mergeClips).toHaveBeenCalled();
     });
 
     it('should fall back to FFmpeg when WebCodecs cannot decode source audio', async () => {
@@ -291,7 +293,7 @@ describe('utils/hybrid-encoder', () => {
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
     });
 
-    it('should fall back to FFmpeg if WebCodecs encode fails', async () => {
+    it('should not attempt WebCodecs before FFmpeg', async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
       (encodeClipsWithWebCodecs as any).mockRejectedValue(new Error('GPU error'));
       const mockBlob = new Blob(['ffmpeg video']);
@@ -310,6 +312,7 @@ describe('utils/hybrid-encoder', () => {
       );
 
       expect(result.path).toBe('ffmpeg');
+      expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
       expect(mergeClips).toHaveBeenCalled();
     });
 
@@ -466,10 +469,11 @@ describe('utils/hybrid-encoder', () => {
       );
     });
 
-    it('should call onStatus with GPU selection message', async () => {
+    it('should call onStatus with audio-preserving FFmpeg selection message', async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['gpu video']);
-      (encodeClipsWithWebCodecs as any).mockResolvedValue(mockBlob);
+      const mockBlob = new Blob(['ffmpeg video']);
+      (mergeClips as any).mockResolvedValue(mockBlob);
+      (calculateRenderPlan as any).mockReturnValue({});
 
       await hybridMergeClips(
         testClips,
@@ -483,7 +487,7 @@ describe('utils/hybrid-encoder', () => {
       );
 
       expect(mockStatusCallback).toHaveBeenCalledWith(
-        expect.stringContaining('GPU path selected'),
+        expect.stringContaining('audio-preserving export'),
       );
     });
 
