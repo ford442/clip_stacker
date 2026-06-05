@@ -12,12 +12,11 @@ const PASS1_PROGRESS_START = 0.12;
 const PASS1_PROGRESS_END = 0.85;
 
 /**
- * CDN URL for Roboto Regular TTF.
+ * URL for Roboto Regular TTF bundled with the app.
  * FFmpeg WASM has no system fonts, so we fetch this at render time and write
  * it to the virtual filesystem as 'roboto.ttf'.
  */
-const FONT_CDN_URL =
-  'https://cdn.jsdelivr.net/gh/google/fonts@main/apache/roboto/static/Roboto-Regular.ttf';
+const FONT_CDN_URL = '/fonts/Roboto-Regular.ttf';
 const FONT_VIRTUAL_NAME = 'roboto.ttf';
 
 let ffmpegInstance: FFmpeg | null = null;

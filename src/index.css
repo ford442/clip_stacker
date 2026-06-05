@@ -768,7 +768,7 @@ audio {
 
 .timeline-ruler-seg {
   position: relative;
-  min-width: 60px;
+  min-width: 100px;
   flex-shrink: 0;
   /* flex value set inline to match clip */
 }
