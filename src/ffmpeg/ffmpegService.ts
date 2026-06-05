@@ -697,33 +697,80 @@ function buildDrawtextFilter(overlay: TextOverlay): string {
 
 
 // Fast path: copy video streams (no decode/encode) but normalize audio to AAC.
-// Pure stream copy (-c copy) silently drops audio when source clips use codecs
-// incompatible with the MP4 container (e.g. Opus in WebM). Transcoding only the
-// audio track is cheap compared to video re-encode and guarantees audio output.
+// We process each clip individually rather than using a single concat-demuxer
+// pass because the concat demuxer can silently drop audio when any file in the
+// list lacks an audio stream, or when clips have inconsistent audio codecs
+// (e.g. Opus in WebM vs AAC in MP4).  Processing per-clip mirrors the two-pass
+// encode path and is the only reliable way to guarantee audio in the output.
 async function mergeClipsLossless(
   ffmpeg: FFmpeg,
   clips: Clip[],
   onStatus: StatusCallback,
   onProgress?: ProgressCallback,
 ): Promise<void> {
-  const listLines = clips.map((clip) => {
-    const lines = [`file '${clip.inputName}'`];
-    if (clip.trimStart > 0) lines.push(`inpoint ${clip.trimStart}`);
-    if (Number.isFinite(clip.trimEnd)) lines.push(`outpoint ${clip.trimEnd}`);
-    return lines.join('\n');
-  });
-  await safeWriteFile(ffmpeg, 'concat_list.txt', listLines.join('\n'), 'lossless concat list');
-
   onStatus('FFmpeg path: fast copy (video copy + audio normalize).');
-  emitProgress(onProgress, 'FFmpeg fast concat', 0.25, false);
+  emitProgress(onProgress, 'FFmpeg fast concat', 0.12, false);
+
+  // Pass 1: per-clip intermediates (video copy + audio → AAC).
+  // If a clip has no audio stream we add a silent AAC track so that all
+  // intermediates have identical streams, which the concat demuxer requires.
+  const intermediates: string[] = [];
+  for (const [index, clip] of clips.entries()) {
+    const outName = `lossless-${index}.mp4`;
+    const clipDuration = getClipDuration(clip);
+    onStatus(`Fast copy [${index + 1}/${clips.length}]: "${clip.title}"...`);
+
+    // Build the base seek + input args (shared between both attempts).
+    const seekArgs: string[] = [];
+    if (clip.trimStart > 0) seekArgs.push('-ss', String(clip.trimStart));
+    seekArgs.push('-i', clip.inputName!);
+
+    const durationArgs: string[] = Number.isFinite(clip.trimEnd) ? ['-t', String(clipDuration)] : [];
+    const codecTail: string[] = [
+      '-c:v', 'copy',
+      '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '192k',
+      '-avoid_negative_ts', 'make_zero',
+      outName,
+    ];
+
+    try {
+      await safeExec(ffmpeg, [...seekArgs, ...durationArgs, ...codecTail],
+        null, `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}"`);
+    } catch (err) {
+      // Retry without source audio if the clip has no audio stream.  Add an
+      // anullsrc generator as a second input so the intermediate still carries
+      // a silent AAC track — necessary for a consistent stream layout when the
+      // final concat step combines clips with and without original audio.
+      if (!NO_AUDIO_STREAM_RE.test((err as Error).message ?? '')) throw err;
+      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      await safeExec(ffmpeg, [
+        ...seekArgs,
+        '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+        '-map', '0:v',
+        '-map', '1:a',
+        ...durationArgs,
+        ...codecTail,
+      ], null, `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}" (silent audio)`);
+    }
+
+    intermediates.push(outName);
+    emitProgress(onProgress, 'FFmpeg fast concat', 0.12 + 0.73 * (index + 1) / clips.length, false);
+  }
+
+  // Pass 2: stream-copy all intermediates (identical codec → no re-encode).
+  const concatList = intermediates.map((n) => `file '${n}'`).join('\n');
+  await safeWriteFile(ffmpeg, 'concat_list.txt', concatList, 'lossless concat list');
   await safeExec(ffmpeg, [
     '-f', 'concat', '-safe', '0', '-i', 'concat_list.txt',
-    '-c:v', 'copy',
-    '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '192k',
+    '-c', 'copy',
     'stacked.mp4',
-  ], null, 'Fast concat exec');
+  ], null, 'Lossless concat pass 2');
   emitProgress(onProgress, 'FFmpeg fast concat', 0.9, false);
+
   try { await ffmpeg.deleteFile('concat_list.txt'); } catch { /* ignore */ }
+  for (const name of intermediates) {
+    try { await ffmpeg.deleteFile(name); } catch { /* ignore */ }
+  }
 }
 
 // Perform two-pass re-encoding for clips with effects
