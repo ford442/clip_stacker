@@ -712,22 +712,47 @@ async function mergeClipsLossless(
   emitProgress(onProgress, 'FFmpeg fast concat', 0.12, false);
 
   // Pass 1: per-clip intermediates (video copy + audio → AAC).
+  // If a clip has no audio stream we add a silent AAC track so that all
+  // intermediates have identical streams, which the concat demuxer requires.
   const intermediates: string[] = [];
   for (const [index, clip] of clips.entries()) {
     const outName = `lossless-${index}.mp4`;
     const clipDuration = getClipDuration(clip);
-    const args: string[] = [];
-    if (clip.trimStart > 0) args.push('-ss', String(clip.trimStart));
-    args.push('-i', clip.inputName!);
-    if (Number.isFinite(clip.trimEnd)) args.push('-t', String(clipDuration));
-    args.push(
+    onStatus(`Fast copy [${index + 1}/${clips.length}]: "${clip.title}"...`);
+
+    // Build the base seek + input args (shared between both attempts).
+    const seekArgs: string[] = [];
+    if (clip.trimStart > 0) seekArgs.push('-ss', String(clip.trimStart));
+    seekArgs.push('-i', clip.inputName!);
+
+    const durationArgs: string[] = Number.isFinite(clip.trimEnd) ? ['-t', String(clipDuration)] : [];
+    const codecTail: string[] = [
       '-c:v', 'copy',
       '-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '192k',
       '-avoid_negative_ts', 'make_zero',
       outName,
-    );
-    onStatus(`Fast copy [${index + 1}/${clips.length}]: "${clip.title}"...`);
-    await safeExec(ffmpeg, args, null, `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}"`);
+    ];
+
+    try {
+      await safeExec(ffmpeg, [...seekArgs, ...durationArgs, ...codecTail],
+        null, `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}"`);
+    } catch (err) {
+      // Retry without source audio if the clip has no audio stream.  Add an
+      // anullsrc generator as a second input so the intermediate still carries
+      // a silent AAC track — necessary for a consistent stream layout when the
+      // final concat step combines clips with and without original audio.
+      if (!NO_AUDIO_STREAM_RE.test((err as Error).message ?? '')) throw err;
+      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      await safeExec(ffmpeg, [
+        ...seekArgs,
+        '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
+        '-map', '0:v',
+        '-map', '1:a',
+        ...durationArgs,
+        ...codecTail,
+      ], null, `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}" (silent audio)`);
+    }
+
     intermediates.push(outName);
     emitProgress(onProgress, 'FFmpeg fast concat', 0.12 + 0.73 * (index + 1) / clips.length, false);
   }
