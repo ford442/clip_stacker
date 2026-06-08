@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
 import type { Clip, ExportSettings } from '../types';
-import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS } from '../types';
+import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { sanitizeFilename } from '../utils/filename';
 import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
 import { extractWaveformPeaks } from '../utils/waveform';
@@ -219,6 +219,23 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
 
   const updateExport = (field: keyof ExportSettings, value: string | number) => {
     onExportSettingsChange({ ...exportSettings, [field]: value });
+  };
+
+  const updateResolutionPreset = (preset: ResolutionPreset) => {
+    const nextResolution =
+      preset === 'original'
+        ? 'original'
+        : preset === 'custom'
+        ? exportSettings.outputResolution === 'original'
+          ? RESOLUTION_PRESETS['720p']
+          : exportSettings.outputResolution
+        : RESOLUTION_PRESETS[preset];
+
+    onExportSettingsChange({
+      ...exportSettings,
+      outputResolution: nextResolution,
+      resolutionPreset: preset,
+    });
   };
 
   const currentPresetName = useMemo(() => {
@@ -581,6 +598,37 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
       <p className="inspector-hint">
         {sanitizeFilename(exportSettings.filename)}
       </p>
+
+      <div className="inspector-group-label">Output resolution</div>
+      <label title="Choose the render canvas size. Original preserves the existing auto/lossless path when possible.">
+        Resolution
+        <select
+          value={exportSettings.resolutionPreset ?? 'custom'}
+          onChange={(e) => updateResolutionPreset(e.target.value as ResolutionPreset)}
+        >
+          <option value="original">Original / auto</option>
+          <option value="720p">720p (1280x720)</option>
+          <option value="1080p">1080p (1920x1080)</option>
+          <option value="1440p">1440p (2560x1440)</option>
+          <option value="4k">4K (3840x2160)</option>
+          <option value="custom">Custom</option>
+        </select>
+      </label>
+      {(exportSettings.resolutionPreset ?? 'custom') === 'custom' && (
+        <label title="Use WIDTHxHEIGHT, for example 1080x1920 for vertical output. Odd values are rounded down for H.264 compatibility.">
+          Custom size
+          <input
+            type="text"
+            value={exportSettings.outputResolution}
+            onChange={(e) => onExportSettingsChange({
+              ...exportSettings,
+              outputResolution: e.target.value,
+              resolutionPreset: 'custom',
+            })}
+            placeholder="1280x720"
+          />
+        </label>
+      )}
 
       <div className="inspector-group-label">Quality preset</div>
       <label>

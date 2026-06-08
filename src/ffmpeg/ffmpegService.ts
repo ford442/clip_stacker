@@ -4,10 +4,8 @@ import type { Clip, ExportSettings, ClipTransition, TextOverlay, RenderPlan } fr
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { getClipDuration } from '../utils/project';
 import { buildTransitionFilterComplex } from '../utils/transitions';
+import { formatOutputResolution, parseOutputResolution, usesFixedOutputResolution } from '../utils/resolution';
 
-const DEFAULT_VIDEO_SIZE = '1280x720';
-const OUTPUT_WIDTH = 1280;
-const OUTPUT_HEIGHT = 720;
 const PASS1_PROGRESS_START = 0.12;
 const PASS1_PROGRESS_END = 0.85;
 
@@ -293,17 +291,18 @@ function getSafeExtension(fileName: string, defaultExtension: string): string {
   return raw && /^[a-z0-9]+$/.test(raw) ? raw : defaultExtension;
 }
 
-function buildSingleClipFilter(clip: Clip): string {
+function buildSingleClipFilter(clip: Clip, settings: ExportSettings): string {
   const duration = getClipDuration(clip);
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   const safeVideoOut = Math.max(0, duration - clip.videoFadeOut);
   const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
+  const { width: outputWidth, height: outputHeight } = parseOutputResolution(settings.outputResolution);
   const parts: string[] = [];
 
   if (clip.kind === 'video') {
     let v = `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS`;
-    v += `,scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`;
-    v += `,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
+    v += `,scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease`;
+    v += `,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0) v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
     parts.push(`${v}[vout]`);
@@ -314,7 +313,7 @@ function buildSingleClipFilter(clip: Clip): string {
     parts.push(`${a}[aout]`);
   } else {
     // Synthesize a black video track for audio-only clips at the master canvas size.
-    parts.push(`color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${duration},format=yuv420p[vout]`);
+    parts.push(`color=c=black:s=${outputWidth}x${outputHeight}:d=${duration},format=yuv420p[vout]`);
 
     let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
@@ -780,6 +779,7 @@ async function performTwoPassEncode(
   onStatus: StatusCallback,
   totalDuration: number,
   onProgress?: ProgressCallback,
+  forceEncodeAll = false,
 ): Promise<void> {
   emitProgress(onProgress, 'FFmpeg re-encode (two-pass)', 0.12, false);
 
@@ -802,6 +802,7 @@ async function performTwoPassEncode(
       onProgress,
       rangeStart,
       rangeEnd,
+      forceEncodeAll,
     ));
     pass1ElapsedDuration += clipDuration;
   }
@@ -819,11 +820,12 @@ async function processClipPass1(
   onProgress: ProgressCallback | undefined,
   rangeStart: number,
   rangeEnd: number,
+  forceEncodeAll: boolean,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
 
-  if (!clipNeedsEffects(clip)) {
+  if (!forceEncodeAll && !clipNeedsEffects(clip) && !usesFixedOutputResolution(settings)) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
     // Audio must be explicitly transcoded so the intermediate has a consistent
     // codec for concat — pure -c copy silently drops audio from non-MP4 sources.
@@ -847,7 +849,7 @@ async function processClipPass1(
   onStatus(`Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}"...`);
   await safeExec(ffmpeg, [
     '-i', clip.inputName!,
-    '-filter_complex', buildSingleClipFilter(clip),
+    '-filter_complex', buildSingleClipFilter(clip, settings),
     '-map', '[vout]',
     '-map', '[aout]',
     '-r', '30',
@@ -946,8 +948,9 @@ async function mergeClipsWithTransitions(
  *
  * Audio from all clips (base and overlay) is mixed together.
  */
-export function buildPipFilterComplex(clips: Clip[]): string {
+export function buildPipFilterComplex(clips: Clip[], settings: ExportSettings = DEFAULT_EXPORT_SETTINGS): string {
   const parts: string[] = [];
+  const { width: outputWidth, height: outputHeight } = parseOutputResolution(settings.outputResolution);
 
   // ── Phase 1: per-clip pre-processing ────────────────────────────────────────
   for (let i = 0; i < clips.length; i++) {
@@ -963,8 +966,8 @@ export function buildPipFilterComplex(clips: Clip[]): string {
 
       if (isBase) {
         // Normalise to output canvas size
-        vf += `,scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`;
-        vf += `,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
+        vf += `,scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease`;
+        vf += `,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
       } else {
         // Scale overlay to requested dimensions (0 means keep original)
         const w = clip.width ?? 0;
@@ -988,7 +991,7 @@ export function buildPipFilterComplex(clips: Clip[]): string {
       parts.push(`${vf}[v${i}]`);
     } else {
       // Audio-only: synthesise a black video track
-      parts.push(`color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${dur},format=yuv420p[v${i}]`);
+      parts.push(`color=c=black:s=${outputWidth}x${outputHeight}:d=${dur},format=yuv420p[v${i}]`);
     }
 
     // Audio — normalize to 44100 Hz stereo so amix / concat always gets matching streams
@@ -1070,7 +1073,7 @@ async function mergeClipsWithCompositing(
   onStatus('Building PiP/compositing render...');
   emitProgress(onProgress, 'FFmpeg PiP/compositing render', 0.15, false);
 
-  const filterComplex = buildPipFilterComplex(clips);
+  const filterComplex = buildPipFilterComplex(clips, settings);
 
   const inputArgs: string[] = [];
   for (const clip of clips) {
@@ -1363,6 +1366,9 @@ export function calculateRenderPlan(
   textOverlays: TextOverlay[] = [],
   settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
 ): RenderPlan {
+  const outputResolution = formatOutputResolution(settings);
+  const resolutionSuffix = usesFixedOutputResolution(settings) ? ` at ${outputResolution}` : '';
+
   // Check for PiP clips
   const hasPipClips = clips.some((c) => (c.layerIndex ?? 0) > 0);
   if (hasPipClips) {
@@ -1370,7 +1376,7 @@ export function calculateRenderPlan(
       path: 'pip',
       reason: 'Picture-in-Picture compositing detected',
       willReencode: true,
-      description: 'Re-encoding with PiP compositing (re-encode)',
+      description: `Re-encoding with PiP compositing${resolutionSuffix} (re-encode)`,
     };
   }
 
@@ -1381,7 +1387,7 @@ export function calculateRenderPlan(
       path: 'transitions',
       reason: `${activeTransitions.length} transition${activeTransitions.length > 1 ? 's' : ''} enabled`,
       willReencode: true,
-      description: 'Re-encoding with transitions (re-encode)',
+      description: `Re-encoding with transitions${resolutionSuffix} (re-encode)`,
     };
   }
 
@@ -1391,7 +1397,7 @@ export function calculateRenderPlan(
       path: 'textoverlays',
       reason: `${textOverlays.length} text overlay${textOverlays.length > 1 ? 's' : ''} present`,
       willReencode: true,
-      description: 'Re-encoding with text overlays (re-encode)',
+      description: `Re-encoding with text overlays${resolutionSuffix} (re-encode)`,
     };
   }
 
@@ -1432,7 +1438,16 @@ export function calculateRenderPlan(
       path: 'effects-reencoding',
       reason: `${effectClips.length > 1 ? 'Clips' : 'Clip'} ${titles} ${reasonDetail}`,
       willReencode: true,
-      description: `Re-encoding ${titles} with CRF ${settings.crf} (${settings.preset} preset)`,
+      description: `Re-encoding ${titles}${resolutionSuffix} with CRF ${settings.crf} (${settings.preset} preset)`,
+    };
+  }
+
+  if (usesFixedOutputResolution(settings)) {
+    return {
+      path: 'effects-reencoding',
+      reason: `Output resolution set to ${outputResolution}`,
+      willReencode: true,
+      description: `Re-encoding to ${outputResolution} with CRF ${settings.crf} (${settings.preset} preset)`,
     };
   }
 
@@ -1493,6 +1508,8 @@ export async function mergeClips(
   }
 
   const renderPlan = calculateRenderPlan(workingClips, transitions, textOverlays, settings);
+  const outputResolution = formatOutputResolution(settings);
+  const resolutionSuffix = usesFixedOutputResolution(settings) ? ` at ${outputResolution}` : '';
   
   // If force re-encode is enabled and we would otherwise use lossless concat, override to re-encode
   let effectivePlan = renderPlan;
@@ -1501,7 +1518,7 @@ export async function mergeClips(
       path: 'effects-reencoding',
       reason: 'Force re-encode enabled',
       willReencode: true,
-      description: `Forced re-encoding (CRF ${settings.crf}, ${settings.preset} preset)`,
+      description: `Forced re-encoding${resolutionSuffix} (CRF ${settings.crf}, ${settings.preset} preset)`,
     };
   }
   
@@ -1511,7 +1528,7 @@ export async function mergeClips(
   const effectClips = workingClips.filter(clipNeedsEffects);
   const hasPipClips = workingClips.some((c) => (c.layerIndex ?? 0) > 0);
   const transitionFilterComplex =
-    activeTransitions.length > 0 ? buildTransitionFilterComplex(workingClips, activeTransitions) : null;
+    activeTransitions.length > 0 ? buildTransitionFilterComplex(workingClips, activeTransitions, settings) : null;
 
   // If force re-encode is enabled, skip lossless path and go straight to re-encoding
   const shouldForceReencodeNow = forceReencode && renderPlan.path === 'lossless-concat';
@@ -1539,7 +1556,7 @@ export async function mergeClips(
       onStatus(
         `FFmpeg path: ${effectivePlan.description}. Starting export...`,
       );
-      await performTwoPassEncode(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress);
+      await performTwoPassEncode(ffmpeg, workingClips, settings, onStatus, totalDuration, onProgress, true);
     } else if (effectivePlan.path === 'lossless-concat') {
       // Lossless path (text overlays will be applied afterward if present)
       onStatus(`FFmpeg path: ${effectivePlan.description}`);

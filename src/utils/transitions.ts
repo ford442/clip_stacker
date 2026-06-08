@@ -3,8 +3,9 @@
  * xfade (video) and acrossfade (audio) transitions between timeline clips.
  */
 
-import type { Clip, ClipTransition, TransitionType } from '../types';
+import type { Clip, ClipTransition, TransitionType, ExportSettings } from '../types';
 import { getClipDuration } from './project';
+import { parseOutputResolution } from './resolution';
 
 // ---------------------------------------------------------------------------
 // Transition defaults
@@ -13,10 +14,6 @@ import { getClipDuration } from './project';
 export const DEFAULT_TRANSITION_DURATION = 0.5; // seconds
 export const MIN_TRANSITION_DURATION = 0.1;
 export const MAX_TRANSITION_DURATION = 2.0;
-
-// Output video resolution for normalized rendering
-const OUTPUT_WIDTH = 1280;
-const OUTPUT_HEIGHT = 720;
 
 /** Map our active transition types to FFmpeg xfade transition names. 'none' is filtered out before this map is consulted. */
 const XFADE_MAP: Partial<Record<TransitionType, string>> = {
@@ -98,10 +95,12 @@ export function computeTotalDuration(
 export function buildTransitionFilterComplex(
   clips: Clip[],
   transitions: ClipTransition[],
+  settings?: ExportSettings,
 ): string | null {
   const activeTransitions = transitions.filter((t) => t.type !== 'none' && t.duration > 0);
   if (activeTransitions.length === 0) return null;
 
+  const { width: outputWidth, height: outputHeight } = parseOutputResolution(settings?.outputResolution);
   const durations = getEffectiveDurations(clips);
   const transMap = new Map(activeTransitions.map((t) => [t.afterClipIndex, t]));
 
@@ -116,7 +115,7 @@ export function buildTransitionFilterComplex(
     const safeAOut = Math.max(0, dur - clip.audioFadeOut);
 
     if (clip.kind === 'video') {
-      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS,scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
+      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS,scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
       if (clip.videoFadeIn > 0) vf += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
       if (clip.videoFadeOut > 0) vf += `,fade=t=out:st=${safeVOut}:d=${clip.videoFadeOut}`;
       parts.push(`${vf}[v${i}]`);
@@ -127,7 +126,7 @@ export function buildTransitionFilterComplex(
       parts.push(`${af}[a${i}]`);
     } else {
       // audio-only: black video
-      parts.push(`color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${dur}[v${i}]`);
+      parts.push(`color=c=black:s=${outputWidth}x${outputHeight}:d=${dur}[v${i}]`);
       let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
       if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;

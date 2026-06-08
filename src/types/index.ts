@@ -129,13 +129,28 @@ export interface ExportSettings {
   videoBitrate: number;
   /** Output filename (without extension; .mp4 is automatically appended). */
   filename: string;
+  /** Output resolution as WIDTHxHEIGHT, or 'original' to preserve the existing auto path. */
+  outputResolution: string;
+  /** Common output-size preset selected in the export UI. */
+  resolutionPreset?: ResolutionPreset;
 }
+
+export type ResolutionPreset = 'original' | '720p' | '1080p' | '1440p' | '4k' | 'custom';
+
+export const RESOLUTION_PRESETS = {
+  '720p': '1280x720',
+  '1080p': '1920x1080',
+  '1440p': '2560x1440',
+  '4k': '3840x2160',
+} as const;
 
 export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   crf: 18,
   preset: 'medium',
   videoBitrate: 8_000_000,
   filename: 'stacked',
+  outputResolution: RESOLUTION_PRESETS['720p'],
+  resolutionPreset: '720p',
 };
 
 /** Preset definitions for common export scenarios. */

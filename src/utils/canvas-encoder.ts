@@ -20,6 +20,7 @@ import { muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { getClipDuration } from './project';
 import { CanvasRenderer } from './canvas-renderer';
 import { startCanvasCapture } from './media-recorder-encoder';
+import { parseOutputResolution } from './resolution';
 
 const CANVAS_RENDER_START = 0.02;
 const CANVAS_RENDER_RANGE = 0.83;
@@ -49,8 +50,9 @@ export async function encodeClipsWithCanvas(
   onProgress?.({ stage: 'Initializing canvas renderer', progress: 0, indeterminate: false });
 
   // Create an off-screen canvas (not attached to DOM; capture still works).
+  const { width, height } = parseOutputResolution(settings.outputResolution);
   const canvas = document.createElement('canvas');
-  const renderer = new CanvasRenderer(canvas, { audioReactive });
+  const renderer = new CanvasRenderer(canvas, { width, height, audioReactive });
 
   // Start capturing the canvas stream before rendering begins so no frames
   // are dropped at the start.
