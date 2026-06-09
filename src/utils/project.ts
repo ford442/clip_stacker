@@ -43,6 +43,8 @@ export function serializeProject(
       title: clip.title,
       kind: clip.kind,
       duration: clip.duration,
+      ...(clip.videoWidth ? { videoWidth: clip.videoWidth } : {}),
+      ...(clip.videoHeight ? { videoHeight: clip.videoHeight } : {}),
       trimStart: clip.trimStart,
       trimEnd: Number.isFinite(clip.trimEnd) ? clip.trimEnd : null,
       videoFadeIn: clip.videoFadeIn,
@@ -430,7 +432,7 @@ export async function applyProjectData(
         });
         const fileType = blob.type || savedClip.fileType || 'application/octet-stream';
         const file = new File([blob], savedClip.fileName, { type: fileType });
-        const { duration, objectUrl } = await getMediaInfo(file);
+        const { duration, objectUrl, videoWidth, videoHeight } = await getMediaInfo(file);
         const restoredDuration = Number(savedClip.duration);
         const effectiveDuration = Number.isFinite(restoredDuration) ? restoredDuration : duration;
         liveClip = {
@@ -440,6 +442,8 @@ export async function applyProjectData(
           title: savedClip.title || savedClip.fileName,
           kind: inferKind(savedClip, file),
           duration: Math.max(MIN_CLIP_DURATION, effectiveDuration),
+          videoWidth: savedClip.videoWidth ?? videoWidth,
+          videoHeight: savedClip.videoHeight ?? videoHeight,
           trimStart: 0,
           trimEnd: NaN,
           videoFadeIn: 0,

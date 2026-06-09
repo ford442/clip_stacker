@@ -71,7 +71,7 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
     return (
       <li key={group.id} className="clip-group">
         <div className="clip-group-header">
-          <span className="clip-group-label">A/B Group</span>
+          <span className="clip-group-label">Compare variants</span>
         </div>
         {(['A', 'B'] as const).map((slot) => {
           const clip = group.variants[slot];
@@ -100,10 +100,10 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
                  type="button"
                  className={`variant-timeline-btn${isActive ? ' on-timeline' : ''}`}
                  onClick={(e) => { e.stopPropagation(); onToggleVariant(group.id, slot); }}
-                 title={isActive ? 'On timeline' : 'Add to timeline'}
-                 aria-label={`${isActive ? 'Remove from' : 'Add to'} timeline: ${clip.title}`}
+                 title={isActive ? 'Active variant on timeline' : 'Switch timeline to this variant'}
+                 aria-label={`${isActive ? 'Active variant' : 'Use variant'} ${slot}: ${clip.title}`}
                >
-                 {isActive ? '● Timeline' : 'Use'}
+                 {isActive ? '● Active' : 'Use'}
                </button>
                <button
                  type="button"
@@ -136,7 +136,7 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
         )}
         {activeClip && (
           <div className="clip-group-active-note muted">
-            Timeline: {active} — {activeClip.title}
+            On timeline: Variant {active} ({activeClip.title})
           </div>
         )}
       </li>

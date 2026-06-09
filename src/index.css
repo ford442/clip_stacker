@@ -719,9 +719,10 @@ audio {
 
 .timeline-header-row {
   display: flex;
-  align-items: baseline;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 0.75rem;
-  margin-bottom: 0.6rem;
+  margin-bottom: 0.35rem;
 }
 
 .timeline-header-row h2 {
@@ -731,6 +732,35 @@ audio {
 .timeline-total-dur {
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
+}
+
+.timeline-total-note {
+  opacity: 0.75;
+}
+
+.timeline-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.72rem;
+}
+
+.timeline-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.timeline-zoom-btn,
+.timeline-scroll-btn {
+  min-width: 1.75rem;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.85rem;
+  line-height: 1.2;
+}
+
+.timeline-zoom-slider {
+  width: 110px;
+  accent-color: var(--gold);
 }
 
 /* Shared scroll container for ruler + track */
@@ -744,15 +774,11 @@ audio {
 
 /* ── Ruler ──────────────────────────────────────────────── */
 .timeline-ruler {
-  display: flex;
-  align-items: flex-end;
+  position: relative;
   height: 22px;
   border-bottom: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(201, 162, 39, 0.04) 0%, transparent 100%);
-  position: relative;
-  min-width: min-content;
-  padding: 0 2px;
-  gap: 0;
+  min-width: 100%;
 }
 
 .timeline-ruler-clip-group {
@@ -768,9 +794,7 @@ audio {
 
 .timeline-ruler-seg {
   position: relative;
-  min-width: 100px;
   flex-shrink: 0;
-  /* flex value set inline to match clip */
 }
 
 .timeline-ruler-end {
@@ -808,25 +832,25 @@ audio {
 
 /* ── Track & clips ──────────────────────────────────────── */
 .timeline-track {
+  position: relative;
   display: flex;
   gap: 0;
   padding: 4px 2px 4px;
   align-items: stretch;
   min-height: 82px;
-  min-width: min-content;
 }
 
 .timeline-clip-wrapper {
   display: flex;
   align-items: stretch;
-  min-width: 0;
+  flex: 0 0 auto;
 }
 
 .timeline-clip {
   display: flex;
   flex-direction: column;
-  min-width: 100px;
-  flex-shrink: 0;
+  width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: rgba(8, 12, 22, 0.85);
@@ -1003,12 +1027,13 @@ audio {
 
 /* ── Drop insertion indicator ───────────────────────────── */
 .timeline-drop-indicator {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
   width: 3px;
   border-radius: 2px;
   background: var(--gold);
-  flex-shrink: 0;
-  align-self: stretch;
-  min-height: 60px;
+  z-index: 4;
   box-shadow: 0 0 8px var(--gold-glow);
   animation: drop-indicator-pulse 0.5s ease-in-out infinite alternate;
 }
@@ -1037,6 +1062,13 @@ audio {
   transition: background 0.15s, width 0.15s;
   position: relative;
   z-index: 1;
+}
+
+.transition-zone--overlay {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  z-index: 3;
 }
 
 .transition-zone:hover {

@@ -1,4 +1,4 @@
-import type { ExportSettings } from '../types';
+import type { Clip, ExportSettings } from '../types';
 
 export const DEFAULT_OUTPUT_WIDTH = 1280;
 export const DEFAULT_OUTPUT_HEIGHT = 720;
@@ -27,8 +27,31 @@ export function parseOutputResolution(value?: string): OutputResolution {
   };
 }
 
+function isExplicitResolutionValue(value?: string): boolean {
+  const trimmed = (value ?? '').trim().toLowerCase();
+  if (!trimmed || trimmed === 'original' || trimmed === 'auto') return false;
+  return /^(\d{2,5})x(\d{2,5})$/i.test(trimmed);
+}
+
 export function usesFixedOutputResolution(settings: ExportSettings): boolean {
-  return settings.resolutionPreset !== 'original' && settings.outputResolution !== 'original';
+  if (settings.resolutionPreset === 'original') return false;
+  return isExplicitResolutionValue(settings.outputResolution);
+}
+
+/** True when timeline video clips do not share the same native dimensions. */
+export function clipsHaveMixedVideoDimensions(clips: Clip[]): boolean {
+  const sizes = clips
+    .filter((clip) => clip.kind === 'video' && clip.videoWidth && clip.videoHeight)
+    .map((clip) => `${clip.videoWidth}x${clip.videoHeight}`);
+
+  if (sizes.length < 2) return false;
+  return new Set(sizes).size > 1;
+}
+
+/** Multi-clip stacks should be normalized before concat when dimensions differ. */
+export function clipsNeedResolutionNormalization(clips: Clip[], settings: ExportSettings): boolean {
+  if (clips.filter((clip) => clip.kind === 'video').length < 2) return false;
+  return usesFixedOutputResolution(settings) || clipsHaveMixedVideoDimensions(clips);
 }
 
 export function formatOutputResolution(settings: ExportSettings): string {
