@@ -152,7 +152,7 @@ export function App() {
                   A: { ...matchedClip, groupId, groupVariant: 'A' },
                   B: { ...newClip, groupId, groupVariant: 'B' },
                 },
-                activeVariant: 'B', // auto-select the new edited version
+                activeVariant: 'A', // keep the original on the timeline by default
               },
             ];
           });
@@ -182,7 +182,7 @@ export function App() {
         if (!isVideo && !isAudio) continue;
 
         try {
-          const { duration, objectUrl } = await getMediaInfo(file);
+          const { duration, objectUrl, videoWidth, videoHeight } = await getMediaInfo(file);
           const newClip: Clip = {
             id: createClipId(),
             file,
@@ -190,6 +190,8 @@ export function App() {
             title: file.name,
             kind: isVideo ? 'video' : 'audio',
             duration: Math.max(MIN_CLIP_DURATION, duration),
+            videoWidth,
+            videoHeight,
             trimStart: 0,
             trimEnd: NaN,
             videoFadeIn: 0,

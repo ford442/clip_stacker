@@ -1,7 +1,19 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { Clip, ClipTransition } from '../types';
 import { extractThumbnails } from '../utils/media';
 import { extractWaveformPeaks } from '../utils/waveform';
+import {
+  buildRulerTicks,
+  clampPixelsPerSecond,
+  clipPixelWidth,
+  DEFAULT_PIXELS_PER_SECOND,
+  formatTimelineTime,
+  MAX_PIXELS_PER_SECOND,
+  MIN_PIXELS_PER_SECOND,
+  rulerTickInterval,
+  timelineContentWidth,
+} from '../utils/timelineLayout';
+import { computeTotalDuration } from '../utils/transitions';
 import { WaveformCanvas } from './WaveformCanvas';
 import { TransitionEditor } from './TransitionEditor';
 
@@ -22,97 +34,45 @@ function effectiveDur(clip: Clip): number {
   return Math.max(0.1, end - clip.trimStart);
 }
 
-/** Choose a human-friendly tick interval (seconds) for the given total duration. */
-function rulerTickInterval(totalDur: number): number {
-  if (totalDur <= 15) return 1;
-  if (totalDur <= 60) return 5;
-  if (totalDur <= 300) return 15;
-  if (totalDur <= 600) return 30;
-  return 60;
-}
-
-/** Format seconds as m:ss or just s.d */
-function fmtTime(s: number): string {
-  if (s < 60) return `${s.toFixed(0)}s`;
-  const m = Math.floor(s / 60);
-  const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-}
-
 const TRANSITION_COLORS: Record<string, string> = {
   none: 'var(--border)',
   dissolve: '#7c4dff',
   motion: '#f06292',
 };
 
+interface ClipLayout {
+  clip: Clip;
+  index: number;
+  duration: number;
+  width: number;
+  start: number;
+}
+
 // ─── Time Ruler ─────────────────────────────────────────────────────────────
 
 interface RulerProps {
-  clips: Clip[];
-  transitions: ClipTransition[];
+  totalDuration: number;
+  pixelsPerSecond: number;
 }
 
-function TimelineRuler({ clips, transitions }: RulerProps) {
-  const totalDur = clips.reduce((sum, c) => sum + effectiveDur(c), 0);
-  if (totalDur <= 0) return null;
+function TimelineRuler({ totalDuration, pixelsPerSecond }: RulerProps) {
+  if (totalDuration <= 0) return null;
 
-  const interval = rulerTickInterval(totalDur);
-  const transSet = new Set(transitions.map((t) => t.afterClipIndex));
+  const contentWidth = timelineContentWidth(totalDuration, pixelsPerSecond);
+  const interval = rulerTickInterval(totalDuration);
+  const ticks = buildRulerTicks(totalDuration, interval);
 
-  // Build per-clip ruler segments sharing the same flex sizing as the track
-  let cursor = 0;
   return (
-    <div className="timeline-ruler" aria-hidden="true">
-      {clips.map((clip, index) => {
-        const dur = effectiveDur(clip);
-        const clipStart = cursor;
-        cursor += dur;
-
-        // Which tick labels fall inside this clip?
-        const firstTick = Math.ceil(clipStart / interval) * interval;
-        const ticks: number[] = [];
-        for (let t = firstTick; t < clipStart + dur - 0.01; t += interval) {
-          // Skip the clip start since it's already shown as the start-of-clip label
-          if (t !== clipStart) {
-            ticks.push(t);
-          }
-        }
-
-        const hasTransition = index > 0 && transSet.has(index);
-
-        return (
-          <div key={clip.id} className="timeline-ruler-clip-group">
-            {/* Gap for the transition zone that precedes this clip */}
-            {hasTransition && <div className="timeline-ruler-gap" />}
-
-            <div className="timeline-ruler-seg" style={{ flex: `${dur} 0 0px` }}>
-              {/* Start-of-clip label (always show) */}
-              <span className="ruler-tick ruler-tick--start">
-                <span className="ruler-tick-label">{fmtTime(clipStart)}</span>
-              </span>
-
-              {/* Interior ticks */}
-              {ticks.map((t) => {
-                const pct = ((t - clipStart) / dur) * 100;
-                return (
-                  <span
-                    key={t}
-                    className="ruler-tick"
-                    style={{ left: `${pct}%` }}
-                  >
-                    <span className="ruler-tick-label">{fmtTime(t)}</span>
-                  </span>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-
-      {/* End label */}
-      <div className="timeline-ruler-end">
-        <span className="ruler-tick-label">{fmtTime(totalDur)}</span>
-      </div>
+    <div className="timeline-ruler" style={{ width: contentWidth }} aria-hidden="true">
+      {ticks.map((tick) => (
+        <span
+          key={tick}
+          className={`ruler-tick${tick === 0 ? ' ruler-tick--start' : ''}`}
+          style={{ left: tick === 0 ? 0 : tick * pixelsPerSecond }}
+        >
+          <span className="ruler-tick-label">{formatTimelineTime(tick)}</span>
+        </span>
+      ))}
     </div>
   );
 }
@@ -137,6 +97,8 @@ export function Timeline({
   const generatingWaves = useRef<Set<string>>(new Set());
   const completedWaves = useRef<Set<string>>(new Set());
   const [editingTransition, setEditingTransition] = useState<ClipTransition | null>(null);
+  const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // ── Drag-and-drop state ──────────────────────────────────────────────────
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -145,8 +107,51 @@ export function Timeline({
   const lastTouchPos = useRef<{ x: number; y: number } | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
 
+  const clipLayouts = useMemo<ClipLayout[]>(() => {
+    let cursor = 0;
+    return clips.map((clip, index) => {
+      const duration = effectiveDur(clip);
+      const width = clipPixelWidth(duration, pixelsPerSecond);
+      const layout = { clip, index, duration, width, start: cursor };
+      cursor += width;
+      return layout;
+    });
+  }, [clips, pixelsPerSecond]);
+
+  const totalDuration = useMemo(
+    () => clips.reduce((sum, clip) => sum + effectiveDur(clip), 0),
+    [clips],
+  );
+  const outputDuration = useMemo(
+    () => computeTotalDuration(clips, transitions),
+    [clips, transitions],
+  );
+  const contentWidth = timelineContentWidth(totalDuration, pixelsPerSecond);
+
+  const calcInsertIndex = (clientX: number): number => {
+    const track = trackRef.current;
+    const scroll = scrollRef.current;
+    if (!track || !scroll) return 0;
+
+    const rect = track.getBoundingClientRect();
+    const x = clientX - rect.left + scroll.scrollLeft;
+
+    for (const layout of clipLayouts) {
+      const midpoint = layout.start + layout.width / 2;
+      if (x < midpoint) return layout.index;
+    }
+    return clipLayouts.length;
+  };
+
+  const adjustZoom = (factor: number) => {
+    setPixelsPerSecond((current) => clampPixelsPerSecond(current * factor));
+  };
+
+  const scrollTimeline = (delta: number) => {
+    scrollRef.current?.scrollBy({ left: delta, behavior: 'smooth' });
+  };
+
   // Attach non-passive touchmove listener so we can call preventDefault
-  // (React synthetic events cannot prevent scroll via passive handlers)
   useEffect(() => {
     const el = trackRef.current;
     if (!el) return;
@@ -157,11 +162,20 @@ export function Timeline({
     return () => el.removeEventListener('touchmove', onTouchMove);
   }, []);
 
-  /** Determine insertion position (0…n) from pointer/touch x over a clip. */
-  const calcInsertIndex = (clientX: number, wrapperEl: HTMLElement, clipIdx: number): number => {
-    const rect = wrapperEl.getBoundingClientRect();
-    return clientX < rect.left + rect.width / 2 ? clipIdx : clipIdx + 1;
-  };
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const onWheel = (event: WheelEvent) => {
+      if (!event.shiftKey) return;
+      event.preventDefault();
+      const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
+      setPixelsPerSecond((current) => clampPixelsPerSecond(current * factor));
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, []);
 
   // ── HTML5 Drag handlers (desktop) ────────────────────────────────────────
   const handleDragStart = (e: React.DragEvent, index: number) => {
@@ -170,16 +184,16 @@ export function Timeline({
     e.dataTransfer.setData('text/plain', String(index));
   };
 
-  const handleDragOver = (e: React.DragEvent, index: number) => {
+  const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
-    setDropTargetIndex(calcInsertIndex(e.clientX, e.currentTarget as HTMLElement, index));
+    setDropTargetIndex(calcInsertIndex(e.clientX));
   };
 
-  const handleDrop = (e: React.DragEvent, index: number) => {
+  const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const from = dragIndex ?? Number(e.dataTransfer.getData('text/plain'));
-    const insertBefore = calcInsertIndex(e.clientX, e.currentTarget as HTMLElement, index);
+    const insertBefore = calcInsertIndex(e.clientX);
     onReorder(from, insertBefore);
     setDragIndex(null);
     setDropTargetIndex(null);
@@ -200,21 +214,13 @@ export function Timeline({
   const handleTouchMoveOnTrack = (e: React.TouchEvent) => {
     if (touchDragRef.current === null) return;
     const touch = e.touches[0];
-    // Skip expensive hit-test when touch hasn't moved more than 4 px
     if (lastTouchPos.current) {
       const dx = Math.abs(touch.clientX - lastTouchPos.current.x);
       const dy = Math.abs(touch.clientY - lastTouchPos.current.y);
       if (dx < 4 && dy < 4) return;
     }
     lastTouchPos.current = { x: touch.clientX, y: touch.clientY };
-    const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    const wrapperEl = el?.closest('[data-clip-index]') as HTMLElement | null;
-    if (!wrapperEl) {
-      setDropTargetIndex(null);
-      return;
-    }
-    const idx = Number(wrapperEl.dataset.clipIndex);
-    setDropTargetIndex(calcInsertIndex(touch.clientX, wrapperEl, idx));
+    setDropTargetIndex(calcInsertIndex(touch.clientX));
   };
 
   const handleTouchEnd = () => {
@@ -262,7 +268,6 @@ export function Timeline({
           setWaveMap((prev) => ({ ...prev, [clip.id]: peaks }));
         },
         () => {
-          // Ignore errors — clip stays without waveform
           generatingWaves.current.delete(clip.id);
           completedWaves.current.add(clip.id);
         },
@@ -284,16 +289,72 @@ export function Timeline({
       <div className="timeline-header-row">
         <h2>Timeline</h2>
         <span className="timeline-total-dur muted">
-          {fmtTime(clips.reduce((s, c) => s + effectiveDur(c), 0))} total
+          {formatTimelineTime(outputDuration)} total
+          {outputDuration !== totalDuration && (
+            <span className="timeline-total-note"> ({formatTimelineTime(totalDuration)} source)</span>
+          )}
         </span>
+        <div className="timeline-zoom-controls">
+          <button
+            type="button"
+            className="timeline-zoom-btn"
+            onClick={() => adjustZoom(1 / 1.25)}
+            aria-label="Zoom out"
+            title="Zoom out"
+          >
+            −
+          </button>
+          <input
+            type="range"
+            className="timeline-zoom-slider"
+            min={MIN_PIXELS_PER_SECOND}
+            max={MAX_PIXELS_PER_SECOND}
+            step={4}
+            value={pixelsPerSecond}
+            onChange={(e) => setPixelsPerSecond(clampPixelsPerSecond(Number(e.target.value)))}
+            aria-label="Timeline zoom"
+            title="Timeline zoom"
+          />
+          <button
+            type="button"
+            className="timeline-zoom-btn"
+            onClick={() => adjustZoom(1.25)}
+            aria-label="Zoom in"
+            title="Zoom in"
+          >
+            +
+          </button>
+          <button
+            type="button"
+            className="timeline-scroll-btn"
+            onClick={() => scrollTimeline(-Math.max(160, scrollRef.current?.clientWidth ? scrollRef.current.clientWidth * 0.6 : 160))}
+            aria-label="Scroll timeline left"
+            title="Scroll left"
+          >
+            ←
+          </button>
+          <button
+            type="button"
+            className="timeline-scroll-btn"
+            onClick={() => scrollTimeline(Math.max(160, scrollRef.current?.clientWidth ? scrollRef.current.clientWidth * 0.6 : 160))}
+            aria-label="Scroll timeline right"
+            title="Scroll right"
+          >
+            →
+          </button>
+        </div>
       </div>
+      <p className="timeline-hint muted">Drag clips to reorder. Shift + scroll wheel zooms the timeline.</p>
 
-      <div className="timeline-scroll-container">
-        <TimelineRuler clips={clips} transitions={transitions} />
+      <div className="timeline-scroll-container" ref={scrollRef}>
+        <TimelineRuler totalDuration={totalDuration} pixelsPerSecond={pixelsPerSecond} />
 
         <div
           className="timeline-track"
           ref={trackRef}
+          style={{ width: contentWidth }}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
           onTouchMove={handleTouchMoveOnTrack}
           onTouchEnd={handleTouchEnd}
           onDragLeave={(e) => {
@@ -302,15 +363,13 @@ export function Timeline({
             }
           }}
         >
-           {clips.map((clip, index) => {
-            const dur = effectiveDur(clip);
+          {clipLayouts.map(({ clip, index, duration, width, start }) => {
             const thumbs = thumbMap[clip.id];
             const waves = waveMap[clip.id];
             const isLoadingThumbs = clip.kind === 'video' && thumbs === undefined;
             const isLoadingWave = clip.kind === 'audio' && waves === undefined;
             const transition = index > 0 ? transMap.get(index) : undefined;
 
-            // Show insertion indicator before this clip when it is the drop target
             const showIndicatorBefore =
               dropTargetIndex === index &&
               dragIndex !== null &&
@@ -320,46 +379,48 @@ export function Timeline({
             return (
               <Fragment key={clip.id}>
                 {showIndicatorBefore && (
-                  <div className="timeline-drop-indicator" aria-hidden="true" />
+                  <div
+                    className="timeline-drop-indicator"
+                    style={{ left: start }}
+                    aria-hidden="true"
+                  />
+                )}
+
+                {transition && (
+                  <button
+                    type="button"
+                    className={`transition-zone transition-zone--overlay${transition.type !== 'none' ? ' active' : ''}`}
+                    style={{
+                      left: start - 12,
+                      '--tz-color': TRANSITION_COLORS[transition.type],
+                    } as React.CSSProperties}
+                    onClick={() => setEditingTransition(transition)}
+                    title={`Transition: ${transition.type}${transition.type !== 'none' ? ` (${transition.duration}s)` : ''}`}
+                    aria-label={`Edit transition between clips ${index} and ${index + 1}`}
+                  >
+                    <span className="tz-icon">⬡</span>
+                    {transition.type !== 'none' && (
+                      <span className="tz-label">{transition.duration}s</span>
+                    )}
+                  </button>
                 )}
 
                 <div
                   className={`timeline-clip-wrapper${dragIndex === index ? ' is-dragging' : ''}`}
+                  style={{ width }}
                   data-clip-index={index}
                   draggable
                   onDragStart={(e) => handleDragStart(e, index)}
-                  onDragOver={(e) => handleDragOver(e, index)}
-                  onDrop={(e) => handleDrop(e, index)}
                   onDragEnd={handleDragEnd}
                   onTouchStart={() => handleTouchStart(index)}
                 >
-                  {/* Transition zone between clips */}
-                  {transition && (
-                    <button
-                      type="button"
-                      className={`transition-zone${transition.type !== 'none' ? ' active' : ''}`}
-                      style={{ '--tz-color': TRANSITION_COLORS[transition.type] } as React.CSSProperties}
-                      onClick={() => setEditingTransition(transition)}
-                      title={`Transition: ${transition.type}${transition.type !== 'none' ? ` (${transition.duration}s)` : ''}`}
-                      aria-label={`Edit transition between clips ${index} and ${index + 1}`}
-                    >
-                      <span className="tz-icon">⬡</span>
-                      {transition.type !== 'none' && (
-                        <span className="tz-label">{transition.duration}s</span>
-                      )}
-                    </button>
-                  )}
-
-                  {/* === MAIN CLIP CONTENT (Combined) === */}
                   <div
                     className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
                       clip.id === selectedClipId ? ' selected' : ''
                     }`}
-                    style={{ flex: `${dur} 0 0px` }}
                     onClick={() => onSelect(clip.id)}
                     title={clip.title}
                   >
-                    {/* Thumbnail / waveform area */}
                     {clip.kind === 'video' ? (
                       <div className={`timeline-thumbs${isLoadingThumbs ? ' is-loading' : ''}`}>
                         {thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null}
@@ -388,7 +449,7 @@ export function Timeline({
                         {index + 1}. {clip.title}
                       </span>
 
-                      <span className="timeline-clip-dur">{dur.toFixed(1)}s</span>
+                      <span className="timeline-clip-dur">{duration.toFixed(1)}s</span>
 
                       <span className="timeline-clip-btns">
                         <button
@@ -424,11 +485,14 @@ export function Timeline({
             );
           })}
 
-          {/* Insertion indicator after the last clip */}
           {dropTargetIndex === clips.length &&
             dragIndex !== null &&
             dragIndex !== clips.length - 1 && (
-              <div className="timeline-drop-indicator" aria-hidden="true" />
+              <div
+                className="timeline-drop-indicator"
+                style={{ left: contentWidth }}
+                aria-hidden="true"
+              />
             )}
         </div>
       </div>
@@ -436,8 +500,8 @@ export function Timeline({
       {editingTransition && (
         <TransitionEditor
           transition={editingTransition}
-          clipATitle={clips[editingTransition.afterClipIndex - 1]?.title ?? 'Clip A'}
-          clipBTitle={clips[editingTransition.afterClipIndex]?.title ?? 'Clip B'}
+          clipATitle={clips[editingTransition.afterClipIndex - 1]?.title ?? 'Previous clip'}
+          clipBTitle={clips[editingTransition.afterClipIndex]?.title ?? 'Next clip'}
           onUpdate={(updated) => {
             onTransitionUpdate(updated);
             setEditingTransition(updated);
@@ -448,4 +512,3 @@ export function Timeline({
     </section>
   );
 }
-

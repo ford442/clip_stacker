@@ -7,6 +7,10 @@ export interface Clip {
   title: string;
   kind: ClipKind;
   duration: number;
+  /** Native video width in pixels (video clips only). */
+  videoWidth?: number;
+  /** Native video height in pixels (video clips only). */
+  videoHeight?: number;
   trimStart: number;
   trimEnd: number; // NaN means "use full duration"
   videoFadeIn: number;
@@ -55,6 +59,8 @@ export interface SerializedClip {
   title: string;
   kind: ClipKind;
   duration: number;
+  videoWidth?: number;
+  videoHeight?: number;
   trimStart: number;
   trimEnd: number | null;
   videoFadeIn: number;

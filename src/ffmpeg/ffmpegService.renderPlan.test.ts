@@ -31,4 +31,22 @@ describe('calculateRenderPlan', () => {
     expect(plan.willReencode).toBe(true);
     expect(plan.reason).toContain('RIFE-processed');
   });
+
+  it('forces re-encoding when clips have mixed native resolutions', () => {
+    const clips = [
+      makeClip({ videoWidth: 1920, videoHeight: 1080 }),
+      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1280, videoHeight: 720 }),
+    ];
+
+    const plan = calculateRenderPlan(
+      clips,
+      [],
+      [],
+      { ...DEFAULT_EXPORT_SETTINGS, resolutionPreset: 'original', outputResolution: 'original' },
+    );
+
+    expect(plan.path).toBe('effects-reencoding');
+    expect(plan.willReencode).toBe(true);
+    expect(plan.reason).toContain('different native resolutions');
+  });
 });

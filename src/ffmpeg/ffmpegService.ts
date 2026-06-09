@@ -4,7 +4,13 @@ import type { Clip, ExportSettings, ClipTransition, TextOverlay, RenderPlan } fr
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { getClipDuration } from '../utils/project';
 import { buildTransitionFilterComplex } from '../utils/transitions';
-import { formatOutputResolution, parseOutputResolution, usesFixedOutputResolution } from '../utils/resolution';
+import {
+  clipsHaveMixedVideoDimensions,
+  clipsNeedResolutionNormalization,
+  formatOutputResolution,
+  parseOutputResolution,
+  usesFixedOutputResolution,
+} from '../utils/resolution';
 
 const PASS1_PROGRESS_START = 0.12;
 const PASS1_PROGRESS_END = 0.85;
@@ -783,6 +789,7 @@ async function performTwoPassEncode(
 ): Promise<void> {
   emitProgress(onProgress, 'FFmpeg re-encode (two-pass)', 0.12, false);
 
+  const normalizeResolution = clipsNeedResolutionNormalization(clips, settings);
   const intermediates: string[] = [];
   const pass1TotalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
   let pass1ElapsedDuration = 0;
@@ -803,6 +810,7 @@ async function performTwoPassEncode(
       rangeStart,
       rangeEnd,
       forceEncodeAll,
+      normalizeResolution,
     ));
     pass1ElapsedDuration += clipDuration;
   }
@@ -821,11 +829,17 @@ async function processClipPass1(
   rangeStart: number,
   rangeEnd: number,
   forceEncodeAll: boolean,
+  normalizeResolution: boolean,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
 
-  if (!forceEncodeAll && !clipNeedsEffects(clip) && !usesFixedOutputResolution(settings)) {
+  if (
+    !forceEncodeAll &&
+    !clipNeedsEffects(clip) &&
+    !usesFixedOutputResolution(settings) &&
+    !normalizeResolution
+  ) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
     // Audio must be explicitly transcoded so the intermediate has a consistent
     // codec for concat — pure -c copy silently drops audio from non-MP4 sources.
@@ -1451,8 +1465,19 @@ export function calculateRenderPlan(
     };
   }
 
+  if (clipsHaveMixedVideoDimensions(clips)) {
+    const targetResolution = usesFixedOutputResolution(settings)
+      ? outputResolution
+      : `${parseOutputResolution(settings.outputResolution).width}x${parseOutputResolution(settings.outputResolution).height}`;
+    return {
+      path: 'effects-reencoding',
+      reason: 'Clips have different native resolutions',
+      willReencode: true,
+      description: `Re-encoding to ${targetResolution} with CRF ${settings.crf} (${settings.preset} preset)`,
+    };
+  }
+
   // All clips are clean with no effects — use fast lossless stream copy + concat.
-  // If clips have mixed native resolutions, enable "Force re-encode" in export settings.
   return {
     path: 'lossless-concat',
     reason: clips.length === 1 ? 'Single clean video clip with no effects' : 'All clips are clean with no effects',
