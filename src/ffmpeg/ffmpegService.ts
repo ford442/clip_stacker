@@ -5,6 +5,8 @@ import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { getClipDuration } from '../utils/project';
 import { buildTransitionFilterComplex } from '../utils/transitions';
 import {
+  allVideoClipsMatchOutputResolution,
+  clipMatchesOutputResolution,
   clipsHaveMixedVideoDimensions,
   clipsNeedResolutionNormalization,
   formatOutputResolution,
@@ -834,11 +836,14 @@ async function processClipPass1(
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
 
+  const clipNeedsRescale =
+    normalizeResolution && clip.kind === 'video' && !clipMatchesOutputResolution(clip, settings);
+
   if (
     !forceEncodeAll &&
     !clipNeedsEffects(clip) &&
     !usesFixedOutputResolution(settings) &&
-    !normalizeResolution
+    !clipNeedsRescale
   ) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
     // Audio must be explicitly transcoded so the intermediate has a consistent
@@ -1457,6 +1462,14 @@ export function calculateRenderPlan(
   }
 
   if (usesFixedOutputResolution(settings)) {
+    if (allVideoClipsMatchOutputResolution(clips, settings)) {
+      return {
+        path: 'lossless-concat',
+        reason: `All clips already match ${outputResolution}`,
+        willReencode: false,
+        description: `Lossless concat at ${outputResolution} (no rescale needed)`,
+      };
+    }
     return {
       path: 'effects-reencoding',
       reason: `Output resolution set to ${outputResolution}`,

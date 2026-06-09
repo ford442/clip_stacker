@@ -104,10 +104,12 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
 
   const gpuLabel = useCanvasRenderer
     ? '🎨 Canvas'
+    : caps?.webcodecs
+    ? '⚡ GPU'
     : '🖥 CPU';
 
   const gpuTitle = caps
-    ? `Audio-safe exports use FFmpeg by default. WebCodecs: ${caps.webcodecs ? 'yes' : 'no'} · Hardware H.264: ${caps.hardwareH264 ? 'yes' : 'no'} · WebGPU: ${caps.webgpu ? 'yes' : 'no'} · MediaRecorder: ${caps.mediaRecorderMp4 ? 'yes' : 'no'}`
+    ? `Rescaling exports auto-use hardware H.264 when available (WebCodecs/WebGPU), with FFmpeg audio mux and CPU fallback. WebCodecs: ${caps.webcodecs ? 'yes' : 'no'} · Hardware H.264: ${caps.hardwareH264 ? 'yes' : 'no'} · WebGPU: ${caps.webgpu ? 'yes' : 'no'} · MediaRecorder: ${caps.mediaRecorderMp4 ? 'yes' : 'no'}`
     : 'Detecting capabilities...';
 
   return (
