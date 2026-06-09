@@ -2,8 +2,9 @@
  * WebCodecs-based encoder for GPU-accelerated video export.
  *
  * Architecture:
- *  - Video: HTMLVideoElement → requestVideoFrameCallback → VideoEncoder (H.264 hardware) → mp4-muxer
- *  - Audio: fetch(objectUrl) → AudioContext.decodeAudioData → AudioEncoder (AAC) → mp4-muxer
+ *  - Video: HTMLVideoElement → requestVideoFrameCallback → WebGPU or Canvas compositor
+ *    → VideoEncoder (hardware H.264) → mp4-muxer (video-only)
+ *  - Audio: muxed separately via FFmpeg (muxVideoWithAudio) for reliability
  *
  * Falls back gracefully; callers should wrap in try/catch and fall back to FFmpeg.
  */
@@ -13,24 +14,26 @@ import type { Clip } from '../types';
 import type { ExportSettings } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { getClipDuration } from './project';
+import { parseOutputResolution } from './resolution';
+import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 
-const TARGET_WIDTH = 1280;
-const TARGET_HEIGHT = 720;
 const TARGET_FPS = 30;
-const AUDIO_SAMPLE_RATE = 44100;
-const AUDIO_CHANNELS = 2;
-const AUDIO_FRAME_SIZE = 1024; // AAC standard
 const WEBCODECS_PROGRESS_START = 0.05;
-const WEBCODECS_PROGRESS_RANGE = 0.85;
+const WEBCODECS_PROGRESS_RANGE = 0.82;
+
+export type GpuCompositorKind = 'auto' | 'webgpu' | 'canvas';
+
+interface ResolvedCompositor {
+  kind: 'webgpu' | 'canvas';
+  gpuCompositor: ExportCompositor | null;
+  canvas: HTMLCanvasElement;
+  ctx: CanvasRenderingContext2D | null;
+}
 
 function mapWebCodecsProgress(elapsedDuration: number, totalDuration: number): number | undefined {
   if (totalDuration <= 0) return undefined;
   return WEBCODECS_PROGRESS_START + (elapsedDuration / totalDuration) * WEBCODECS_PROGRESS_RANGE;
 }
-
-// ---------------------------------------------------------------------------
-// Type declarations for APIs not yet present in all TS DOM libs
-// ---------------------------------------------------------------------------
 
 declare global {
   interface HTMLVideoElement {
@@ -41,62 +44,90 @@ declare global {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Public helpers
-// ---------------------------------------------------------------------------
-
-export async function isWebCodecsAvailable(): Promise<boolean> {
-  if (
-    typeof VideoEncoder === 'undefined' ||
-    typeof VideoFrame === 'undefined' ||
-    typeof AudioEncoder === 'undefined'
-  ) {
+export async function isWebCodecsAvailable(
+  width = parseOutputResolution().width,
+  height = parseOutputResolution().height,
+): Promise<boolean> {
+  if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
     return false;
   }
   try {
-    const [videoSupport, audioSupport] = await Promise.all([
-      VideoEncoder.isConfigSupported({
-        codec: 'avc1.42001e',
-        width: TARGET_WIDTH,
-        height: TARGET_HEIGHT,
-        hardwareAcceleration: 'prefer-hardware',
-      }),
-      AudioEncoder.isConfigSupported({
-        codec: 'mp4a.40.2',
-        sampleRate: AUDIO_SAMPLE_RATE,
-        numberOfChannels: AUDIO_CHANNELS,
-        bitrate: 128_000,
-      }),
-    ]);
-    return videoSupport.supported === true && audioSupport.supported === true;
+    const videoSupport = await VideoEncoder.isConfigSupported({
+      codec: 'avc1.42001e',
+      width,
+      height,
+      hardwareAcceleration: 'prefer-hardware',
+    });
+    return videoSupport.supported === true;
   } catch {
     return false;
   }
 }
 
-// ---------------------------------------------------------------------------
-// Main encode entry point
-// ---------------------------------------------------------------------------
+async function resolveCompositor(
+  width: number,
+  height: number,
+  preference: GpuCompositorKind,
+): Promise<ResolvedCompositor> {
+  const useWebGpu =
+    preference === 'webgpu' ||
+    (preference === 'auto' && (await isWebGpuExportAvailable()));
 
-export async function encodeClipsWithWebCodecs(
+  if (useWebGpu) {
+    try {
+      const gpuCompositor = await ExportCompositor.create(width, height);
+      return {
+        kind: 'webgpu',
+        gpuCompositor,
+        canvas: gpuCompositor.canvas,
+        ctx: null,
+      };
+    } catch {
+      if (preference === 'webgpu') throw new Error('WebGPU compositor unavailable');
+    }
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) throw new Error('Could not create 2D canvas for GPU export');
+  return { kind: 'canvas', gpuCompositor: null, canvas, ctx };
+}
+
+/**
+ * Encode timeline video with hardware H.264. Audio is intentionally omitted;
+ * callers should mux source audio with FFmpeg via muxVideoWithAudio().
+ */
+export async function encodeVideoWithWebCodecs(
   clips: Clip[],
   settings: ExportSettings,
   onStatus: StatusCallback,
   onProgress?: ProgressCallback,
+  compositorPreference: GpuCompositorKind = 'auto',
 ): Promise<Blob> {
-  onStatus('Initializing GPU encoder...');
+  const { width, height } = parseOutputResolution(settings.outputResolution);
+  onStatus(
+    compositorPreference === 'webgpu'
+      ? 'Initializing WebGPU + hardware encoder...'
+      : 'Initializing GPU hardware encoder...',
+  );
   onProgress?.({ stage: 'Initializing GPU encoder', progress: 0, indeterminate: false });
+
+  const compositor = await resolveCompositor(width, height, compositorPreference);
+  onStatus(
+    compositor.kind === 'webgpu'
+      ? `WebGPU compositor active (${width}x${height})`
+      : `Canvas compositor active (${width}x${height})`,
+  );
 
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
-    video: { codec: 'avc', width: TARGET_WIDTH, height: TARGET_HEIGHT },
-    audio: { codec: 'aac', sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS },
+    video: { codec: 'avc', width, height },
     fastStart: 'in-memory',
   });
 
   let videoError: Error | null = null;
-  let audioError: Error | null = null;
-
   const videoEncoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
     error: (e) => { videoError = e; },
@@ -104,102 +135,85 @@ export async function encodeClipsWithWebCodecs(
 
   videoEncoder.configure({
     codec: 'avc1.42001e',
-    width: TARGET_WIDTH,
-    height: TARGET_HEIGHT,
+    width,
+    height,
     bitrate: settings.videoBitrate,
     framerate: TARGET_FPS,
     hardwareAcceleration: 'prefer-hardware',
   });
 
-  const audioEncoder = new AudioEncoder({
-    output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-    error: (e) => { audioError = e; },
-  });
-
-  audioEncoder.configure({
-    codec: 'mp4a.40.2',
-    sampleRate: AUDIO_SAMPLE_RATE,
-    numberOfChannels: AUDIO_CHANNELS,
-    bitrate: 128_000,
-  });
-
-  const canvas = document.createElement('canvas');
-  canvas.width = TARGET_WIDTH;
-  canvas.height = TARGET_HEIGHT;
-  const ctx = canvas.getContext('2d')!;
-
   let videoTimeUs = 0;
-  let audioTimeUs = 0;
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
   let elapsedDuration = 0;
 
-  for (let i = 0; i < clips.length; i++) {
-    const clip = clips[i];
-    onStatus(`GPU encode [${i + 1}/${clips.length}]: "${clip.title}"...`);
-    onProgress?.({
-      stage: `GPU encode: ${clip.title}`,
-      progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
-      indeterminate: totalDuration <= 0,
-    });
+  try {
+    for (let i = 0; i < clips.length; i++) {
+      const clip = clips[i];
+      onStatus(`GPU encode [${i + 1}/${clips.length}]: "${clip.title}"...`);
+      onProgress?.({
+        stage: `GPU encode: ${clip.title}`,
+        progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
+        indeterminate: totalDuration <= 0,
+      });
 
-    const clipDuration = getClipDuration(clip);
+      videoTimeUs = await encodeVideoFrames(
+        videoEncoder,
+        compositor,
+        clip,
+        videoTimeUs,
+        width,
+        height,
+      );
+      if (videoError) throw videoError;
 
-    // Encode video frames
-    videoTimeUs = await encodeVideoFrames(
-      videoEncoder,
-      canvas,
-      ctx,
-      clip,
-      videoTimeUs,
-    );
+      elapsedDuration += getClipDuration(clip);
+      onProgress?.({
+        stage: `GPU encode: ${clip.title}`,
+        progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
+        indeterminate: totalDuration <= 0,
+      });
+    }
+
+    onStatus('Flushing GPU encoder...');
+    onProgress?.({ stage: 'Flushing GPU encoder', progress: 0.9, indeterminate: false });
+    await videoEncoder.flush();
     if (videoError) throw videoError;
 
-    // Encode audio frames
-    audioTimeUs = await encodeAudioFrames(audioEncoder, clip, audioTimeUs, clipDuration);
-    if (audioError) throw audioError;
-    elapsedDuration += clipDuration;
-    onProgress?.({
-      stage: `GPU encode: ${clip.title}`,
-      progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
-      indeterminate: totalDuration <= 0,
-    });
+    muxer.finalize();
+    onProgress?.({ stage: 'Finalizing GPU video', progress: 0.92, indeterminate: false });
+
+    const { buffer } = muxer.target as ArrayBufferTarget;
+    return new Blob([buffer], { type: 'video/mp4' });
+  } finally {
+    compositor.gpuCompositor?.destroy();
   }
-
-  onStatus('Flushing encoders...');
-  onProgress?.({ stage: 'Flushing GPU encoders', progress: 0.93, indeterminate: false });
-  await videoEncoder.flush();
-  await audioEncoder.flush();
-
-  if (videoError) throw videoError;
-  if (audioError) throw audioError;
-
-  muxer.finalize();
-  onProgress?.({ stage: 'Finalizing GPU output', progress: 1, indeterminate: false });
-
-  const { buffer } = muxer.target as ArrayBufferTarget;
-  return new Blob([buffer], { type: 'video/mp4' });
 }
 
-// ---------------------------------------------------------------------------
-// Video encoding — requestVideoFrameCallback path
-// ---------------------------------------------------------------------------
+/** @deprecated Use encodeVideoWithWebCodecs + muxVideoWithAudio instead. */
+export async function encodeClipsWithWebCodecs(
+  clips: Clip[],
+  settings: ExportSettings,
+  onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
+): Promise<Blob> {
+  return encodeVideoWithWebCodecs(clips, settings, onStatus, onProgress);
+}
 
 async function encodeVideoFrames(
   encoder: VideoEncoder,
-  canvas: HTMLCanvasElement,
-  ctx: CanvasRenderingContext2D,
+  compositor: ResolvedCompositor,
   clip: Clip,
   startTimeUs: number,
+  targetWidth: number,
+  targetHeight: number,
 ): Promise<number> {
   const trimStart = clip.trimStart;
   const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   const clipDuration = trimEnd - trimStart;
 
   if (clip.kind === 'audio') {
-    // For audio-only clips, synthesise a black video frame at the start + end
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const frame = new VideoFrame(canvas, {
+    drawBlackFrame(compositor, targetWidth, targetHeight);
+    const frame = new VideoFrame(compositor.canvas, {
       timestamp: startTimeUs,
       duration: Math.round(clipDuration * 1_000_000),
     });
@@ -211,7 +225,6 @@ async function encodeVideoFrames(
   const video = document.createElement('video');
   video.muted = true;
   video.playsInline = true;
-  // Append off-screen so requestVideoFrameCallback is fully supported
   video.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;';
   document.body.appendChild(video);
 
@@ -219,15 +232,11 @@ async function encodeVideoFrames(
     video.src = clip.objectUrl;
     video.currentTime = trimStart;
     await waitForSeeked(video);
-
-    // Accelerate playback for faster-than-realtime frame ingestion (timestamps stay correct;
-    // output duration is unaffected). 3x is a conservative balance for decode headroom.
     video.playbackRate = 3.0;
 
     let frameCount = 0;
 
     if (video.requestVideoFrameCallback) {
-      // requestVideoFrameCallback path — fires for every decoded frame
       await new Promise<void>((resolve, reject) => {
         let done = false;
 
@@ -243,22 +252,9 @@ async function encodeVideoFrames(
 
           const elapsed = Math.max(0, mediaTime - trimStart);
           const timestamp = startTimeUs + Math.round(elapsed * 1_000_000);
+          drawCompositedFrame(compositor, video, elapsed, clipDuration, clip, targetWidth, targetHeight);
 
-          // Clear and fill canvas with black for letterboxing
-          ctx.fillStyle = '#000';
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          
-          // Draw video with letterboxing to preserve aspect ratio
-          const destRect = calculateLetterboxRect(
-            video.videoWidth || TARGET_WIDTH,
-            video.videoHeight || TARGET_HEIGHT,
-            TARGET_WIDTH,
-            TARGET_HEIGHT,
-          );
-          ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
-          applyFadeOverlay(ctx, canvas, elapsed, clipDuration, clip.videoFadeIn, clip.videoFadeOut);
-
-          const frame = new VideoFrame(canvas, {
+          const frame = new VideoFrame(compositor.canvas, {
             timestamp,
             duration: Math.round(1_000_000 / TARGET_FPS),
           });
@@ -275,7 +271,6 @@ async function encodeVideoFrames(
         video.play().catch(reject);
       });
     } else {
-      // Seek-step fallback (slower but universal)
       const stepSeconds = 1 / TARGET_FPS;
       let t = trimStart;
       while (t < trimEnd) {
@@ -284,22 +279,9 @@ async function encodeVideoFrames(
 
         const elapsed = t - trimStart;
         const timestamp = startTimeUs + Math.round(elapsed * 1_000_000);
+        drawCompositedFrame(compositor, video, elapsed, clipDuration, clip, targetWidth, targetHeight);
 
-        // Clear and fill canvas with black for letterboxing
-        ctx.fillStyle = '#000';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
-        // Draw video with letterboxing to preserve aspect ratio
-        const destRect = calculateLetterboxRect(
-          video.videoWidth || TARGET_WIDTH,
-          video.videoHeight || TARGET_HEIGHT,
-          TARGET_WIDTH,
-          TARGET_HEIGHT,
-        );
-        ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
-        applyFadeOverlay(ctx, canvas, elapsed, clipDuration, clip.videoFadeIn, clip.videoFadeOut);
-
-        const frame = new VideoFrame(canvas, {
+        const frame = new VideoFrame(compositor.canvas, {
           timestamp,
           duration: Math.round(1_000_000 / TARGET_FPS),
         });
@@ -317,120 +299,49 @@ async function encodeVideoFrames(
   return startTimeUs + Math.round(clipDuration * 1_000_000);
 }
 
-// ---------------------------------------------------------------------------
-// Audio encoding — Web Audio API path
-// ---------------------------------------------------------------------------
-
-async function encodeAudioFrames(
-  encoder: AudioEncoder,
-  clip: Clip,
-  startTimeUs: number,
-  clipDuration: number,
-): Promise<number> {
-  let arrayBuffer: ArrayBuffer;
-  try {
-    const response = await fetch(clip.objectUrl);
-    arrayBuffer = await response.arrayBuffer();
-  } catch (error) {
-    // If fetching fails, throw error to trigger FFmpeg fallback
-    throw new Error(`Failed to fetch audio for clip "${clip.title}": ${(error as Error).message}`);
+function drawBlackFrame(compositor: ResolvedCompositor, width: number, height: number): void {
+  if (compositor.kind === 'webgpu' && compositor.gpuCompositor) {
+    compositor.gpuCompositor.clearBlack();
+    return;
   }
-
-  const trimStart = clip.trimStart;
-  const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-  const playDur = Math.max(0, trimEnd - trimStart);
-
-  // Always render at canonical 44.1 kHz stereo so the AAC track duration matches video exactly.
-  // Use OfflineAudioContext + BufferSource for native-rate resampling + fade automation (fast).
-  const targetFrames = Math.ceil(playDur * AUDIO_SAMPLE_RATE);
-  const off = new OfflineAudioContext(AUDIO_CHANNELS, Math.max(1, targetFrames), AUDIO_SAMPLE_RATE);
-
-  let audioBuffer: AudioBuffer | null = null;
-  try {
-    audioBuffer = await off.decodeAudioData(arrayBuffer.slice(0)); // clone; decode may detach
-  } catch (error) {
-    // Do not silently encode an all-zero AAC track when the browser cannot
-    // decode audio from the source container (common for video files). Throw so
-    // the hybrid pipeline falls back to the FFmpeg path, which can demux the
-    // original audio reliably.
-    const message = (error as Error)?.message || String(error);
-    throw new Error(
-      `GPU audio decode failed for clip "${clip.title}"; falling back to FFmpeg audio muxing. ${message}`,
-    );
-  }
-
-  if (audioBuffer && audioBuffer.numberOfChannels > 0 && playDur > 0) {
-    const source = off.createBufferSource();
-    source.buffer = audioBuffer;
-    const gain = off.createGain();
-
-    // Fades via native automation (linear ramps on the gain node).
-    const fadeIn = Math.min(clip.audioFadeIn, playDur);
-    const fadeOut = Math.min(clip.audioFadeOut, playDur);
-    const safeOut = Math.max(0, playDur - fadeOut);
-
-    if (fadeIn > 0) {
-      gain.gain.setValueAtTime(0, 0);
-      gain.gain.linearRampToValueAtTime(1, fadeIn);
-    } else {
-      gain.gain.setValueAtTime(1, 0);
-    }
-    if (fadeOut > 0) {
-      gain.gain.setValueAtTime(1, safeOut);
-      gain.gain.linearRampToValueAtTime(0, playDur);
-    }
-
-    source.connect(gain);
-    gain.connect(off.destination);
-    // offset + duration in seconds on the source buffer (handles native rate conversion to context)
-    source.start(0, trimStart, playDur);
-  } else {
-    // Silence for the segment (no source connected → zeros). Still renders full duration.
-  }
-
-  const rendered: AudioBuffer = await off.startRendering();
-
-  // Now chunk the (resampled + faded + rate-normalized) rendered buffer into AudioEncoder frames.
-  // This memcopy loop is cheap; the heavy resample/fade/trim was native.
-  let offset = 0;
-  let audioTimeUs = startTimeUs;
-  const frameUs = Math.round((AUDIO_FRAME_SIZE / AUDIO_SAMPLE_RATE) * 1_000_000);
-
-  while (offset < targetFrames) {
-    const chunkSize = Math.min(AUDIO_FRAME_SIZE, targetFrames - offset);
-
-    // Build planar float32 data (f32-planar layout)
-    const planarData = new Float32Array(chunkSize * AUDIO_CHANNELS);
-    for (let ch = 0; ch < AUDIO_CHANNELS; ch++) {
-      const chData = ch < rendered.numberOfChannels ? rendered.getChannelData(ch) : null;
-      for (let i = 0; i < chunkSize; i++) {
-        const s = chData ? chData[offset + i] : 0;
-        planarData[ch * chunkSize + i] = s;
-      }
-    }
-
-    const audioData = new AudioData({
-      format: 'f32-planar',
-      sampleRate: AUDIO_SAMPLE_RATE,
-      numberOfFrames: chunkSize,
-      numberOfChannels: AUDIO_CHANNELS,
-      timestamp: audioTimeUs,
-      data: planarData,
-    });
-
-    encoder.encode(audioData);
-    audioData.close();
-
-    offset += chunkSize;
-    audioTimeUs += frameUs;
-  }
-
-  return startTimeUs + Math.round(clipDuration * 1_000_000);
+  compositor.ctx!.fillStyle = '#000';
+  compositor.ctx!.fillRect(0, 0, width, height);
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
+function drawCompositedFrame(
+  compositor: ResolvedCompositor,
+  video: HTMLVideoElement,
+  elapsed: number,
+  duration: number,
+  clip: Clip,
+  targetWidth: number,
+  targetHeight: number,
+): void {
+  if (compositor.kind === 'webgpu' && compositor.gpuCompositor) {
+    const frame = new VideoFrame(video, { timestamp: Math.round(elapsed * 1_000_000) });
+    compositor.gpuCompositor.renderFrame(
+      frame,
+      elapsed,
+      duration,
+      clip.videoFadeIn,
+      clip.videoFadeOut,
+    );
+    frame.close();
+    return;
+  }
+
+  const ctx = compositor.ctx!;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, targetWidth, targetHeight);
+  const destRect = calculateLetterboxRect(
+    video.videoWidth || targetWidth,
+    video.videoHeight || targetHeight,
+    targetWidth,
+    targetHeight,
+  );
+  ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
+  applyFadeOverlay(ctx, compositor.canvas, elapsed, duration, clip.videoFadeIn, clip.videoFadeOut);
+}
 
 function waitForSeeked(video: HTMLVideoElement): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -455,7 +366,6 @@ function calculateLetterboxRect(
   canvasWidth: number,
   canvasHeight: number,
 ): { x: number; y: number; width: number; height: number } {
-  // Calculate aspect ratios
   const videoAspect = videoWidth / videoHeight;
   const canvasAspect = canvasWidth / canvasHeight;
 
@@ -463,20 +373,19 @@ function calculateLetterboxRect(
   let destHeight: number;
 
   if (videoAspect > canvasAspect) {
-    // Video is wider — fit to canvas width
     destWidth = canvasWidth;
     destHeight = canvasWidth / videoAspect;
   } else {
-    // Video is taller — fit to canvas height
     destHeight = canvasHeight;
     destWidth = canvasHeight * videoAspect;
   }
 
-  // Center in canvas
-  const x = (canvasWidth - destWidth) / 2;
-  const y = (canvasHeight - destHeight) / 2;
-
-  return { x, y, width: destWidth, height: destHeight };
+  return {
+    x: (canvasWidth - destWidth) / 2,
+    y: (canvasHeight - destHeight) / 2,
+    width: destWidth,
+    height: destHeight,
+  };
 }
 
 function applyFadeOverlay(

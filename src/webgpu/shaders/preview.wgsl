@@ -8,6 +8,10 @@ struct Uniforms {
   duration: f32,
   elapsed: f32,
   opacity: f32,
+  uvScaleX: f32,
+  uvScaleY: f32,
+  uvOffsetX: f32,
+  uvOffsetY: f32,
   _pad0: f32,
   _pad1: f32,
   _pad2: f32,
@@ -39,7 +43,8 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
   );
   var out: VertexOutput;
   out.pos = vec4<f32>(positions[idx], 0.0, 1.0);
-  out.uv = uvs[idx];
+  let baseUv = uvs[idx];
+  out.uv = baseUv * vec2<f32>(u.uvScaleX, u.uvScaleY) + vec2<f32>(u.uvOffsetX, u.uvOffsetY);
   return out;
 }
 

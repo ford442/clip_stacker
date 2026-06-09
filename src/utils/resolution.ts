@@ -48,10 +48,26 @@ export function clipsHaveMixedVideoDimensions(clips: Clip[]): boolean {
   return new Set(sizes).size > 1;
 }
 
-/** Multi-clip stacks should be normalized before concat when dimensions differ. */
+export function clipMatchesOutputResolution(clip: Clip, settings: ExportSettings): boolean {
+  if (clip.kind !== 'video' || !clip.videoWidth || !clip.videoHeight) return false;
+  const { width, height } = parseOutputResolution(settings.outputResolution);
+  return clip.videoWidth === width && clip.videoHeight === height;
+}
+
+/** True when every video clip already matches the configured export resolution. */
+export function allVideoClipsMatchOutputResolution(clips: Clip[], settings: ExportSettings): boolean {
+  const videoClips = clips.filter((clip) => clip.kind === 'video');
+  if (videoClips.length === 0) return false;
+  return videoClips.every((clip) => clipMatchesOutputResolution(clip, settings));
+}
+
+/** True when any clip must be scaled before concat to keep output dimensions consistent. */
 export function clipsNeedResolutionNormalization(clips: Clip[], settings: ExportSettings): boolean {
-  if (clips.filter((clip) => clip.kind === 'video').length < 2) return false;
-  return usesFixedOutputResolution(settings) || clipsHaveMixedVideoDimensions(clips);
+  const videoClips = clips.filter((clip) => clip.kind === 'video');
+  if (videoClips.length === 0) return false;
+  if (clipsHaveMixedVideoDimensions(clips)) return true;
+  if (!usesFixedOutputResolution(settings)) return false;
+  return videoClips.some((clip) => !clipMatchesOutputResolution(clip, settings));
 }
 
 export function formatOutputResolution(settings: ExportSettings): string {

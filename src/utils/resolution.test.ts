@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import type { Clip } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
-import { clipsHaveMixedVideoDimensions, usesFixedOutputResolution } from './resolution';
+import {
+  allVideoClipsMatchOutputResolution,
+  clipMatchesOutputResolution,
+  clipsHaveMixedVideoDimensions,
+  clipsNeedResolutionNormalization,
+  usesFixedOutputResolution,
+} from './resolution';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
@@ -38,6 +44,14 @@ describe('resolution helpers', () => {
         outputResolution: '1280x720',
       }),
     ).toBe(false);
+  });
+
+  it('detects when clips already match the export resolution', () => {
+    const settings = { ...DEFAULT_EXPORT_SETTINGS };
+    const clip = makeClip({ videoWidth: 1280, videoHeight: 720 });
+    expect(clipMatchesOutputResolution(clip, settings)).toBe(true);
+    expect(allVideoClipsMatchOutputResolution([clip], settings)).toBe(true);
+    expect(clipsNeedResolutionNormalization([clip], settings)).toBe(false);
   });
 
   it('detects mixed native clip dimensions', () => {
