@@ -39,22 +39,24 @@ export class PreviewEngine {
   }
 
   static async create(canvas: HTMLCanvasElement): Promise<PreviewEngine> {
-    const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-    if (!adapter) throw new Error('No WebGPU adapter available');
+    const adapter = await navigator.gpu.requestAdapter({
+      powerPreference: "high-performance",
+    });
+    if (!adapter) throw new Error("No WebGPU adapter available");
     const device = await adapter.requestDevice();
 
-    const context = canvas.getContext('webgpu') as GPUCanvasContext | null;
-    if (!context) throw new Error('Could not get WebGPU context from canvas');
+    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
+    if (!context) throw new Error("Could not get WebGPU context from canvas");
 
     const format = navigator.gpu.getPreferredCanvasFormat();
-    context.configure({ device, format, alphaMode: 'premultiplied' });
+    context.configure({ device, format, alphaMode: "premultiplied" });
 
     const shaderCode = await PreviewEngine.loadShader();
     const shaderModule = device.createShaderModule({ code: shaderCode });
 
     const sampler = device.createSampler({
-      magFilter: 'linear',
-      minFilter: 'linear',
+      magFilter: "linear",
+      minFilter: "linear",
     });
 
     const uniformBuffer = device.createBuffer({
@@ -65,20 +67,30 @@ export class PreviewEngine {
     const bindGroupLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, externalTexture: {} },
-        { binding: 2, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          externalTexture: {},
+        },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: "uniform" },
+        },
       ],
     });
 
     const pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
-      vertex: { module: shaderModule, entryPoint: 'vs_main' },
+      layout: device.createPipelineLayout({
+        bindGroupLayouts: [bindGroupLayout],
+      }),
+      vertex: { module: shaderModule, entryPoint: "vs_main" },
       fragment: {
         module: shaderModule,
-        entryPoint: 'fs_main',
+        entryPoint: "fs_main",
         targets: [{ format }],
       },
-      primitive: { topology: 'triangle-list' },
+      primitive: { topology: "triangle-list" },
     });
 
     return new PreviewEngine(device, context, pipeline, sampler, uniformBuffer);
@@ -89,7 +101,9 @@ export class PreviewEngine {
   private static async loadShader(): Promise<string> {
     if (PreviewEngine.shaderText) return PreviewEngine.shaderText;
     try {
-      const res = await fetch(new URL('./shaders/preview.wgsl', import.meta.url).href);
+      const res = await fetch(
+        new URL("./shaders/preview.wgsl", import.meta.url).href,
+      );
       if (!res.ok) throw new Error(`Shader fetch failed: ${res.status}`);
       PreviewEngine.shaderText = await res.text();
       return PreviewEngine.shaderText;
@@ -127,7 +141,9 @@ export class PreviewEngine {
     // [5..7] padding — zero by default
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
-    const externalTexture = this.device.importExternalTexture({ source: videoFrame });
+    const externalTexture = this.device.importExternalTexture({
+      source: videoFrame,
+    });
 
     const bindGroup = this.device.createBindGroup({
       layout: this.pipeline.getBindGroupLayout(0),
@@ -143,8 +159,8 @@ export class PreviewEngine {
       colorAttachments: [
         {
           view: this.context.getCurrentTexture().createView(),
-          loadOp: 'clear',
-          storeOp: 'store',
+          loadOp: "clear",
+          storeOp: "store",
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
         },
       ],

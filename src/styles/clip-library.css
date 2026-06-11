@@ -1,0 +1,121 @@
+/* ============================================================
+   Clip library
+   ============================================================ */
+.library-panel {
+  min-height: 200px;
+}
+
+.clip-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.clip-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(6, 9, 15, 0.65);
+  padding: 0.6rem 0.75rem;
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.clip-item:hover {
+  background: var(--panel-hover);
+  border-color: var(--border-active);
+}
+
+.clip-item.selected {
+  border-color: var(--gold);
+  background: var(--gold-dim);
+}
+
+.clip-title {
+  font-size: 0.85rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 160px;
+}
+
+/* A/B group styles */
+.clip-group {
+  border: 1px solid var(--tz-dissolve);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(124, 77, 255, 0.05);
+}
+
+.clip-group-header {
+  padding: 0.3rem 0.75rem;
+  background: rgba(124, 77, 255, 0.12);
+  border-bottom: 1px solid rgba(124, 77, 255, 0.3);
+}
+
+.clip-group-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #a78bfa;
+}
+
+.clip-variant {
+  border: none;
+  border-radius: 0;
+  border-bottom: 1px solid var(--border);
+  padding-left: 1rem;
+}
+
+.clip-variant:last-of-type {
+  border-bottom: none;
+}
+
+.clip-variant.variant-active {
+  background: rgba(79, 140, 255, 0.08);
+}
+
+.clip-variant.variant-empty {
+  opacity: 0.5;
+  font-style: italic;
+}
+
+.variant-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border-active);
+  font-size: 0.65rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  margin-right: 0.25rem;
+}
+
+.variant-timeline-btn {
+  margin-left: auto;
+  padding: 0.15rem 0.5rem;
+  font-size: 0.7rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+}
+
+.variant-timeline-btn.on-timeline {
+  border-color: var(--gold);
+  color: var(--gold);
+  background: var(--gold-dim);
+}
+
+.clip-group-active-note {
+  padding: 0.3rem 0.75rem;
+  font-size: 0.72rem;
+  border-top: 1px solid var(--border);
+}

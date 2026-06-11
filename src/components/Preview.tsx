@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import type { Clip } from '../types';
-import { sanitizeFilename } from '../utils/filename';
-import { PreviewEngine } from '../webgpu/previewEngine';
+import { useEffect, useRef, useState } from "react";
+import type { Clip } from "../types";
+import { sanitizeFilename } from "../utils/filename";
+import { PreviewEngine } from "../webgpu/previewEngine";
 
 interface Props {
   clip: Clip | null;
@@ -16,7 +16,9 @@ interface Props {
  */
 export function Preview({ clip, outputUrl, exportFilename }: Props) {
   if (outputUrl) {
-    const downloadFilename = exportFilename ? sanitizeFilename(exportFilename) : 'stacked.mp4';
+    const downloadFilename = exportFilename
+      ? sanitizeFilename(exportFilename)
+      : "stacked.mp4";
     return (
       <section className="panel">
         <h2>Preview</h2>
@@ -41,7 +43,7 @@ export function Preview({ clip, outputUrl, exportFilename }: Props) {
     );
   }
 
-  if (clip.kind === 'video') {
+  if (clip.kind === "video") {
     return (
       <section className="panel">
         <h2>Preview</h2>
@@ -84,11 +86,14 @@ function WebGPUVideoPreview({ clip }: VideoPreviewProps) {
     async function init() {
       const canvas = canvasRef.current;
       const video = videoRef.current;
-      if (!canvas || !video || !('gpu' in navigator)) return;
+      if (!canvas || !video || !("gpu" in navigator)) return;
 
       try {
         engine = await PreviewEngine.create(canvas);
-        if (!alive) { engine.destroy(); return; }
+        if (!alive) {
+          engine.destroy();
+          return;
+        }
         engineRef.current = engine;
         setGpuActive(true);
 
@@ -102,15 +107,27 @@ function WebGPUVideoPreview({ clip }: VideoPreviewProps) {
             return;
           }
           // Sync canvas size to video intrinsic size
-          if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          if (
+            canvas.width !== video.videoWidth ||
+            canvas.height !== video.videoHeight
+          ) {
             canvas.width = video.videoWidth || 1280;
             canvas.height = video.videoHeight || 720;
           }
           try {
             const frame = new VideoFrame(video);
             const elapsed = video.currentTime - clip.trimStart;
-            const duration = (Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration) - clip.trimStart;
-            engine.renderFrame(frame, elapsed, duration, clip.videoFadeIn, clip.videoFadeOut, clip.opacity ?? 1);
+            const duration =
+              (Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration) -
+              clip.trimStart;
+            engine.renderFrame(
+              frame,
+              elapsed,
+              duration,
+              clip.videoFadeIn,
+              clip.videoFadeOut,
+              clip.opacity ?? 1,
+            );
             frame.close();
           } catch {
             // VideoFrame creation can fail on paused / seeking frames — skip
@@ -133,8 +150,8 @@ function WebGPUVideoPreview({ clip }: VideoPreviewProps) {
       engineRef.current = null;
       setGpuActive(false);
     };
-  // Re-init when clip changes
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // Re-init when clip changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clip.id]);
 
   return (
@@ -144,14 +161,14 @@ function WebGPUVideoPreview({ clip }: VideoPreviewProps) {
         ref={videoRef}
         src={clip.objectUrl}
         controls={!gpuActive}
-        style={gpuActive ? { display: 'none' } : undefined}
+        style={gpuActive ? { display: "none" } : undefined}
         aria-label={`Preview of ${clip.title} video. Press space to play/pause.`}
         crossOrigin="anonymous"
       />
       {/* WebGPU canvas — shown only when GPU engine is running */}
       <canvas
         ref={canvasRef}
-        style={gpuActive ? undefined : { display: 'none' }}
+        style={gpuActive ? undefined : { display: "none" }}
         aria-label={`WebGPU preview of ${clip.title}`}
         width={1280}
         height={720}
@@ -164,12 +181,19 @@ function WebGPUVideoPreview({ clip }: VideoPreviewProps) {
       {gpuActive && (
         <div className="preview-gpu-controls">
           <button
-            onClick={() => { videoRef.current?.paused ? videoRef.current?.play() : videoRef.current?.pause(); }}
+            onClick={() => {
+              videoRef.current?.paused
+                ? videoRef.current?.play()
+                : videoRef.current?.pause();
+            }}
             aria-label="Play/Pause"
           >
             ▶ / ⏸
           </button>
-          <span className="preview-gpu-badge" title="Rendering with WebGPU — fades applied live">
+          <span
+            className="preview-gpu-badge"
+            title="Rendering with WebGPU — fades applied live"
+          >
             WebGPU
           </span>
         </div>

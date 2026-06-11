@@ -1,9 +1,9 @@
-import { Fragment, useEffect, useRef, useState } from 'react';
-import type { Clip, ClipTransition } from '../types';
-import { extractThumbnails } from '../utils/media';
-import { extractWaveformPeaks } from '../utils/waveform';
-import { WaveformCanvas } from './WaveformCanvas';
-import { TransitionEditor } from './TransitionEditor';
+import { Fragment, useEffect, useRef, useState } from "react";
+import type { Clip, ClipTransition } from "../types";
+import { extractThumbnails } from "../utils/media";
+import { extractWaveformPeaks } from "../utils/waveform";
+import { WaveformCanvas } from "./WaveformCanvas";
+import { TransitionEditor } from "./TransitionEditor";
 
 interface Props {
   clips: Clip[];
@@ -36,13 +36,13 @@ function fmtTime(s: number): string {
   if (s < 60) return `${s.toFixed(0)}s`;
   const m = Math.floor(s / 60);
   const sec = Math.floor(s % 60);
-  return `${m}:${sec.toString().padStart(2, '0')}`;
+  return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
 const TRANSITION_COLORS: Record<string, string> = {
-  none: 'var(--border)',
-  dissolve: '#7c4dff',
-  motion: '#f06292',
+  none: "var(--border)",
+  dissolve: "#7c4dff",
+  motion: "#f06292",
 };
 
 // ─── Time Ruler ─────────────────────────────────────────────────────────────
@@ -85,7 +85,10 @@ function TimelineRuler({ clips, transitions }: RulerProps) {
             {/* Gap for the transition zone that precedes this clip */}
             {hasTransition && <div className="timeline-ruler-gap" />}
 
-            <div className="timeline-ruler-seg" style={{ flex: `${dur} 0 0px` }}>
+            <div
+              className="timeline-ruler-seg"
+              style={{ flex: `${dur} 0 0px` }}
+            >
               {/* Start-of-clip label (always show) */}
               <span className="ruler-tick ruler-tick--start">
                 <span className="ruler-tick-label">{fmtTime(clipStart)}</span>
@@ -136,7 +139,8 @@ export function Timeline({
   const completedThumbs = useRef<Set<string>>(new Set());
   const generatingWaves = useRef<Set<string>>(new Set());
   const completedWaves = useRef<Set<string>>(new Set());
-  const [editingTransition, setEditingTransition] = useState<ClipTransition | null>(null);
+  const [editingTransition, setEditingTransition] =
+    useState<ClipTransition | null>(null);
 
   // ── Drag-and-drop state ──────────────────────────────────────────────────
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -153,12 +157,16 @@ export function Timeline({
     const onTouchMove = (e: TouchEvent) => {
       if (touchDragRef.current !== null) e.preventDefault();
     };
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    return () => el.removeEventListener('touchmove', onTouchMove);
+    el.addEventListener("touchmove", onTouchMove, { passive: false });
+    return () => el.removeEventListener("touchmove", onTouchMove);
   }, []);
 
   /** Determine insertion position (0…n) from pointer/touch x over a clip. */
-  const calcInsertIndex = (clientX: number, wrapperEl: HTMLElement, clipIdx: number): number => {
+  const calcInsertIndex = (
+    clientX: number,
+    wrapperEl: HTMLElement,
+    clipIdx: number,
+  ): number => {
     const rect = wrapperEl.getBoundingClientRect();
     return clientX < rect.left + rect.width / 2 ? clipIdx : clipIdx + 1;
   };
@@ -166,20 +174,26 @@ export function Timeline({
   // ── HTML5 Drag handlers (desktop) ────────────────────────────────────────
   const handleDragStart = (e: React.DragEvent, index: number) => {
     setDragIndex(index);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(index));
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(index));
   };
 
   const handleDragOver = (e: React.DragEvent, index: number) => {
     e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    setDropTargetIndex(calcInsertIndex(e.clientX, e.currentTarget as HTMLElement, index));
+    e.dataTransfer.dropEffect = "move";
+    setDropTargetIndex(
+      calcInsertIndex(e.clientX, e.currentTarget as HTMLElement, index),
+    );
   };
 
   const handleDrop = (e: React.DragEvent, index: number) => {
     e.preventDefault();
-    const from = dragIndex ?? Number(e.dataTransfer.getData('text/plain'));
-    const insertBefore = calcInsertIndex(e.clientX, e.currentTarget as HTMLElement, index);
+    const from = dragIndex ?? Number(e.dataTransfer.getData("text/plain"));
+    const insertBefore = calcInsertIndex(
+      e.clientX,
+      e.currentTarget as HTMLElement,
+      index,
+    );
     onReorder(from, insertBefore);
     setDragIndex(null);
     setDropTargetIndex(null);
@@ -208,7 +222,7 @@ export function Timeline({
     }
     lastTouchPos.current = { x: touch.clientX, y: touch.clientY };
     const el = document.elementFromPoint(touch.clientX, touch.clientY);
-    const wrapperEl = el?.closest('[data-clip-index]') as HTMLElement | null;
+    const wrapperEl = el?.closest("[data-clip-index]") as HTMLElement | null;
     if (!wrapperEl) {
       setDropTargetIndex(null);
       return;
@@ -232,26 +246,30 @@ export function Timeline({
   // Thumbnail generation for video clips
   useEffect(() => {
     for (const clip of clips) {
-      if (clip.kind !== 'video') continue;
+      if (clip.kind !== "video") continue;
       if (completedThumbs.current.has(clip.id)) continue;
       if (generatingThumbs.current.has(clip.id)) continue;
       generatingThumbs.current.add(clip.id);
       const dur = effectiveDur(clip);
       const count = Math.max(2, Math.min(8, Math.ceil(dur / 3)));
-      extractThumbnails(clip.objectUrl, clip.duration, clip.trimStart, clip.trimEnd, count).then(
-        (thumbs) => {
-          generatingThumbs.current.delete(clip.id);
-          completedThumbs.current.add(clip.id);
-          setThumbMap((prev) => ({ ...prev, [clip.id]: thumbs }));
-        },
-      );
+      extractThumbnails(
+        clip.objectUrl,
+        clip.duration,
+        clip.trimStart,
+        clip.trimEnd,
+        count,
+      ).then((thumbs) => {
+        generatingThumbs.current.delete(clip.id);
+        completedThumbs.current.add(clip.id);
+        setThumbMap((prev) => ({ ...prev, [clip.id]: thumbs }));
+      });
     }
   }, [clips]);
 
   // Waveform generation for audio clips
   useEffect(() => {
     for (const clip of clips) {
-      if (clip.kind !== 'audio') continue;
+      if (clip.kind !== "audio") continue;
       if (completedWaves.current.has(clip.id)) continue;
       if (generatingWaves.current.has(clip.id)) continue;
       generatingWaves.current.add(clip.id);
@@ -302,12 +320,13 @@ export function Timeline({
             }
           }}
         >
-           {clips.map((clip, index) => {
+          {clips.map((clip, index) => {
             const dur = effectiveDur(clip);
             const thumbs = thumbMap[clip.id];
             const waves = waveMap[clip.id];
-            const isLoadingThumbs = clip.kind === 'video' && thumbs === undefined;
-            const isLoadingWave = clip.kind === 'audio' && waves === undefined;
+            const isLoadingThumbs =
+              clip.kind === "video" && thumbs === undefined;
+            const isLoadingWave = clip.kind === "audio" && waves === undefined;
             const transition = index > 0 ? transMap.get(index) : undefined;
 
             // Show insertion indicator before this clip when it is the drop target
@@ -324,7 +343,7 @@ export function Timeline({
                 )}
 
                 <div
-                  className={`timeline-clip-wrapper${dragIndex === index ? ' is-dragging' : ''}`}
+                  className={`timeline-clip-wrapper${dragIndex === index ? " is-dragging" : ""}`}
                   data-clip-index={index}
                   draggable
                   onDragStart={(e) => handleDragStart(e, index)}
@@ -337,14 +356,18 @@ export function Timeline({
                   {transition && (
                     <button
                       type="button"
-                      className={`transition-zone${transition.type !== 'none' ? ' active' : ''}`}
-                      style={{ '--tz-color': TRANSITION_COLORS[transition.type] } as React.CSSProperties}
+                      className={`transition-zone${transition.type !== "none" ? " active" : ""}`}
+                      style={
+                        {
+                          "--tz-color": TRANSITION_COLORS[transition.type],
+                        } as React.CSSProperties
+                      }
                       onClick={() => setEditingTransition(transition)}
-                      title={`Transition: ${transition.type}${transition.type !== 'none' ? ` (${transition.duration}s)` : ''}`}
+                      title={`Transition: ${transition.type}${transition.type !== "none" ? ` (${transition.duration}s)` : ""}`}
                       aria-label={`Edit transition between clips ${index} and ${index + 1}`}
                     >
                       <span className="tz-icon">⬡</span>
-                      {transition.type !== 'none' && (
+                      {transition.type !== "none" && (
                         <span className="tz-label">{transition.duration}s</span>
                       )}
                     </button>
@@ -352,20 +375,26 @@ export function Timeline({
 
                   {/* === MAIN CLIP CONTENT (Combined) === */}
                   <div
-                    className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
-                      clip.id === selectedClipId ? ' selected' : ''
+                    className={`timeline-clip${clip.kind === "audio" ? " timeline-clip--audio" : ""}${
+                      clip.id === selectedClipId ? " selected" : ""
                     }`}
                     style={{ flex: `${dur} 0 0px` }}
                     onClick={() => onSelect(clip.id)}
                     title={clip.title}
                   >
                     {/* Thumbnail / waveform area */}
-                    {clip.kind === 'video' ? (
-                      <div className={`timeline-thumbs${isLoadingThumbs ? ' is-loading' : ''}`}>
-                        {thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null}
+                    {clip.kind === "video" ? (
+                      <div
+                        className={`timeline-thumbs${isLoadingThumbs ? " is-loading" : ""}`}
+                      >
+                        {thumbs?.map((src, ti) => (
+                          <img key={ti} src={src} alt="" />
+                        )) ?? null}
                       </div>
                     ) : (
-                      <div className={`timeline-waveform${isLoadingWave ? ' is-loading' : ''}`}>
+                      <div
+                        className={`timeline-waveform${isLoadingWave ? " is-loading" : ""}`}
+                      >
                         {waves ? (
                           <WaveformCanvas peaks={waves} height={54} />
                         ) : (
@@ -388,12 +417,17 @@ export function Timeline({
                         {index + 1}. {clip.title}
                       </span>
 
-                      <span className="timeline-clip-dur">{dur.toFixed(1)}s</span>
+                      <span className="timeline-clip-dur">
+                        {dur.toFixed(1)}s
+                      </span>
 
                       <span className="timeline-clip-btns">
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); onMoveUp(index); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMoveUp(index);
+                          }}
                           disabled={index === 0}
                           aria-label="Move clip left"
                         >
@@ -401,7 +435,10 @@ export function Timeline({
                         </button>
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); onMoveDown(index); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onMoveDown(index);
+                          }}
                           disabled={index === clips.length - 1}
                           aria-label="Move clip right"
                         >
@@ -410,7 +447,10 @@ export function Timeline({
                         <button
                           type="button"
                           className="project-delete-btn"
-                          onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDelete(clip.id);
+                          }}
                           title="Delete clip"
                           aria-label="Delete clip"
                         >
@@ -436,8 +476,12 @@ export function Timeline({
       {editingTransition && (
         <TransitionEditor
           transition={editingTransition}
-          clipATitle={clips[editingTransition.afterClipIndex - 1]?.title ?? 'Clip A'}
-          clipBTitle={clips[editingTransition.afterClipIndex]?.title ?? 'Clip B'}
+          clipATitle={
+            clips[editingTransition.afterClipIndex - 1]?.title ?? "Clip A"
+          }
+          clipBTitle={
+            clips[editingTransition.afterClipIndex]?.title ?? "Clip B"
+          }
           onUpdate={(updated) => {
             onTransitionUpdate(updated);
             setEditingTransition(updated);
@@ -448,4 +492,3 @@ export function Timeline({
     </section>
   );
 }
-

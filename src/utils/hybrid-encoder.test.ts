@@ -1,26 +1,26 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { Clip, ClipTransition, TextOverlay } from '../types';
-import { DEFAULT_EXPORT_SETTINGS } from '../types';
-import { hybridMergeClips } from './hybrid-encoder';
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { Clip, ClipTransition, TextOverlay } from "../types";
+import { DEFAULT_EXPORT_SETTINGS } from "../types";
+import { hybridMergeClips } from "./hybrid-encoder";
 
 // Mock dependencies
-vi.mock('./webcodecs', () => ({
+vi.mock("./webcodecs", () => ({
   isWebCodecsAvailable: vi.fn(),
   encodeClipsWithWebCodecs: vi.fn(),
 }));
 
-vi.mock('./canvas-encoder', () => ({
+vi.mock("./canvas-encoder", () => ({
   encodeClipsWithCanvas: vi.fn(),
 }));
 
-vi.mock('../ffmpeg/ffmpegService', () => ({
+vi.mock("../ffmpeg/ffmpegService", () => ({
   mergeClips: vi.fn(),
   calculateRenderPlan: vi.fn(),
 }));
 
-import { isWebCodecsAvailable, encodeClipsWithWebCodecs } from './webcodecs';
-import { encodeClipsWithCanvas } from './canvas-encoder';
-import { mergeClips, calculateRenderPlan } from '../ffmpeg/ffmpegService';
+import { isWebCodecsAvailable, encodeClipsWithWebCodecs } from "./webcodecs";
+import { encodeClipsWithCanvas } from "./canvas-encoder";
+import { mergeClips, calculateRenderPlan } from "../ffmpeg/ffmpegService";
 
 // Helper to create a minimal test clip
 function createTestClip(id: string, duration: number): Clip {
@@ -29,7 +29,7 @@ function createTestClip(id: string, duration: number): Clip {
     file: new File([], `${id}.mp4`),
     objectUrl: `blob:${id}`,
     title: id,
-    kind: 'video',
+    kind: "video",
     duration,
     trimStart: 0,
     trimEnd: NaN,
@@ -40,7 +40,7 @@ function createTestClip(id: string, duration: number): Clip {
   };
 }
 
-describe('utils/hybrid-encoder', () => {
+describe("utils/hybrid-encoder", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // Mock MediaRecorder for canvas tests
@@ -49,19 +49,16 @@ describe('utils/hybrid-encoder', () => {
 
   const mockStatusCallback = vi.fn();
   const mockProgressCallback = vi.fn();
-  const testClips = [
-    createTestClip('a', 5),
-    createTestClip('b', 3),
-  ];
+  const testClips = [createTestClip("a", 5), createTestClip("b", 3)];
   const testTransitions: ClipTransition[] = [];
   const testSettings = DEFAULT_EXPORT_SETTINGS;
 
   // =========================================================================
   // Canvas renderer path selection
   // =========================================================================
-  describe('Canvas renderer path selection', () => {
-    it('should use canvas renderer when requested', async () => {
-      const mockBlob = new Blob(['video data']);
+  describe("Canvas renderer path selection", () => {
+    it("should use canvas renderer when requested", async () => {
+      const mockBlob = new Blob(["video data"]);
       (encodeClipsWithCanvas as any).mockResolvedValue(mockBlob);
 
       const result = await hybridMergeClips(
@@ -76,14 +73,16 @@ describe('utils/hybrid-encoder', () => {
         true, // audioReactive
       );
 
-      expect(result.path).toBe('canvas');
+      expect(result.path).toBe("canvas");
       expect(result.blob).toBe(mockBlob);
       expect(encodeClipsWithCanvas).toHaveBeenCalled();
     });
 
-    it('should fall back to FFmpeg if canvas renderer fails', async () => {
-      (encodeClipsWithCanvas as any).mockRejectedValue(new Error('Canvas error'));
-      const mockBlob = new Blob(['ffmpeg video']);
+    it("should fall back to FFmpeg if canvas renderer fails", async () => {
+      (encodeClipsWithCanvas as any).mockRejectedValue(
+        new Error("Canvas error"),
+      );
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -98,12 +97,12 @@ describe('utils/hybrid-encoder', () => {
         true, // useCanvas
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(mergeClips).toHaveBeenCalled();
     });
 
-    it('should pass audioReactive flag to canvas encoder', async () => {
-      const mockBlob = new Blob(['video data']);
+    it("should pass audioReactive flag to canvas encoder", async () => {
+      const mockBlob = new Blob(["video data"]);
       (encodeClipsWithCanvas as any).mockResolvedValue(mockBlob);
 
       await hybridMergeClips(
@@ -131,10 +130,10 @@ describe('utils/hybrid-encoder', () => {
   // =========================================================================
   // WebCodecs GPU path selection logic
   // =========================================================================
-  describe('WebCodecs GPU path selection logic', () => {
-    it('should use FFmpeg by default even when WebCodecs is available', async () => {
+  describe("WebCodecs GPU path selection logic", () => {
+    it("should use FFmpeg by default even when WebCodecs is available", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -149,17 +148,19 @@ describe('utils/hybrid-encoder', () => {
         false, // useCanvas = false
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
       expect(mergeClips).toHaveBeenCalled();
     });
 
-    it('should fall back to FFmpeg when WebCodecs cannot decode source audio', async () => {
+    it("should fall back to FFmpeg when WebCodecs cannot decode source audio", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
       (encodeClipsWithWebCodecs as any).mockRejectedValue(
-        new Error('GPU audio decode failed for clip "a"; falling back to FFmpeg audio muxing.'),
+        new Error(
+          'GPU audio decode failed for clip "a"; falling back to FFmpeg audio muxing.',
+        ),
       );
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -174,21 +175,23 @@ describe('utils/hybrid-encoder', () => {
         false,
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(mergeClips).toHaveBeenCalled();
       expect(mockStatusCallback).toHaveBeenCalledWith(
-        expect.stringContaining('GPU encode failed (GPU audio decode failed'),
+        expect.stringContaining(
+          "FFmpeg path selected for audio-preserving export",
+        ),
       );
     });
 
-    it('should skip WebCodecs if transitions are present', async () => {
+    it("should skip WebCodecs if transitions are present", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
       const transitions: ClipTransition[] = [
-        { afterClipIndex: 1, type: 'dissolve', duration: 0.5 },
+        { afterClipIndex: 1, type: "dissolve", duration: 0.5 },
       ];
 
       const result = await hybridMergeClips(
@@ -202,28 +205,28 @@ describe('utils/hybrid-encoder', () => {
         false,
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
     });
 
-    it('should skip WebCodecs if text overlays are present', async () => {
+    it("should skip WebCodecs if text overlays are present", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
       const textOverlays: TextOverlay[] = [
         {
-          id: 'text1',
-          text: 'Hello',
+          id: "text1",
+          text: "Hello",
           fontsize: 40,
-          fontcolor: '#ffffff',
+          fontcolor: "#ffffff",
           x: 50,
           y: 650,
           scrolling: false,
           scrollSpeed: 100,
           box: false,
-          boxColor: 'black@0.5',
+          boxColor: "black@0.5",
         },
       ];
 
@@ -238,20 +241,17 @@ describe('utils/hybrid-encoder', () => {
         false,
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
     });
 
-    it('should skip WebCodecs if PiP overlays are present', async () => {
+    it("should skip WebCodecs if PiP overlays are present", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
-      const clipsWithPiP = [
-        testClips[0],
-        { ...testClips[1], layerIndex: 1 },
-      ];
+      const clipsWithPiP = [testClips[0], { ...testClips[1], layerIndex: 1 }];
 
       const result = await hybridMergeClips(
         clipsWithPiP,
@@ -264,19 +264,17 @@ describe('utils/hybrid-encoder', () => {
         false,
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
     });
 
-    it('should skip WebCodecs if RIFE-processed clips are present', async () => {
+    it("should skip WebCodecs if RIFE-processed clips are present", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
-      const clipsWithRife = [
-        { ...testClips[0], rifeProcessed: true },
-      ];
+      const clipsWithRife = [{ ...testClips[0], rifeProcessed: true }];
 
       const result = await hybridMergeClips(
         clipsWithRife,
@@ -289,14 +287,16 @@ describe('utils/hybrid-encoder', () => {
         false,
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
     });
 
-    it('should not attempt WebCodecs before FFmpeg', async () => {
+    it("should not attempt WebCodecs before FFmpeg", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      (encodeClipsWithWebCodecs as any).mockRejectedValue(new Error('GPU error'));
-      const mockBlob = new Blob(['ffmpeg video']);
+      (encodeClipsWithWebCodecs as any).mockRejectedValue(
+        new Error("GPU error"),
+      );
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -311,14 +311,14 @@ describe('utils/hybrid-encoder', () => {
         false,
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
       expect(mergeClips).toHaveBeenCalled();
     });
 
-    it('should force FFmpeg when forceFFmpeg flag is set', async () => {
+    it("should force FFmpeg when forceFFmpeg flag is set", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -333,7 +333,7 @@ describe('utils/hybrid-encoder', () => {
         false,
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(encodeClipsWithWebCodecs).not.toHaveBeenCalled();
     });
   });
@@ -341,10 +341,10 @@ describe('utils/hybrid-encoder', () => {
   // =========================================================================
   // FFmpeg path (default / fallback)
   // =========================================================================
-  describe('FFmpeg path (default / fallback)', () => {
-    it('should use FFmpeg when WebCodecs is not available', async () => {
+  describe("FFmpeg path (default / fallback)", () => {
+    it("should use FFmpeg when WebCodecs is not available", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(false);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -356,14 +356,14 @@ describe('utils/hybrid-encoder', () => {
         mockProgressCallback,
       );
 
-      expect(result.path).toBe('ffmpeg');
+      expect(result.path).toBe("ffmpeg");
       expect(mergeClips).toHaveBeenCalled();
     });
 
-    it('should calculate render plan if not provided', async () => {
+    it("should calculate render plan if not provided", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(false);
-      const mockBlob = new Blob(['ffmpeg video']);
-      const mockRenderPlan = { someKey: 'someValue' };
+      const mockBlob = new Blob(["ffmpeg video"]);
+      const mockRenderPlan = { someKey: "someValue" };
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue(mockRenderPlan);
 
@@ -390,10 +390,10 @@ describe('utils/hybrid-encoder', () => {
       expect(result.renderPlan).toBe(mockRenderPlan);
     });
 
-    it('should use provided render plan', async () => {
+    it("should use provided render plan", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(false);
-      const mockBlob = new Blob(['ffmpeg video']);
-      const providedRenderPlan = { cached: 'plan' };
+      const mockBlob = new Blob(["ffmpeg video"]);
+      const providedRenderPlan = { cached: "plan" };
       (mergeClips as any).mockResolvedValue(mockBlob);
 
       const result = await hybridMergeClips(
@@ -414,9 +414,9 @@ describe('utils/hybrid-encoder', () => {
       expect(calculateRenderPlan).not.toHaveBeenCalled();
     });
 
-    it('should pass forceReencode to mergeClips', async () => {
+    it("should pass forceReencode to mergeClips", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(false);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -448,9 +448,9 @@ describe('utils/hybrid-encoder', () => {
   // =========================================================================
   // Status and progress callbacks
   // =========================================================================
-  describe('Status and progress callbacks', () => {
-    it('should call onStatus with canvas selection message', async () => {
-      const mockBlob = new Blob(['video data']);
+  describe("Status and progress callbacks", () => {
+    it("should call onStatus with canvas selection message", async () => {
+      const mockBlob = new Blob(["video data"]);
       (encodeClipsWithCanvas as any).mockResolvedValue(mockBlob);
 
       await hybridMergeClips(
@@ -465,13 +465,13 @@ describe('utils/hybrid-encoder', () => {
       );
 
       expect(mockStatusCallback).toHaveBeenCalledWith(
-        expect.stringContaining('Canvas renderer path selected'),
+        expect.stringContaining("Canvas renderer path selected"),
       );
     });
 
-    it('should call onStatus with audio-preserving FFmpeg selection message', async () => {
+    it("should call onStatus with audio-preserving FFmpeg selection message", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -487,13 +487,13 @@ describe('utils/hybrid-encoder', () => {
       );
 
       expect(mockStatusCallback).toHaveBeenCalledWith(
-        expect.stringContaining('audio-preserving export'),
+        expect.stringContaining("audio-preserving export"),
       );
     });
 
-    it('should call onProgress callbacks', async () => {
+    it("should call onProgress callbacks", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(false);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -521,10 +521,10 @@ describe('utils/hybrid-encoder', () => {
   // =========================================================================
   // Return value structure
   // =========================================================================
-  describe('Return value structure', () => {
-    it('should return HybridEncodeResult with blob and path', async () => {
+  describe("Return value structure", () => {
+    it("should return HybridEncodeResult with blob and path", async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(false);
-      const mockBlob = new Blob(['ffmpeg video']);
+      const mockBlob = new Blob(["ffmpeg video"]);
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({});
 
@@ -536,9 +536,9 @@ describe('utils/hybrid-encoder', () => {
         mockProgressCallback,
       );
 
-      expect(result).toHaveProperty('blob');
-      expect(result).toHaveProperty('path');
-      expect(['canvas', 'webcodecs', 'ffmpeg']).toContain(result.path);
+      expect(result).toHaveProperty("blob");
+      expect(result).toHaveProperty("path");
+      expect(["canvas", "webcodecs", "ffmpeg"]).toContain(result.path);
       expect(result.blob instanceof Blob).toBe(true);
     });
   });

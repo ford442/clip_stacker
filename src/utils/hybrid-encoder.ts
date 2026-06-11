@@ -12,12 +12,18 @@
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */
 
-import type { Clip, ExportSettings, ClipTransition, TextOverlay, RenderPlan } from '../types';
-import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
-import { mergeClips, calculateRenderPlan } from '../ffmpeg/ffmpegService';
-import { encodeClipsWithCanvas } from './canvas-encoder';
+import type {
+  Clip,
+  ExportSettings,
+  ClipTransition,
+  TextOverlay,
+  RenderPlan,
+} from "../types";
+import type { StatusCallback, ProgressCallback } from "../ffmpeg/ffmpegService";
+import { mergeClips, calculateRenderPlan } from "../ffmpeg/ffmpegService";
+import { encodeClipsWithCanvas } from "./canvas-encoder";
 
-export type EncoderPath = 'webcodecs' | 'ffmpeg' | 'canvas';
+export type EncoderPath = "webcodecs" | "ffmpeg" | "canvas";
 
 export interface HybridEncodeResult {
   blob: Blob;
@@ -56,34 +62,62 @@ export async function hybridMergeClips(
   let canvasFailure: string | null = null;
 
   // -- Canvas renderer path --------------------------------------------------
-  if (useCanvas && typeof MediaRecorder !== 'undefined') {
+  if (useCanvas && typeof MediaRecorder !== "undefined") {
     try {
-      onStatus('Canvas renderer path selected (audio-reactive compositing)...');
-      onProgress?.({ stage: 'Canvas renderer selected', progress: 0, indeterminate: false });
-      const blob = await encodeClipsWithCanvas(clips, settings, onStatus, audioReactive, onProgress);
-      return { blob, path: 'canvas' };
+      onStatus("Canvas renderer path selected (audio-reactive compositing)...");
+      onProgress?.({
+        stage: "Canvas renderer selected",
+        progress: 0,
+        indeterminate: false,
+      });
+      const blob = await encodeClipsWithCanvas(
+        clips,
+        settings,
+        onStatus,
+        audioReactive,
+        onProgress,
+      );
+      return { blob, path: "canvas" };
     } catch (err) {
       canvasFailure = (err as Error).message;
-      onStatus(`Canvas render failed (${canvasFailure}). Falling back to FFmpeg...`);
+      onStatus(
+        `Canvas render failed (${canvasFailure}). Falling back to FFmpeg...`,
+      );
     }
   }
 
   // -- FFmpeg path (default / fallback) -------------------------------------
   if (!forceFFmpeg && !useCanvas) {
-    onStatus('FFmpeg path selected for audio-preserving export...');
+    onStatus("FFmpeg path selected for audio-preserving export...");
   }
-  onProgress?.({ stage: 'FFmpeg path selected', progress: 0, indeterminate: false });
+  onProgress?.({
+    stage: "FFmpeg path selected",
+    progress: 0,
+    indeterminate: false,
+  });
   try {
-    const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress, forceReencode);
-    const effectiveRenderPlan = renderPlan || calculateRenderPlan(clips, transitions, textOverlays, settings);
-    return { blob, path: 'ffmpeg', renderPlan: effectiveRenderPlan };
+    const blob = await mergeClips(
+      clips,
+      transitions,
+      settings,
+      onStatus,
+      textOverlays,
+      onProgress,
+      forceReencode,
+    );
+    const effectiveRenderPlan =
+      renderPlan ||
+      calculateRenderPlan(clips, transitions, textOverlays, settings);
+    return { blob, path: "ffmpeg", renderPlan: effectiveRenderPlan };
   } catch (err) {
     // Chain prior fallback messages so the final error is maximally diagnostic.
     if (canvasFailure) {
       const prev: string[] = [];
       if (canvasFailure) prev.push(`Canvas: ${canvasFailure}`);
       const orig = (err as Error).message;
-      const e = new Error(`${orig}\n\nPrevious encoder attempts that also failed:\n${prev.join('\n')}`);
+      const e = new Error(
+        `${orig}\n\nPrevious encoder attempts that also failed:\n${prev.join("\n")}`,
+      );
       (e as any).ffmpegLogs = (err as any).ffmpegLogs;
       throw e;
     }

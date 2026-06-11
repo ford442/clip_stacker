@@ -8,11 +8,11 @@
  * Falls back gracefully; callers should wrap in try/catch and fall back to FFmpeg.
  */
 
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
-import type { Clip } from '../types';
-import type { ExportSettings } from '../types';
-import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
-import { getClipDuration } from './project';
+import { Muxer, ArrayBufferTarget } from "mp4-muxer";
+import type { Clip } from "../types";
+import type { ExportSettings } from "../types";
+import type { StatusCallback, ProgressCallback } from "../ffmpeg/ffmpegService";
+import { getClipDuration } from "./project";
 
 const TARGET_WIDTH = 1280;
 const TARGET_HEIGHT = 720;
@@ -23,9 +23,15 @@ const AUDIO_FRAME_SIZE = 1024; // AAC standard
 const WEBCODECS_PROGRESS_START = 0.05;
 const WEBCODECS_PROGRESS_RANGE = 0.85;
 
-function mapWebCodecsProgress(elapsedDuration: number, totalDuration: number): number | undefined {
+function mapWebCodecsProgress(
+  elapsedDuration: number,
+  totalDuration: number,
+): number | undefined {
   if (totalDuration <= 0) return undefined;
-  return WEBCODECS_PROGRESS_START + (elapsedDuration / totalDuration) * WEBCODECS_PROGRESS_RANGE;
+  return (
+    WEBCODECS_PROGRESS_START +
+    (elapsedDuration / totalDuration) * WEBCODECS_PROGRESS_RANGE
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -35,7 +41,10 @@ function mapWebCodecsProgress(elapsedDuration: number, totalDuration: number): n
 declare global {
   interface HTMLVideoElement {
     requestVideoFrameCallback(
-      callback: (now: DOMHighResTimeStamp, metadata: { mediaTime: number }) => void,
+      callback: (
+        now: DOMHighResTimeStamp,
+        metadata: { mediaTime: number },
+      ) => void,
     ): number;
     cancelVideoFrameCallback(handle: number): void;
   }
@@ -47,22 +56,22 @@ declare global {
 
 export async function isWebCodecsAvailable(): Promise<boolean> {
   if (
-    typeof VideoEncoder === 'undefined' ||
-    typeof VideoFrame === 'undefined' ||
-    typeof AudioEncoder === 'undefined'
+    typeof VideoEncoder === "undefined" ||
+    typeof VideoFrame === "undefined" ||
+    typeof AudioEncoder === "undefined"
   ) {
     return false;
   }
   try {
     const [videoSupport, audioSupport] = await Promise.all([
       VideoEncoder.isConfigSupported({
-        codec: 'avc1.42001e',
+        codec: "avc1.42001e",
         width: TARGET_WIDTH,
         height: TARGET_HEIGHT,
-        hardwareAcceleration: 'prefer-hardware',
+        hardwareAcceleration: "prefer-hardware",
       }),
       AudioEncoder.isConfigSupported({
-        codec: 'mp4a.40.2',
+        codec: "mp4a.40.2",
         sampleRate: AUDIO_SAMPLE_RATE,
         numberOfChannels: AUDIO_CHANNELS,
         bitrate: 128_000,
@@ -84,14 +93,22 @@ export async function encodeClipsWithWebCodecs(
   onStatus: StatusCallback,
   onProgress?: ProgressCallback,
 ): Promise<Blob> {
-  onStatus('Initializing GPU encoder...');
-  onProgress?.({ stage: 'Initializing GPU encoder', progress: 0, indeterminate: false });
+  onStatus("Initializing GPU encoder...");
+  onProgress?.({
+    stage: "Initializing GPU encoder",
+    progress: 0,
+    indeterminate: false,
+  });
 
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
-    video: { codec: 'avc', width: TARGET_WIDTH, height: TARGET_HEIGHT },
-    audio: { codec: 'aac', sampleRate: AUDIO_SAMPLE_RATE, numberOfChannels: AUDIO_CHANNELS },
-    fastStart: 'in-memory',
+    video: { codec: "avc", width: TARGET_WIDTH, height: TARGET_HEIGHT },
+    audio: {
+      codec: "aac",
+      sampleRate: AUDIO_SAMPLE_RATE,
+      numberOfChannels: AUDIO_CHANNELS,
+    },
+    fastStart: "in-memory",
   });
 
   let videoError: Error | null = null;
@@ -99,38 +116,45 @@ export async function encodeClipsWithWebCodecs(
 
   const videoEncoder = new VideoEncoder({
     output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-    error: (e) => { videoError = e; },
+    error: (e) => {
+      videoError = e;
+    },
   });
 
   videoEncoder.configure({
-    codec: 'avc1.42001e',
+    codec: "avc1.42001e",
     width: TARGET_WIDTH,
     height: TARGET_HEIGHT,
     bitrate: settings.videoBitrate,
     framerate: TARGET_FPS,
-    hardwareAcceleration: 'prefer-hardware',
+    hardwareAcceleration: "prefer-hardware",
   });
 
   const audioEncoder = new AudioEncoder({
     output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-    error: (e) => { audioError = e; },
+    error: (e) => {
+      audioError = e;
+    },
   });
 
   audioEncoder.configure({
-    codec: 'mp4a.40.2',
+    codec: "mp4a.40.2",
     sampleRate: AUDIO_SAMPLE_RATE,
     numberOfChannels: AUDIO_CHANNELS,
     bitrate: 128_000,
   });
 
-  const canvas = document.createElement('canvas');
+  const canvas = document.createElement("canvas");
   canvas.width = TARGET_WIDTH;
   canvas.height = TARGET_HEIGHT;
-  const ctx = canvas.getContext('2d')!;
+  const ctx = canvas.getContext("2d")!;
 
   let videoTimeUs = 0;
   let audioTimeUs = 0;
-  const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
+  const totalDuration = clips.reduce(
+    (sum, clip) => sum + getClipDuration(clip),
+    0,
+  );
   let elapsedDuration = 0;
 
   for (let i = 0; i < clips.length; i++) {
@@ -155,7 +179,12 @@ export async function encodeClipsWithWebCodecs(
     if (videoError) throw videoError;
 
     // Encode audio frames
-    audioTimeUs = await encodeAudioFrames(audioEncoder, clip, audioTimeUs, clipDuration);
+    audioTimeUs = await encodeAudioFrames(
+      audioEncoder,
+      clip,
+      audioTimeUs,
+      clipDuration,
+    );
     if (audioError) throw audioError;
     elapsedDuration += clipDuration;
     onProgress?.({
@@ -165,8 +194,12 @@ export async function encodeClipsWithWebCodecs(
     });
   }
 
-  onStatus('Flushing encoders...');
-  onProgress?.({ stage: 'Flushing GPU encoders', progress: 0.93, indeterminate: false });
+  onStatus("Flushing encoders...");
+  onProgress?.({
+    stage: "Flushing GPU encoders",
+    progress: 0.93,
+    indeterminate: false,
+  });
   await videoEncoder.flush();
   await audioEncoder.flush();
 
@@ -174,10 +207,14 @@ export async function encodeClipsWithWebCodecs(
   if (audioError) throw audioError;
 
   muxer.finalize();
-  onProgress?.({ stage: 'Finalizing GPU output', progress: 1, indeterminate: false });
+  onProgress?.({
+    stage: "Finalizing GPU output",
+    progress: 1,
+    indeterminate: false,
+  });
 
   const { buffer } = muxer.target as ArrayBufferTarget;
-  return new Blob([buffer], { type: 'video/mp4' });
+  return new Blob([buffer], { type: "video/mp4" });
 }
 
 // ---------------------------------------------------------------------------
@@ -195,9 +232,9 @@ async function encodeVideoFrames(
   const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   const clipDuration = trimEnd - trimStart;
 
-  if (clip.kind === 'audio') {
+  if (clip.kind === "audio") {
     // For audio-only clips, synthesise a black video frame at the start + end
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     const frame = new VideoFrame(canvas, {
       timestamp: startTimeUs,
@@ -208,11 +245,12 @@ async function encodeVideoFrames(
     return startTimeUs + Math.round(clipDuration * 1_000_000);
   }
 
-  const video = document.createElement('video');
+  const video = document.createElement("video");
   video.muted = true;
   video.playsInline = true;
   // Append off-screen so requestVideoFrameCallback is fully supported
-  video.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;';
+  video.style.cssText =
+    "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;";
   document.body.appendChild(video);
 
   try {
@@ -231,7 +269,10 @@ async function encodeVideoFrames(
       await new Promise<void>((resolve, reject) => {
         let done = false;
 
-        const onFrame = (_now: DOMHighResTimeStamp, meta: { mediaTime: number }) => {
+        const onFrame = (
+          _now: DOMHighResTimeStamp,
+          meta: { mediaTime: number },
+        ) => {
           if (done) return;
 
           const mediaTime = meta.mediaTime;
@@ -245,9 +286,9 @@ async function encodeVideoFrames(
           const timestamp = startTimeUs + Math.round(elapsed * 1_000_000);
 
           // Clear and fill canvas with black for letterboxing
-          ctx.fillStyle = '#000';
+          ctx.fillStyle = "#000";
           ctx.fillRect(0, 0, canvas.width, canvas.height);
-          
+
           // Draw video with letterboxing to preserve aspect ratio
           const destRect = calculateLetterboxRect(
             video.videoWidth || TARGET_WIDTH,
@@ -255,8 +296,21 @@ async function encodeVideoFrames(
             TARGET_WIDTH,
             TARGET_HEIGHT,
           );
-          ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
-          applyFadeOverlay(ctx, canvas, elapsed, clipDuration, clip.videoFadeIn, clip.videoFadeOut);
+          ctx.drawImage(
+            video,
+            destRect.x,
+            destRect.y,
+            destRect.width,
+            destRect.height,
+          );
+          applyFadeOverlay(
+            ctx,
+            canvas,
+            elapsed,
+            clipDuration,
+            clip.videoFadeIn,
+            clip.videoFadeOut,
+          );
 
           const frame = new VideoFrame(canvas, {
             timestamp,
@@ -269,8 +323,15 @@ async function encodeVideoFrames(
           video.requestVideoFrameCallback!(onFrame);
         };
 
-        video.addEventListener('ended', () => { done = true; resolve(); }, { once: true });
-        video.addEventListener('error', reject, { once: true });
+        video.addEventListener(
+          "ended",
+          () => {
+            done = true;
+            resolve();
+          },
+          { once: true },
+        );
+        video.addEventListener("error", reject, { once: true });
         video.requestVideoFrameCallback!(onFrame);
         video.play().catch(reject);
       });
@@ -286,9 +347,9 @@ async function encodeVideoFrames(
         const timestamp = startTimeUs + Math.round(elapsed * 1_000_000);
 
         // Clear and fill canvas with black for letterboxing
-        ctx.fillStyle = '#000';
+        ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
-        
+
         // Draw video with letterboxing to preserve aspect ratio
         const destRect = calculateLetterboxRect(
           video.videoWidth || TARGET_WIDTH,
@@ -296,8 +357,21 @@ async function encodeVideoFrames(
           TARGET_WIDTH,
           TARGET_HEIGHT,
         );
-        ctx.drawImage(video, destRect.x, destRect.y, destRect.width, destRect.height);
-        applyFadeOverlay(ctx, canvas, elapsed, clipDuration, clip.videoFadeIn, clip.videoFadeOut);
+        ctx.drawImage(
+          video,
+          destRect.x,
+          destRect.y,
+          destRect.width,
+          destRect.height,
+        );
+        applyFadeOverlay(
+          ctx,
+          canvas,
+          elapsed,
+          clipDuration,
+          clip.videoFadeIn,
+          clip.videoFadeOut,
+        );
 
         const frame = new VideoFrame(canvas, {
           timestamp,
@@ -310,7 +384,7 @@ async function encodeVideoFrames(
       }
     }
   } finally {
-    video.src = '';
+    video.src = "";
     if (document.body.contains(video)) document.body.removeChild(video);
   }
 
@@ -333,7 +407,9 @@ async function encodeAudioFrames(
     arrayBuffer = await response.arrayBuffer();
   } catch (error) {
     // If fetching fails, throw error to trigger FFmpeg fallback
-    throw new Error(`Failed to fetch audio for clip "${clip.title}": ${(error as Error).message}`);
+    throw new Error(
+      `Failed to fetch audio for clip "${clip.title}": ${(error as Error).message}`,
+    );
   }
 
   const trimStart = clip.trimStart;
@@ -343,7 +419,11 @@ async function encodeAudioFrames(
   // Always render at canonical 44.1 kHz stereo so the AAC track duration matches video exactly.
   // Use OfflineAudioContext + BufferSource for native-rate resampling + fade automation (fast).
   const targetFrames = Math.ceil(playDur * AUDIO_SAMPLE_RATE);
-  const off = new OfflineAudioContext(AUDIO_CHANNELS, Math.max(1, targetFrames), AUDIO_SAMPLE_RATE);
+  const off = new OfflineAudioContext(
+    AUDIO_CHANNELS,
+    Math.max(1, targetFrames),
+    AUDIO_SAMPLE_RATE,
+  );
 
   let audioBuffer: AudioBuffer | null = null;
   try {
@@ -394,7 +474,9 @@ async function encodeAudioFrames(
   // This memcopy loop is cheap; the heavy resample/fade/trim was native.
   let offset = 0;
   let audioTimeUs = startTimeUs;
-  const frameUs = Math.round((AUDIO_FRAME_SIZE / AUDIO_SAMPLE_RATE) * 1_000_000);
+  const frameUs = Math.round(
+    (AUDIO_FRAME_SIZE / AUDIO_SAMPLE_RATE) * 1_000_000,
+  );
 
   while (offset < targetFrames) {
     const chunkSize = Math.min(AUDIO_FRAME_SIZE, targetFrames - offset);
@@ -402,7 +484,8 @@ async function encodeAudioFrames(
     // Build planar float32 data (f32-planar layout)
     const planarData = new Float32Array(chunkSize * AUDIO_CHANNELS);
     for (let ch = 0; ch < AUDIO_CHANNELS; ch++) {
-      const chData = ch < rendered.numberOfChannels ? rendered.getChannelData(ch) : null;
+      const chData =
+        ch < rendered.numberOfChannels ? rendered.getChannelData(ch) : null;
       for (let i = 0; i < chunkSize; i++) {
         const s = chData ? chData[offset + i] : 0;
         planarData[ch * chunkSize + i] = s;
@@ -410,7 +493,7 @@ async function encodeAudioFrames(
     }
 
     const audioData = new AudioData({
-      format: 'f32-planar',
+      format: "f32-planar",
       sampleRate: AUDIO_SAMPLE_RATE,
       numberOfFrames: chunkSize,
       numberOfChannels: AUDIO_CHANNELS,
@@ -438,14 +521,20 @@ function waitForSeeked(video: HTMLVideoElement): Promise<void> {
       resolve();
       return;
     }
-    const onSeeked = () => { off(); resolve(); };
-    const onError = () => { off(); reject(new Error('Video seek failed')); };
-    const off = () => {
-      video.removeEventListener('seeked', onSeeked);
-      video.removeEventListener('error', onError);
+    const onSeeked = () => {
+      off();
+      resolve();
     };
-    video.addEventListener('seeked', onSeeked, { once: true });
-    video.addEventListener('error', onError, { once: true });
+    const onError = () => {
+      off();
+      reject(new Error("Video seek failed"));
+    };
+    const off = () => {
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
+    };
+    video.addEventListener("seeked", onSeeked, { once: true });
+    video.addEventListener("error", onError, { once: true });
   });
 }
 
@@ -494,7 +583,12 @@ function applyFadeOverlay(
   }
 }
 
-function computeFadeAlpha(elapsed: number, duration: number, fadeIn: number, fadeOut: number): number {
+function computeFadeAlpha(
+  elapsed: number,
+  duration: number,
+  fadeIn: number,
+  fadeOut: number,
+): number {
   let alpha = 1;
   if (fadeIn > 0 && elapsed < fadeIn) alpha = Math.min(alpha, elapsed / fadeIn);
   if (fadeOut > 0 && elapsed > duration - fadeOut) {

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type MockFfmpegInstance = {
   on: ReturnType<typeof vi.fn>;
@@ -39,18 +39,22 @@ const mocked = vi.hoisted(() => {
   };
 });
 
-vi.mock('@ffmpeg/ffmpeg', () => ({
+vi.mock("@ffmpeg/ffmpeg", () => ({
   FFmpeg: mocked.FFmpeg,
 }));
 
-vi.mock('@ffmpeg/util', () => ({
+vi.mock("@ffmpeg/util", () => ({
   toBlobURL: mocked.toBlobURL,
   fetchFile: mocked.fetchFile,
 }));
 
-import { ensureFfmpeg, isFfmpegLoadFailed, resetFFmpegInstance } from './ffmpegService';
+import {
+  ensureFfmpeg,
+  isFfmpegLoadFailed,
+  resetFFmpegInstance,
+} from "./ffmpegService";
 
-describe('FFmpeg loader', () => {
+describe("FFmpeg loader", () => {
   beforeEach(async () => {
     await resetFFmpegInstance();
     mocked.instances.length = 0;
@@ -68,22 +72,22 @@ describe('FFmpeg loader', () => {
     vi.useRealTimers();
   });
 
-  it('downloads locally hosted core assets before any fallback CDN', async () => {
+  it("downloads locally hosted core assets before any fallback CDN", async () => {
     await ensureFfmpeg(vi.fn(), vi.fn());
 
     expect(mocked.toBlobURL).toHaveBeenNthCalledWith(
       1,
-      'http://localhost:3000/ffmpeg-core/ffmpeg-core.js',
-      'text/javascript',
+      "http://localhost:3000/ffmpeg-core/ffmpeg-core.js",
+      "text/javascript",
     );
     expect(mocked.toBlobURL).toHaveBeenNthCalledWith(
       2,
-      'http://localhost:3000/ffmpeg-core/ffmpeg-core.wasm',
-      'application/wasm',
+      "http://localhost:3000/ffmpeg-core/ffmpeg-core.wasm",
+      "application/wasm",
     );
   });
 
-  it('emits indeterminate progress stages while FFmpeg is loading', async () => {
+  it("emits indeterminate progress stages while FFmpeg is loading", async () => {
     const onProgress = vi.fn();
 
     await ensureFfmpeg(vi.fn(), onProgress);
@@ -91,36 +95,34 @@ describe('FFmpeg loader', () => {
     const stages = onProgress.mock.calls.map(([update]) => update.stage);
     expect(stages).toEqual(
       expect.arrayContaining([
-        'Loading FFmpeg core (this may take a moment)...',
-        'Downloading FFmpeg core.js from local hosted FFmpeg core...',
-        'Downloading FFmpeg core.wasm from local hosted FFmpeg core...',
-        'Initializing FFmpeg WASM engine...',
+        "Loading FFmpeg core (this may take a moment)...",
+        "Downloading FFmpeg core.js from local hosted FFmpeg core...",
+        "Downloading FFmpeg core.wasm from local hosted FFmpeg core...",
+        "Initializing FFmpeg WASM engine...",
       ]),
     );
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
-        stage: 'Loading FFmpeg core (this may take a moment)...',
+        stage: "Loading FFmpeg core (this may take a moment)...",
         indeterminate: true,
       }),
     );
   });
 
-  it('retries automatically and succeeds on a later attempt', async () => {
+  it("retries automatically and succeeds on a later attempt", async () => {
     vi.useFakeTimers();
 
     const first = mocked.createInstance();
-    first.load.mockRejectedValueOnce(new Error('network blip'));
+    first.load.mockRejectedValueOnce(new Error("network blip"));
 
     const second = mocked.createInstance();
     second.load.mockResolvedValueOnce(undefined);
 
-    mocked.FFmpeg
-      .mockImplementationOnce(function MockFFmpegFirst() {
-        return first;
-      })
-      .mockImplementationOnce(function MockFFmpegSecond() {
-        return second;
-      });
+    mocked.FFmpeg.mockImplementationOnce(function MockFFmpegFirst() {
+      return first;
+    }).mockImplementationOnce(function MockFFmpegSecond() {
+      return second;
+    });
 
     const onStatus = vi.fn();
     const onProgress = vi.fn();
@@ -133,16 +135,16 @@ describe('FFmpeg loader', () => {
     expect(result).toBe(second);
     expect(first.terminate).toHaveBeenCalledTimes(1);
     expect(onStatus).toHaveBeenCalledWith(
-      expect.stringContaining('retrying in 2s (attempt 2/3)'),
+      expect.stringContaining("retrying in 2s (attempt 2/3)"),
     );
     expect(isFfmpegLoadFailed()).toBe(false);
   });
 
-  it('fails after exhausting all retries and surfaces an actionable message', async () => {
+  it("fails after exhausting all retries and surfaces an actionable message", async () => {
     vi.useFakeTimers();
 
     const failing = mocked.createInstance();
-    failing.load.mockRejectedValue(new Error('network down'));
+    failing.load.mockRejectedValue(new Error("network down"));
 
     mocked.FFmpeg.mockImplementation(function MockFFmpegFailing() {
       return failing;
@@ -157,26 +159,30 @@ describe('FFmpeg loader', () => {
 
     const err = await promise;
     expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/FFmpeg failed to load after 3 attempts/);
+    expect((err as Error).message).toMatch(
+      /FFmpeg failed to load after 3 attempts/,
+    );
     expect(failing.terminate).toHaveBeenCalledTimes(3);
-    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining('FFmpeg failed to load after 3 attempts'));
+    expect(onStatus).toHaveBeenCalledWith(
+      expect.stringContaining("FFmpeg failed to load after 3 attempts"),
+    );
     expect(onProgress).toHaveBeenCalledWith(
       expect.objectContaining({
-        stage: 'FFmpeg load failed',
+        stage: "FFmpeg load failed",
         indeterminate: true,
       }),
     );
     expect(isFfmpegLoadFailed()).toBe(true);
   });
 
-  it('surfaces a readable message when the worker rejects with a string', async () => {
+  it("surfaces a readable message when the worker rejects with a string", async () => {
     // @ffmpeg/ffmpeg's worker rejects with `error.toString()` (a plain string),
     // not an Error. Previously this surfaced as "FAILED: undefined" because the
     // code read `.message` off a string. The final message must carry the text.
     vi.useFakeTimers();
 
     const failing = mocked.createInstance();
-    failing.load.mockRejectedValue('Error: failed to import ffmpeg-core.js');
+    failing.load.mockRejectedValue("Error: failed to import ffmpeg-core.js");
 
     mocked.FFmpeg.mockImplementation(function MockFFmpegStringReject() {
       return failing;
@@ -189,15 +195,15 @@ describe('FFmpeg loader', () => {
 
     const err = await promise;
     expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toContain('failed to import ffmpeg-core.js');
-    expect((err as Error).message).not.toContain('undefined');
+    expect((err as Error).message).toContain("failed to import ffmpeg-core.js");
+    expect((err as Error).message).not.toContain("undefined");
   });
 
-  it('clears failed load state so a second manual attempt can succeed', async () => {
+  it("clears failed load state so a second manual attempt can succeed", async () => {
     vi.useFakeTimers();
 
     const first = mocked.createInstance();
-    first.load.mockRejectedValue(new Error('network down'));
+    first.load.mockRejectedValue(new Error("network down"));
 
     mocked.FFmpeg.mockImplementation(function MockFFmpegFailing() {
       return first;
@@ -210,7 +216,9 @@ describe('FFmpeg loader', () => {
     await vi.advanceTimersByTimeAsync(7000);
     const err = await promise1;
     expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/FFmpeg failed to load after 3 attempts/);
+    expect((err as Error).message).toMatch(
+      /FFmpeg failed to load after 3 attempts/,
+    );
     expect(isFfmpegLoadFailed()).toBe(true);
 
     // Reset and try again

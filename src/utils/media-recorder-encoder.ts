@@ -37,9 +37,12 @@ export interface CaptureHandle {
  * Begin capturing a canvas element via MediaRecorder.
  * @throws if MediaRecorder is not available or the selected MIME type is unsupported.
  */
-export function startCanvasCapture(canvas: HTMLCanvasElement, options: CaptureOptions = {}): CaptureHandle {
-  if (typeof MediaRecorder === 'undefined') {
-    throw new Error('MediaRecorder is not available in this browser.');
+export function startCanvasCapture(
+  canvas: HTMLCanvasElement,
+  options: CaptureOptions = {},
+): CaptureHandle {
+  if (typeof MediaRecorder === "undefined") {
+    throw new Error("MediaRecorder is not available in this browser.");
   }
 
   const fps = options.fps ?? 30;
@@ -68,15 +71,15 @@ export function startCanvasCapture(canvas: HTMLCanvasElement, options: CaptureOp
   const stop = (): Promise<Blob> =>
     new Promise((resolve, reject) => {
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
+        const blob = new Blob(chunks, { type: mimeType || "video/webm" });
         resolve(blob);
       };
       recorder.onerror = (e: Event) => {
         const err = (e as Event & { error?: DOMException }).error;
-        const msg = err?.message ?? 'unknown MediaRecorder error';
+        const msg = err?.message ?? "unknown MediaRecorder error";
         reject(new Error(`MediaRecorder error: ${msg}`));
       };
-      if (recorder.state !== 'inactive') recorder.stop();
+      if (recorder.state !== "inactive") recorder.stop();
     });
 
   return { recorder, stop };
@@ -91,20 +94,20 @@ export function startCanvasCapture(canvas: HTMLCanvasElement, options: CaptureOp
  * Prefers MP4 (better compatibility with FFmpeg muxing) then falls back to WebM.
  */
 export function getBestMimeType(): string {
-  if (typeof MediaRecorder === 'undefined') return 'video/webm';
+  if (typeof MediaRecorder === "undefined") return "video/webm";
 
   const candidates = [
-    'video/mp4;codecs=avc1',
-    'video/mp4;codecs=avc1.42E01E',
-    'video/mp4',
-    'video/webm;codecs=vp9',
-    'video/webm;codecs=vp8',
-    'video/webm',
+    "video/mp4;codecs=avc1",
+    "video/mp4;codecs=avc1.42E01E",
+    "video/mp4",
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8",
+    "video/webm",
   ];
 
   for (const type of candidates) {
     if (MediaRecorder.isTypeSupported(type)) return type;
   }
 
-  return 'video/webm';
+  return "video/webm";
 }

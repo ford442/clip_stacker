@@ -1,0 +1,183 @@
+/* ============================================================
+   Toolbar
+   ============================================================ */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.render-plan-info {
+  min-height: 1.4rem;
+  color: var(--muted);
+  margin: 0.5rem 0 0;
+  font-size: 0.9rem;
+  font-style: italic;
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #b8901f 0%, #c9a227 40%, #e8c84b 100%);
+  border: 1px solid var(--gold);
+  color: #1a1000;
+  padding: 0.5rem 1.1rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 0.9rem;
+  letter-spacing: 0.02em;
+  transition:
+    opacity 0.15s,
+    transform 0.1s,
+    box-shadow 0.15s;
+  box-shadow: 0 2px 12px rgba(201, 162, 39, 0.35);
+}
+
+.btn-primary:hover {
+  opacity: 0.9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 18px rgba(201, 162, 39, 0.5);
+}
+
+.btn-secondary {
+  background: var(--panel-alt);
+  border: 1px solid var(--border-active);
+  color: var(--text);
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.btn-secondary:hover {
+  border-color: var(--gold);
+  background: var(--gold-dim);
+}
+
+button,
+.button-like {
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  color: var(--text);
+  padding: 0.45rem 0.75rem;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+button:hover,
+.button-like:hover {
+  border-color: var(--gold);
+  background: var(--gold-dim);
+}
+
+button:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* Focus styles for keyboard navigation and accessibility */
+button:focus-visible,
+.button-like:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+  box-shadow:
+    0 0 0 3px var(--gold-dim),
+    inset 0 0 0 1px var(--gold);
+  border-color: var(--gold);
+}
+
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+
+.button-like input {
+  display: none;
+}
+
+/* Encoder badge */
+.encoder-badge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+
+.encoder-indicator {
+  font-weight: 600;
+}
+
+.encoder-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.render-progress {
+  width: 100%;
+  margin-top: 0.6rem;
+}
+
+.render-progress-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.25rem;
+}
+
+.render-progress-track {
+  height: 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: rgba(6, 9, 15, 0.9);
+  overflow: hidden;
+}
+
+.render-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #b8901f 0%, #e8c84b 100%);
+  box-shadow: 0 0 10px rgba(232, 200, 75, 0.35);
+  transition: width 0.2s ease;
+}
+
+.render-progress-track.is-indeterminate::before {
+  content: "";
+  display: block;
+  width: 35%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(232, 200, 75, 0.9) 50%,
+    transparent 100%
+  );
+  animation: render-progress-indeterminate 1s infinite linear;
+}
+
+@keyframes render-progress-indeterminate {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(320%);
+  }
+}

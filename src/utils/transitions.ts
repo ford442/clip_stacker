@@ -3,8 +3,8 @@
  * xfade (video) and acrossfade (audio) transitions between timeline clips.
  */
 
-import type { Clip, ClipTransition, TransitionType } from '../types';
-import { getClipDuration } from './project';
+import type { Clip, ClipTransition, TransitionType } from "../types";
+import { getClipDuration } from "./project";
 
 // ---------------------------------------------------------------------------
 // Transition defaults
@@ -20,8 +20,8 @@ const OUTPUT_HEIGHT = 720;
 
 /** Map our active transition types to FFmpeg xfade transition names. 'none' is filtered out before this map is consulted. */
 const XFADE_MAP: Partial<Record<TransitionType, string>> = {
-  dissolve: 'fade',
-  motion: 'smoothleft',
+  dissolve: "fade",
+  motion: "smoothleft",
 };
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ export function computeTransitionOffsets(
   for (let i = 0; i < durations.length - 1; i++) {
     accumulated += durations[i];
     const t = transMap.get(i + 1);
-    if (t && t.type !== 'none' && t.duration > 0) {
+    if (t && t.type !== "none" && t.duration > 0) {
       offsets.push(accumulated - overlapSoFar - t.duration);
       overlapSoFar += t.duration;
     } else {
@@ -77,7 +77,7 @@ export function computeTotalDuration(
 ): number {
   const durations = getEffectiveDurations(clips);
   const totalOverlap = transitions
-    .filter((t) => t.type !== 'none')
+    .filter((t) => t.type !== "none")
     .reduce((s, t) => s + t.duration, 0);
   return Math.max(0, durations.reduce((a, b) => a + b, 0) - totalOverlap);
 }
@@ -99,7 +99,9 @@ export function buildTransitionFilterComplex(
   clips: Clip[],
   transitions: ClipTransition[],
 ): string | null {
-  const activeTransitions = transitions.filter((t) => t.type !== 'none' && t.duration > 0);
+  const activeTransitions = transitions.filter(
+    (t) => t.type !== "none" && t.duration > 0,
+  );
   if (activeTransitions.length === 0) return null;
 
   const durations = getEffectiveDurations(clips);
@@ -115,22 +117,27 @@ export function buildTransitionFilterComplex(
     const safeVOut = Math.max(0, dur - clip.videoFadeOut);
     const safeAOut = Math.max(0, dur - clip.audioFadeOut);
 
-    if (clip.kind === 'video') {
+    if (clip.kind === "video") {
       let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS,scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
       if (clip.videoFadeIn > 0) vf += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
-      if (clip.videoFadeOut > 0) vf += `,fade=t=out:st=${safeVOut}:d=${clip.videoFadeOut}`;
+      if (clip.videoFadeOut > 0)
+        vf += `,fade=t=out:st=${safeVOut}:d=${clip.videoFadeOut}`;
       parts.push(`${vf}[v${i}]`);
 
       let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
-      if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
+      if (clip.audioFadeOut > 0)
+        af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
       parts.push(`${af}[a${i}]`);
     } else {
       // audio-only: black video
-      parts.push(`color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${dur}[v${i}]`);
+      parts.push(
+        `color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${dur}[v${i}]`,
+      );
       let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
-      if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
+      if (clip.audioFadeOut > 0)
+        af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
       parts.push(`${af}[a${i}]`);
     }
   }
@@ -138,8 +145,8 @@ export function buildTransitionFilterComplex(
   // Step 2 — chain xfade / acrossfade transitions
   let accumulated = 0;
   let overlapSoFar = 0;
-  let currentV = 'v0';
-  let currentA = 'a0';
+  let currentV = "v0";
+  let currentA = "a0";
 
   for (let i = 1; i < clips.length; i++) {
     accumulated += durations[i - 1];
@@ -147,24 +154,22 @@ export function buildTransitionFilterComplex(
 
     if (t && t.duration > 0) {
       const offset = Math.max(0, accumulated - overlapSoFar - t.duration);
-      const xfadeType = XFADE_MAP[t.type] ?? 'fade';
-      const outV = i < clips.length - 1 ? `vt${i}` : 'vout';
-      const outA = i < clips.length - 1 ? `at${i}` : 'aout';
+      const xfadeType = XFADE_MAP[t.type] ?? "fade";
+      const outV = i < clips.length - 1 ? `vt${i}` : "vout";
+      const outA = i < clips.length - 1 ? `at${i}` : "aout";
 
       parts.push(
         `[${currentV}][v${i}]xfade=transition=${xfadeType}:duration=${t.duration}:offset=${offset.toFixed(4)}[${outV}]`,
       );
-      parts.push(
-        `[${currentA}][a${i}]acrossfade=d=${t.duration}[${outA}]`,
-      );
+      parts.push(`[${currentA}][a${i}]acrossfade=d=${t.duration}[${outA}]`);
 
       currentV = outV;
       currentA = outA;
       overlapSoFar += t.duration;
     } else {
       // Hard cut — concatenate
-      const outV = i < clips.length - 1 ? `vt${i}` : 'vout';
-      const outA = i < clips.length - 1 ? `at${i}` : 'aout';
+      const outV = i < clips.length - 1 ? `vt${i}` : "vout";
+      const outA = i < clips.length - 1 ? `at${i}` : "aout";
       parts.push(`[${currentV}][v${i}]concat=n=2:v=1:a=0[${outV}]`);
       parts.push(`[${currentA}][a${i}]concat=n=2:v=0:a=1[${outA}]`);
       currentV = outV;
@@ -172,7 +177,7 @@ export function buildTransitionFilterComplex(
     }
   }
 
-  return parts.join(';');
+  return parts.join(";");
 }
 
 // ---------------------------------------------------------------------------
@@ -183,7 +188,7 @@ export function buildTransitionFilterComplex(
 export function createDefaultTransitions(clips: Clip[]): ClipTransition[] {
   return clips.slice(1).map((_, i) => ({
     afterClipIndex: i + 1,
-    type: 'dissolve' as TransitionType,
+    type: "dissolve" as TransitionType,
     duration: DEFAULT_TRANSITION_DURATION,
   }));
 }
@@ -197,6 +202,9 @@ export function reindexTransitions(
     .filter((t) => t.afterClipIndex !== removedIndex)
     .map((t) => ({
       ...t,
-      afterClipIndex: t.afterClipIndex > removedIndex ? t.afterClipIndex - 1 : t.afterClipIndex,
+      afterClipIndex:
+        t.afterClipIndex > removedIndex
+          ? t.afterClipIndex - 1
+          : t.afterClipIndex,
     }));
 }

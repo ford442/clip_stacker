@@ -1,5 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Clip } from '../types';
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { Clip } from "../types";
 
 type MockFfmpegInstance = {
   on: ReturnType<typeof vi.fn>;
@@ -40,11 +40,11 @@ const mocked = vi.hoisted(() => {
   };
 });
 
-vi.mock('@ffmpeg/ffmpeg', () => ({
+vi.mock("@ffmpeg/ffmpeg", () => ({
   FFmpeg: mocked.FFmpeg,
 }));
 
-vi.mock('@ffmpeg/util', () => ({
+vi.mock("@ffmpeg/util", () => ({
   toBlobURL: mocked.toBlobURL,
   fetchFile: mocked.fetchFile,
 }));
@@ -52,15 +52,17 @@ vi.mock('@ffmpeg/util', () => ({
 import {
   muxProcessedVideoWithSourceAudio,
   resetFFmpegInstance,
-} from './ffmpegService';
+} from "./ffmpegService";
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
-    id: 'clip-1',
-    file: new File([new Uint8Array([7, 8, 9])], 'source.mp4', { type: 'video/mp4' }),
-    objectUrl: 'blob:clip-1',
-    title: 'Clip 1',
-    kind: 'video',
+    id: "clip-1",
+    file: new File([new Uint8Array([7, 8, 9])], "source.mp4", {
+      type: "video/mp4",
+    }),
+    objectUrl: "blob:clip-1",
+    title: "Clip 1",
+    kind: "video",
     duration: 10,
     trimStart: 1.25,
     trimEnd: 4.5,
@@ -72,7 +74,7 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
   };
 }
 
-describe('muxProcessedVideoWithSourceAudio', () => {
+describe("muxProcessedVideoWithSourceAudio", () => {
   beforeEach(async () => {
     await resetFFmpegInstance();
     mocked.instances.length = 0;
@@ -90,28 +92,37 @@ describe('muxProcessedVideoWithSourceAudio', () => {
     await resetFFmpegInstance();
   });
 
-  it('maps processed video with trimmed source audio into the output mp4', async () => {
-    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: 'video/mp4' });
+  it("maps processed video with trimmed source audio into the output mp4", async () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "video/mp4" });
     const clip = makeClip();
     const onStatus = vi.fn();
 
     const result = await muxProcessedVideoWithSourceAudio(blob, clip, onStatus);
 
-    const instance = mocked.instances.at(-1)!;
+    const instance = mocked.instances[mocked.instances.length - 1]!;
     expect(instance.exec).toHaveBeenCalledWith([
-      '-i', 'processed-video.mp4',
-      '-i', 'source-audio.mp4',
-      '-filter_complex', '[1:a]atrim=start=1.25:end=4.5,asetpts=PTS-STARTPTS[aout]',
-      '-map', '0:v:0',
-      '-map', '[aout]',
-      '-c:v', 'copy',
-      '-c:a', 'aac',
-      '-b:a', '192k',
-      '-movflags', '+faststart',
-      'processed-with-audio.mp4',
+      "-i",
+      "processed-video.mp4",
+      "-i",
+      "source-audio.mp4",
+      "-filter_complex",
+      "[1:a]atrim=start=1.25:end=4.5,asetpts=PTS-STARTPTS[aout]",
+      "-map",
+      "0:v:0",
+      "-map",
+      "[aout]",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-movflags",
+      "+faststart",
+      "processed-with-audio.mp4",
     ]);
     expect(mocked.fetchFile).toHaveBeenCalledWith(clip.file);
-    expect(result.type).toBe('video/mp4');
-    expect(onStatus).toHaveBeenCalledWith('Source audio restored.');
+    expect(result.type).toBe("video/mp4");
+    expect(onStatus).toHaveBeenCalledWith("Source audio restored.");
   });
 });

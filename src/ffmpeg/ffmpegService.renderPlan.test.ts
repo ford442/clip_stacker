@@ -1,15 +1,15 @@
-import { describe, it, expect } from 'vitest';
-import type { Clip } from '../types';
-import { DEFAULT_EXPORT_SETTINGS } from '../types';
-import { calculateRenderPlan } from './ffmpegService';
+import { describe, it, expect } from "vitest";
+import type { Clip } from "../types";
+import { DEFAULT_EXPORT_SETTINGS } from "../types";
+import { calculateRenderPlan } from "./ffmpegService";
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
-    id: 'clip-1',
-    file: new File([], 'clip-1.mp4'),
-    objectUrl: 'blob:clip-1',
-    title: 'Clip 1',
-    kind: 'video',
+    id: "clip-1",
+    file: new File([], "clip-1.mp4"),
+    objectUrl: "blob:clip-1",
+    title: "Clip 1",
+    kind: "video",
     duration: 5,
     trimStart: 0,
     trimEnd: NaN,
@@ -21,14 +21,14 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
   };
 }
 
-describe('calculateRenderPlan', () => {
-  it('forces re-encoding when a clip is RIFE-processed', () => {
-    const clip = makeClip({ title: 'RIFE Clip', rifeProcessed: true });
+describe("calculateRenderPlan", () => {
+  it("forces re-encoding when a clip is RIFE-processed", () => {
+    const clip = makeClip({ title: "RIFE Clip", rifeProcessed: true });
 
     const plan = calculateRenderPlan([clip], [], [], DEFAULT_EXPORT_SETTINGS);
 
-    expect(plan.path).toBe('effects-reencoding');
+    expect(plan.path).toBe("effects-reencoding");
     expect(plan.willReencode).toBe(true);
-    expect(plan.reason).toContain('RIFE-processed');
+    expect(plan.reason).toContain("RIFE-processed");
   });
 });

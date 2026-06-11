@@ -1,5 +1,5 @@
-import { formatBytes, estimateRenderMemoryUsage } from '../utils/memory';
-import type { Clip } from '../types';
+import { formatBytes, estimateRenderMemoryUsage } from "../utils/memory";
+import type { Clip } from "../types";
 
 interface Props {
   isOpen: boolean;
@@ -8,7 +8,12 @@ interface Props {
   onCancel: () => void;
 }
 
-export function MemoryWarningModal({ isOpen, clips, onConfirm, onCancel }: Props) {
+export function MemoryWarningModal({
+  isOpen,
+  clips,
+  onConfirm,
+  onCancel,
+}: Props) {
   if (!isOpen) return null;
 
   const estimatedMemory = estimateRenderMemoryUsage(clips);
@@ -38,11 +43,12 @@ export function MemoryWarningModal({ isOpen, clips, onConfirm, onCancel }: Props
         </div>
         <div className="modal-body">
           <p>
-            This render may use approximately <strong>{estimatedStr}</strong> of memory,
-            which could be very close to your browser's limits.
+            This render may use approximately <strong>{estimatedStr}</strong> of
+            memory, which could be very close to your browser's limits.
           </p>
           <p>
-            If your browser runs out of memory, the render will fail and you may lose work.
+            If your browser runs out of memory, the render will fail and you may
+            lose work.
           </p>
           <p>
             <strong>To reduce memory usage:</strong>
@@ -53,9 +59,7 @@ export function MemoryWarningModal({ isOpen, clips, onConfirm, onCancel }: Props
             <li>Reduce output resolution or quality settings</li>
             <li>Close other browser tabs to free up memory</li>
           </ul>
-          <p>
-            Do you want to continue with the render anyway?
-          </p>
+          <p>Do you want to continue with the render anyway?</p>
         </div>
         <div className="modal-actions">
           <button type="button" onClick={onCancel} className="btn-secondary">
