@@ -1,0 +1,19 @@
+/* ============================================================
+   Utility
+   ============================================================ */
+.row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.muted {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+#status {
+  min-height: 1.4rem;
+  color: var(--muted);
+}

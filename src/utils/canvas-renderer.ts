@@ -10,8 +10,8 @@
  *   await renderer.renderClips(clips, (progress) => setStatus(...));
  */
 
-import type { Clip } from '../types';
-import { getClipDuration } from './project';
+import type { Clip } from "../types";
+import { getClipDuration } from "./project";
 
 const TARGET_WIDTH = 1280;
 const TARGET_HEIGHT = 720;
@@ -63,8 +63,9 @@ export class CanvasRenderer {
   private abortRequested = false;
 
   constructor(canvas: HTMLCanvasElement, options: RendererOptions = {}) {
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('CanvasRenderer: could not get 2D rendering context');
+    const ctx = canvas.getContext("2d");
+    if (!ctx)
+      throw new Error("CanvasRenderer: could not get 2D rendering context");
     this.canvas = canvas;
     this.ctx = ctx;
     this.options = {
@@ -87,7 +88,10 @@ export class CanvasRenderer {
    * Each clip is played back in real-time; the rAF loop draws every decoded frame.
    * Resolves once all clips have been composited (or `stop()` was called).
    */
-  async renderClips(clips: Clip[], onProgress?: ProgressCallback): Promise<void> {
+  async renderClips(
+    clips: Clip[],
+    onProgress?: ProgressCallback,
+  ): Promise<void> {
     this.abortRequested = false;
     let totalElapsed = 0;
 
@@ -105,7 +109,14 @@ export class CanvasRenderer {
         totalElapsed,
       });
 
-      await this.renderSingleClip(clip, i, clips.length, duration, totalElapsed, onProgress);
+      await this.renderSingleClip(
+        clip,
+        i,
+        clips.length,
+        duration,
+        totalElapsed,
+        onProgress,
+      );
 
       totalElapsed += duration;
     }
@@ -133,7 +144,9 @@ export class CanvasRenderer {
         audioCtx = new AudioContext();
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
-        freqData = new Uint8Array(analyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
+        freqData = new Uint8Array(
+          analyser.frequencyBinCount,
+        ) as Uint8Array<ArrayBuffer>;
         // Note: analyser → silentGain → destination wiring is done inside
         // renderVideoClip / renderAudioClip where the source node is created.
       } catch {
@@ -145,7 +158,7 @@ export class CanvasRenderer {
     }
 
     try {
-      if (clip.kind === 'audio') {
+      if (clip.kind === "audio") {
         await this.renderAudioClip(
           clip,
           duration,
@@ -159,7 +172,9 @@ export class CanvasRenderer {
         );
       } else {
         const trimStart = clip.trimStart;
-        const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
+        const trimEnd = Number.isFinite(clip.trimEnd)
+          ? clip.trimEnd
+          : clip.duration;
         await this.renderVideoClip(
           clip,
           trimStart,
@@ -176,7 +191,11 @@ export class CanvasRenderer {
       }
     } finally {
       if (audioCtx) {
-        try { await audioCtx.close(); } catch { /* ignore */ }
+        try {
+          await audioCtx.close();
+        } catch {
+          /* ignore */
+        }
       }
     }
   }
@@ -198,11 +217,12 @@ export class CanvasRenderer {
     analyser?: AnalyserNode | null,
     freqData?: Uint8Array<ArrayBuffer> | null,
   ): Promise<void> {
-    const video = document.createElement('video');
+    const video = document.createElement("video");
     // Start muted — the AudioContext takes over audio routing below.
     video.muted = true;
     video.playsInline = true;
-    video.style.cssText = 'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;';
+    video.style.cssText =
+      "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;";
     document.body.appendChild(video);
 
     try {
@@ -243,14 +263,25 @@ export class CanvasRenderer {
           const mediaTime = video.currentTime;
           const elapsed = Math.max(0, mediaTime - trimStart);
 
-          if (mediaTime >= trimEnd - FRAME_TOLERANCE_FRACTION / this.options.fps || video.ended) {
+          if (
+            mediaTime >=
+              trimEnd - FRAME_TOLERANCE_FRACTION / this.options.fps ||
+            video.ended
+          ) {
             done = true;
             cancelAnimationFrame(rafHandle);
             resolve();
             return;
           }
 
-          this.drawVideoFrame(video, clip, elapsed, duration, analyser, freqData);
+          this.drawVideoFrame(
+            video,
+            clip,
+            elapsed,
+            duration,
+            analyser,
+            freqData,
+          );
 
           onProgress?.({
             clipIndex,
@@ -263,14 +294,28 @@ export class CanvasRenderer {
           rafHandle = requestAnimationFrame(drawFrame);
         };
 
-        video.addEventListener('ended', () => { done = true; resolve(); }, { once: true });
-        video.addEventListener('error', () => { done = true; resolve(); }, { once: true });
+        video.addEventListener(
+          "ended",
+          () => {
+            done = true;
+            resolve();
+          },
+          { once: true },
+        );
+        video.addEventListener(
+          "error",
+          () => {
+            done = true;
+            resolve();
+          },
+          { once: true },
+        );
 
         rafHandle = requestAnimationFrame(drawFrame);
       });
     } finally {
       video.pause();
-      video.src = '';
+      video.src = "";
       if (document.body.contains(video)) document.body.removeChild(video);
     }
   }
@@ -303,10 +348,14 @@ export class CanvasRenderer {
         silentGain.connect(audioCtx.destination);
         // Un-mute the element so AudioContext receives the audio data.
         audio.muted = false;
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore */
+      }
     }
 
-    const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
+    const trimEnd = Number.isFinite(clip.trimEnd)
+      ? clip.trimEnd
+      : clip.duration;
 
     try {
       await audio.play();
@@ -332,7 +381,7 @@ export class CanvasRenderer {
           const elapsed = Math.max(0, audio.currentTime - clip.trimStart);
 
           // Black background for audio-only clips.
-          this.ctx.fillStyle = '#000';
+          this.ctx.fillStyle = "#000";
           this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
           if (analyser && freqData) {
@@ -351,14 +400,28 @@ export class CanvasRenderer {
           rafHandle = requestAnimationFrame(drawFrame);
         };
 
-        audio.addEventListener('ended', () => { done = true; resolve(); }, { once: true });
-        audio.addEventListener('error', () => { done = true; resolve(); }, { once: true });
+        audio.addEventListener(
+          "ended",
+          () => {
+            done = true;
+            resolve();
+          },
+          { once: true },
+        );
+        audio.addEventListener(
+          "error",
+          () => {
+            done = true;
+            resolve();
+          },
+          { once: true },
+        );
 
         rafHandle = requestAnimationFrame(drawFrame);
       });
     } finally {
       audio.pause();
-      audio.src = '';
+      audio.src = "";
     }
   }
 
@@ -378,7 +441,7 @@ export class CanvasRenderer {
     const ctx = this.ctx;
 
     // Fill black (letterbox background).
-    ctx.fillStyle = '#000';
+    ctx.fillStyle = "#000";
     ctx.fillRect(0, 0, width, height);
 
     // Draw video with letterbox scaling.
@@ -397,7 +460,12 @@ export class CanvasRenderer {
     }
 
     // Video fade in/out overlay.
-    const fadeAlpha = computeFadeAlpha(elapsed, duration, clip.videoFadeIn, clip.videoFadeOut);
+    const fadeAlpha = computeFadeAlpha(
+      elapsed,
+      duration,
+      clip.videoFadeIn,
+      clip.videoFadeOut,
+    );
     if (fadeAlpha < 1) {
       ctx.fillStyle = `rgba(0,0,0,${(1 - fadeAlpha).toFixed(4)})`;
       ctx.fillRect(0, 0, width, height);
@@ -425,11 +493,15 @@ export class CanvasRenderer {
     const { width, height } = this.canvas;
 
     const grad = this.ctx.createRadialGradient(
-      width / 2, height / 2, 0,
-      width / 2, height / 2, Math.max(width, height) * 0.65,
+      width / 2,
+      height / 2,
+      0,
+      width / 2,
+      height / 2,
+      Math.max(width, height) * 0.65,
     );
     grad.addColorStop(0, `rgba(255,180,60,${alpha.toFixed(4)})`);
-    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, "rgba(0,0,0,0)");
 
     this.ctx.fillStyle = grad;
     this.ctx.fillRect(0, 0, width, height);
@@ -442,15 +514,24 @@ export class CanvasRenderer {
 
 function waitForSeeked(video: HTMLVideoElement): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (video.readyState >= 2 && !video.seeking) { resolve(); return; }
-    const onSeeked = () => { off(); resolve(); };
-    const onError = () => { off(); reject(new Error('Video seek failed')); };
-    const off = () => {
-      video.removeEventListener('seeked', onSeeked);
-      video.removeEventListener('error', onError);
+    if (video.readyState >= 2 && !video.seeking) {
+      resolve();
+      return;
+    }
+    const onSeeked = () => {
+      off();
+      resolve();
     };
-    video.addEventListener('seeked', onSeeked, { once: true });
-    video.addEventListener('error', onError, { once: true });
+    const onError = () => {
+      off();
+      reject(new Error("Video seek failed"));
+    };
+    const off = () => {
+      video.removeEventListener("seeked", onSeeked);
+      video.removeEventListener("error", onError);
+    };
+    video.addEventListener("seeked", onSeeked, { once: true });
+    video.addEventListener("error", onError, { once: true });
   });
 }
 
@@ -479,9 +560,15 @@ function calculateLetterboxRect(
   };
 }
 
-function computeFadeAlpha(elapsed: number, duration: number, fadeIn: number, fadeOut: number): number {
+function computeFadeAlpha(
+  elapsed: number,
+  duration: number,
+  fadeIn: number,
+  fadeOut: number,
+): number {
   let alpha = 1;
   if (fadeIn > 0 && elapsed < fadeIn) alpha = Math.min(alpha, elapsed / fadeIn);
-  if (fadeOut > 0 && elapsed > duration - fadeOut) alpha = Math.min(alpha, (duration - elapsed) / fadeOut);
+  if (fadeOut > 0 && elapsed > duration - fadeOut)
+    alpha = Math.min(alpha, (duration - elapsed) / fadeOut);
   return Math.max(0, Math.min(1, alpha));
 }

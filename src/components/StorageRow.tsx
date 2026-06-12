@@ -1,13 +1,21 @@
-import { useState, useCallback } from 'react';
-import { ContaboStorageManagerClient } from '../utils/project';
-import { ProgressBar } from './ProgressBar';
+import { useState, useCallback } from "react";
+import { ContaboStorageManagerClient } from "../utils/project";
+import { ProgressBar } from "./ProgressBar";
 
 interface Props {
   endpoint: string;
   authToken: string;
   onAuthTokenChange: (value: string) => void;
-  onSaveRemote: (endpoint: string, authToken: string, projectName: string) => void;
-  onLoadRemote: (endpoint: string, authToken: string, projectName: string) => void;
+  onSaveRemote: (
+    endpoint: string,
+    authToken: string,
+    projectName: string,
+  ) => void;
+  onLoadRemote: (
+    endpoint: string,
+    authToken: string,
+    projectName: string,
+  ) => void;
   isRemoteSaving: boolean;
   isRemoteLoading: boolean;
   remoteLoadStage: string;
@@ -19,16 +27,16 @@ interface Props {
     index: number;
     total: number;
     progress: number;
-    status: 'pending' | 'uploading' | 'uploaded' | 'failed' | 'skipped';
+    status: "pending" | "uploading" | "uploaded" | "failed" | "skipped";
     error?: string;
   }[];
   pendingRemoteUploadError: {
     fileName: string;
     index: number;
     total: number;
-    error: string;
+    error: Error;
   } | null;
-  onResolveRemoteUploadError: (action: 'retry' | 'skip' | 'abort') => void;
+  onResolveRemoteUploadError: (action: "retry" | "skip" | "abort") => void;
 }
 
 export function StorageRow({
@@ -46,18 +54,20 @@ export function StorageRow({
   pendingRemoteUploadError,
   onResolveRemoteUploadError,
 }: Props) {
-  const [projectName, setProjectName] = useState('default-project');
-  const [projects, setProjects] = useState<{ name: string; modified: number }[]>([]);
+  const [projectName, setProjectName] = useState("default-project");
+  const [projects, setProjects] = useState<
+    { name: string; modified: number }[]
+  >([]);
   const [loading, setLoading] = useState(false);
-  const [listError, setListError] = useState('');
+  const [listError, setListError] = useState("");
 
   const fetchProjects = useCallback(async () => {
     if (!endpoint) {
-      setListError('Enter an endpoint URL first.');
+      setListError("Enter an endpoint URL first.");
       return;
     }
     setLoading(true);
-    setListError('');
+    setListError("");
     try {
       const client = new ContaboStorageManagerClient(endpoint, authToken);
       const list = await client.list();
@@ -70,22 +80,25 @@ export function StorageRow({
     }
   }, [endpoint, authToken]);
 
-  const handleDelete = useCallback(async (name: string) => {
-    if (!confirm(`Delete project "${name}"?`)) return;
-    try {
-      const client = new ContaboStorageManagerClient(endpoint, authToken);
-      await client.delete(name);
-      setProjects((prev) => prev.filter((p) => p.name !== name));
-    } catch (error) {
-      setListError((error as Error).message);
-    }
-  }, [endpoint, authToken]);
+  const handleDelete = useCallback(
+    async (name: string) => {
+      if (!confirm(`Delete project "${name}"?`)) return;
+      try {
+        const client = new ContaboStorageManagerClient(endpoint, authToken);
+        await client.delete(name);
+        setProjects((prev) => prev.filter((p) => p.name !== name));
+      } catch (error) {
+        setListError((error as Error).message);
+      }
+    },
+    [endpoint, authToken],
+  );
 
   const fmtDate = (ts: number) => {
     try {
       return new Date(ts * 1000).toLocaleString();
     } catch {
-      return '';
+      return "";
     }
   };
 
@@ -117,17 +130,21 @@ export function StorageRow({
           onClick={() => onSaveRemote(endpoint, authToken, projectName)}
           disabled={isRemoteSaving || isRemoteLoading}
         >
-          {isRemoteSaving ? 'Saving…' : 'Save remote'}
+          {isRemoteSaving ? "Saving…" : "Save remote"}
         </button>
         <button
           type="button"
           onClick={() => onLoadRemote(endpoint, authToken, projectName)}
           disabled={isRemoteLoading || isRemoteSaving}
         >
-          {isRemoteLoading ? 'Loading…' : 'Load remote'}
+          {isRemoteLoading ? "Loading…" : "Load remote"}
         </button>
-        <button type="button" onClick={fetchProjects} disabled={loading || isRemoteLoading || isRemoteSaving}>
-          {loading ? 'Refreshing…' : 'Refresh list'}
+        <button
+          type="button"
+          onClick={fetchProjects}
+          disabled={loading || isRemoteLoading || isRemoteSaving}
+        >
+          {loading ? "Refreshing…" : "Refresh list"}
         </button>
       </div>
 
@@ -145,7 +162,9 @@ export function StorageRow({
 
       {remoteUploadItems.length > 0 && (
         <div className="storage-upload-list">
-          <h3>{isRemoteSaving ? 'Uploading source media' : 'Last upload summary'}</h3>
+          <h3>
+            {isRemoteSaving ? "Uploading source media" : "Last upload summary"}
+          </h3>
           <ul>
             {remoteUploadItems.map((item) => {
               const percent = Math.round(item.progress * 100);
@@ -155,19 +174,20 @@ export function StorageRow({
                     Clip {item.index}/{item.total}: {item.fileName}
                   </span>
                   <span className="upload-item-status">
-                    {item.status === 'uploading'
+                    {item.status === "uploading"
                       ? `Uploading (${percent}%)`
-                      : item.status === 'uploaded'
-                      ? 'Uploaded (100%)'
-                      : item.status === 'failed'
-                      ? 'Failed'
-                      : item.status === 'skipped'
-                      ? 'Skipped'
-                      : 'Pending'}
+                      : item.status === "uploaded"
+                        ? "Uploaded (100%)"
+                        : item.status === "failed"
+                          ? "Failed"
+                          : item.status === "skipped"
+                            ? "Skipped"
+                            : "Pending"}
                   </span>
-                  {item.error && (item.status === 'failed' || item.status === 'skipped') && (
-                    <span className="upload-item-error">{item.error}</span>
-                  )}
+                  {item.error &&
+                    (item.status === "failed" || item.status === "skipped") && (
+                      <span className="upload-item-error">{item.error}</span>
+                    )}
                 </li>
               );
             })}
@@ -178,14 +198,32 @@ export function StorageRow({
       {pendingRemoteUploadError && (
         <div className="storage-upload-error-actions" role="alert">
           <p>
-            Upload failed for clip {pendingRemoteUploadError.index}/{pendingRemoteUploadError.total}:{' '}
+            Upload failed for clip {pendingRemoteUploadError.index}/
+            {pendingRemoteUploadError.total}:{" "}
             {pendingRemoteUploadError.fileName}
           </p>
-          <p className="storage-upload-error-detail">{pendingRemoteUploadError.error}</p>
+          <p className="storage-upload-error-detail">
+            {typeof pendingRemoteUploadError.error === 'string' ? pendingRemoteUploadError.error : pendingRemoteUploadError.error.message}
+          </p>
           <div className="storage-upload-error-buttons">
-            <button type="button" onClick={() => onResolveRemoteUploadError('retry')}>Retry this file</button>
-            <button type="button" onClick={() => onResolveRemoteUploadError('skip')}>Skip and continue</button>
-            <button type="button" onClick={() => onResolveRemoteUploadError('abort')}>Cancel save</button>
+            <button
+              type="button"
+              onClick={() => onResolveRemoteUploadError("retry")}
+            >
+              Retry this file
+            </button>
+            <button
+              type="button"
+              onClick={() => onResolveRemoteUploadError("skip")}
+            >
+              Skip and continue
+            </button>
+            <button
+              type="button"
+              onClick={() => onResolveRemoteUploadError("abort")}
+            >
+              Cancel save
+            </button>
           </div>
         </div>
       )}
@@ -197,7 +235,7 @@ export function StorageRow({
             {projects.map((p) => (
               <li
                 key={p.name}
-                className={p.name === projectName ? 'selected' : ''}
+                className={p.name === projectName ? "selected" : ""}
                 onClick={() => setProjectName(p.name)}
                 title="Click to select"
               >
@@ -222,7 +260,9 @@ export function StorageRow({
       )}
 
       {projects.length === 0 && !loading && !listError && endpoint && (
-        <p className="storage-hint">No saved projects found. Click "Refresh list" after saving.</p>
+        <p className="storage-hint">
+          No saved projects found. Click "Refresh list" after saving.
+        </p>
       )}
     </div>
   );

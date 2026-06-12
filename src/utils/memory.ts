@@ -1,4 +1,4 @@
-import type { Clip } from '../types';
+import type { Clip } from "../types";
 
 /**
  * Default memory usage threshold for warning the user.
@@ -11,9 +11,9 @@ export const DEFAULT_MEMORY_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
  * (Chrome/Edge only; returns null on other browsers)
  */
 export function getCurrentMemoryUsage(): number | null {
-  if (typeof performance !== 'undefined' && 'memory' in performance) {
+  if (typeof performance !== "undefined" && "memory" in performance) {
     const memory = (performance as any).memory;
-    if (memory && typeof memory.usedJSHeapSize === 'number') {
+    if (memory && typeof memory.usedJSHeapSize === "number") {
       return memory.usedJSHeapSize;
     }
   }
@@ -25,9 +25,9 @@ export function getCurrentMemoryUsage(): number | null {
  * (Chrome/Edge only; returns null on other browsers)
  */
 export function getMemoryLimit(): number | null {
-  if (typeof performance !== 'undefined' && 'memory' in performance) {
+  if (typeof performance !== "undefined" && "memory" in performance) {
     const memory = (performance as any).memory;
-    if (memory && typeof memory.jsHeapSizeLimit === 'number') {
+    if (memory && typeof memory.jsHeapSizeLimit === "number") {
       return memory.jsHeapSizeLimit;
     }
   }
@@ -38,9 +38,9 @@ export function getMemoryLimit(): number | null {
  * Format bytes into a human-readable string (e.g., "123 MB", "1.5 GB")
  */
 export function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B';
+  if (bytes === 0) return "0 B";
   const k = 1024;
-  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   const value = bytes / Math.pow(k, i);
   return `${value.toFixed(1)} ${sizes[i]}`;
@@ -77,7 +77,10 @@ export function estimateRenderMemoryUsage(clips: Clip[]): number {
  * Returns true if estimated usage exceeds the threshold.
  * Uses the default 2GB threshold unless a custom threshold is provided.
  */
-export function isHighMemoryUsage(clips: Clip[], thresholdBytes = DEFAULT_MEMORY_THRESHOLD_BYTES): boolean {
+export function isHighMemoryUsage(
+  clips: Clip[],
+  thresholdBytes = DEFAULT_MEMORY_THRESHOLD_BYTES,
+): boolean {
   return estimateRenderMemoryUsage(clips) > thresholdBytes;
 }
 

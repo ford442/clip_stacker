@@ -23,8 +23,8 @@
  * ```
  */
 
-import { processClipWithRIFE } from './huggingface';
-import type { RifeMode, RifeProgressEvent } from './huggingface';
+import { processClipWithRIFE } from "./huggingface";
+import type { RifeMode, RifeProgressEvent } from "./huggingface";
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -91,7 +91,7 @@ export interface VideoProcessingBackend {
  * This is the current production backend — no server infrastructure required.
  */
 export class HuggingFaceRifeBackend implements VideoProcessingBackend {
-  readonly name = 'HuggingFace RIFE (1inkusFace/RIFE)';
+  readonly name = "HuggingFace RIFE (1inkusFace/RIFE)";
 
   async isAvailable(): Promise<boolean> {
     // The Space is public and always reachable when the user has internet access.
@@ -154,7 +154,7 @@ export class SelfHostedRifeBackend implements VideoProcessingBackend {
   async isAvailable(): Promise<boolean> {
     try {
       const response = await fetch(`${this.endpointUrl}/health`, {
-        method: 'GET',
+        method: "GET",
         signal: AbortSignal.timeout(5000),
       });
       return response.ok;
@@ -168,49 +168,71 @@ export class SelfHostedRifeBackend implements VideoProcessingBackend {
     options: VideoProcessingOptions,
     onProgress?: (event: VideoProcessingProgressEvent) => void,
   ): Promise<VideoProcessingResult> {
-    onProgress?.({ stage: 'uploading', progress: 0, message: 'Uploading to self-hosted RIFE…' });
+    onProgress?.({
+      stage: "uploading",
+      progress: 0,
+      message: "Uploading to self-hosted RIFE…",
+    });
 
     const form = new FormData();
-    form.append('video', videoBlob, 'clip.mp4');
-    form.append('multiplier', String(options.multiplier));
-    form.append('boomerang', String(options.mode === 'boomerang'));
+    form.append("video", videoBlob, "clip.mp4");
+    form.append("multiplier", String(options.multiplier));
+    form.append("boomerang", String(options.mode === "boomerang"));
 
-    onProgress?.({ stage: 'processing', progress: null, message: 'Processing with self-hosted RIFE…' });
+    onProgress?.({
+      stage: "processing",
+      progress: null,
+      message: "Processing with self-hosted RIFE…",
+    });
 
     const response = await fetch(`${this.endpointUrl}/predict`, {
-      method: 'POST',
+      method: "POST",
       body: form,
     });
 
     if (!response.ok) {
-      throw new Error(`Self-hosted RIFE request failed: HTTP ${response.status}`);
+      throw new Error(
+        `Self-hosted RIFE request failed: HTTP ${response.status}`,
+      );
     }
 
-    const result = (await response.json()) as { data?: Array<{ url?: string } | string> };
+    const result = (await response.json()) as {
+      data?: Array<{ url?: string } | string>;
+    };
     const output = result.data?.[0];
 
     if (!output) {
-      throw new Error('Self-hosted RIFE returned no output.');
+      throw new Error("Self-hosted RIFE returned no output.");
     }
 
-    onProgress?.({ stage: 'downloading', progress: 80, message: 'Downloading processed clip…' });
+    onProgress?.({
+      stage: "downloading",
+      progress: 80,
+      message: "Downloading processed clip…",
+    });
 
     let outputBlob: Blob;
     if (output instanceof Blob) {
       outputBlob = output;
-    } else if (typeof output === 'string') {
+    } else if (typeof output === "string") {
       const res = await fetch(output);
-      if (!res.ok) throw new Error(`Failed to download self-hosted RIFE output (HTTP ${res.status})`);
+      if (!res.ok)
+        throw new Error(
+          `Failed to download self-hosted RIFE output (HTTP ${res.status})`,
+        );
       outputBlob = await res.blob();
-    } else if (typeof output === 'object' && 'url' in output && output.url) {
+    } else if (typeof output === "object" && "url" in output && output.url) {
       const res = await fetch(output.url);
-      if (!res.ok) throw new Error(`Failed to download self-hosted RIFE output (HTTP ${res.status})`);
+      if (!res.ok)
+        throw new Error(
+          `Failed to download self-hosted RIFE output (HTTP ${res.status})`,
+        );
       outputBlob = await res.blob();
     } else {
-      throw new Error('Unexpected self-hosted RIFE output format.');
+      throw new Error("Unexpected self-hosted RIFE output format.");
     }
 
-    onProgress?.({ stage: 'downloading', progress: 100, message: 'Done.' });
+    onProgress?.({ stage: "downloading", progress: 100, message: "Done." });
     return { blob: outputBlob };
   }
 }

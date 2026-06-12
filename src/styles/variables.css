@@ -1,0 +1,62 @@
+:root {
+  color-scheme: dark;
+  --bg: #06090f;
+  --panel: #0d1220;
+  --panel-alt: #131a2e;
+  --panel-hover: #182038;
+  --accent: #c9a227;
+  --accent-dim: rgba(201, 162, 39, 0.15);
+  --accent-hover: #e8b84b;
+  --gold: #c9a227;
+  --gold-bright: #e8c84b;
+  --gold-dim: rgba(201, 162, 39, 0.12);
+  --gold-glow: rgba(201, 162, 39, 0.25);
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+  --text: #e8eeff;
+  --muted: #8a96b8;
+  --border: rgba(201, 162, 39, 0.18);
+  --border-active: rgba(201, 162, 39, 0.45);
+  --radius: 12px;
+  --radius-sm: 7px;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 2px 12px rgba(0, 0, 0, 0.35);
+  --glass-bg: rgba(13, 18, 32, 0.78);
+  --glass-border: rgba(201, 162, 39, 0.2);
+  --glass-inset: inset 0 1px 0 rgba(255, 215, 80, 0.08);
+
+  /* Transition zone colors */
+  --tz-dissolve: #7c4dff;
+  --tz-motion: #f06292;
+  --tz-none: var(--border);
+}
+
+* {
+  box-sizing: border-box;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    sans-serif;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(
+      ellipse at 15% 0%,
+      rgba(201, 162, 39, 0.055) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse at 85% 100%,
+      rgba(100, 60, 180, 0.04) 0%,
+      transparent 50%
+    ),
+    linear-gradient(180deg, #04070e 0%, #080d1a 50%, #04070e 100%);
+  color: var(--text);
+  min-height: 100vh;
+}

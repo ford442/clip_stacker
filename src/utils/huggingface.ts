@@ -7,12 +7,12 @@
  * artifacts across scene cuts.
  */
 
-import { Client } from '@gradio/client';
+import { Client } from "@gradio/client";
 
-export type RifeMode = 'interpolation' | 'boomerang';
+export type RifeMode = "interpolation" | "boomerang";
 
 export interface RifeProgressEvent {
-  stage: 'uploading' | 'processing' | 'downloading';
+  stage: "uploading" | "processing" | "downloading";
   /** 0–100 progress percentage, or null if indeterminate */
   progress: number | null;
   message?: string;
@@ -34,65 +34,85 @@ export interface RifeResult {
 export async function processClipWithRIFE(
   videoBlob: Blob,
   multiplier: 2 | 4 = 2,
-  mode: RifeMode = 'interpolation',
+  mode: RifeMode = "interpolation",
   onProgress?: (event: RifeProgressEvent) => void,
 ): Promise<RifeResult> {
-  onProgress?.({ stage: 'uploading', progress: 0, message: 'Connecting to RIFE space…' });
+  onProgress?.({
+    stage: "uploading",
+    progress: 0,
+    message: "Connecting to RIFE space…",
+  });
 
-  const client = await Client.connect('1inkusFace/RIFE');
+  const client = await Client.connect("1inkusFace/RIFE");
 
-  onProgress?.({ stage: 'uploading', progress: 20, message: 'Uploading clip to RIFE…' });
+  onProgress?.({
+    stage: "uploading",
+    progress: 20,
+    message: "Uploading clip to RIFE…",
+  });
 
   // The 1inkusFace/RIFE space API accepts:
   //   - video: file handle / blob
   //   - multiplier: number (e.g. 2 or 4)
   //   - boomerang: boolean
-  const isBoomerang = mode === 'boomerang';
+  const isBoomerang = mode === "boomerang";
 
   let result: { data: unknown[] };
   try {
-    onProgress?.({ stage: 'processing', progress: null, message: 'Processing with RIFE…' });
+    onProgress?.({
+      stage: "processing",
+      progress: null,
+      message: "Processing with RIFE…",
+    });
 
-    result = await client.predict('/predict', {
+    result = (await client.predict("/predict", {
       video: videoBlob,
       multiplier,
       boomerang: isBoomerang,
-    }) as { data: unknown[] };
+    })) as { data: unknown[] };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`RIFE processing failed: ${message}`);
   }
 
-  onProgress?.({ stage: 'downloading', progress: 80, message: 'Downloading processed clip…' });
+  onProgress?.({
+    stage: "downloading",
+    progress: 80,
+    message: "Downloading processed clip…",
+  });
 
   // The space returns a file URL or a blob-like object in result.data[0]
   const output = result.data?.[0];
   if (!output) {
-    throw new Error('RIFE returned no output.');
+    throw new Error("RIFE returned no output.");
   }
 
   let outputBlob: Blob;
   if (output instanceof Blob) {
     outputBlob = output;
-  } else if (typeof output === 'string') {
+  } else if (typeof output === "string") {
     // Could be a URL
     const response = await fetch(output);
     if (!response.ok) {
-      throw new Error(`Failed to download RIFE output (HTTP ${response.status})`);
+      throw new Error(
+        `Failed to download RIFE output (HTTP ${response.status})`,
+      );
     }
     outputBlob = await response.blob();
-  } else if (typeof output === 'object' && output !== null && 'url' in output) {
+  } else if (typeof output === "object" && output !== null && "url" in output) {
     const url = (output as { url: string }).url;
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Failed to download RIFE output (HTTP ${response.status})`);
+      throw new Error(
+        `Failed to download RIFE output (HTTP ${response.status})`,
+      );
     }
     outputBlob = await response.blob();
   } else {
-    throw new Error('Unexpected RIFE output format.');
+    throw new Error("Unexpected RIFE output format.");
   }
 
-  onProgress?.({ stage: 'downloading', progress: 100, message: 'Done.' });
+  onProgress?.({ stage: "downloading", progress: 100, message: "Done." });
 
   return { blob: outputBlob };
 }

@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
-import type { ClipTransition, TransitionType } from '../types';
-import { MIN_TRANSITION_DURATION, MAX_TRANSITION_DURATION } from '../utils/transitions';
+import { useEffect, useRef, useState } from "react";
+import type { ClipTransition, TransitionType } from "../types";
+import {
+  MIN_TRANSITION_DURATION,
+  MAX_TRANSITION_DURATION,
+} from "../utils/transitions";
 
 interface Props {
   transition: ClipTransition;
@@ -10,13 +13,31 @@ interface Props {
   onClose: () => void;
 }
 
-const TRANSITION_OPTIONS: { value: TransitionType; label: string; description: string }[] = [
-  { value: 'none', label: 'Cut', description: 'Hard cut — no overlap' },
-  { value: 'dissolve', label: 'Dissolve', description: 'Crossfade between clips' },
-  { value: 'motion', label: 'Motion blend', description: 'Smooth blend for motion-matched clips' },
+const TRANSITION_OPTIONS: {
+  value: TransitionType;
+  label: string;
+  description: string;
+}[] = [
+  { value: "none", label: "Cut", description: "Hard cut — no overlap" },
+  {
+    value: "dissolve",
+    label: "Dissolve",
+    description: "Crossfade between clips",
+  },
+  {
+    value: "motion",
+    label: "Motion blend",
+    description: "Smooth blend for motion-matched clips",
+  },
 ];
 
-export function TransitionEditor({ transition, clipATitle, clipBTitle, onUpdate, onClose }: Props) {
+export function TransitionEditor({
+  transition,
+  clipATitle,
+  clipBTitle,
+  onUpdate,
+  onClose,
+}: Props) {
   const [type, setType] = useState<TransitionType>(transition.type);
   const [duration, setDuration] = useState(transition.duration);
   const overlayRef = useRef<HTMLDivElement>(null);
@@ -28,10 +49,10 @@ export function TransitionEditor({ transition, clipATitle, clipBTitle, onUpdate,
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === "Escape") onClose();
     };
-    window.addEventListener('keydown', handleKey);
-    return () => window.removeEventListener('keydown', handleKey);
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
   }, [onClose]);
 
   const handleOverlayClick = (e: React.MouseEvent) => {
@@ -46,7 +67,10 @@ export function TransitionEditor({ transition, clipATitle, clipBTitle, onUpdate,
   const handleDurationChange = (rawValue: string) => {
     const v = parseFloat(rawValue);
     if (isNaN(v)) return;
-    const clamped = Math.max(MIN_TRANSITION_DURATION, Math.min(MAX_TRANSITION_DURATION, v));
+    const clamped = Math.max(
+      MIN_TRANSITION_DURATION,
+      Math.min(MAX_TRANSITION_DURATION, v),
+    );
     setDuration(clamped);
     onUpdate({ ...transition, type, duration: clamped });
   };
@@ -67,7 +91,14 @@ export function TransitionEditor({ transition, clipATitle, clipBTitle, onUpdate,
       <div className="transition-editor-popup">
         <div className="te-header">
           <span className="te-title">Transition</span>
-          <button type="button" className="te-close" onClick={onClose} aria-label="Close">✕</button>
+          <button
+            type="button"
+            className="te-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ✕
+          </button>
         </div>
 
         <div className="te-clips">
@@ -83,7 +114,7 @@ export function TransitionEditor({ transition, clipATitle, clipBTitle, onUpdate,
               <button
                 key={opt.value}
                 type="button"
-                className={`te-type-btn${type === opt.value ? ' active' : ''}`}
+                className={`te-type-btn${type === opt.value ? " active" : ""}`}
                 onClick={() => handleTypeChange(opt.value)}
                 title={opt.description}
               >
@@ -93,11 +124,17 @@ export function TransitionEditor({ transition, clipATitle, clipBTitle, onUpdate,
           </div>
         </div>
 
-        {type !== 'none' && (
+        {type !== "none" && (
           <div className="te-field-group">
             <label className="te-label">Duration (s)</label>
             <div className="te-duration-row">
-              <button type="button" className="te-step-btn" onClick={() => adjust(-0.1)}>−</button>
+              <button
+                type="button"
+                className="te-step-btn"
+                onClick={() => adjust(-0.1)}
+              >
+                −
+              </button>
               <input
                 type="number"
                 className="te-duration-input"
@@ -107,7 +144,13 @@ export function TransitionEditor({ transition, clipATitle, clipBTitle, onUpdate,
                 value={duration}
                 onChange={(e) => handleDurationChange(e.target.value)}
               />
-              <button type="button" className="te-step-btn" onClick={() => adjust(0.1)}>+</button>
+              <button
+                type="button"
+                className="te-step-btn"
+                onClick={() => adjust(0.1)}
+              >
+                +
+              </button>
             </div>
           </div>
         )}

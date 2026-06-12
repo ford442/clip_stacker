@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import type { TextOverlay } from '../types';
+import { useState } from "react";
+import type { TextOverlay } from "../types";
 
 interface Props {
   overlays: TextOverlay[];
@@ -8,14 +8,23 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props) {
+export function TextOverlayPanel({
+  overlays,
+  onAdd,
+  onUpdate,
+  onDelete,
+}: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
 
   const handleToggleEdit = (id: string) => {
     setEditingId((prev) => (prev === id ? null : id));
   };
 
-  const set = (overlay: TextOverlay, field: keyof TextOverlay, value: string | number | boolean) => {
+  const set = (
+    overlay: TextOverlay,
+    field: keyof TextOverlay,
+    value: string | number | boolean,
+  ) => {
     onUpdate({ ...overlay, [field]: value });
   };
 
@@ -23,33 +32,41 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
     <section className="panel tol-panel">
       <div className="tol-header">
         <h2>Text Overlays</h2>
-        <button type="button" className="btn-secondary tol-add-btn" onClick={onAdd}>
+        <button
+          type="button"
+          className="btn-secondary tol-add-btn"
+          onClick={onAdd}
+        >
           + Add Text
         </button>
       </div>
 
       {overlays.length === 0 ? (
-        <p className="muted" style={{ fontSize: '0.82rem', margin: 0 }}>
-          No text overlays yet. Click <strong>+ Add Text</strong> to create a news ticker or caption that will be burned into the exported video.
+        <p className="muted" style={{ fontSize: "0.82rem", margin: 0 }}>
+          No text overlays yet. Click <strong>+ Add Text</strong> to create a
+          news ticker or caption that will be burned into the exported video.
         </p>
       ) : (
         <div className="tol-list">
           {overlays.map((overlay) => (
             <div key={overlay.id} className="tol-item">
               <div className="tol-item-row">
-                <span className="tol-item-icon" aria-hidden="true">T</span>
+                <span className="tol-item-icon" aria-hidden="true">
+                  T
+                </span>
                 <span className="tol-item-text" title={overlay.text}>
                   {overlay.text || <em>(empty)</em>}
                 </span>
                 <span className="tol-item-meta">
-                  {overlay.scrolling ? '↔ ticker' : '📍 static'} · {overlay.fontsize}px
+                  {overlay.scrolling ? "↔ ticker" : "📍 static"} ·{" "}
+                  {overlay.fontsize}px
                 </span>
                 <button
                   type="button"
-                  className={`tol-edit-btn${editingId === overlay.id ? ' active' : ''}`}
+                  className={`tol-edit-btn${editingId === overlay.id ? " active" : ""}`}
                   onClick={() => handleToggleEdit(overlay.id)}
                 >
-                  {editingId === overlay.id ? 'Close' : 'Edit'}
+                  {editingId === overlay.id ? "Close" : "Edit"}
                 </button>
                 <button
                   type="button"
@@ -72,7 +89,7 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
                       className="tol-textarea"
                       rows={2}
                       value={overlay.text}
-                      onChange={(e) => set(overlay, 'text', e.target.value)}
+                      onChange={(e) => set(overlay, "text", e.target.value)}
                       placeholder="Enter your caption or ticker text"
                     />
                   </label>
@@ -86,7 +103,9 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
                         max="200"
                         step="1"
                         value={overlay.fontsize}
-                        onChange={(e) => set(overlay, 'fontsize', Number(e.target.value))}
+                        onChange={(e) =>
+                          set(overlay, "fontsize", Number(e.target.value))
+                        }
                       />
                     </label>
                     <label title="Any FFmpeg color: 'white', 'yellow', '#ffcc00'">
@@ -95,27 +114,40 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
                         <input
                           type="color"
                           className="tol-color-swatch"
-                          value={overlay.fontcolor.startsWith('#') ? overlay.fontcolor : '#ffffff'}
-                          onChange={(e) => set(overlay, 'fontcolor', e.target.value)}
+                          value={
+                            overlay.fontcolor.startsWith("#")
+                              ? overlay.fontcolor
+                              : "#ffffff"
+                          }
+                          onChange={(e) =>
+                            set(overlay, "fontcolor", e.target.value)
+                          }
                         />
                         <input
                           type="text"
                           value={overlay.fontcolor}
-                          onChange={(e) => set(overlay, 'fontcolor', e.target.value)}
+                          onChange={(e) =>
+                            set(overlay, "fontcolor", e.target.value)
+                          }
                           placeholder="white"
                         />
                       </div>
                     </label>
                   </div>
 
-                  <div className="inspector-group-label" style={{ marginTop: '0.5rem' }}>Mode</div>
+                  <div
+                    className="inspector-group-label"
+                    style={{ marginTop: "0.5rem" }}
+                  >
+                    Mode
+                  </div>
                   <div className="tol-mode-row">
                     <label className="tol-radio-label">
                       <input
                         type="radio"
                         name={`mode-${overlay.id}`}
                         checked={!overlay.scrolling}
-                        onChange={() => set(overlay, 'scrolling', false)}
+                        onChange={() => set(overlay, "scrolling", false)}
                       />
                       Static
                     </label>
@@ -124,7 +156,7 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
                         type="radio"
                         name={`mode-${overlay.id}`}
                         checked={overlay.scrolling}
-                        onChange={() => set(overlay, 'scrolling', true)}
+                        onChange={() => set(overlay, "scrolling", true)}
                       />
                       Scrolling ticker
                     </label>
@@ -138,7 +170,9 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
                           type="number"
                           step="1"
                           value={overlay.x}
-                          onChange={(e) => set(overlay, 'x', Number(e.target.value))}
+                          onChange={(e) =>
+                            set(overlay, "x", Number(e.target.value))
+                          }
                         />
                       </label>
                     )}
@@ -148,7 +182,9 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
                         type="number"
                         step="1"
                         value={overlay.y}
-                        onChange={(e) => set(overlay, 'y', Number(e.target.value))}
+                        onChange={(e) =>
+                          set(overlay, "y", Number(e.target.value))
+                        }
                       />
                     </label>
                     {overlay.scrolling && (
@@ -160,18 +196,25 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
                           max="1000"
                           step="10"
                           value={overlay.scrollSpeed}
-                          onChange={(e) => set(overlay, 'scrollSpeed', Number(e.target.value))}
+                          onChange={(e) =>
+                            set(overlay, "scrollSpeed", Number(e.target.value))
+                          }
                         />
                       </label>
                     )}
                   </div>
 
-                  <div className="inspector-group-label" style={{ marginTop: '0.5rem' }}>Background Box</div>
+                  <div
+                    className="inspector-group-label"
+                    style={{ marginTop: "0.5rem" }}
+                  >
+                    Background Box
+                  </div>
                   <label className="tol-checkbox-label">
                     <input
                       type="checkbox"
                       checked={overlay.box}
-                      onChange={(e) => set(overlay, 'box', e.target.checked)}
+                      onChange={(e) => set(overlay, "box", e.target.checked)}
                     />
                     Show background box
                   </label>
@@ -181,15 +224,17 @@ export function TextOverlayPanel({ overlays, onAdd, onUpdate, onDelete }: Props)
                       <input
                         type="text"
                         value={overlay.boxColor}
-                        onChange={(e) => set(overlay, 'boxColor', e.target.value)}
+                        onChange={(e) =>
+                          set(overlay, "boxColor", e.target.value)
+                        }
                         placeholder="black@0.5"
                       />
                     </label>
                   )}
 
-                  <p className="inspector-hint" style={{ marginTop: '0.5rem' }}>
-                    Font: Roboto Regular (loaded automatically from CDN).
-                    For 1280×720 output, Y=670 places text near the bottom.
+                  <p className="inspector-hint" style={{ marginTop: "0.5rem" }}>
+                    Font: Roboto Regular (loaded automatically from CDN). For
+                    1280×720 output, Y=670 places text near the bottom.
                   </p>
                 </div>
               )}

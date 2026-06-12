@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef } from "react";
 
 export interface KeyboardShortcutMap {
   [key: string]: () => void;
@@ -27,31 +27,32 @@ export function useKeyboardShortcuts(
       // Skip if user is typing in an input or textarea
       const target = e.target as HTMLElement;
       const isFormField =
-        target.tagName === 'INPUT' ||
-        target.tagName === 'TEXTAREA' ||
-        target.contentEditable === 'true';
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.contentEditable === "true";
 
       // For video/audio elements, only handle Space specially (allow play/pause)
-      const isMediaElement = target.tagName === 'VIDEO' || target.tagName === 'AUDIO';
+      const isMediaElement =
+        target.tagName === "VIDEO" || target.tagName === "AUDIO";
 
       if (isFormField) {
         // Allow form field shortcuts only for Escape
-        if (e.key !== 'Escape') return;
+        if (e.key !== "Escape") return;
       }
 
       // Construct shortcut key from modifiers + key
       // Note: Both Ctrl (Windows/Linux) and Cmd/Meta (Mac) are normalized to 'ctrl'
       // for cross-platform consistency. This means 'ctrl+key' works on all platforms.
       const mods: string[] = [];
-      if (e.ctrlKey || e.metaKey) mods.push('ctrl');
-      if (e.shiftKey) mods.push('shift');
-      if (e.altKey) mods.push('alt');
+      if (e.ctrlKey || e.metaKey) mods.push("ctrl");
+      if (e.shiftKey) mods.push("shift");
+      if (e.altKey) mods.push("alt");
 
-      const shortcutKey = [...mods, e.key.toLowerCase()].join('+');
+      const shortcutKey = [...mods, e.key.toLowerCase()].join("+");
 
       if (shortcutKey in shortcutsRef.current) {
         // For media elements, let Space through to browser default (play/pause)
-        if (isMediaElement && e.key === ' ') {
+        if (isMediaElement && e.key === " ") {
           return;
         }
         e.preventDefault();
@@ -59,7 +60,7 @@ export function useKeyboardShortcuts(
       }
     };
 
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [enabled]);
 }

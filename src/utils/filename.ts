@@ -9,17 +9,15 @@
  */
 export function sanitizeFilename(filename: string): string {
   // Remove any path separators and invalid filesystem characters
-  let sanitized = filename
-    .replace(/[/\\:*?"<>|]/g, '')
-    .trim();
+  let sanitized = filename.replace(/[/\\:*?"<>|]/g, "").trim();
 
   // If empty after sanitization, use default
   if (!sanitized) {
-    sanitized = 'stacked';
+    sanitized = "stacked";
   }
 
   // Remove existing extension if present and ensure .mp4
-  sanitized = sanitized.replace(/\.[^.]*$/, '');
+  sanitized = sanitized.replace(/\.[^.]*$/, "");
 
   // Truncate to reasonable length (255 is filesystem limit, leave room for extension)
   if (sanitized.length > 250) {

@@ -4,15 +4,18 @@ interface Props {
 }
 
 const SHORTCUTS = [
-  { key: 'R', description: 'Render merge' },
-  { key: 'S', description: 'Save local project' },
-  { key: 'L', description: 'Load local project' },
-  { key: 'Delete / Backspace', description: 'Delete selected clip' },
-  { key: 'Arrow Left (with Ctrl/Cmd)', description: 'Move selected clip left' },
-  { key: 'Arrow Right (with Ctrl/Cmd)', description: 'Move selected clip right' },
-  { key: 'Space', description: 'Play/pause preview (when focused)' },
-  { key: 'Escape', description: 'Close modals' },
-  { key: 'Enter / Space (in library)', description: 'Select clip' },
+  { key: "R", description: "Render merge" },
+  { key: "S", description: "Save local project" },
+  { key: "L", description: "Load local project" },
+  { key: "Delete / Backspace", description: "Delete selected clip" },
+  { key: "Arrow Left (with Ctrl/Cmd)", description: "Move selected clip left" },
+  {
+    key: "Arrow Right (with Ctrl/Cmd)",
+    description: "Move selected clip right",
+  },
+  { key: "Space", description: "Play/pause preview (when focused)" },
+  { key: "Escape", description: "Close modals" },
+  { key: "Enter / Space (in library)", description: "Select clip" },
 ];
 
 export function KeyboardShortcutsModal({ isOpen, onClose }: Props) {
