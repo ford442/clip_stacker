@@ -3,29 +3,49 @@
  * of an existing clip so the two can be grouped for A/B comparison.
  */
 
-/** Suffixes that indicate an edited / alternative version of a file. */
-const EDITED_SUFFIXES = [
-  "_edited",
-  "_edit",
-  "_final",
-  "_v1",
-  "_v2",
-  "_v3",
-  "_v4",
-  "_v5",
-  "_cut",
-  "_trim",
-  "_processed",
-  "_export",
-  "_output",
-  "_render",
-  " copy",
-  " - copy",
-  " - Copy",
-  "(1)",
-  "(2)",
-  "(3)",
+/** Suffixes stripped when comparing base names. */
+const NORMALIZE_SUFFIXES = [
+  '_edited',
+  '_edit',
+  '_final',
+  '_v1', '_v2', '_v3', '_v4', '_v5',
+  '_cut',
+  '_trim',
+  '_processed',
+  '_export',
+  '_output',
+  '_render',
+  ' copy',
+  ' - copy',
+  ' - Copy',
+  '(1)', '(2)', '(3)',
 ];
+
+/**
+ * Suffixes that indicate an intentional alternate edit — only these trigger
+ * automatic A/B grouping. Generic duplicates like "video (1).mp4" or
+ * "video copy.mp4" are left as separate sequential clips.
+ */
+const AUTO_GROUP_SUFFIXES = [
+  '_edited',
+  '_edit',
+  '_final',
+  '_v1', '_v2', '_v3', '_v4', '_v5',
+  '_cut',
+  '_trim',
+  '_processed',
+  '_export',
+  '_output',
+  '_render',
+];
+
+function stripExtension(filename: string): string {
+  return filename.replace(/\.[^.]+$/, '');
+}
+
+function endsWithSuffix(filename: string, suffix: string): boolean {
+  return filename.toLowerCase().endsWith(suffix.toLowerCase());
+}
 
 /**
  * Strip the file extension and any common "edited version" suffixes from a
@@ -34,24 +54,23 @@ const EDITED_SUFFIXES = [
  * Example: "myvideo_edited.mp4" → "myvideo"
  */
 export function normaliseBaseName(filename: string): string {
-  // Remove extension
-  const withoutExt = filename.replace(/\.[^.]+$/, "");
+  let base = stripExtension(filename);
 
-  // Remove known suffixes (case-insensitive, longest match first)
-  const sorted = [...EDITED_SUFFIXES].sort((a, b) => b.length - a.length);
-  let base = withoutExt;
+  const sorted = [...NORMALIZE_SUFFIXES].sort((a, b) => b.length - a.length);
   for (const suffix of sorted) {
-    const lower = base.toLowerCase();
-    const sfxLower = suffix.toLowerCase();
-    // Case-insensitive match: compare lowercase versions, then slice using
-    // the original suffix length (equal to the matched region's length).
-    if (lower.endsWith(sfxLower)) {
+    if (endsWithSuffix(base, suffix)) {
       base = base.slice(0, base.length - suffix.length);
-      break; // remove at most one suffix
+      break;
     }
   }
 
   return base.trim();
+}
+
+/** True when the filename ends with a suffix that should auto-create an A/B group. */
+export function hasAutoGroupSuffix(filename: string): boolean {
+  const withoutExt = stripExtension(filename);
+  return AUTO_GROUP_SUFFIXES.some((suffix) => endsWithSuffix(withoutExt, suffix));
 }
 
 /**
@@ -60,10 +79,7 @@ export function normaliseBaseName(filename: string): string {
  * Returns true when the normalised base names are equal AND the raw filenames
  * are different (so we don't match a file to itself).
  */
-export function isEditedVersion(
-  existingName: string,
-  candidateName: string,
-): boolean {
+export function isEditedVersion(existingName: string, candidateName: string): boolean {
   if (existingName === candidateName) return false;
   return normaliseBaseName(existingName) === normaliseBaseName(candidateName);
 }
@@ -74,14 +90,11 @@ export function isEditedVersion(
  *
  * Returns -1 if no match is found.
  */
-export function findMatchingClipIndex(
-  existingNames: string[],
-  newName: string,
-): number {
-  const newBase = normaliseBaseName(newName);
+export function findMatchingClipIndex(existingNames: string[], newName: string): number {
+  if (!hasAutoGroupSuffix(newName)) return -1;
+
   for (let i = 0; i < existingNames.length; i++) {
-    const existingBase = normaliseBaseName(existingNames[i]);
-    if (existingBase === newBase && existingNames[i] !== newName) {
+    if (isEditedVersion(existingNames[i], newName)) {
       return i;
     }
   }

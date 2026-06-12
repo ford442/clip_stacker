@@ -13,7 +13,7 @@
  *   engine.destroy();
  */
 
-const UNIFORM_FLOATS = 8; // must match WGSL struct (padded to 32 bytes)
+const UNIFORM_FLOATS = 12; // must match WGSL struct (padded to 48 bytes)
 
 export class PreviewEngine {
   private device: GPUDevice;
@@ -130,6 +130,8 @@ export class PreviewEngine {
     fadeIn: number,
     fadeOut: number,
     opacity = 1,
+    uvScale: [number, number] = [1, 1],
+    uvOffset: [number, number] = [0, 0],
   ): void {
     if (this.destroyed) return;
 
@@ -138,7 +140,11 @@ export class PreviewEngine {
     this.uniformData[2] = duration;
     this.uniformData[3] = elapsed;
     this.uniformData[4] = opacity;
-    // [5..7] padding — zero by default
+    this.uniformData[5] = uvScale[0];
+    this.uniformData[6] = uvScale[1];
+    this.uniformData[7] = uvOffset[0];
+    this.uniformData[8] = uvOffset[1];
+    // [9..11] padding — zero by default
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
     const externalTexture = this.device.importExternalTexture({
@@ -172,6 +178,24 @@ export class PreviewEngine {
     this.device.queue.submit([encoder.finish()]);
   }
 
+  /** Clear the canvas to black without sampling a video frame. */
+  clearToBlack(): void {
+    if (this.destroyed) return;
+    const encoder = this.device.createCommandEncoder();
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: this.context.getCurrentTexture().createView(),
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+    pass.end();
+    this.device.queue.submit([encoder.finish()]);
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
@@ -188,7 +212,8 @@ const INLINE_SHADER = /* wgsl */ `
 
 struct Uniforms {
   fadeIn: f32, fadeOut: f32, duration: f32, elapsed: f32,
-  opacity: f32, _p0: f32, _p1: f32, _p2: f32,
+  opacity: f32, uvScaleX: f32, uvScaleY: f32, uvOffsetX: f32,
+  uvOffsetY: f32, _p0: f32, _p1: f32, _p2: f32,
 };
 
 struct VO { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
@@ -200,7 +225,9 @@ struct VO { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
   var t = array<vec2<f32>,6>(
     vec2(0.,1.), vec2(1.,1.), vec2(0.,0.),
     vec2(0.,0.), vec2(1.,1.), vec2(1.,0.));
-  return VO(vec4(p[i],0.,1.), t[i]);
+  let baseUv = t[i];
+  let uv = baseUv * vec2(u.uvScaleX, u.uvScaleY) + vec2(u.uvOffsetX, u.uvOffsetY);
+  return VO(vec4(p[i],0.,1.), uv);
 }
 
 @fragment fn fs_main(v: VO) -> @location(0) vec4<f32> {

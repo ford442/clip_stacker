@@ -5,6 +5,8 @@ const MEDIA_LOAD_TIMEOUT_MS = 5000;
 export interface MediaInfo {
   duration: number;
   objectUrl: string;
+  videoWidth?: number;
+  videoHeight?: number;
 }
 
 function loadMediaInfo(file: File, includeUrl: true): Promise<MediaInfo>;
@@ -33,9 +35,17 @@ function loadMediaInfo(
       if (resolved) return;
       resolved = true;
       const duration = mediaElement.duration;
+      const videoWidth =
+        mediaElement instanceof HTMLVideoElement && mediaElement.videoWidth > 0
+          ? mediaElement.videoWidth
+          : undefined;
+      const videoHeight =
+        mediaElement instanceof HTMLVideoElement && mediaElement.videoHeight > 0
+          ? mediaElement.videoHeight
+          : undefined;
       cleanup();
       if (includeUrl) {
-        resolve({ duration, objectUrl });
+        resolve({ duration, objectUrl, videoWidth, videoHeight });
       } else {
         URL.revokeObjectURL(objectUrl);
         resolve(duration);

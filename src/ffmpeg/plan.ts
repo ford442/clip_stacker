@@ -11,6 +11,13 @@ import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
+  allVideoClipsMatchOutputResolution,
+  clipsHaveMixedVideoDimensions,
+  clipsNeedResolutionNormalization,
+  formatOutputResolution,
+  usesFixedOutputResolution,
+} from "../utils/resolution";
+import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
   recordFfmpegLog,
@@ -163,14 +170,37 @@ export function calculateRenderPlan(
     };
   }
 
+  const needsResolutionNormalization = clipsNeedResolutionNormalization(
+    clips,
+    settings,
+  );
+  if (needsResolutionNormalization) {
+    const hasMixedNativeDimensions = clipsHaveMixedVideoDimensions(clips);
+    const fixedOutput = usesFixedOutputResolution(settings);
+    const outputResolution = formatOutputResolution(settings);
+    const alreadyMatch = fixedOutput && allVideoClipsMatchOutputResolution(clips, settings);
+    return {
+      path: "effects-reencoding",
+      reason: alreadyMatch
+        ? `All clips already match the configured export resolution (${outputResolution})`
+        : hasMixedNativeDimensions
+          ? "Clips have different native resolutions and must be normalized before concat"
+          : `Clips must be normalized to ${outputResolution} before concat`,
+      willReencode: true,
+      description: `Re-encoding clips with CRF ${settings.crf} (${settings.preset} preset)`,
+    };
+  }
+
   // All clips are clean with no effects — use fast lossless stream copy + concat.
-  // If clips have mixed native resolutions, enable "Force re-encode" in export settings.
+  // If clips need resolution normalization, enable "Force re-encode" in export settings.
   return {
     path: "lossless-concat",
     reason:
       clips.length === 1
         ? "Single clean video clip with no effects"
-        : "All clips are clean with no effects",
+        : usesFixedOutputResolution(settings)
+          ? `All clips already match the configured export resolution (${formatOutputResolution(settings)})`
+          : "All clips are clean with no effects",
     willReencode: false,
     description: "Lossless concat (fast, no quality loss)",
   };

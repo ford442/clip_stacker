@@ -1,23 +1,16 @@
-import type { Clip, ClipGroup } from "../types";
-import { getClipDuration } from "../utils/project";
+import type { Clip, ClipGroup } from '../types';
+import { getClipDuration } from '../utils/project';
 
 interface Props {
   clips: Clip[];
   selectedClipId: string | null;
   clipGroups: ClipGroup[];
   onSelect: (id: string) => void;
-  onToggleVariant: (groupId: string, variant: "A" | "B") => void;
+  onToggleVariant: (groupId: string, variant: 'A' | 'B') => void;
   onDelete: (id: string) => void;
 }
 
-export function ClipLibrary({
-  clips,
-  selectedClipId,
-  clipGroups,
-  onSelect,
-  onToggleVariant,
-  onDelete,
-}: Props) {
+export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onToggleVariant, onDelete }: Props) {
   // Build a map from clip id → its group (if any)
   const groupByClipId = new Map<string, ClipGroup>();
   for (const group of clipGroups) {
@@ -33,10 +26,10 @@ export function ClipLibrary({
   const renderSingleClip = (clip: Clip) => (
     <li
       key={clip.id}
-      className={`clip-item${clip.id === selectedClipId ? " selected" : ""}`}
+      className={`clip-item${clip.id === selectedClipId ? ' selected' : ''}`}
       onClick={() => onSelect(clip.id)}
       onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
+        if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
           onSelect(clip.id);
         }
@@ -51,10 +44,7 @@ export function ClipLibrary({
         <button
           type="button"
           className="project-delete-btn"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(clip.id);
-          }}
+          onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
           title="Delete clip (Delete or Backspace key)"
           aria-label={`Delete clip ${clip.title}`}
         >
@@ -62,17 +52,11 @@ export function ClipLibrary({
         </button>
       </div>
       <div className="muted">
-        {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s
-        →{" "}
-        {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : "end"}
+        {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
+        {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : 'end'}
         {clip.rifeProcessed && (
-          <span
-            className="rife-badge"
-            title={`Processed with RIFE ${clip.rifeMode === "boomerang" ? "Boomerang" : `${clip.rifeMultiplier ?? 2}× interpolation`}`}
-          >
-            {clip.rifeMode === "boomerang"
-              ? " 🔁"
-              : ` ✨${clip.rifeMultiplier ?? 2}×`}
+          <span className="rife-badge" title={`Processed with RIFE ${clip.rifeMode === 'boomerang' ? 'Boomerang' : `${clip.rifeMultiplier ?? 2}× interpolation`}`}>
+            {clip.rifeMode === 'boomerang' ? ' 🔁' : ` ✨${clip.rifeMultiplier ?? 2}×`}
           </span>
         )}
       </div>
@@ -87,74 +71,60 @@ export function ClipLibrary({
     return (
       <li key={group.id} className="clip-group">
         <div className="clip-group-header">
-          <span className="clip-group-label">A/B Group</span>
+          <span className="clip-group-label">Compare variants</span>
         </div>
-        {(["A", "B"] as const).map((slot) => {
+        {(['A', 'B'] as const).map((slot) => {
           const clip = group.variants[slot];
           if (!clip) return null;
           const isActive = active === slot;
           const isSelected = clip.id === selectedClipId;
           return (
-            <div
-              key={slot}
-              className={`clip-item clip-variant${isSelected ? " selected" : ""}${isActive ? " variant-active" : ""}`}
-              onClick={() => onSelect(clip.id)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  onSelect(clip.id);
-                }
-              }}
-              role="listitem"
-              aria-label={`Variant ${slot}: ${clip.title}`}
-              tabIndex={0}
-            >
-              <div className="row">
-                <span className="variant-badge">{slot}</span>
-                <strong className="clip-title">{clip.title}</strong>
-                <button
-                  type="button"
-                  className={`variant-timeline-btn${isActive ? " on-timeline" : ""}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleVariant(group.id, slot);
-                  }}
-                  title={isActive ? "On timeline" : "Add to timeline"}
-                  aria-label={`${isActive ? "Remove from" : "Add to"} timeline: ${clip.title}`}
-                >
-                  {isActive ? "● Timeline" : "Use"}
-                </button>
-                <button
-                  type="button"
-                  className="project-delete-btn"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDelete(clip.id);
-                  }}
-                  title="Delete clip (Delete or Backspace key)"
-                  aria-label={`Delete clip ${clip.title}`}
-                >
-                  ×
-                </button>
-              </div>
-              <div className="muted">
-                {getClipDuration(clip).toFixed(1)}s · trim{" "}
-                {clip.trimStart.toFixed(1)}s →{" "}
-                {Number.isFinite(clip.trimEnd)
-                  ? `${clip.trimEnd.toFixed(1)}s`
-                  : "end"}
-                {clip.rifeProcessed && (
-                  <span
-                    className="rife-badge"
-                    title={`Processed with RIFE ${clip.rifeMode === "boomerang" ? "Boomerang" : `${clip.rifeMultiplier ?? 2}× interpolation`}`}
-                  >
-                    {clip.rifeMode === "boomerang"
-                      ? " 🔁"
-                      : ` ✨${clip.rifeMultiplier ?? 2}×`}
-                  </span>
-                )}
-              </div>
-            </div>
+           <div
+             key={slot}
+             className={`clip-item clip-variant${isSelected ? ' selected' : ''}${isActive ? ' variant-active' : ''}`}
+             onClick={() => onSelect(clip.id)}
+             onKeyDown={(e) => {
+               if (e.key === 'Enter' || e.key === ' ') {
+                 e.preventDefault();
+                 onSelect(clip.id);
+               }
+             }}
+             role="listitem"
+             aria-label={`Variant ${slot}: ${clip.title}`}
+             tabIndex={0}
+           >
+             <div className="row">
+               <span className="variant-badge">{slot}</span>
+               <strong className="clip-title">{clip.title}</strong>
+               <button
+                 type="button"
+                 className={`variant-timeline-btn${isActive ? ' on-timeline' : ''}`}
+                 onClick={(e) => { e.stopPropagation(); onToggleVariant(group.id, slot); }}
+                 title={isActive ? 'Active variant on timeline' : 'Switch timeline to this variant'}
+                 aria-label={`${isActive ? 'Active variant' : 'Use variant'} ${slot}: ${clip.title}`}
+               >
+                 {isActive ? '● Active' : 'Use'}
+               </button>
+               <button
+                 type="button"
+                 className="project-delete-btn"
+                 onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+                 title="Delete clip (Delete or Backspace key)"
+                 aria-label={`Delete clip ${clip.title}`}
+               >
+                 ×
+               </button>
+             </div>
+             <div className="muted">
+               {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
+               {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : 'end'}
+               {clip.rifeProcessed && (
+                 <span className="rife-badge" title={`Processed with RIFE ${clip.rifeMode === 'boomerang' ? 'Boomerang' : `${clip.rifeMultiplier ?? 2}× interpolation`}`}>
+                   {clip.rifeMode === 'boomerang' ? ' 🔁' : ` ✨${clip.rifeMultiplier ?? 2}×`}
+                 </span>
+               )}
+             </div>
+           </div>
           );
         })}
         {/* Show placeholder for missing B slot */}
@@ -166,7 +136,7 @@ export function ClipLibrary({
         )}
         {activeClip && (
           <div className="clip-group-active-note muted">
-            Timeline: {active} — {activeClip.title}
+            On timeline: Variant {active} ({activeClip.title})
           </div>
         )}
       </li>
