@@ -838,36 +838,111 @@ export async function mergeClipsLossless(
   for (const [index, clip] of clips.entries()) {
     const outName = `lossless-${index}.mp4`;
     const clipDuration = getClipDuration(clip);
+    const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     onStatus(`Fast copy [${index + 1}/${clips.length}]: "${clip.title}"...`);
 
-    // Build the base seek + input args (shared between both attempts).
-    const seekArgs: string[] = [];
-    if (clip.trimStart > 0) seekArgs.push("-ss", String(clip.trimStart));
-    seekArgs.push("-i", clip.inputName!);
+    let primaryArgs: string[];
+    let silentAudioArgs: string[];
 
-    const durationArgs: string[] = Number.isFinite(clip.trimEnd)
-      ? ["-t", String(clipDuration)]
-      : [];
-    const codecTail: string[] = [
-      "-c:v",
-      "copy",
-      "-c:a",
-      "aac",
-      "-ar",
-      "44100",
-      "-ac",
-      "2",
-      "-b:a",
-      "192k",
-      "-avoid_negative_ts",
-      "make_zero",
-      outName,
-    ];
+    if (clip.trimStart > 0) {
+      // `-ss` before `-i` combined with `-c:v copy` can't cut mid-GOP: ffmpeg
+      // rounds the seek down to the keyframe at/before trimStart and re-includes
+      // everything from that keyframe up to trimStart in the output, while
+      // -avoid_negative_ts make_zero collapses that leading span to PTS=0. The
+      // re-encoded audio track *does* seek accurately to trimStart, so the
+      // result is a silent video-only lead-in showing the footage the user
+      // trimmed away — a frozen/paused start to the render. Re-encode the
+      // video via trim+setpts for clips with a non-zero trim-in so both
+      // streams start exactly at trimStart.
+      const videoFilter = `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS[vout]`;
+      const audioFilter = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo[aout]`;
+      const encodeTail: string[] = [
+        "-c:v",
+        "libx264",
+        "-crf",
+        "16",
+        "-preset",
+        "veryfast",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-b:a",
+        "192k",
+        outName,
+      ];
+      primaryArgs = [
+        "-i",
+        clip.inputName!,
+        "-filter_complex",
+        `${videoFilter};${audioFilter}`,
+        "-map",
+        "[vout]",
+        "-map",
+        "[aout]",
+        ...encodeTail,
+      ];
+      silentAudioArgs = [
+        "-i",
+        clip.inputName!,
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=44100:cl=stereo",
+        "-filter_complex",
+        videoFilter,
+        "-map",
+        "[vout]",
+        "-map",
+        "1:a",
+        "-t",
+        String(clipDuration),
+        ...encodeTail,
+      ];
+    } else {
+      const durationArgs: string[] = Number.isFinite(clip.trimEnd)
+        ? ["-t", String(clipDuration)]
+        : [];
+      const codecTail: string[] = [
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-ar",
+        "44100",
+        "-ac",
+        "2",
+        "-b:a",
+        "192k",
+        "-avoid_negative_ts",
+        "make_zero",
+        outName,
+      ];
+      primaryArgs = ["-i", clip.inputName!, ...durationArgs, ...codecTail];
+      silentAudioArgs = [
+        "-i",
+        clip.inputName!,
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=44100:cl=stereo",
+        "-map",
+        "0:v",
+        "-map",
+        "1:a",
+        ...durationArgs,
+        ...codecTail,
+      ];
+    }
 
     try {
       await safeExec(
         ffmpeg,
-        [...seekArgs, ...durationArgs, ...codecTail],
+        primaryArgs,
         null,
         `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}"`,
       );
@@ -880,19 +955,7 @@ export async function mergeClipsLossless(
       onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
       await safeExec(
         ffmpeg,
-        [
-          ...seekArgs,
-          "-f",
-          "lavfi",
-          "-i",
-          "anullsrc=r=44100:cl=stereo",
-          "-map",
-          "0:v",
-          "-map",
-          "1:a",
-          ...durationArgs,
-          ...codecTail,
-        ],
+        silentAudioArgs,
         null,
         `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}" (silent audio)`,
       );
