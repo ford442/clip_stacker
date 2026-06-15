@@ -103,6 +103,7 @@ export function useProjectSaveLoad({
           textOverlays: loadedOverlays,
           skippedClipCount,
           skippedClipFileNames,
+          invalidColorWarnings,
         } = await applyProjectData(parsed, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
@@ -114,6 +115,9 @@ export function useProjectSaveLoad({
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
+        }
+        if (invalidColorWarnings.length > 0) {
+          msg += ` ⚠️ ${invalidColorWarnings.join(" ")}`;
         }
         setStatus(msg);
       } catch (error) {
@@ -213,6 +217,7 @@ export function useProjectSaveLoad({
           textOverlays: loadedOverlays,
           skippedClipCount,
           skippedClipFileNames,
+          invalidColorWarnings,
         } = await loadRemoteProject(client, projectName, clips, {
           onProgress: (event: RemoteProjectLoadProgressEvent) => {
             setRemoteLoadStage(event.stage);
@@ -237,6 +242,9 @@ export function useProjectSaveLoad({
         let msg = `Remote project loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
+        }
+        if (invalidColorWarnings.length > 0) {
+          msg += ` ⚠️ ${invalidColorWarnings.join(" ")}`;
         }
         setStatus(msg);
       } catch (error) {

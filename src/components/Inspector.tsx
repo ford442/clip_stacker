@@ -3,6 +3,7 @@ import type { Clip, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { sanitizeFilename } from '../utils/filename';
 import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
+import { isOverlayOffCanvas } from '../utils/project';
 import { extractWaveformPeaks } from '../utils/waveform';
 import { WaveformCanvas } from './WaveformCanvas';
 
@@ -21,6 +22,7 @@ interface ClipValues {
   width: string;
   height: string;
   opacity: string;
+  volume: string;
 }
 
 interface Props {
@@ -44,6 +46,7 @@ const DEFAULT_LAYOUT_VALUES = {
   width: 0,
   height: 0,
   opacity: 1,
+  volume: 1,
 } as const;
 const MIN_INSPECTOR_THUMBNAILS = 4;
 const MAX_INSPECTOR_THUMBNAILS = 8;
@@ -63,14 +66,15 @@ function formatSeconds(value: number): string {
   return String(Number(value.toFixed(2)));
 }
 
-function hasAdvancedLayoutValues(values: Pick<ClipValues, 'layerIndex' | 'x' | 'y' | 'width' | 'height' | 'opacity'>): boolean {
+function hasAdvancedLayoutValues(values: Pick<ClipValues, 'layerIndex' | 'x' | 'y' | 'width' | 'height' | 'opacity' | 'volume'>): boolean {
   return (
     parseNumber(values.layerIndex, 0) > DEFAULT_LAYOUT_VALUES.layerIndex ||
     parseNumber(values.x, 0) !== DEFAULT_LAYOUT_VALUES.x ||
     parseNumber(values.y, 0) !== DEFAULT_LAYOUT_VALUES.y ||
     parseNumber(values.width, 0) !== DEFAULT_LAYOUT_VALUES.width ||
     parseNumber(values.height, 0) !== DEFAULT_LAYOUT_VALUES.height ||
-    parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity
+    parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity ||
+    parseNumber(values.volume, 1) !== DEFAULT_LAYOUT_VALUES.volume
   );
 }
 
@@ -136,6 +140,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
     width: '0',
     height: '0',
     opacity: '1',
+    volume: '1',
   });
 
   useEffect(() => {
@@ -154,6 +159,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
       width: String(clip.width ?? 0),
       height: String(clip.height ?? 0),
       opacity: String(clip.opacity ?? 1),
+      volume: String(clip.volume ?? 1),
     });
     setAdvancedOpen(
       hasAdvancedLayoutValues({
@@ -163,6 +169,7 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
         width: String(clip.width ?? 0),
         height: String(clip.height ?? 0),
         opacity: String(clip.opacity ?? 1),
+        volume: String(clip.volume ?? 1),
       }),
     );
   }, [clip]);
@@ -243,6 +250,17 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
   }, [exportSettings]);
 
   const hasAdvancedLayout = useMemo(() => hasAdvancedLayoutValues(values), [values]);
+  const overlayOffCanvas = useMemo(
+    () =>
+      parseNumber(values.layerIndex, 0) > 0 &&
+      isOverlayOffCanvas({
+        x: parseNumber(values.x, 0),
+        y: parseNumber(values.y, 0),
+        width: parseNumber(values.width, 0),
+        height: parseNumber(values.height, 0),
+      }),
+    [values],
+  );
   const trimDuration = clip ? Math.max(MIN_CLIP_DURATION, clip.duration) : MIN_CLIP_DURATION;
   const trimStart = clip ? clamp(parseNumber(values.trimStart, 0), 0, Math.max(0, trimDuration - MIN_CLIP_DURATION)) : 0;
   const trimEnd = clip
@@ -565,17 +583,61 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
                   onChange={(e) => update('height', e.target.value)}
                 />
               </label>
-              <label title="Opacity of the overlay from 0.0 (transparent) to 1.0 (fully opaque).">
-                Opacity (0–1)
-                <input
-                  type="number"
-                  min="0"
-                  max="1"
-                  step="0.05"
-                  value={values.opacity}
-                  onChange={(e) => update('opacity', e.target.value)}
-                />
-              </label>
+              {overlayOffCanvas && (
+                <p className="inspector-warning">
+                  ⚠ This overlay is positioned fully off-canvas and won't be visible in the
+                  render. Adjust the X/Y offsets so it overlaps the canvas.
+                </p>
+              )}
+              {parseNumber(values.layerIndex, 0) > 0 && (
+                <label title="Opacity of the overlay from 0.0 (transparent) to 1.0 (fully opaque).">
+                  Opacity (0–1)
+                  <input
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.05"
+                    value={values.opacity}
+                    onChange={(e) => update('opacity', e.target.value)}
+                  />
+                </label>
+              )}
+              {parseNumber(values.layerIndex, 0) > 0 && (
+                <label title="Volume of this overlay's audio relative to the base track. 0 mutes it, 1 is unchanged, values above 1 boost it.">
+                  Overlay volume (0–2)
+                  <input
+                    type="number"
+                    min="0"
+                    max="2"
+                    step="0.05"
+                    value={values.volume}
+                    onChange={(e) => update('volume', e.target.value)}
+                  />
+                </label>
+              )}
+              {parseNumber(values.layerIndex, 0) > 0 && (
+                <label
+                  className="inspector-checkbox-label"
+                  title="Mute this overlay's audio entirely."
+                >
+                  <input
+                    type="checkbox"
+                    checked={parseNumber(values.volume, 1) <= 0}
+                    onChange={(e) =>
+                      update('volume', e.target.checked ? '0' : '1')
+                    }
+                  />
+                  Mute overlay audio
+                </label>
+              )}
+              {parseNumber(values.layerIndex, 0) === 0 &&
+                (parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity ||
+                  parseNumber(values.volume, 1) !== DEFAULT_LAYOUT_VALUES.volume) && (
+                  <p className="inspector-hint">
+                    Opacity and overlay volume only apply to overlay layers (layer index
+                    1+) and are ignored for the base layer.
+                  </p>
+                )}
             </div>
           </details>
         )}

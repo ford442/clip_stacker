@@ -640,6 +640,7 @@ export function App() {
             width: Math.max(0, Number(values.width || 0)),
             height: Math.max(0, Number(values.height || 0)),
             opacity: Math.min(1, Math.max(0, Number(values.opacity ?? 1))),
+            volume: Math.min(2, Math.max(0, Number(values.volume ?? 1))),
           };
           sanitizeClipAdjustments(updated);
           return updated;

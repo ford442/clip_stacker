@@ -8,7 +8,7 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration, clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
 import { buildTransitionFilterComplex, XFADE_MAP } from "../utils/transitions";
 import {
   isFfmpegLoadFailed,
@@ -44,6 +44,9 @@ import {
   ensureFfmpeg,
   ensureFont,
   buildDrawtextFilter,
+  appendTextOverlayFilters,
+  writeTextOverlayFiles,
+  cleanupTextOverlayFiles,
   mergeClipsLossless,
   performTwoPassEncode,
   processClipPass1,
@@ -78,6 +81,7 @@ import {
 export function buildPipFilterComplex(
   clips: Clip[],
   transitions: ClipTransition[] = [],
+  onWarning?: (message: string) => void,
 ): string {
   const parts: string[] = [];
 
@@ -209,16 +213,31 @@ export function buildPipFilterComplex(
 
   for (let o = 0; o < overlayEntries.length; o++) {
     const { c: clip, i: idx } = overlayEntries[o];
-    const x = clip.x ?? 0;
-    const y = clip.y ?? 0;
+    if (isOverlayOffCanvas(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT)) {
+      onWarning?.(
+        `Overlay clip ${idx + 1} is positioned fully off-canvas (x=${clip.x ?? 0}, y=${clip.y ?? 0}) and will not be visible. Its position has been clamped back into view.`,
+      );
+    }
+    const { x, y } = clampOverlayPosition(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT);
     const isLast = o === overlayEntries.length - 1;
-    const outV = isLast ? "vout" : `vcomp${o}`;
+    const outV = isLast ? "vout" : `vcomp${idx}`;
 
     parts.push(
       `[${currentV}][v${idx}]overlay=${x}:${y}:eof_action=pass[${outV}]`,
     );
     currentV = outV;
-    audioStreams.push(`a${idx}`);
+
+    // Apply per-overlay volume (0 = muted) before mixing with the base audio.
+    const volume = clip.volume ?? 1;
+    if (volume <= 0) {
+      // Muted: drop this overlay's audio from the mix entirely.
+    } else if (volume !== 1) {
+      const outA = `a${idx}vol`;
+      parts.push(`[a${idx}]volume=${volume.toFixed(4)}[${outA}]`);
+      audioStreams.push(outA);
+    } else {
+      audioStreams.push(`a${idx}`);
+    }
   }
 
   // When there are no overlay clips the base video is already the final output
@@ -248,52 +267,67 @@ export async function mergeClipsWithCompositing(
   totalDuration: number,
   onProgress?: ProgressCallback,
   transitions: ClipTransition[] = [],
+  textOverlays: TextOverlay[] = [],
 ): Promise<void> {
   onStatus("Building PiP/compositing render...");
   emitProgress(onProgress, "FFmpeg PiP/compositing render", 0.15, false);
 
-  const filterComplex = buildPipFilterComplex(clips, transitions);
+  let filterComplex = buildPipFilterComplex(clips, transitions, (message) =>
+    onStatus(`Warning: ${message}`),
+  );
+
+  if (textOverlays.length > 0) {
+    await ensureFont(ffmpeg, onStatus);
+    await writeTextOverlayFiles(ffmpeg, textOverlays);
+    filterComplex = appendTextOverlayFilters(filterComplex, textOverlays);
+  }
 
   const inputArgs: string[] = [];
   for (const clip of clips) {
     inputArgs.push("-i", clip.inputName!);
   }
 
-  await safeExec(
-    ffmpeg,
-    [
-      ...inputArgs,
-      "-filter_complex",
-      filterComplex,
-      "-map",
-      "[vout]",
-      "-map",
-      "[aout]",
-      "-r",
-      "30",
-      "-c:v",
-      "libx264",
-      "-crf",
-      String(settings.crf),
-      "-preset",
-      settings.preset,
-      "-pix_fmt",
-      "yuv420p",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "stacked.mp4",
-    ],
-    {
-      stage: "FFmpeg PiP/compositing render",
-      totalDuration,
-      rangeStart: 0.15,
-      rangeEnd: 0.95,
-      onProgress,
-    },
-    "PiP/compositing filter_complex render",
-  );
+  try {
+    await safeExec(
+      ffmpeg,
+      [
+        ...inputArgs,
+        "-filter_complex",
+        filterComplex,
+        "-map",
+        "[vout]",
+        "-map",
+        "[aout]",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-crf",
+        String(settings.crf),
+        "-preset",
+        settings.preset,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "stacked.mp4",
+      ],
+      {
+        stage: "FFmpeg PiP/compositing render",
+        totalDuration,
+        rangeStart: 0.15,
+        rangeEnd: 0.95,
+        onProgress,
+      },
+      "PiP/compositing filter_complex render",
+    );
+  } finally {
+    if (textOverlays.length > 0) {
+      await cleanupTextOverlayFiles(ffmpeg, textOverlays);
+    }
+  }
 }
 
 /**

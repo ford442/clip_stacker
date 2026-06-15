@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { TextOverlay } from "../types";
+import { isValidFfmpegColor } from "../utils/color";
 
 interface Props {
   overlays: TextOverlay[];
@@ -132,6 +133,12 @@ export function TextOverlayPanel({
                           placeholder="white"
                         />
                       </div>
+                      {!isValidFfmpegColor(overlay.fontcolor) && (
+                        <p className="inspector-warning">
+                          ⚠ "{overlay.fontcolor}" isn't a color FFmpeg recognizes.
+                          Use a named color (e.g. "white"), "#RRGGBB", or "0xRRGGBB".
+                        </p>
+                      )}
                     </label>
                   </div>
 
@@ -229,6 +236,13 @@ export function TextOverlayPanel({
                         }
                         placeholder="black@0.5"
                       />
+                      {!isValidFfmpegColor(overlay.boxColor) && (
+                        <p className="inspector-warning">
+                          ⚠ "{overlay.boxColor}" isn't a color FFmpeg recognizes.
+                          Use a named color (e.g. "black@0.5"), "#RRGGBB", or
+                          "0xRRGGBB", optionally with "@alpha".
+                        </p>
+                      )}
                     </label>
                   )}
 

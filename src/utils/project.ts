@@ -10,6 +10,7 @@ import type {
   SerializedClipGroup,
 } from '../types';
 import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
+import { sanitizeFfmpegColor } from './color';
 
 const FADE_SAFETY_MARGIN = 0.01;
 
@@ -19,6 +20,46 @@ export const MAX_UPLOAD_RETRY_ATTEMPTS = 5;
 export function getClipDuration(clip: Clip): number {
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   return Math.max(MIN_CLIP_DURATION, end - clip.trimStart);
+}
+
+/** Default compositing canvas size (matches OUTPUT_WIDTH/OUTPUT_HEIGHT in ffmpeg/core). */
+export const DEFAULT_CANVAS_WIDTH = 1280;
+export const DEFAULT_CANVAS_HEIGHT = 720;
+
+/**
+ * Clamp a PiP overlay's x/y position so that at least one pixel of the
+ * overlay remains within the canvas bounds, preventing it from being
+ * positioned fully off-screen.
+ */
+export function clampOverlayPosition(
+  clip: Pick<Clip, 'x' | 'y' | 'width' | 'height'>,
+  canvasWidth: number = DEFAULT_CANVAS_WIDTH,
+  canvasHeight: number = DEFAULT_CANVAS_HEIGHT,
+): { x: number; y: number } {
+  const overlayW = clip.width && clip.width > 0 ? clip.width : canvasWidth;
+  const overlayH = clip.height && clip.height > 0 ? clip.height : canvasHeight;
+  const x = clip.x ?? 0;
+  const y = clip.y ?? 0;
+  return {
+    x: Math.min(Math.max(x, -(overlayW - 1)), canvasWidth - 1),
+    y: Math.min(Math.max(y, -(overlayH - 1)), canvasHeight - 1),
+  };
+}
+
+/**
+ * Returns true if a PiP overlay's configured x/y position would place it
+ * entirely outside the canvas (i.e. fully invisible in the render).
+ */
+export function isOverlayOffCanvas(
+  clip: Pick<Clip, 'x' | 'y' | 'width' | 'height'>,
+  canvasWidth: number = DEFAULT_CANVAS_WIDTH,
+  canvasHeight: number = DEFAULT_CANVAS_HEIGHT,
+): boolean {
+  const overlayW = clip.width && clip.width > 0 ? clip.width : canvasWidth;
+  const overlayH = clip.height && clip.height > 0 ? clip.height : canvasHeight;
+  const x = clip.x ?? 0;
+  const y = clip.y ?? 0;
+  return x + overlayW <= 0 || x >= canvasWidth || y + overlayH <= 0 || y >= canvasHeight;
 }
 
 export function sanitizeClipAdjustments(clip: Clip): void {
@@ -66,7 +107,7 @@ export function serializeProject(
         processedFps: clip.processedFps,
         rifeMode: clip.rifeMode,
       } : {}),
-      ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1)
+      ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1) || (clip.volume != null && clip.volume !== 1)
         ? {
             layerIndex: clip.layerIndex ?? 0,
             x: clip.x ?? 0,
@@ -74,6 +115,7 @@ export function serializeProject(
             width: clip.width ?? 0,
             height: clip.height ?? 0,
             opacity: clip.opacity ?? 1,
+            volume: clip.volume ?? 1,
           }
         : {}),
     })),
@@ -126,6 +168,8 @@ export interface AppliedProjectData {
   textOverlays: TextOverlay[];
   skippedClipCount: number;
   skippedClipFileNames: string[];
+  /** Human-readable descriptions of invalid color values that were reset to defaults. */
+  invalidColorWarnings: string[];
 }
 
 export interface RemoteProjectLoadProgressEvent {
@@ -493,6 +537,7 @@ export async function applyProjectData(
     if (savedClip.width != null) liveClip.width = Number(savedClip.width);
     if (savedClip.height != null) liveClip.height = Number(savedClip.height);
     if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
+    if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
   }
@@ -530,22 +575,40 @@ export async function applyProjectData(
       }))
     : [];
 
+  const invalidColorWarnings: string[] = [];
   const textOverlays: TextOverlay[] = Array.isArray(project.textOverlays)
-    ? project.textOverlays.map((o) => ({
-        id: String(o.id ?? ''),
-        text: String(o.text ?? ''),
-        fontsize: Number(o.fontsize ?? 40),
-        fontcolor: String(o.fontcolor ?? '#ffffff'),
-        x: Number(o.x ?? 50),
-        y: Number(o.y ?? 650),
-        scrolling: Boolean(o.scrolling),
-        scrollSpeed: Number(o.scrollSpeed ?? 100),
-        box: Boolean(o.box),
-        boxColor: String(o.boxColor ?? 'black@0.5'),
-      }))
+    ? project.textOverlays.map((o, index) => {
+        const label = o.text ? `"${String(o.text).slice(0, 20)}"` : `#${index + 1}`;
+        const rawFontcolor = String(o.fontcolor ?? '#ffffff');
+        const fontcolor = sanitizeFfmpegColor(rawFontcolor, '#ffffff');
+        if (fontcolor !== rawFontcolor) {
+          invalidColorWarnings.push(
+            `Text overlay ${label}: invalid font color "${rawFontcolor}" reset to ${fontcolor}.`,
+          );
+        }
+        const rawBoxColor = String(o.boxColor ?? 'black@0.5');
+        const boxColor = sanitizeFfmpegColor(rawBoxColor, 'black@0.5');
+        if (boxColor !== rawBoxColor) {
+          invalidColorWarnings.push(
+            `Text overlay ${label}: invalid box color "${rawBoxColor}" reset to ${boxColor}.`,
+          );
+        }
+        return {
+          id: String(o.id ?? ''),
+          text: String(o.text ?? ''),
+          fontsize: Number(o.fontsize ?? 40),
+          fontcolor,
+          x: Number(o.x ?? 50),
+          y: Number(o.y ?? 650),
+          scrolling: Boolean(o.scrolling),
+          scrollSpeed: Number(o.scrollSpeed ?? 100),
+          box: Boolean(o.box),
+          boxColor,
+        };
+      })
     : [];
 
-  return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount, skippedClipFileNames };
+  return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount, skippedClipFileNames, invalidColorWarnings };
 }
 
 export async function loadRemoteProject(

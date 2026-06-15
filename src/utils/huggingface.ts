@@ -51,9 +51,10 @@ export async function processClipWithRIFE(
     message: "Uploading clip to RIFE…",
   });
 
-  // The 1inkusFace/RIFE space API accepts:
+  // The 1inkusFace/RIFE space exposes its frame-interpolation endpoint as
+  // "/interpolate_video", accepting:
   //   - video: file handle / blob
-  //   - multiplier: number (e.g. 2 or 4)
+  //   - multiplier: string ("2", "4", or "8")
   //   - boomerang: boolean
   const isBoomerang = mode === "boomerang";
 
@@ -65,9 +66,9 @@ export async function processClipWithRIFE(
       message: "Processing with RIFE…",
     });
 
-    result = (await client.predict("/predict", {
+    result = (await client.predict("/interpolate_video", {
       video: videoBlob,
-      multiplier,
+      multiplier: String(multiplier),
       boomerang: isBoomerang,
     })) as { data: unknown[] };
   } catch (err: unknown) {

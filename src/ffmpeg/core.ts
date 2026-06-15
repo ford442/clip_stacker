@@ -10,6 +10,7 @@ import type {
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
 import { buildTransitionFilterComplex } from "../utils/transitions";
+import { isValidFfmpegColor } from "../utils/color";
 
 export const DEFAULT_VIDEO_SIZE = "1280x720";
 export const OUTPUT_WIDTH = 1280;
@@ -796,6 +797,19 @@ export async function ensureFont(
  * The overlay's text is written to a named temp file to avoid escaping issues.
  */
 export function buildDrawtextFilter(overlay: TextOverlay): string {
+  if (!isValidFfmpegColor(overlay.fontcolor)) {
+    throw new Error(
+      `Text overlay "${overlay.text.slice(0, 20)}" has an invalid font color: "${overlay.fontcolor}". ` +
+        `Use a named color (e.g. "white"), "#RRGGBB", or "0xRRGGBB".`,
+    );
+  }
+  if (overlay.box && !isValidFfmpegColor(overlay.boxColor)) {
+    throw new Error(
+      `Text overlay "${overlay.text.slice(0, 20)}" has an invalid box color: "${overlay.boxColor}". ` +
+        `Use a named color (e.g. "black@0.5"), "#RRGGBB", or "0xRRGGBB", optionally with "@alpha".`,
+    );
+  }
+
   const x = overlay.scrolling
     ? `w+tw-(t*${overlay.scrollSpeed})`
     : String(overlay.x);
@@ -814,6 +828,56 @@ export function buildDrawtextFilter(overlay: TextOverlay): string {
   }
 
   return `drawtext=${parts.join(":")}`;
+}
+
+/**
+ * Append drawtext filters for the given text overlays onto the final video
+ * output of a filter_complex graph, so text rendering happens in the same
+ * encode pass as the composite/transition render instead of a second
+ * full re-encode.
+ *
+ * Renames the graph's existing `[vout]` sink to `[vpretext]` and chains the
+ * drawtext filters from there back onto `[vout]`. Assumes `[vout]` is the
+ * sole final video sink label (true for buildPipFilterComplex and
+ * buildTransitionFilterComplex).
+ */
+export function appendTextOverlayFilters(
+  filterComplex: string,
+  textOverlays: TextOverlay[],
+): string {
+  if (textOverlays.length === 0) return filterComplex;
+  const drawtextChain = textOverlays.map(buildDrawtextFilter).join(",");
+  const rewritten = filterComplex.replace(/\[vout\]/g, "[vpretext]");
+  return `${rewritten};[vpretext]${drawtextChain}[vout]`;
+}
+
+/** Write each text overlay's text content to a temp file for drawtext's `textfile=` option. */
+export async function writeTextOverlayFiles(
+  ffmpeg: FFmpeg,
+  textOverlays: TextOverlay[],
+): Promise<void> {
+  for (const overlay of textOverlays) {
+    await safeWriteFile(
+      ffmpeg,
+      `tol_${overlay.id}.txt`,
+      overlay.text,
+      "text overlay txt",
+    );
+  }
+}
+
+/** Remove the temp text files written by {@link writeTextOverlayFiles}. */
+export async function cleanupTextOverlayFiles(
+  ffmpeg: FFmpeg,
+  textOverlays: TextOverlay[],
+): Promise<void> {
+  for (const overlay of textOverlays) {
+    try {
+      await ffmpeg.deleteFile(`tol_${overlay.id}.txt`);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 // Fast path: copy video streams (no decode/encode) but normalize audio to AAC.
@@ -1225,50 +1289,64 @@ export async function mergeClipsWithTransitions(
   onStatus: StatusCallback,
   totalDuration: number,
   onProgress?: ProgressCallback,
+  textOverlays: TextOverlay[] = [],
 ): Promise<void> {
   onStatus("Building transition render...");
   emitProgress(onProgress, "FFmpeg transition render", 0.15, false);
+
+  let effectiveFilterComplex = filterComplex;
+  if (textOverlays.length > 0) {
+    await ensureFont(ffmpeg, onStatus);
+    await writeTextOverlayFiles(ffmpeg, textOverlays);
+    effectiveFilterComplex = appendTextOverlayFilters(filterComplex, textOverlays);
+  }
 
   const inputArgs: string[] = [];
   for (const clip of clips) {
     inputArgs.push("-i", clip.inputName!);
   }
 
-  await safeExec(
-    ffmpeg,
-    [
-      ...inputArgs,
-      "-filter_complex",
-      filterComplex,
-      "-map",
-      "[vout]",
-      "-map",
-      "[aout]",
-      "-r",
-      "30",
-      "-c:v",
-      "libx264",
-      "-crf",
-      String(settings.crf),
-      "-preset",
-      settings.preset,
-      "-pix_fmt",
-      "yuv420p",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "stacked.mp4",
-    ],
-    {
-      stage: "FFmpeg transition render",
-      totalDuration,
-      rangeStart: 0.15,
-      rangeEnd: 0.95,
-      onProgress,
-    },
-    "Transition filter_complex render",
-  );
+  try {
+    await safeExec(
+      ffmpeg,
+      [
+        ...inputArgs,
+        "-filter_complex",
+        effectiveFilterComplex,
+        "-map",
+        "[vout]",
+        "-map",
+        "[aout]",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-crf",
+        String(settings.crf),
+        "-preset",
+        settings.preset,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "stacked.mp4",
+      ],
+      {
+        stage: "FFmpeg transition render",
+        totalDuration,
+        rangeStart: 0.15,
+        rangeEnd: 0.95,
+        onProgress,
+      },
+      "Transition filter_complex render",
+    );
+  } finally {
+    if (textOverlays.length > 0) {
+      await cleanupTextOverlayFiles(ffmpeg, textOverlays);
+    }
+  }
 }
 
 /**

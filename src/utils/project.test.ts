@@ -360,6 +360,62 @@ describe("utils/project", () => {
       expect(result.transitions[0].duration).toBe(0.5);
     });
 
+    it("should sanitize invalid text overlay colors and report a warning", async () => {
+      const sourceClips = [createTestClip("a", 5)];
+
+      const project: Project = {
+        clips: [],
+        textOverlays: [
+          {
+            id: "ov1",
+            text: "Hello",
+            fontsize: 40,
+            fontcolor: "notacolor",
+            x: 50,
+            y: 650,
+            scrolling: false,
+            scrollSpeed: 100,
+            box: true,
+            boxColor: "also-bad",
+          },
+        ],
+      };
+
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.textOverlays[0].fontcolor).toBe("#ffffff");
+      expect(result.textOverlays[0].boxColor).toBe("black@0.5");
+      expect(result.invalidColorWarnings).toHaveLength(2);
+      expect(result.invalidColorWarnings[0]).toContain("notacolor");
+      expect(result.invalidColorWarnings[1]).toContain("also-bad");
+    });
+
+    it("should leave valid text overlay colors untouched", async () => {
+      const sourceClips = [createTestClip("a", 5)];
+
+      const project: Project = {
+        clips: [],
+        textOverlays: [
+          {
+            id: "ov1",
+            text: "Hello",
+            fontsize: 40,
+            fontcolor: "yellow",
+            x: 50,
+            y: 650,
+            scrolling: false,
+            scrollSpeed: 100,
+            box: false,
+            boxColor: "black@0.5",
+          },
+        ],
+      };
+
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.textOverlays[0].fontcolor).toBe("yellow");
+      expect(result.textOverlays[0].boxColor).toBe("black@0.5");
+      expect(result.invalidColorWarnings).toHaveLength(0);
+    });
+
     it("should throw error if project is invalid", async () => {
       const sourceClips = [createTestClip("a", 5)];
       const invalidProject = { clips: null } as unknown as Project;

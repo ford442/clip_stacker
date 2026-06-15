@@ -44,6 +44,8 @@ import {
   ensureFfmpeg,
   ensureFont,
   buildDrawtextFilter,
+  writeTextOverlayFiles,
+  cleanupTextOverlayFiles,
   mergeClipsLossless,
   performTwoPassEncode,
   processClipPass1,
@@ -171,6 +173,10 @@ export async function mergeClips(
   const shouldForceReencodeNow =
     forceReencode && renderPlan.path === "lossless-concat";
 
+  // PiP/compositing and transition renders apply text overlays directly in
+  // their filter_complex, avoiding a second full re-encode pass.
+  let textOverlaysApplied = false;
+
   try {
     if (hasPipClips) {
       // PiP / compositing path — overlay clips on top of the base layer
@@ -183,7 +189,9 @@ export async function mergeClips(
         totalDuration,
         onProgress,
         activeTransitions,
+        textOverlays,
       );
+      textOverlaysApplied = textOverlays.length > 0;
     } else if (transitionFilterComplex) {
       // Single-pass filter_complex render covering all clips + transitions
       onStatus(`FFmpeg path: ${effectivePlan.description}`);
@@ -196,7 +204,9 @@ export async function mergeClips(
         onStatus,
         totalDuration,
         onProgress,
+        textOverlays,
       );
+      textOverlaysApplied = textOverlays.length > 0;
     } else if (shouldForceReencodeNow) {
       // Force re-encode even though lossless would be used
       onStatus(`FFmpeg path: ${effectivePlan.description}. Starting export...`);
@@ -238,21 +248,14 @@ export async function mergeClips(
   }
 
   // ── Text overlay post-processing ──────────────────────────────────────────
-  // Apply drawtext filters on top of the composed stacked.mp4 when overlays exist.
+  // For paths that didn't already bake drawtext into their filter_complex
+  // (lossless concat / two-pass re-encode), apply it as a final pass on top
+  // of the composed stacked.mp4.
   let finalFileName = "stacked.mp4";
 
-  if (textOverlays.length > 0) {
+  if (textOverlays.length > 0 && !textOverlaysApplied) {
     await ensureFont(ffmpeg, onStatus);
-
-    // Write each overlay's text to a dedicated temp file to avoid escaping issues.
-    for (const overlay of textOverlays) {
-      await safeWriteFile(
-        ffmpeg,
-        `tol_${overlay.id}.txt`,
-        overlay.text,
-        "text overlay txt",
-      );
-    }
+    await writeTextOverlayFiles(ffmpeg, textOverlays);
 
     const vfFilter = textOverlays.map(buildDrawtextFilter).join(",");
     onStatus("Applying text overlays...");
@@ -287,14 +290,7 @@ export async function mergeClips(
       "Text overlay drawtext pass",
     );
 
-    // Clean up temp text files.
-    for (const overlay of textOverlays) {
-      try {
-        await ffmpeg.deleteFile(`tol_${overlay.id}.txt`);
-      } catch {
-        /* ignore */
-      }
-    }
+    await cleanupTextOverlayFiles(ffmpeg, textOverlays);
 
     try {
       await ffmpeg.deleteFile("stacked.mp4");

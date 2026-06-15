@@ -67,6 +67,28 @@
   margin: 0;
 }
 
+.inspector-warning {
+  font-size: 0.75rem;
+  color: var(--warning);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.inspector-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.inspector-checkbox-label input[type="checkbox"] {
+  accent-color: var(--gold);
+  cursor: pointer;
+  width: auto;
+}
+
 .inspector-trim-visual-group {
   display: grid;
   gap: 0.45rem;

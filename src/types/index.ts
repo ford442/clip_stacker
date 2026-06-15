@@ -52,6 +52,8 @@ export interface Clip {
   height?: number;
   /** Overlay opacity from 0.0 (transparent) to 1.0 (fully opaque). */
   opacity?: number;
+  /** Overlay audio volume multiplier (0 = muted, 1 = unchanged, 2 = double). */
+  volume?: number;
 }
 
 export interface SerializedClip {
@@ -97,6 +99,7 @@ export interface SerializedClip {
   width?: number;
   height?: number;
   opacity?: number;
+  volume?: number;
 }
 
 export type TransitionType = 'none' | 'dissolve' | 'motion';

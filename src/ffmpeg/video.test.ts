@@ -1,6 +1,23 @@
 import { describe, it, expect } from "vitest";
-import type { Clip, ClipTransition } from "../types";
+import type { Clip, ClipTransition, TextOverlay } from "../types";
 import { buildPipFilterComplex } from "./video";
+import { appendTextOverlayFilters } from "./core";
+
+function createTestOverlay(id: string, overrides: Partial<TextOverlay> = {}): TextOverlay {
+  return {
+    id,
+    text: "Hello",
+    fontsize: 24,
+    fontcolor: "white",
+    x: 10,
+    y: 10,
+    scrolling: false,
+    scrollSpeed: 0,
+    box: false,
+    boxColor: "black@0.5",
+    ...overrides,
+  };
+}
 
 // Helper to create a minimal test clip
 function createTestClip(
@@ -84,6 +101,53 @@ describe("buildPipFilterComplex", () => {
     const clips = [createTestClip("pip", 4, { layerIndex: 1 })];
     expect(() => buildPipFilterComplex(clips)).toThrow(
       /requires at least one base-layer clip/,
+    );
+  });
+
+  it("mutes overlay audio when volume is 0", () => {
+    const clips = [
+      createTestClip("a", 5),
+      createTestClip("pip", 4, { layerIndex: 1, x: 10, y: 20, volume: 0 }),
+    ];
+
+    const filterComplex = buildPipFilterComplex(clips);
+
+    // Overlay audio stream [a1] should not be fed into the final mix
+    expect(filterComplex).not.toContain("volume=");
+    const finalAudioLine = filterComplex
+      .split(";")
+      .find((part) => part.endsWith("[aout]"));
+    expect(finalAudioLine).not.toContain("[a1]");
+  });
+
+  it("applies a volume filter to overlay audio when volume differs from 1", () => {
+    const clips = [
+      createTestClip("a", 5),
+      createTestClip("pip", 4, { layerIndex: 1, x: 10, y: 20, volume: 0.5 }),
+    ];
+
+    const filterComplex = buildPipFilterComplex(clips);
+
+    expect(filterComplex).toContain("[a1]volume=0.5000[a1vol]");
+    expect(filterComplex).toContain("amix=inputs=2:normalize=0[aout]");
+    expect(filterComplex).toContain("[a1vol]");
+  });
+});
+
+describe("appendTextOverlayFilters", () => {
+  it("returns the filter_complex unchanged when there are no text overlays", () => {
+    const filterComplex = "[0:v]null[vout];[0:a]anull[aout]";
+    expect(appendTextOverlayFilters(filterComplex, [])).toBe(filterComplex);
+  });
+
+  it("renames the final [vout] sink and chains drawtext filters back onto [vout]", () => {
+    const filterComplex = "[0:v]null[vout];[0:a]anull[aout]";
+    const overlays = [createTestOverlay("a"), createTestOverlay("b")];
+
+    const result = appendTextOverlayFilters(filterComplex, overlays);
+
+    expect(result).toBe(
+      "[0:v]null[vpretext];[0:a]anull[aout];[vpretext]drawtext=fontfile=roboto.ttf:textfile=tol_a.txt:x=10:y=10:fontsize=24:fontcolor=white,drawtext=fontfile=roboto.ttf:textfile=tol_b.txt:x=10:y=10:fontsize=24:fontcolor=white[vout]",
     );
   });
 });
