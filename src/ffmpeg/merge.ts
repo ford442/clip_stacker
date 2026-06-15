@@ -182,6 +182,7 @@ export async function mergeClips(
         onStatus,
         totalDuration,
         onProgress,
+        activeTransitions,
       );
     } else if (transitionFilterComplex) {
       // Single-pass filter_complex render covering all clips + transitions

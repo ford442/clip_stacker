@@ -16,7 +16,7 @@ export const MIN_TRANSITION_DURATION = 0.1;
 export const MAX_TRANSITION_DURATION = 2.0;
 
 /** Map our active transition types to FFmpeg xfade transition names. 'none' is filtered out before this map is consulted. */
-const XFADE_MAP: Partial<Record<TransitionType, string>> = {
+export const XFADE_MAP: Partial<Record<TransitionType, string>> = {
   dissolve: 'fade',
   motion: 'smoothleft',
 };

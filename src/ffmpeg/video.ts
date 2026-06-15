@@ -9,7 +9,7 @@ import type {
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
-import { buildTransitionFilterComplex } from "../utils/transitions";
+import { buildTransitionFilterComplex, XFADE_MAP } from "../utils/transitions";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -75,7 +75,10 @@ import {
   FFMPEG_LOAD_TIMEOUT_MS,
 } from "./core";
 
-export function buildPipFilterComplex(clips: Clip[]): string {
+export function buildPipFilterComplex(
+  clips: Clip[],
+  transitions: ClipTransition[] = [],
+): string {
   const parts: string[] = [];
 
   // ── Phase 1: per-clip pre-processing ────────────────────────────────────────
@@ -144,20 +147,57 @@ export function buildPipFilterComplex(clips: Clip[]): string {
   }
 
   let currentV: string;
-  let baseAudio: string;
+  let currentA: string;
 
   if (baseIndices.length === 1) {
     currentV = `v${baseIndices[0]}`;
-    baseAudio = `a${baseIndices[0]}`;
+    currentA = `a${baseIndices[0]}`;
   } else {
-    // concat expects interleaved [v0][a0][v1][a1]...
-    const segInputs = baseIndices.map((i) => `[v${i}][a${i}]`).join("");
-    parts.push(
-      `${segInputs}concat=n=${baseIndices.length}:v=1:a=1[vbase][abase]`,
+    // Chain the base-layer clips together, honouring crossfade/transition
+    // settings between adjacent base clips, falling back to a hard concat.
+    const activeTransitions = transitions.filter(
+      (t) => t.type !== "none" && t.duration > 0,
     );
-    currentV = "vbase";
-    baseAudio = "abase";
+    const transMap = new Map(activeTransitions.map((t) => [t.afterClipIndex, t]));
+    const durations = clips.map(getClipDuration);
+
+    currentV = `v${baseIndices[0]}`;
+    currentA = `a${baseIndices[0]}`;
+    let accumulated = durations[baseIndices[0]];
+    let overlapSoFar = 0;
+
+    for (let bi = 1; bi < baseIndices.length; bi++) {
+      const idx = baseIndices[bi];
+      const prevIdx = baseIndices[bi - 1];
+      // Only honour a configured transition between clips that are adjacent
+      // in the original timeline order.
+      const t = idx === prevIdx + 1 ? transMap.get(idx) : undefined;
+      const isLast = bi === baseIndices.length - 1;
+      const outV = isLast ? "vbase" : `vbt${bi}`;
+      const outA = isLast ? "abase" : `abt${bi}`;
+
+      if (t) {
+        const offset = Math.max(0, accumulated - overlapSoFar - t.duration);
+        const xfadeType = XFADE_MAP[t.type] ?? "fade";
+        parts.push(
+          `[${currentV}][v${idx}]xfade=transition=${xfadeType}:duration=${t.duration}:offset=${offset.toFixed(4)}[${outV}]`,
+        );
+        parts.push(
+          `[${currentA}][a${idx}]acrossfade=d=${t.duration}[${outA}]`,
+        );
+        overlapSoFar += t.duration;
+      } else {
+        parts.push(`[${currentV}][v${idx}]concat=n=2:v=1:a=0[${outV}]`);
+        parts.push(`[${currentA}][a${idx}]concat=n=2:v=0:a=1[${outA}]`);
+      }
+
+      currentV = outV;
+      currentA = outA;
+      accumulated += durations[idx];
+    }
   }
+
+  const baseAudio = currentA;
 
   // ── Phase 3: overlay each PiP clip in layerIndex order ──────────────────────
   const overlayEntries = clips
@@ -207,11 +247,12 @@ export async function mergeClipsWithCompositing(
   onStatus: StatusCallback,
   totalDuration: number,
   onProgress?: ProgressCallback,
+  transitions: ClipTransition[] = [],
 ): Promise<void> {
   onStatus("Building PiP/compositing render...");
   emitProgress(onProgress, "FFmpeg PiP/compositing render", 0.15, false);
 
-  const filterComplex = buildPipFilterComplex(clips);
+  const filterComplex = buildPipFilterComplex(clips, transitions);
 
   const inputArgs: string[] = [];
   for (const clip of clips) {
