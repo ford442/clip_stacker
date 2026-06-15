@@ -1,6 +1,11 @@
 import { useState } from "react";
 import type { TextOverlay } from "../types";
 import { isValidFfmpegColor } from "../utils/color";
+import {
+  estimateScrollCrossingSeconds,
+  MIN_SCROLL_SPEED,
+  MAX_SCROLL_SPEED,
+} from "../utils/textOverlay";
 
 interface Props {
   overlays: TextOverlay[];
@@ -195,18 +200,21 @@ export function TextOverlayPanel({
                       />
                     </label>
                     {overlay.scrolling && (
-                      <label title="Scroll speed in pixels per second">
-                        Speed (px/s)
+                      <label title="Scroll speed as a percentage of the screen width crossed per second. Resolution-independent: the same value crosses in the same time at any output size.">
+                        Speed (% width/s)
                         <input
                           type="number"
-                          min="10"
-                          max="1000"
-                          step="10"
+                          min={MIN_SCROLL_SPEED}
+                          max={MAX_SCROLL_SPEED}
+                          step="1"
                           value={overlay.scrollSpeed}
                           onChange={(e) =>
                             set(overlay, "scrollSpeed", Number(e.target.value))
                           }
                         />
+                        <span className="tol-scroll-time-hint">
+                          ≈ {estimateScrollCrossingSeconds(overlay.scrollSpeed).toFixed(1)}s to cross
+                        </span>
                       </label>
                     )}
                   </div>

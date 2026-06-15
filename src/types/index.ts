@@ -226,7 +226,11 @@ export interface TextOverlay {
   y: number;
   /** When true the text scrolls right-to-left (news-ticker style) */
   scrolling: boolean;
-  /** Horizontal scroll speed in pixels per second (only used when scrolling is true) */
+  /**
+   * Horizontal scroll speed as a percentage of the output width crossed per
+   * second (only used when scrolling is true). Resolution-independent — a
+   * value of 20 takes ~5 seconds to cross the screen at any output size.
+   */
   scrollSpeed: number;
   /** Whether to draw a filled background box behind the text */
   box: boolean;

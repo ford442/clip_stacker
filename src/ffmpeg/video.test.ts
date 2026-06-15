@@ -150,4 +150,13 @@ describe("appendTextOverlayFilters", () => {
       "[0:v]null[vpretext];[0:a]anull[aout];[vpretext]drawtext=fontfile=roboto.ttf:textfile=tol_a.txt:x=10:y=10:fontsize=24:fontcolor=white,drawtext=fontfile=roboto.ttf:textfile=tol_b.txt:x=10:y=10:fontsize=24:fontcolor=white[vout]",
     );
   });
+
+  it("builds a resolution-independent x expression for scrolling overlays", () => {
+    const filterComplex = "[0:v]null[vout];[0:a]anull[aout]";
+    const overlay = createTestOverlay("a", { scrolling: true, scrollSpeed: 20 });
+
+    const result = appendTextOverlayFilters(filterComplex, [overlay]);
+
+    expect(result).toContain("x=w+tw-(t*w*0.2000)");
+  });
 });

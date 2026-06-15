@@ -69,6 +69,7 @@ export function useProjectSaveLoad({
   const handleSaveProject = useCallback(async () => {
     try {
       setStatus("Exporting project JSON with source media...");
+      const embedWarnings: string[] = [];
       const project = await serializeProjectWithMedia(
         clips,
         transitions,
@@ -76,6 +77,7 @@ export function useProjectSaveLoad({
         clipGroups,
         {
           mediaMode: "embed",
+          onEmbedWarning: (message) => embedWarnings.push(message),
         },
       );
       const payload = JSON.stringify(project, null, 2);
@@ -86,7 +88,11 @@ export function useProjectSaveLoad({
       anchor.download = "clip_stacker-project.json";
       anchor.click();
       URL.revokeObjectURL(url);
-      setStatus("Project JSON exported with source media.");
+      let msg = "Project JSON exported with source media.";
+      if (embedWarnings.length > 0) {
+        msg += ` ⚠️ ${embedWarnings.join(" ")}`;
+      }
+      setStatus(msg);
     } catch (error) {
       setStatus(`Could not export project: ${(error as Error).message}`);
     }

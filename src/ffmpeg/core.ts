@@ -11,6 +11,7 @@ import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import { isValidFfmpegColor } from "../utils/color";
+import { buildScrollXExpression } from "../utils/textOverlay";
 
 export const DEFAULT_VIDEO_SIZE = "1280x720";
 export const OUTPUT_WIDTH = 1280;
@@ -811,7 +812,7 @@ export function buildDrawtextFilter(overlay: TextOverlay): string {
   }
 
   const x = overlay.scrolling
-    ? `w+tw-(t*${overlay.scrollSpeed})`
+    ? buildScrollXExpression(overlay.scrollSpeed)
     : String(overlay.x);
 
   const parts: string[] = [

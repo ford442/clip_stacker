@@ -11,11 +11,22 @@ import type {
 } from '../types';
 import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
 import { sanitizeFfmpegColor } from './color';
+import { clampScrollSpeed, DEFAULT_SCROLL_SPEED } from './textOverlay';
 
 const FADE_SAFETY_MARGIN = 0.01;
 
 /** Maximum number of upload attempts per clip before aborting the save. */
 export const MAX_UPLOAD_RETRY_ATTEMPTS = 5;
+
+/**
+ * Maximum source file size (in bytes) that will be embedded as a base64
+ * data URL in a project JSON. Base64 inflates size by ~33%, and the
+ * resulting JSON string must still fit comfortably in browser memory and
+ * (if ever persisted) `localStorage`'s ~5-10MB quota. Files larger than
+ * this are either uploaded to remote storage (if a media client is
+ * available) or left out of the embed with a warning.
+ */
+export const MAX_EMBED_FILE_BYTES = 8 * 1024 * 1024;
 
 export function getClipDuration(clip: Clip): number {
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
@@ -143,6 +154,13 @@ interface SerializeProjectOptions {
   onRemoteUploadError?: (
     event: RemoteUploadErrorEvent,
   ) => Promise<'retry' | 'skip' | 'abort'> | 'retry' | 'skip' | 'abort';
+  /**
+   * Called when `mediaMode === 'embed'` and a clip's source file exceeds
+   * `MAX_EMBED_FILE_BYTES`. Receives a human-readable warning describing
+   * whether the clip was uploaded to remote storage instead (if
+   * `mediaClient` is set) or embedded anyway despite the size.
+   */
+  onEmbedWarning?: (message: string) => void;
 }
 
 export interface RemoteUploadProgressEvent {
@@ -298,6 +316,110 @@ async function readFileAsDataUrl(file: File): Promise<string> {
   });
 }
 
+/** Format a byte count as a human-readable size (e.g. "12.3 MB"). */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ['KB', 'MB', 'GB'];
+  let value = bytes / 1024;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+/** Upload a clip's source media to remote storage, retrying on failure per `options`. */
+async function uploadClipMediaWithRetry(
+  clip: Clip,
+  index: number,
+  total: number,
+  options: SerializeProjectOptions,
+): Promise<string | undefined> {
+  if (!options.mediaClient) throw new Error('Remote save requires a storage endpoint.');
+  const uploadName = `${clip.id}-${sanitizeUploadFileName(clip.file.name)}`;
+  let attempt = 0;
+  while (true) {
+    attempt += 1;
+    options.onRemoteUploadProgress?.({
+      clipId: clip.id,
+      fileName: clip.file.name,
+      index,
+      total,
+      progress: 0,
+      status: 'uploading',
+    });
+    try {
+      const url = await options.mediaClient.uploadMedia(
+        uploadName,
+        clip.file,
+        clip.file.type || 'application/octet-stream',
+        (progress) =>
+          options.onRemoteUploadProgress?.({
+            clipId: clip.id,
+            fileName: clip.file.name,
+            index,
+            total,
+            progress,
+            status: 'uploading',
+          }),
+      );
+      options.onRemoteUploadProgress?.({
+        clipId: clip.id,
+        fileName: clip.file.name,
+        index,
+        total,
+        progress: 1,
+        status: 'uploaded',
+      });
+      return url;
+    } catch (error) {
+      const uploadError = error as Error;
+      options.onRemoteUploadProgress?.({
+        clipId: clip.id,
+        fileName: clip.file.name,
+        index,
+        total,
+        progress: 0,
+        status: 'failed',
+        message: uploadError.message,
+      });
+      const action = options.onRemoteUploadError
+        ? await options.onRemoteUploadError({
+            clipId: clip.id,
+            fileName: clip.file.name,
+            index,
+            total,
+            progress: 0,
+            status: 'failed',
+            message: uploadError.message,
+            error: uploadError,
+            attempt,
+          })
+        : 'abort';
+      if (action === 'retry') {
+        if (attempt < MAX_UPLOAD_RETRY_ATTEMPTS) continue;
+        throw new Error(
+          `Upload failed for clip ${index}/${total} after ${attempt} attempts: ${uploadError.message}`,
+        );
+      }
+      if (action === 'skip') {
+        options.onRemoteUploadProgress?.({
+          clipId: clip.id,
+          fileName: clip.file.name,
+          index,
+          total,
+          progress: 0,
+          status: 'skipped',
+          message: uploadError.message,
+        });
+        return undefined;
+      }
+      throw new Error(`Upload aborted at clip ${index}/${total}: ${uploadError.message}`);
+    }
+  }
+}
+
 export async function serializeProjectWithMedia(
   clips: Clip[],
   transitions: ClipTransition[] = [],
@@ -319,90 +441,25 @@ export async function serializeProjectWithMedia(
     if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
     const updated: SerializedClip = { ...serialized };
     if (mediaMode === 'embed') {
-      updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
-    } else if (mediaMode === 'remote') {
-      if (!options.mediaClient) throw new Error('Remote save requires a storage endpoint.');
-      const uploadName = `${clip.id}-${sanitizeUploadFileName(clip.file.name)}`;
-      let attempt = 0;
-      while (true) {
-        attempt += 1;
-        options.onRemoteUploadProgress?.({
-          clipId: clip.id,
-          fileName: clip.file.name,
-          index,
-          total,
-          progress: 0,
-          status: 'uploading',
-        });
-        try {
-          updated.sourceMediaUrl = await options.mediaClient.uploadMedia(
-            uploadName,
-            clip.file,
-            clip.file.type || 'application/octet-stream',
-            (progress) =>
-              options.onRemoteUploadProgress?.({
-                clipId: clip.id,
-                fileName: clip.file.name,
-                index,
-                total,
-                progress,
-                status: 'uploading',
-              }),
+      if (clip.file.size > MAX_EMBED_FILE_BYTES) {
+        if (options.mediaClient) {
+          updated.sourceMediaUrl = await uploadClipMediaWithRetry(clip, index, total, options);
+          options.onEmbedWarning?.(
+            `"${clip.file.name}" (${formatBytes(clip.file.size)}) is too large to embed directly ` +
+              `and was uploaded to remote storage instead.`,
           );
-          options.onRemoteUploadProgress?.({
-            clipId: clip.id,
-            fileName: clip.file.name,
-            index,
-            total,
-            progress: 1,
-            status: 'uploaded',
-          });
-          break;
-        } catch (error) {
-          const uploadError = error as Error;
-          options.onRemoteUploadProgress?.({
-            clipId: clip.id,
-            fileName: clip.file.name,
-            index,
-            total,
-            progress: 0,
-            status: 'failed',
-            message: uploadError.message,
-          });
-          const action = options.onRemoteUploadError
-            ? await options.onRemoteUploadError({
-                clipId: clip.id,
-                fileName: clip.file.name,
-                index,
-                total,
-                progress: 0,
-                status: 'failed',
-                message: uploadError.message,
-                error: uploadError,
-                attempt,
-              })
-            : 'abort';
-          if (action === 'retry') {
-            if (attempt < MAX_UPLOAD_RETRY_ATTEMPTS) continue;
-            throw new Error(
-              `Upload failed for clip ${index}/${total} after ${attempt} attempts: ${uploadError.message}`,
-            );
-          }
-          if (action === 'skip') {
-            options.onRemoteUploadProgress?.({
-              clipId: clip.id,
-              fileName: clip.file.name,
-              index,
-              total,
-              progress: 0,
-              status: 'skipped',
-              message: uploadError.message,
-            });
-            break;
-          }
-          throw new Error(`Upload aborted at clip ${index}/${total}: ${uploadError.message}`);
+        } else {
+          updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
+          options.onEmbedWarning?.(
+            `"${clip.file.name}" (${formatBytes(clip.file.size)}) is large and may exceed browser ` +
+              `storage limits when embedded in the project file. Consider using remote save instead.`,
+          );
         }
+      } else {
+        updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
       }
+    } else if (mediaMode === 'remote') {
+      updated.sourceMediaUrl = await uploadClipMediaWithRetry(clip, index, total, options);
     }
     enrichedClips.push(updated);
   }
@@ -601,7 +658,7 @@ export async function applyProjectData(
           x: Number(o.x ?? 50),
           y: Number(o.y ?? 650),
           scrolling: Boolean(o.scrolling),
-          scrollSpeed: Number(o.scrollSpeed ?? 100),
+          scrollSpeed: clampScrollSpeed(Number(o.scrollSpeed ?? DEFAULT_SCROLL_SPEED)),
           box: Boolean(o.box),
           boxColor,
         };

@@ -139,6 +139,12 @@
   align-items: center;
 }
 
+.tol-scroll-time-hint {
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
 .tol-color-swatch {
   width: 32px;
   height: 32px;

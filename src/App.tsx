@@ -18,6 +18,7 @@ import {
   type RemoteProjectLoadProgressEvent,
 } from "./utils/project";
 import { findMatchingClipIndex } from "./utils/clipMatching";
+import { DEFAULT_SCROLL_SPEED } from "./utils/textOverlay";
 import { reindexTransitions } from "./utils/transitions";
 import { hybridMergeClips } from "./utils/hybrid-encoder";
 import {
@@ -878,7 +879,7 @@ export function App() {
       x: 50,
       y: 650,
       scrolling: false,
-      scrollSpeed: 100,
+      scrollSpeed: DEFAULT_SCROLL_SPEED,
       box: true,
       boxColor: "black@0.5",
     };
