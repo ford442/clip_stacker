@@ -49,6 +49,11 @@
   font-style: italic;
 }
 
+.storage-token-clear-btn {
+  font-size: 0.8rem;
+  padding: 0.3rem 0.7rem;
+}
+
 .storage-upload-list {
   width: 100%;
 }
@@ -214,4 +219,67 @@
   opacity: 1;
   background: rgba(248, 113, 113, 0.12);
   border-color: rgba(248, 113, 113, 0.3);
+}
+
+/* ============================================================
+   Media library panel
+   ============================================================ */
+.media-library {
+  width: 100%;
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--border);
+}
+
+.media-library-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.4rem;
+}
+
+.media-library-header h3 {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--gold);
+  opacity: 0.8;
+}
+
+.media-library-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.media-library-list li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(6, 9, 15, 0.65);
+}
+
+.media-library-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.media-library-meta {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
 }

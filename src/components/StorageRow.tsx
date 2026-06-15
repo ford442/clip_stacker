@@ -114,6 +114,20 @@ export function StorageRow({
             onChange={(e) => onAuthTokenChange(e.target.value)}
           />
         </label>
+        {authToken && (
+          <button
+            type="button"
+            className="storage-token-clear-btn"
+            title="Clear the saved auth token"
+            onClick={() => onAuthTokenChange("")}
+          >
+            Clear token
+          </button>
+        )}
+        <p className="storage-hint">
+          The auth token is saved in this browser's local storage so you
+          don't need to re-enter it next time.
+        </p>
       </div>
 
       <div className="storage-actions">

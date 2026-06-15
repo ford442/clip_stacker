@@ -24,6 +24,13 @@ export interface Clip {
   groupVariant?: 'A' | 'B';
   /** URL of the remotely stored extracted WAV for this clip */
   remoteAudioUrl?: string;
+  /**
+   * URL of this clip's source media in the remote media library, if it has
+   * already been uploaded there (either by a prior remote save, or because
+   * the clip was added from the library). When set, remote saves reuse this
+   * URL instead of re-uploading the file.
+   */
+  remoteSourceUrl?: string;
   // ---------------------------------------------------------------------------
   // RIFE frame interpolation metadata
   // ---------------------------------------------------------------------------
@@ -248,6 +255,14 @@ export interface Project {
   clipGroups?: SerializedClipGroup[];
   transitions?: SerializedTransition[];
   textOverlays?: TextOverlay[];
+  /**
+   * How source media was stored when this project was saved. Used on load
+   * to pick between `sourceMediaDataUrl` and `sourceMediaUrl` authoritatively,
+   * rather than falling back through whichever happens to be present (a
+   * project re-saved in a different mode may still carry a stale field from
+   * an earlier save).
+   */
+  mediaMode?: 'metadata' | 'embed' | 'remote';
 }
 
 /**

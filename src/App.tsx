@@ -14,8 +14,10 @@ import {
   serializeProjectWithMedia,
   applyProjectData,
   loadRemoteProject,
+  downloadRemoteMedia,
   ContaboStorageManagerClient,
   type RemoteProjectLoadProgressEvent,
+  type MediaLibraryItem,
 } from "./utils/project";
 import { findMatchingClipIndex } from "./utils/clipMatching";
 import { DEFAULT_SCROLL_SPEED } from "./utils/textOverlay";
@@ -45,6 +47,7 @@ import {
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import { Toolbar } from "./components/Toolbar";
 import { StorageRow } from "./components/StorageRow";
+import { MediaLibraryPanel } from "./components/MediaLibraryPanel";
 import { ClipLibrary } from "./components/ClipLibrary";
 import { Inspector } from "./components/Inspector";
 import type { ClipValues } from "./components/Inspector";
@@ -55,6 +58,9 @@ import { KeyboardShortcutsModal } from "./components/KeyboardShortcutsModal";
 import { MemoryWarningModal } from "./components/MemoryWarningModal";
 import { useProjectSaveLoad } from "./hooks/useProjectSaveLoad";
 import { useRenderState } from "./hooks/useRenderState";
+
+/** localStorage key for the persisted remote storage auth token. */
+const STORAGE_AUTH_TOKEN_KEY = "clip_stacker:storage_auth_token";
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(", ");
@@ -160,7 +166,17 @@ export function App() {
   const [storageEndpoint, setStorageEndpoint] = useState(
     "https://storage.noahcohn.com/webhook/clip-stacker",
   );
-  const [storageAuthToken, setStorageAuthToken] = useState("");
+  const [storageAuthToken, setStorageAuthToken] = useState(
+    () => localStorage.getItem(STORAGE_AUTH_TOKEN_KEY) ?? "",
+  );
+  const handleStorageAuthTokenChange = useCallback((value: string) => {
+    setStorageAuthToken(value);
+    if (value) {
+      localStorage.setItem(STORAGE_AUTH_TOKEN_KEY, value);
+    } else {
+      localStorage.removeItem(STORAGE_AUTH_TOKEN_KEY);
+    }
+  }, []);
   const pendingRemoteUploadResolver = useRef<
     ((action: "retry" | "skip" | "abort") => void) | null
   >(null);
@@ -282,6 +298,46 @@ export function App() {
       } else {
         setStatus(
           "No media files could be imported. Check that files are valid MP4/WAV/MP3.",
+        );
+      }
+    },
+    [addClipToState],
+  );
+
+  const handleAddLibraryClip = useCallback(
+    async (item: MediaLibraryItem) => {
+      setStatus(`Downloading ${item.name} from media library...`);
+      try {
+        const blob = await downloadRemoteMedia(item.url);
+        const file = new File([blob], item.name, { type: blob.type });
+        const isAudio =
+          file.type.startsWith("audio/") || /\.(wav|mp3)$/i.test(file.name);
+        const { duration, objectUrl, videoWidth, videoHeight } =
+          await getMediaInfo(file);
+        const newClip: Clip = {
+          id: createClipId(),
+          file,
+          objectUrl,
+          title: file.name,
+          kind: isAudio ? "audio" : "video",
+          duration: Math.max(MIN_CLIP_DURATION, duration),
+          videoWidth,
+          videoHeight,
+          trimStart: 0,
+          trimEnd: NaN,
+          videoFadeIn: 0,
+          videoFadeOut: 0,
+          audioFadeIn: 0,
+          audioFadeOut: 0,
+          remoteSourceUrl: item.url,
+        };
+        addClipToState(newClip);
+        setSelectedClipId(newClip.id);
+        setOutputUrl(null);
+        setStatus(`Added "${item.name}" from media library.`);
+      } catch (error) {
+        setStatus(
+          `Could not add "${item.name}" from media library: ${(error as Error).message}`,
         );
       }
     },
@@ -993,7 +1049,7 @@ export function App() {
         <StorageRow
           endpoint={storageEndpoint}
           authToken={storageAuthToken}
-          onAuthTokenChange={setStorageAuthToken}
+          onAuthTokenChange={handleStorageAuthTokenChange}
           onSaveRemote={handleSaveRemote}
           onLoadRemote={handleLoadRemote}
           isRemoteSaving={isRemoteSaving}
@@ -1004,6 +1060,11 @@ export function App() {
           remoteUploadItems={remoteUploadItems}
           pendingRemoteUploadError={pendingRemoteUploadError}
           onResolveRemoteUploadError={resolveRemoteUploadError as any}
+        />
+        <MediaLibraryPanel
+          endpoint={storageEndpoint}
+          authToken={storageAuthToken}
+          onAddClip={handleAddLibraryClip}
         />
       </section>
 

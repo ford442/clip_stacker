@@ -110,6 +110,7 @@ export function useProjectSaveLoad({
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
+          mediaDownloadWarnings,
         } = await applyProjectData(parsed, clips);
         if (updatedClips.length > 0) {
           setClips(updatedClips);
@@ -121,6 +122,9 @@ export function useProjectSaveLoad({
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
+        }
+        if (mediaDownloadWarnings.length > 0) {
+          msg += ` ⚠️ Media download errors: ${mediaDownloadWarnings.join("; ")}`;
         }
         if (invalidColorWarnings.length > 0) {
           msg += ` ⚠️ ${invalidColorWarnings.join(" ")}`;
@@ -145,6 +149,30 @@ export function useProjectSaveLoad({
     async (endpoint: string, authToken: string, projectName: string) => {
       try {
         setIsRemoteSaving(true);
+        const client = new ContaboStorageManagerClient(endpoint, authToken);
+
+        setStatus("Checking for existing remote projects...");
+        try {
+          const existingProjects = await client.list();
+          if (existingProjects.some((p) => p.name === projectName)) {
+            const overwrite = window.confirm(
+              `A project named "${projectName}" already exists in remote storage.\n\n` +
+                `Click OK to overwrite it, or Cancel to go back and choose a different name ` +
+                `(save as a new project instead).`,
+            );
+            if (!overwrite) {
+              setStatus(
+                `Save cancelled — "${projectName}" already exists. Choose a different name to save as a new project.`,
+              );
+              return;
+            }
+          }
+        } catch (listError) {
+          // If we can't list existing projects (e.g. fresh endpoint), proceed
+          // without the conflict check rather than blocking the save.
+          console.warn("Could not check for existing remote projects:", listError);
+        }
+
         setRemoteUploadItems(
           clips.map((clip, i) => ({
             clipId: clip.id,
@@ -160,7 +188,6 @@ export function useProjectSaveLoad({
             ? `Uploading clip 1/${clips.length}: ${clips[0].file.name} (0%)`
             : "Saving project to remote storage...",
         );
-        const client = new ContaboStorageManagerClient(endpoint, authToken);
         const project = await serializeProjectWithMedia(
           clips,
           transitions,
@@ -224,6 +251,7 @@ export function useProjectSaveLoad({
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
+          mediaDownloadWarnings,
         } = await loadRemoteProject(client, projectName, clips, {
           onProgress: (event: RemoteProjectLoadProgressEvent) => {
             setRemoteLoadStage(event.stage);
@@ -248,6 +276,9 @@ export function useProjectSaveLoad({
         let msg = `Remote project loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
+        }
+        if (mediaDownloadWarnings.length > 0) {
+          msg += ` ⚠️ Media download errors: ${mediaDownloadWarnings.join("; ")}`;
         }
         if (invalidColorWarnings.length > 0) {
           msg += ` ⚠️ ${invalidColorWarnings.join(" ")}`;

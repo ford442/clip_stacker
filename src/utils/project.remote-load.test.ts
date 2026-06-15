@@ -162,6 +162,7 @@ describe("remote project load progress", () => {
 
     expect(fetchMock).toHaveBeenCalledWith(
       "https://example.com/media/remote.mp4",
+      { mode: "cors", credentials: "omit" },
     );
     expect(result.clips).toHaveLength(1);
     const restoredFile = mediaMocks.getMediaInfo.mock.calls[0][0] as File;
@@ -199,6 +200,31 @@ describe("remote project load progress", () => {
         indeterminate: true,
       }),
     );
+  });
+
+  it("tags clips restored from a remote URL with remoteSourceUrl, but not data URLs", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() =>
+        Promise.resolve(createStreamingResponse(["ab", "cd"])),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const remoteResult = await applyProjectData(
+      createRemoteProject("remote.mp4"),
+      [],
+    );
+    expect(remoteResult.clips[0].remoteSourceUrl).toBe(
+      "https://example.com/media/remote.mp4",
+    );
+
+    const embeddedProject = createRemoteProject("embedded.mp4");
+    embeddedProject.mediaMode = "embed";
+    delete embeddedProject.clips[0].sourceMediaUrl;
+    embeddedProject.clips[0].sourceMediaDataUrl =
+      "data:video/mp4;base64,AAAA";
+    const embeddedResult = await applyProjectData(embeddedProject, []);
+    expect(embeddedResult.clips[0].remoteSourceUrl).toBeUndefined();
   });
 
   it("falls back to indeterminate clip progress when streaming details are unavailable", async () => {
@@ -243,5 +269,118 @@ describe("remote project load progress", () => {
         indeterminate: true,
       }),
     );
+  });
+
+  it("retries a transient network failure and succeeds on a later attempt", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockResolvedValueOnce(createStreamingResponse(["ab", "cd"]));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("setTimeout", (fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
+
+    const result = await applyProjectData(
+      createRemoteProject("retry.mp4"),
+      [],
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      "https://example.com/media/retry.mp4",
+      { mode: "cors", credentials: "omit" },
+    );
+    expect(result.clips).toHaveLength(1);
+    expect(result.skippedClipCount).toBe(0);
+    expect(result.mediaDownloadWarnings).toHaveLength(0);
+  });
+
+  it("surfaces a descriptive warning when a remote download fails every attempt", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(new TypeError("Failed to fetch"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("setTimeout", (fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
+
+    const result = await applyProjectData(
+      createRemoteProject("broken.mp4"),
+      [],
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.clips).toHaveLength(0);
+    expect(result.skippedClipCount).toBe(1);
+    expect(result.skippedClipFileNames).toEqual(["broken.mp4"]);
+    expect(result.mediaDownloadWarnings).toHaveLength(1);
+    expect(result.mediaDownloadWarnings[0]).toContain("broken.mp4");
+    expect(result.mediaDownloadWarnings[0]).toContain("Failed to fetch");
+  });
+
+  it("prefers sourceMediaUrl over a stale sourceMediaDataUrl when mediaMode is 'remote'", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createStreamingResponse(["remote-bytes"]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const project = createRemoteProject("saved1.mp4");
+    project.mediaMode = "remote";
+    project.clips[0].sourceMediaDataUrl = "data:video/mp4;base64,AAAA";
+
+    await applyProjectData(project, []);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://example.com/media/saved1.mp4",
+      { mode: "cors", credentials: "omit" },
+    );
+  });
+
+  it("prefers sourceMediaDataUrl over a stale sourceMediaUrl when mediaMode is 'embed'", async () => {
+    const dataUrl = "data:video/mp4;base64,AAAA";
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(createStreamingResponse(["embedded-bytes"]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const project = createRemoteProject("saved1.mp4");
+    project.mediaMode = "embed";
+    project.clips[0].sourceMediaDataUrl = dataUrl;
+    // Stale remote URL left over from an earlier remote-mode save.
+    project.clips[0].sourceMediaUrl = "https://example.com/media/saved1.mp4";
+
+    await applyProjectData(project, []);
+
+    expect(fetchMock).toHaveBeenCalledWith(dataUrl, {
+      mode: "cors",
+      credentials: "omit",
+    });
+  });
+
+  it("surfaces the HTTP status when the remote server returns an error response", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+      headers: new Headers(),
+    } satisfies Partial<Response>);
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+    vi.stubGlobal("setTimeout", (fn: () => void) => {
+      fn();
+      return 0 as unknown as ReturnType<typeof setTimeout>;
+    });
+
+    const result = await applyProjectData(
+      createRemoteProject("forbidden.mp4"),
+      [],
+    );
+
+    expect(result.skippedClipFileNames).toEqual(["forbidden.mp4"]);
+    expect(result.mediaDownloadWarnings[0]).toContain("403");
+    expect(result.mediaDownloadWarnings[0]).toContain("Forbidden");
   });
 });

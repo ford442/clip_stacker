@@ -188,6 +188,8 @@ export interface AppliedProjectData {
   skippedClipFileNames: string[];
   /** Human-readable descriptions of invalid color values that were reset to defaults. */
   invalidColorWarnings: string[];
+  /** Human-readable reasons remote media could not be downloaded, one per failed clip. */
+  mediaDownloadWarnings: string[];
 }
 
 export interface RemoteProjectLoadProgressEvent {
@@ -231,6 +233,26 @@ function hasRestorableRemoteMedia(savedClip: SerializedClip): boolean {
   return Boolean(savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl);
 }
 
+/**
+ * Pick the media source URL for a saved clip, preferring the field that
+ * matches the project's `mediaMode` so a stale field left over from an
+ * earlier save (e.g. embed -> remote without clearing the data URL) doesn't
+ * silently win. Falls back to whichever field is present — both for clips
+ * that took a different path than the project's overall mode (e.g. an
+ * oversized clip uploaded remotely while the rest of the project was
+ * embedded) and for older project files saved before `mediaMode` was
+ * recorded.
+ */
+function selectMediaSource(
+  savedClip: SerializedClip,
+  mediaMode: Project['mediaMode'],
+): string | undefined {
+  if (mediaMode === 'remote') {
+    return savedClip.sourceMediaUrl ?? savedClip.sourceMediaDataUrl;
+  }
+  return savedClip.sourceMediaDataUrl ?? savedClip.sourceMediaUrl;
+}
+
 function countRemoteProjectDownloads(project: Project, clips: Clip[]): number {
   if (!Array.isArray(project.clips)) return 0;
   const byName = new Map(clips.map((clip) => [clip.file.name, clip]));
@@ -256,12 +278,60 @@ function calculateRemoteDownloadProgress(
   return rangeStart + completed * Math.max(0, rangeEnd - rangeStart);
 }
 
-async function downloadRemoteMedia(
+/** Number of attempts (including the first) for downloading remote media. */
+export const MAX_MEDIA_DOWNLOAD_ATTEMPTS = 3;
+
+/** Delay (ms) before retrying a failed media download, multiplied by the attempt number. */
+const MEDIA_DOWNLOAD_RETRY_DELAY_MS = 500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Fetch a remote media file with a couple of retries for transient network
+ * failures (timeouts, dropped connections, brief CORS hiccups). `credentials:
+ * 'omit'` is required so wildcard (`Access-Control-Allow-Origin: *`) bucket
+ * CORS policies — common for Contabo and other S3-compatible storage — don't
+ * get rejected by the browser for sending credentials cross-origin. Signed
+ * URLs carry their own auth in the query string, so no cookies/headers are
+ * needed.
+ */
+async function fetchRemoteMediaWithRetry(mediaUrl: string): Promise<Response> {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= MAX_MEDIA_DOWNLOAD_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(mediaUrl, {
+        mode: 'cors',
+        credentials: 'omit',
+      });
+      if (!response.ok) {
+        const statusText = response.statusText ? ` ${response.statusText}` : '';
+        throw new Error(`Media download failed (HTTP ${response.status}${statusText})`);
+      }
+      return response;
+    } catch (error) {
+      lastError =
+        error instanceof Error
+          ? error
+          : new Error(
+              'Media download failed: network error or CORS policy blocked the request.',
+            );
+      if (attempt < MAX_MEDIA_DOWNLOAD_ATTEMPTS) {
+        await delay(MEDIA_DOWNLOAD_RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+  throw new Error(
+    `Could not download media after ${MAX_MEDIA_DOWNLOAD_ATTEMPTS} attempts: ${lastError?.message}`,
+  );
+}
+
+export async function downloadRemoteMedia(
   mediaUrl: string,
   onProgress?: (progress: number, indeterminate: boolean) => void,
 ): Promise<Blob> {
-  const mediaResponse = await fetch(mediaUrl);
-  if (!mediaResponse.ok) throw new Error(`Media download failed (${mediaResponse.status})`);
+  const mediaResponse = await fetchRemoteMediaWithRetry(mediaUrl);
 
   const contentLengthHeader = mediaResponse.headers.get('content-length');
   const totalBytes = contentLengthHeader ? Number(contentLengthHeader) : NaN;
@@ -327,6 +397,32 @@ export function formatBytes(bytes: number): string {
     unitIndex += 1;
   }
   return `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+/**
+ * Upload a clip's source media to remote storage, unless it has already been
+ * uploaded (`clip.remoteSourceUrl` is set — either from a prior remote save
+ * or because the clip was added from the media library), in which case the
+ * existing URL is reused as-is.
+ */
+async function uploadOrReuseClipMedia(
+  clip: Clip,
+  index: number,
+  total: number,
+  options: SerializeProjectOptions,
+): Promise<string | undefined> {
+  if (clip.remoteSourceUrl) {
+    options.onRemoteUploadProgress?.({
+      clipId: clip.id,
+      fileName: clip.file.name,
+      index,
+      total,
+      progress: 1,
+      status: 'uploaded',
+    });
+    return clip.remoteSourceUrl;
+  }
+  return uploadClipMediaWithRetry(clip, index, total, options);
 }
 
 /** Upload a clip's source media to remote storage, retrying on failure per `options`. */
@@ -440,10 +536,14 @@ export async function serializeProjectWithMedia(
     const clip = clipById.get(serialized.id);
     if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
     const updated: SerializedClip = { ...serialized };
+    // Clear any stale media-source fields from a previous save in a
+    // different mode; the branches below set whichever field applies.
+    delete updated.sourceMediaDataUrl;
+    delete updated.sourceMediaUrl;
     if (mediaMode === 'embed') {
       if (clip.file.size > MAX_EMBED_FILE_BYTES) {
         if (options.mediaClient) {
-          updated.sourceMediaUrl = await uploadClipMediaWithRetry(clip, index, total, options);
+          updated.sourceMediaUrl = await uploadOrReuseClipMedia(clip, index, total, options);
           options.onEmbedWarning?.(
             `"${clip.file.name}" (${formatBytes(clip.file.size)}) is too large to embed directly ` +
               `and was uploaded to remote storage instead.`,
@@ -459,12 +559,12 @@ export async function serializeProjectWithMedia(
         updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
       }
     } else if (mediaMode === 'remote') {
-      updated.sourceMediaUrl = await uploadClipMediaWithRetry(clip, index, total, options);
+      updated.sourceMediaUrl = await uploadOrReuseClipMedia(clip, index, total, options);
     }
     enrichedClips.push(updated);
   }
 
-  return { ...project, clips: enrichedClips };
+  return { ...project, clips: enrichedClips, mediaMode };
 }
 
 export async function applyProjectData(
@@ -480,6 +580,7 @@ export async function applyProjectData(
   const mapped: Clip[] = [];
   let skippedCount = 0;
   const skippedClipFileNames: string[] = [];
+  const mediaDownloadWarnings: string[] = [];
   const totalRemoteDownloads = countRemoteProjectDownloads(project, clips);
   const remoteProgressStart = options.remoteProgressStart ?? 0;
   const remoteProgressEnd = options.remoteProgressEnd ?? 1;
@@ -507,7 +608,7 @@ export async function applyProjectData(
         fileName: savedClip.fileName,
       });
       try {
-        const mediaUrl = savedClip.sourceMediaDataUrl || savedClip.sourceMediaUrl;
+        const mediaUrl = selectMediaSource(savedClip, project.mediaMode);
         if (!mediaUrl) throw new Error('No media URL available');
         const blob = await downloadRemoteMedia(mediaUrl, (clipProgress, indeterminate) => {
           emitRemoteProjectLoadProgress(options.onProgress, {
@@ -559,9 +660,14 @@ export async function applyProjectData(
           videoFadeOut: 0,
           audioFadeIn: 0,
           audioFadeOut: 0,
+          // Remember the remote URL (not a data: URL) so a future remote
+          // save can reuse it instead of re-uploading this clip.
+          remoteSourceUrl: /^https?:\/\//i.test(mediaUrl) ? mediaUrl : undefined,
         };
       } catch (error) {
-        console.warn(`Could not restore media for "${savedClip.fileName}"`, error);
+        const message = (error as Error).message || String(error);
+        console.warn(`Could not restore media for "${savedClip.fileName}": ${message}`, error);
+        mediaDownloadWarnings.push(`"${savedClip.fileName}": ${message}`);
         liveClip = undefined;
       }
     }
@@ -665,7 +771,7 @@ export async function applyProjectData(
       })
     : [];
 
-  return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount, skippedClipFileNames, invalidColorWarnings };
+  return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount, skippedClipFileNames, invalidColorWarnings, mediaDownloadWarnings };
 }
 
 export async function loadRemoteProject(
@@ -829,4 +935,31 @@ export class ContaboStorageManagerClient {
       request.send(formData);
     });
   }
+
+  /**
+   * List previously uploaded files in the remote media library (the same
+   * store `uploadMedia` writes to). Expects the server to respond with
+   * `{ "files": [{ "name", "url", "size"?, "modified"? }, ...] }`.
+   */
+  async listMedia(): Promise<MediaLibraryItem[]> {
+    const authHeader = this.getAuthHeader();
+    const response = await fetch(this.mediaEndpoint, {
+      headers: authHeader ? { authorization: authHeader } : undefined,
+    });
+    if (!response.ok) throw new Error(`Media library list failed (${response.status})`);
+    const result = (await response.json()) as { files?: MediaLibraryItem[] };
+    return result.files ?? [];
+  }
+}
+
+/** A single entry in the remote media library, as returned by `listMedia`. */
+export interface MediaLibraryItem {
+  /** Storage object name (e.g. "clip1-vacation.mp4"). */
+  name: string;
+  /** Public/signed URL the file can be downloaded from. */
+  url: string;
+  /** File size in bytes, if reported by the server. */
+  size?: number;
+  /** Last-modified time as a Unix timestamp (seconds), if reported by the server. */
+  modified?: number;
 }

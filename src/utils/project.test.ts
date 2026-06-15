@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type {
   Clip,
   ClipGroup,
@@ -14,7 +14,7 @@ import {
   applyProjectData,
   MAX_UPLOAD_RETRY_ATTEMPTS,
   MAX_EMBED_FILE_BYTES,
-  type ContaboStorageManagerClient,
+  ContaboStorageManagerClient,
 } from "./project";
 
 // Helper to create a minimal test clip
@@ -594,6 +594,24 @@ describe("utils/project", () => {
       );
       expect(mediaClient.uploadMedia).toHaveBeenCalledTimes(2);
     });
+
+    it("reuses an existing remoteSourceUrl instead of re-uploading", async () => {
+      const clip = createTestClip("clip1", 5);
+      clip.remoteSourceUrl = "https://example.com/library/clip1.mp4";
+      const mediaClient = {
+        uploadMedia: vi.fn().mockResolvedValue("https://example.com/clip1.mp4"),
+      } as unknown as ContaboStorageManagerClient;
+
+      const project = await serializeProjectWithMedia([clip], [], [], [], {
+        mediaMode: "remote",
+        mediaClient,
+      });
+
+      expect(project.clips[0].sourceMediaUrl).toBe(
+        "https://example.com/library/clip1.mp4",
+      );
+      expect(mediaClient.uploadMedia).not.toHaveBeenCalled();
+    });
   });
 
   // =========================================================================
@@ -654,6 +672,88 @@ describe("utils/project", () => {
       expect(project.clips[0].sourceMediaUrl).toBe("https://example.com/clip1.mp4");
       expect(onEmbedWarning).toHaveBeenCalledTimes(1);
       expect(onEmbedWarning.mock.calls[0][0]).toContain("uploaded to remote storage");
+    });
+  });
+
+  // =========================================================================
+  // mediaMode persistence and authoritative source selection
+  // =========================================================================
+  describe("mediaMode-aware media source selection", () => {
+    it("records mediaMode on the serialized project and clears the unused field", async () => {
+      const clip = createTestClip("clip1", 5);
+
+      const embedded = await serializeProjectWithMedia([clip], [], [], [], {
+        mediaMode: "embed",
+      });
+      expect(embedded.mediaMode).toBe("embed");
+      expect(embedded.clips[0].sourceMediaDataUrl).toBeDefined();
+      expect(embedded.clips[0].sourceMediaUrl).toBeUndefined();
+
+      const mediaClient = {
+        uploadMedia: vi.fn().mockResolvedValue("https://example.com/clip1.mp4"),
+      } as unknown as ContaboStorageManagerClient;
+      const remote = await serializeProjectWithMedia([clip], [], [], [], {
+        mediaMode: "remote",
+        mediaClient,
+      });
+      expect(remote.mediaMode).toBe("remote");
+      expect(remote.clips[0].sourceMediaUrl).toBe("https://example.com/clip1.mp4");
+      expect(remote.clips[0].sourceMediaDataUrl).toBeUndefined();
+    });
+
+  });
+
+  // =========================================================================
+  // ContaboStorageManagerClient.listMedia
+  // =========================================================================
+  describe("ContaboStorageManagerClient.listMedia", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("fetches the media endpoint and returns the file list", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          files: [
+            { name: "clip1.mp4", url: "https://example.com/media/clip1.mp4", size: 1024, modified: 1700000000 },
+          ],
+        }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ContaboStorageManagerClient("https://example.com/api", "token123");
+      const items = await client.listMedia();
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://example.com/api/media",
+        { headers: { authorization: "Bearer token123" } },
+      );
+      expect(items).toEqual([
+        { name: "clip1.mp4", url: "https://example.com/media/clip1.mp4", size: 1024, modified: 1700000000 },
+      ]);
+    });
+
+    it("returns an empty array when the server omits the files field", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({}),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ContaboStorageManagerClient("https://example.com/api");
+      const items = await client.listMedia();
+
+      expect(items).toEqual([]);
+    });
+
+    it("throws a descriptive error when the request fails", async () => {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = new ContaboStorageManagerClient("https://example.com/api");
+
+      await expect(client.listMedia()).rejects.toThrow(/500/);
     });
   });
 });
