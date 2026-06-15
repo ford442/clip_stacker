@@ -10,7 +10,10 @@ import {
   getClipDuration,
   sanitizeClipAdjustments,
   serializeProject,
+  serializeProjectWithMedia,
   applyProjectData,
+  MAX_UPLOAD_RETRY_ATTEMPTS,
+  type ContaboStorageManagerClient,
 } from "./project";
 
 // Helper to create a minimal test clip
@@ -486,6 +489,53 @@ describe("utils/project", () => {
       // Verify roundtrip
       expect(result.clipGroups).toHaveLength(1);
       expect(result.clipGroups[0].activeVariant).toBe("B");
+    });
+  });
+
+  // =========================================================================
+  // serializeProjectWithMedia — remote upload retry cap
+  // =========================================================================
+  describe("serializeProjectWithMedia remote upload retries", () => {
+    it("aborts after MAX_UPLOAD_RETRY_ATTEMPTS instead of retrying forever", async () => {
+      const clip = createTestClip("clip1", 5);
+      const mediaClient = {
+        uploadMedia: vi.fn().mockRejectedValue(new Error("upload failed")),
+      } as unknown as ContaboStorageManagerClient;
+
+      await expect(
+        serializeProjectWithMedia([clip], [], [], [], {
+          mediaMode: "remote",
+          mediaClient,
+          onRemoteUploadError: () => "retry",
+        }),
+      ).rejects.toThrow(/after \d+ attempts/);
+
+      expect(mediaClient.uploadMedia).toHaveBeenCalledTimes(
+        MAX_UPLOAD_RETRY_ATTEMPTS,
+      );
+    });
+
+    it("succeeds once the upload eventually resolves within the retry cap", async () => {
+      const clip = createTestClip("clip1", 5);
+      let calls = 0;
+      const mediaClient = {
+        uploadMedia: vi.fn().mockImplementation(() => {
+          calls += 1;
+          if (calls < 2) return Promise.reject(new Error("transient"));
+          return Promise.resolve("https://example.com/clip1.mp4");
+        }),
+      } as unknown as ContaboStorageManagerClient;
+
+      const project = await serializeProjectWithMedia([clip], [], [], [], {
+        mediaMode: "remote",
+        mediaClient,
+        onRemoteUploadError: () => "retry",
+      });
+
+      expect(project.clips[0].sourceMediaUrl).toBe(
+        "https://example.com/clip1.mp4",
+      );
+      expect(mediaClient.uploadMedia).toHaveBeenCalledTimes(2);
     });
   });
 });

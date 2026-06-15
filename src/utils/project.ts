@@ -13,6 +13,9 @@ import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
 
 const FADE_SAFETY_MARGIN = 0.01;
 
+/** Maximum number of upload attempts per clip before aborting the save. */
+export const MAX_UPLOAD_RETRY_ATTEMPTS = 5;
+
 export function getClipDuration(clip: Clip): number {
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   return Math.max(MIN_CLIP_DURATION, end - clip.trimStart);
@@ -335,7 +338,12 @@ export async function serializeProjectWithMedia(
                 attempt,
               })
             : 'abort';
-          if (action === 'retry') continue;
+          if (action === 'retry') {
+            if (attempt < MAX_UPLOAD_RETRY_ATTEMPTS) continue;
+            throw new Error(
+              `Upload failed for clip ${index}/${total} after ${attempt} attempts: ${uploadError.message}`,
+            );
+          }
           if (action === 'skip') {
             options.onRemoteUploadProgress?.({
               clipId: clip.id,
