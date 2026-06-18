@@ -68,6 +68,10 @@ import { useRenderState } from "./hooks/useRenderState";
 import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { getTimelineClips } from "./utils/timelineClips";
+import {
+  readStorageAuthToken,
+  writeStorageAuthToken,
+} from "./utils/storageAuth";
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(", ");
