@@ -29,3 +29,13 @@ Recent history uses short imperative commits, sometimes with conventional prefix
 ## Security & Configuration Tips
 
 Do not commit secrets, storage auth tokens, or private endpoint credentials. Preserve COOP/COEP headers in Vite and Apache configuration because SharedArrayBuffer and FFmpeg WASM depend on them.
+
+## Cursor Cloud specific instructions
+
+Single-service product: a React + TypeScript Vite frontend (no backend to run; `contabo_storage_manager/` is an optional external storage backend, not started here). Standard commands live in `package.json` / README (`npm test -- --run`, `npm run build`, `npm run dev`, `npm run preview`).
+
+Non-obvious caveats:
+
+- Dependencies are installed with `npm install`, not `npm ci`: the committed `package-lock.json` historically drifted from `package.json` (missing optional `@esbuild/*` platform packages), which makes `npm ci` abort.
+- `npm run dev` does not render in a CSP-enforcing browser as-is. `index.html` ships a static `Content-Security-Policy` meta tag with `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-inline'`), which blocks Vite's injected inline React-refresh/HMR preamble script and leaves a blank page with `@vitejs/plugin-react can't detect preamble` console errors. To run/verify the app in the browser, use the production build instead: `npm run build` then `npm run preview` (serves on `http://localhost:4173/`, no inline scripts, CSP-clean). Do not relax the CSP just to make dev mode load unless that is the actual task.
+- FFmpeg WASM needs cross-origin isolation; both the dev and preview servers already set the required COOP/COEP headers, so use those servers rather than a generic static server.
