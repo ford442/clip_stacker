@@ -1,3 +1,5 @@
+import previewShader from "./shaders/preview.wgsl?raw";
+
 /**
  * WebGPU-based clip preview engine.
  *
@@ -72,8 +74,7 @@ export class PreviewEngine {
     const format = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format, alphaMode: "premultiplied" });
 
-    const shaderCode = await PreviewEngine.loadShader();
-    const shaderModule = device.createShaderModule({ code: shaderCode });
+    const shaderModule = device.createShaderModule({ code: previewShader });
 
     const sampler = device.createSampler({
       magFilter: "linear",
@@ -95,7 +96,7 @@ export class PreviewEngine {
         },
         {
           binding: 2,
-          visibility: GPUShaderStage.FRAGMENT,
+          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
           buffer: { type: "uniform" },
         },
       ],
@@ -131,23 +132,6 @@ export class PreviewEngine {
     });
 
     return new PreviewEngine(device, context, pipeline, sampler, uniformBuffer);
-  }
-
-  private static shaderText: string | null = null;
-
-  private static async loadShader(): Promise<string> {
-    if (PreviewEngine.shaderText) return PreviewEngine.shaderText;
-    try {
-      const res = await fetch(
-        new URL("./shaders/preview.wgsl", import.meta.url).href,
-      );
-      if (!res.ok) throw new Error(`Shader fetch failed: ${res.status}`);
-      PreviewEngine.shaderText = await res.text();
-      return PreviewEngine.shaderText;
-    } catch {
-      PreviewEngine.shaderText = INLINE_SHADER;
-      return PreviewEngine.shaderText;
-    }
   }
 
   /**
@@ -258,46 +242,3 @@ export class PreviewEngine {
     this.device.destroy();
   }
 }
-
-// Minimal inline shader used when the .wgsl file fetch fails
-const INLINE_SHADER = /* wgsl */ `
-@group(0) @binding(0) var videoSampler: sampler;
-@group(0) @binding(1) var videoTexture: texture_external;
-@group(0) @binding(2) var<uniform> u: Uniforms;
-
-struct Uniforms {
-  fadeIn: f32, fadeOut: f32, duration: f32, elapsed: f32,
-  opacity: f32, uvScaleX: f32, uvScaleY: f32, uvOffsetX: f32,
-  uvOffsetY: f32, destX: f32, destY: f32, destW: f32, destH: f32,
-  _p0: f32, _p1: f32, _p2: f32,
-};
-
-struct VO { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
-
-@vertex fn vs_main(@builtin(vertex_index) i: u32) -> VO {
-  var unit = array<vec2<f32>,6>(
-    vec2(0.,1.), vec2(1.,1.), vec2(0.,0.),
-    vec2(0.,0.), vec2(1.,1.), vec2(1.,0.));
-  var t = array<vec2<f32>,6>(
-    vec2(0.,1.), vec2(1.,1.), vec2(0.,0.),
-    vec2(0.,0.), vec2(1.,1.), vec2(1.,0.));
-  let ndcLeft = u.destX * 2.0 - 1.0;
-  let ndcRight = (u.destX + u.destW) * 2.0 - 1.0;
-  let ndcTop = 1.0 - u.destY * 2.0;
-  let ndcBottom = 1.0 - (u.destY + u.destH) * 2.0;
-  let ndc = vec2(mix(ndcLeft, ndcRight, unit[i].x), mix(ndcBottom, ndcTop, unit[i].y));
-  let uv = t[i] * vec2(u.uvScaleX, u.uvScaleY) + vec2(u.uvOffsetX, u.uvOffsetY);
-  return VO(vec4(ndc,0.,1.), uv);
-}
-
-@fragment fn fs_main(v: VO) -> @location(0) vec4<f32> {
-  var c = textureSampleBaseClampToEdge(videoTexture, videoSampler, v.uv);
-  var fa = 1.0;
-  if (u.fadeIn > 0.0 && u.elapsed < u.fadeIn) { fa = u.elapsed / u.fadeIn; }
-  if (u.fadeOut > 0.0 && u.duration > 0.0 && u.elapsed > (u.duration - u.fadeOut)) {
-    fa = min(fa, (u.duration - u.elapsed) / u.fadeOut);
-  }
-  fa = clamp(fa, 0.0, 1.0) * clamp(u.opacity, 0.0, 1.0);
-  return vec4(c.rgb * fa, c.a * fa);
-}
-`;
