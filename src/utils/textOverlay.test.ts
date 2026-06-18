@@ -3,6 +3,8 @@ import {
   clampScrollSpeed,
   estimateScrollCrossingSeconds,
   buildScrollXExpression,
+  escapeDrawtext,
+  buildDrawtextFilter,
   DEFAULT_SCROLL_SPEED,
   MIN_SCROLL_SPEED,
   MAX_SCROLL_SPEED,
@@ -50,5 +52,59 @@ describe("buildScrollXExpression", () => {
   it("produces a resolution-independent fraction for other speeds", () => {
     expect(buildScrollXExpression(50)).toBe("w+tw-(t*w*0.5000)");
     expect(buildScrollXExpression(100)).toBe("w+tw-(t*w*1.0000)");
+  });
+});
+
+describe("escapeDrawtext", () => {
+  it("escapes backslashes, quotes, colons, commas, and percent signs", () => {
+    expect(escapeDrawtext(`He said 'hi': a,b\\end%`)).toBe(
+      "He said \\'hi\\'\\: a\\,b\\\\end\\%",
+    );
+  });
+
+  it("escapes newlines as drawtext C-style sequences", () => {
+    expect(escapeDrawtext("line1\nline2")).toBe("line1\\nline2");
+    expect(escapeDrawtext("line1\r\nline2")).toBe("line1\\nline2");
+  });
+
+  it("leaves plain text unchanged", () => {
+    expect(escapeDrawtext("Hello world")).toBe("Hello world");
+  });
+});
+
+describe("buildDrawtextFilter", () => {
+  it("embeds escaped user text in the filter graph", () => {
+    const filter = buildDrawtextFilter({
+      id: "overlay-1",
+      text: `News: it's 50% off, now\\today`,
+      fontsize: 24,
+      fontcolor: "white",
+      x: 10,
+      y: 20,
+      scrolling: false,
+      scrollSpeed: 20,
+      box: false,
+      boxColor: "black@0.5",
+    });
+
+    expect(filter).toContain("text='News\\: it\\'s 50\\% off\\, now\\\\today'");
+    expect(filter).not.toContain("textfile=");
+  });
+
+  it("throws for invalid font colors before building the filter", () => {
+    expect(() =>
+      buildDrawtextFilter({
+        id: "overlay-1",
+        text: "Hello",
+        fontsize: 24,
+        fontcolor: "not-a-color",
+        x: 0,
+        y: 0,
+        scrolling: false,
+        scrollSpeed: 20,
+        box: false,
+        boxColor: "black@0.5",
+      }),
+    ).toThrow(/invalid font color/i);
   });
 });

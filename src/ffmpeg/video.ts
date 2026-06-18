@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration, clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
+import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
 import { buildTransitionFilterComplex, XFADE_MAP } from "../utils/transitions";
 import {
   isFfmpegLoadFailed,
@@ -45,8 +46,6 @@ import {
   ensureFont,
   buildDrawtextFilter,
   appendTextOverlayFilters,
-  writeTextOverlayFiles,
-  cleanupTextOverlayFiles,
   mergeClipsLossless,
   performTwoPassEncode,
   processClipPass1,
@@ -135,6 +134,7 @@ export function buildPipFilterComplex(
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
+    af += audioVolumeFilterSegment(clip.volume ?? 1);
     parts.push(`${af}[a${i}]`);
   }
 
@@ -227,15 +227,8 @@ export function buildPipFilterComplex(
     );
     currentV = outV;
 
-    // Apply per-overlay volume (0 = muted) before mixing with the base audio.
-    const volume = clip.volume ?? 1;
-    if (volume <= 0) {
-      // Muted: drop this overlay's audio from the mix entirely.
-    } else if (volume !== 1) {
-      const outA = `a${idx}vol`;
-      parts.push(`[a${idx}]volume=${volume.toFixed(4)}[${outA}]`);
-      audioStreams.push(outA);
-    } else {
+    // Muted overlays are omitted from the final mix (volume is applied per-clip in phase 1).
+    if (getClipVolume(clip) > 0) {
       audioStreams.push(`a${idx}`);
     }
   }
@@ -278,7 +271,6 @@ export async function mergeClipsWithCompositing(
 
   if (textOverlays.length > 0) {
     await ensureFont(ffmpeg, onStatus);
-    await writeTextOverlayFiles(ffmpeg, textOverlays);
     filterComplex = appendTextOverlayFilters(filterComplex, textOverlays);
   }
 
@@ -287,47 +279,41 @@ export async function mergeClipsWithCompositing(
     inputArgs.push("-i", clip.inputName!);
   }
 
-  try {
-    await safeExec(
-      ffmpeg,
-      [
-        ...inputArgs,
-        "-filter_complex",
-        filterComplex,
-        "-map",
-        "[vout]",
-        "-map",
-        "[aout]",
-        "-r",
-        "30",
-        "-c:v",
-        "libx264",
-        "-crf",
-        String(settings.crf),
-        "-preset",
-        settings.preset,
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "stacked.mp4",
-      ],
-      {
-        stage: "FFmpeg PiP/compositing render",
-        totalDuration,
-        rangeStart: 0.15,
-        rangeEnd: 0.95,
-        onProgress,
-      },
-      "PiP/compositing filter_complex render",
-    );
-  } finally {
-    if (textOverlays.length > 0) {
-      await cleanupTextOverlayFiles(ffmpeg, textOverlays);
-    }
-  }
+  await safeExec(
+    ffmpeg,
+    [
+      ...inputArgs,
+      "-filter_complex",
+      filterComplex,
+      "-map",
+      "[vout]",
+      "-map",
+      "[aout]",
+      "-r",
+      "30",
+      "-c:v",
+      "libx264",
+      "-crf",
+      String(settings.crf),
+      "-preset",
+      settings.preset,
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "stacked.mp4",
+    ],
+    {
+      stage: "FFmpeg PiP/compositing render",
+      totalDuration,
+      rangeStart: 0.15,
+      rangeEnd: 0.95,
+      onProgress,
+    },
+    "PiP/compositing filter_complex render",
+  );
 }
 
 /**

@@ -65,33 +65,57 @@ export async function encodeClipsWithCanvas(
   onStatus('Canvas render started (real-time playback)...');
   onProgress?.({ stage: 'Canvas render (real-time playback)', progress: CANVAS_RENDER_START, indeterminate: false });
 
-  try {
-    await renderer.renderClips(clips, (progress) => {
-      const pct = totalDuration > 0
-        ? Math.round((progress.totalElapsed / totalDuration) * 100)
-        : 0;
-      const normalized = totalDuration > 0
-        ? Math.max(0, Math.min(1, progress.totalElapsed / totalDuration))
-        : 0;
-      onProgress?.({
-        stage: `Canvas render: ${progress.clipTitle}`,
-        progress: CANVAS_RENDER_START + normalized * CANVAS_RENDER_RANGE,
-        indeterminate: totalDuration <= 0,
-      });
-      onStatus(
-        `Canvas render [${progress.clipIndex + 1}/${progress.totalClips}]: ` +
-        `"${progress.clipTitle}" (${pct}%)${audioReactive ? ' 🎵' : ''}`,
-      );
+  const reportCaptureFailure = (err: unknown): never => {
+    const message =
+      err instanceof Error ? err.message : String(err ?? 'Canvas capture failed');
+    onStatus(`Canvas capture failed: ${message}`);
+    onProgress?.({
+      stage: 'Canvas capture failed',
+      progress: undefined,
+      indeterminate: true,
     });
+    throw err instanceof Error ? err : new Error(message);
+  };
+
+  try {
+    await Promise.race([
+      renderer.renderClips(clips, (progress) => {
+        const pct = totalDuration > 0
+          ? Math.round((progress.totalElapsed / totalDuration) * 100)
+          : 0;
+        const normalized = totalDuration > 0
+          ? Math.max(0, Math.min(1, progress.totalElapsed / totalDuration))
+          : 0;
+        onProgress?.({
+          stage: `Canvas render: ${progress.clipTitle}`,
+          progress: CANVAS_RENDER_START + normalized * CANVAS_RENDER_RANGE,
+          indeterminate: totalDuration <= 0,
+        });
+        onStatus(
+          `Canvas render [${progress.clipIndex + 1}/${progress.totalClips}]: ` +
+          `"${progress.clipTitle}" (${pct}%)${audioReactive ? ' 🎵' : ''}`,
+        );
+      }),
+      captureHandle.onFailure(),
+    ]);
   } catch (err) {
-    // If the renderer fails mid-way, stop the recorder and re-throw.
-    try { await captureHandle.stop(); } catch { /* ignore */ }
-    throw err;
+    try {
+      await captureHandle.stop();
+    } catch {
+      /* ignore secondary stop errors */
+    }
+    reportCaptureFailure(err);
   }
 
   onStatus('Finalizing canvas capture...');
   onProgress?.({ stage: 'Finalizing canvas capture', progress: 0.87, indeterminate: false });
-  const videoBlob = await captureHandle.stop();
+
+  let videoBlob: Blob;
+  try {
+    videoBlob = await captureHandle.stop();
+  } catch (err) {
+    reportCaptureFailure(err);
+  }
 
   onStatus('Muxing with high-quality audio...');
   onProgress?.({ stage: 'Muxing with high-quality audio', progress: 0.88, indeterminate: false });

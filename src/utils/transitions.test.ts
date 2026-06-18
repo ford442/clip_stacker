@@ -6,6 +6,7 @@ import {
   computeTotalDuration,
   createDefaultTransitions,
   reindexTransitions,
+  shiftTransitionsForInsert,
   buildTransitionFilterComplex,
 } from "./transitions";
 
@@ -209,6 +210,18 @@ describe("utils/transitions", () => {
       expect(result).toHaveLength(2);
       expect(result[0].afterClipIndex).toBe(1);
       expect(result[1].afterClipIndex).toBe(2);
+    });
+  });
+
+  describe("shiftTransitionsForInsert", () => {
+    it("increments transition indices at and after the inserted clip", () => {
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type: "dissolve", duration: 0.5 },
+        { afterClipIndex: 2, type: "motion", duration: 0.5 },
+      ];
+      const result = shiftTransitionsForInsert(transitions, 2);
+      expect(result[0].afterClipIndex).toBe(1);
+      expect(result[1].afterClipIndex).toBe(3);
     });
   });
 

@@ -1,5 +1,6 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { CONTENT_SECURITY_POLICY, DEV_CONTENT_SECURITY_POLICY } from './src/utils/csp';
 
 export default defineConfig({
   base: './',
@@ -14,12 +15,14 @@ export default defineConfig({
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Content-Security-Policy': DEV_CONTENT_SECURITY_POLICY,
     },
   },
   preview: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',
+      'Content-Security-Policy': CONTENT_SECURITY_POLICY,
     },
   },
   optimizeDeps: {

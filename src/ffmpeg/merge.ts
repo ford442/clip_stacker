@@ -25,8 +25,6 @@ import {
   getCdnLabel,
   getLocalFfmpegCoreBaseURL,
   getFfmpegCoreSources,
-  terminateFfmpegInstance,
-  clearTrackedLoadingInstance,
   buildFfmpegLoadErrorMessage,
   parseFfmpegTimeSeconds,
   safeExec,
@@ -40,12 +38,9 @@ import {
   toBlobURLWithRetry,
   toBlobURLWithFallback,
   withTimeout,
-  _doLoadFfmpeg,
   ensureFfmpeg,
   ensureFont,
   buildDrawtextFilter,
-  writeTextOverlayFiles,
-  cleanupTextOverlayFiles,
   mergeClipsLossless,
   performTwoPassEncode,
   processClipPass1,
@@ -58,20 +53,11 @@ import {
   PASS1_PROGRESS_END,
   FONT_CDN_URL,
   FONT_VIRTUAL_NAME,
-  ffmpegInstance,
-  fontLoaded,
-  ffmpegLoadingInstance,
-  ffmpegLoadingPromise,
-  ffmpegLoadFailed,
-  loadGeneration,
   StatusCallback,
   RenderProgressUpdate,
   ProgressCallback,
   FfmpegLogProgressContext,
-  activeFfmpegLogProgress,
   MAX_LOG_BUFFER,
-  ffmpegLogBuffer,
-  lastFfmpegErrorLog,
   FFMPEG_CORE_CDNS,
   FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
   FFMPEG_LOAD_TIMEOUT_MS,
@@ -255,9 +241,10 @@ export async function mergeClips(
 
   if (textOverlays.length > 0 && !textOverlaysApplied) {
     await ensureFont(ffmpeg, onStatus);
-    await writeTextOverlayFiles(ffmpeg, textOverlays);
 
-    const vfFilter = textOverlays.map(buildDrawtextFilter).join(",");
+    const vfFilter = textOverlays
+      .map((overlay) => buildDrawtextFilter(overlay))
+      .join(",");
     onStatus("Applying text overlays...");
     emitProgress(onProgress, "Applying text overlays", 0.95, false);
 
@@ -289,8 +276,6 @@ export async function mergeClips(
       },
       "Text overlay drawtext pass",
     );
-
-    await cleanupTextOverlayFiles(ffmpeg, textOverlays);
 
     try {
       await ffmpeg.deleteFile("stacked.mp4");

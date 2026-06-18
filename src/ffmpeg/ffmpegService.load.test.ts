@@ -53,10 +53,17 @@ import {
   isFfmpegLoadFailed,
   resetFFmpegInstance,
 } from "./ffmpegService";
+import { DirectFfmpegRuntime } from "./directFfmpegRuntime";
+import {
+  FfmpegManager,
+  resetFfmpegManagerForTesting,
+  setFfmpegManagerForTesting,
+} from "./ffmpegManager";
 
 describe("FFmpeg loader", () => {
   beforeEach(async () => {
     await resetFFmpegInstance();
+    resetFfmpegManagerForTesting();
     mocked.instances.length = 0;
     mocked.fetchFile.mockReset();
     mocked.toBlobURL.mockReset();
@@ -65,10 +72,18 @@ describe("FFmpeg loader", () => {
       return mocked.createInstance();
     });
     mocked.toBlobURL.mockImplementation(async (url: string) => `blob:${url}`);
+    setFfmpegManagerForTesting(
+      new FfmpegManager({
+        useWorker: false,
+        createDirectRuntime: () =>
+          new DirectFfmpegRuntime(new mocked.FFmpeg()),
+      }),
+    );
   });
 
   afterEach(async () => {
     await resetFFmpegInstance();
+    resetFfmpegManagerForTesting();
     vi.useRealTimers();
   });
 
@@ -132,7 +147,8 @@ describe("FFmpeg loader", () => {
     await vi.advanceTimersByTimeAsync(2500);
 
     const result = await promise;
-    expect(result).toBe(second);
+    expect(result).toBeInstanceOf(DirectFfmpegRuntime);
+    expect((result as DirectFfmpegRuntime).underlying).toBe(second);
     expect(first.terminate).toHaveBeenCalledTimes(1);
     expect(onStatus).toHaveBeenCalledWith(
       expect.stringContaining("retrying in 2s (attempt 2/3)"),
@@ -233,7 +249,8 @@ describe("FFmpeg loader", () => {
 
     const promise2 = ensureFfmpeg(onStatus, onProgress);
     const result = await promise2;
-    expect(result).toBe(second);
+    expect(result).toBeInstanceOf(DirectFfmpegRuntime);
+    expect((result as DirectFfmpegRuntime).underlying).toBe(second);
     expect(isFfmpegLoadFailed()).toBe(false);
   });
 });

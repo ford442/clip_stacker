@@ -112,8 +112,7 @@ describe("buildPipFilterComplex", () => {
 
     const filterComplex = buildPipFilterComplex(clips);
 
-    // Overlay audio stream [a1] should not be fed into the final mix
-    expect(filterComplex).not.toContain("volume=");
+    expect(filterComplex).toContain("volume=0.0000");
     const finalAudioLine = filterComplex
       .split(";")
       .find((part) => part.endsWith("[aout]"));
@@ -128,9 +127,17 @@ describe("buildPipFilterComplex", () => {
 
     const filterComplex = buildPipFilterComplex(clips);
 
-    expect(filterComplex).toContain("[a1]volume=0.5000[a1vol]");
+    expect(filterComplex).toContain("volume=0.5000");
     expect(filterComplex).toContain("amix=inputs=2:normalize=0[aout]");
-    expect(filterComplex).toContain("[a1vol]");
+    expect(filterComplex).toContain("[a1]");
+  });
+
+  it("applies volume to base-layer clip audio during per-clip preprocessing", () => {
+    const clips = [createTestClip("a", 5, { volume: 1.5 })];
+
+    const filterComplex = buildPipFilterComplex(clips);
+
+    expect(filterComplex).toContain("volume=1.5000");
   });
 });
 
@@ -147,7 +154,7 @@ describe("appendTextOverlayFilters", () => {
     const result = appendTextOverlayFilters(filterComplex, overlays);
 
     expect(result).toBe(
-      "[0:v]null[vpretext];[0:a]anull[aout];[vpretext]drawtext=fontfile=roboto.ttf:textfile=tol_a.txt:x=10:y=10:fontsize=24:fontcolor=white,drawtext=fontfile=roboto.ttf:textfile=tol_b.txt:x=10:y=10:fontsize=24:fontcolor=white[vout]",
+      "[0:v]null[vpretext];[0:a]anull[aout];[vpretext]drawtext=fontfile=roboto.ttf:text='Hello':x=10:y=10:fontsize=24:fontcolor=white,drawtext=fontfile=roboto.ttf:text='Hello':x=10:y=10:fontsize=24:fontcolor=white[vout]",
     );
   });
 

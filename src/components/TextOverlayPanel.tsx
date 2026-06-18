@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TextOverlay } from "../types";
 import { isValidFfmpegColor } from "../utils/color";
 import {
@@ -9,7 +9,7 @@ import {
 
 interface Props {
   overlays: TextOverlay[];
-  onAdd: () => void;
+  onAdd: () => string;
   onUpdate: (overlay: TextOverlay) => void;
   onDelete: (id: string) => void;
 }
@@ -21,9 +21,21 @@ export function TextOverlayPanel({
   onDelete,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    if (!editingId) return;
+    const node = itemRefs.current[editingId];
+    node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [editingId, overlays.length]);
 
   const handleToggleEdit = (id: string) => {
     setEditingId((prev) => (prev === id ? null : id));
+  };
+
+  const handleAdd = () => {
+    const id = onAdd();
+    setEditingId(id);
   };
 
   const set = (
@@ -41,7 +53,8 @@ export function TextOverlayPanel({
         <button
           type="button"
           className="btn-secondary tol-add-btn"
-          onClick={onAdd}
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={handleAdd}
         >
           + Add Text
         </button>
@@ -55,7 +68,13 @@ export function TextOverlayPanel({
       ) : (
         <div className="tol-list">
           {overlays.map((overlay) => (
-            <div key={overlay.id} className="tol-item">
+            <div
+              key={overlay.id}
+              ref={(node) => {
+                itemRefs.current[overlay.id] = node;
+              }}
+              className="tol-item"
+            >
               <div className="tol-item-row">
                 <span className="tol-item-icon" aria-hidden="true">
                   T

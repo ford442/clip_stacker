@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { ContaboStorageManagerClient } from "../utils/project";
 import { ProgressBar } from "./ProgressBar";
 
@@ -60,6 +60,16 @@ export function StorageRow({
   >([]);
   const [loading, setLoading] = useState(false);
   const [listError, setListError] = useState("");
+  const projectNameInputRef = useRef<HTMLInputElement>(null);
+
+  const selectProject = useCallback((name: string) => {
+    setProjectName(name);
+    projectNameInputRef.current?.focus();
+  }, []);
+
+  const handleLoadSelected = useCallback(() => {
+    onLoadRemote(endpoint, authToken, projectName);
+  }, [endpoint, authToken, onLoadRemote, projectName]);
 
   const fetchProjects = useCallback(async () => {
     if (!endpoint) {
@@ -125,8 +135,8 @@ export function StorageRow({
           </button>
         )}
         <p className="storage-hint">
-          The auth token is saved in this browser's local storage so you
-          don't need to re-enter it next time.
+          The auth token is saved for this browser tab session only and is
+          cleared when you close the tab.
         </p>
       </div>
 
@@ -134,6 +144,7 @@ export function StorageRow({
         <label>
           Project name
           <input
+            ref={projectNameInputRef}
             type="text"
             value={projectName}
             onChange={(e) => setProjectName(e.target.value)}
@@ -148,8 +159,8 @@ export function StorageRow({
         </button>
         <button
           type="button"
-          onClick={() => onLoadRemote(endpoint, authToken, projectName)}
-          disabled={isRemoteLoading || isRemoteSaving}
+          onClick={handleLoadSelected}
+          disabled={isRemoteLoading || isRemoteSaving || !projectName.trim()}
         >
           {isRemoteLoading ? "Loading…" : "Load remote"}
         </button>
@@ -245,16 +256,36 @@ export function StorageRow({
       {projects.length > 0 && (
         <div className="storage-project-list">
           <h3>Saved projects</h3>
-          <ul>
-            {projects.map((p) => (
+          <p className="storage-hint storage-project-hint">
+            Click a project to select it for Load remote. Double-click to load immediately.
+          </p>
+          <ul role="listbox" aria-label="Saved remote projects">
+            {projects.map((p) => {
+              const isSelected = p.name === projectName;
+              return (
               <li
                 key={p.name}
-                className={p.name === projectName ? "selected" : ""}
-                onClick={() => setProjectName(p.name)}
-                title="Click to select"
+                role="option"
+                aria-selected={isSelected}
+                tabIndex={0}
+                className={isSelected ? "selected" : ""}
+                onClick={() => selectProject(p.name)}
+                onDoubleClick={() => onLoadRemote(endpoint, authToken, p.name)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    selectProject(p.name);
+                  }
+                }}
+                title={isSelected ? "Selected for Load remote" : "Click to select"}
               >
                 <span className="project-name">{p.name}</span>
                 <span className="project-date">{fmtDate(p.modified)}</span>
+                {isSelected && (
+                  <span className="project-selected-badge" aria-hidden="true">
+                    Selected
+                  </span>
+                )}
                 <button
                   type="button"
                   className="project-delete-btn"
@@ -268,7 +299,8 @@ export function StorageRow({
                   ×
                 </button>
               </li>
-            ))}
+            );
+            })}
           </ul>
         </div>
       )}

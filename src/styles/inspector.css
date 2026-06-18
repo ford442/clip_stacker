@@ -89,6 +89,37 @@
   width: auto;
 }
 
+.inspector-volume-group {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.inspector-volume-waveform {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: rgba(6, 9, 15, 0.85);
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.inspector-volume-waveform.is-loading {
+  opacity: 0.55;
+}
+
+.inspector-volume-slider {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+}
+
+.inspector-volume-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--gold);
+}
+
 .inspector-trim-visual-group {
   display: grid;
   gap: 0.45rem;
@@ -158,59 +189,23 @@
   align-items: end;
 }
 
-.inspector-fade-preview {
+.inspector-fade-canvas-preview {
   display: grid;
   gap: 0.2rem;
 }
 
-.inspector-fade-preview-bar {
-  position: relative;
-  height: 1.8rem;
+.inspector-fade-canvas-preview__canvas {
+  display: block;
+  width: 100%;
+  height: 4.5rem;
   border-radius: 8px;
-  overflow: hidden;
   border: 1px solid var(--border);
-  background: linear-gradient(
-    180deg,
-    rgba(6, 9, 15, 0.95) 0%,
-    rgba(19, 26, 46, 0.95) 100%
-  );
+  background: rgba(6, 9, 15, 0.95);
+  object-fit: cover;
 }
 
-.inspector-fade-preview-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: linear-gradient(
-    90deg,
-    rgba(201, 162, 39, 0.08) 0%,
-    rgba(232, 200, 75, 0.95) 100%
-  );
-}
-
-.inspector-fade-preview-bar--out .inspector-fade-preview-fill {
-  inset: 0 0 0 auto;
-  background: linear-gradient(
-    270deg,
-    rgba(201, 162, 39, 0.08) 0%,
-    rgba(232, 200, 75, 0.95) 100%
-  );
-}
-
-.inspector-fade-preview--audio .inspector-fade-preview-fill {
-  background: linear-gradient(
-    90deg,
-    rgba(96, 165, 250, 0.08) 0%,
-    rgba(96, 165, 250, 0.95) 100%
-  );
-}
-
-.inspector-fade-preview--audio
-  .inspector-fade-preview-bar--out
-  .inspector-fade-preview-fill {
-  background: linear-gradient(
-    270deg,
-    rgba(96, 165, 250, 0.08) 0%,
-    rgba(96, 165, 250, 0.95) 100%
-  );
+.inspector-fade-canvas-preview--audio .inspector-fade-canvas-preview__canvas {
+  border-color: rgba(96, 165, 250, 0.25);
 }
 
 .inspector-fade-preview-label {

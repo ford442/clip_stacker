@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
+import { audioVolumeFilterSegment } from "../utils/audioVolume";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   isFfmpegLoadFailed,
@@ -148,6 +149,7 @@ export async function muxVideoWithAudio(
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
+    af += audioVolumeFilterSegment(clip.volume ?? 1);
     const label = `[amux${i}]`;
     af += label;
     filterParts.push(af);

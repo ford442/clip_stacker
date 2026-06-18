@@ -8,3 +8,55 @@ audio {
   background: #000;
   margin-bottom: 0.5rem;
 }
+
+.preview-playhead-label {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.preview-video-wrapper {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.preview-timeline-canvas {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  background: #000;
+  cursor: pointer;
+}
+
+.preview-gpu-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.preview-gpu-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--gold-bright);
+  border: 1px solid var(--border-active);
+  background: var(--gold-dim);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+}
+
+.preview-scrub-label {
+  display: grid;
+  gap: 0.2rem;
+  flex: 1;
+  min-width: 160px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.preview-scrub-label input[type="range"] {
+  width: 100%;
+  accent-color: var(--gold);
+}

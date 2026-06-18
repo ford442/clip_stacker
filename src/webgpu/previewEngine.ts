@@ -13,7 +13,28 @@
  *   engine.destroy();
  */
 
-const UNIFORM_FLOATS = 12; // must match WGSL struct (padded to 48 bytes)
+const UNIFORM_FLOATS = 16; // must match WGSL struct (padded to 64 bytes)
+
+export interface NormalizedDestRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+export interface LayerRenderParams {
+  elapsed: number;
+  duration: number;
+  fadeIn: number;
+  fadeOut: number;
+  opacity: number;
+  uvScale: [number, number];
+  uvOffset: [number, number];
+  /** Destination rectangle on the canvas in normalized 0–1 coordinates. */
+  destRect?: NormalizedDestRect;
+  /** When true, clears the canvas before drawing this layer. */
+  clear?: boolean;
+}
 
 export class PreviewEngine {
   private device: GPUDevice;
@@ -88,7 +109,23 @@ export class PreviewEngine {
       fragment: {
         module: shaderModule,
         entryPoint: "fs_main",
-        targets: [{ format }],
+        targets: [
+          {
+            format,
+            blend: {
+              color: {
+                srcFactor: "one",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+              alpha: {
+                srcFactor: "one",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+            },
+          },
+        ],
       },
       primitive: { topology: "triangle-list" },
     });
@@ -107,8 +144,7 @@ export class PreviewEngine {
       if (!res.ok) throw new Error(`Shader fetch failed: ${res.status}`);
       PreviewEngine.shaderText = await res.text();
       return PreviewEngine.shaderText;
-    } catch (e) {
-      // Inline fallback — minimal pass-through with fade support
+    } catch {
       PreviewEngine.shaderText = INLINE_SHADER;
       return PreviewEngine.shaderText;
     }
@@ -133,18 +169,37 @@ export class PreviewEngine {
     uvScale: [number, number] = [1, 1],
     uvOffset: [number, number] = [0, 0],
   ): void {
+    this.renderLayer(videoFrame, {
+      elapsed,
+      duration,
+      fadeIn,
+      fadeOut,
+      opacity,
+      uvScale,
+      uvOffset,
+      destRect: { x: 0, y: 0, w: 1, h: 1 },
+      clear: true,
+    });
+  }
+
+  /** Render one composited layer (multi-pass timeline preview). */
+  renderLayer(videoFrame: VideoFrame, params: LayerRenderParams): void {
     if (this.destroyed) return;
 
-    this.uniformData[0] = fadeIn;
-    this.uniformData[1] = fadeOut;
-    this.uniformData[2] = duration;
-    this.uniformData[3] = elapsed;
-    this.uniformData[4] = opacity;
-    this.uniformData[5] = uvScale[0];
-    this.uniformData[6] = uvScale[1];
-    this.uniformData[7] = uvOffset[0];
-    this.uniformData[8] = uvOffset[1];
-    // [9..11] padding — zero by default
+    const dest = params.destRect ?? { x: 0, y: 0, w: 1, h: 1 };
+    this.uniformData[0] = params.fadeIn;
+    this.uniformData[1] = params.fadeOut;
+    this.uniformData[2] = params.duration;
+    this.uniformData[3] = params.elapsed;
+    this.uniformData[4] = params.opacity;
+    this.uniformData[5] = params.uvScale[0];
+    this.uniformData[6] = params.uvScale[1];
+    this.uniformData[7] = params.uvOffset[0];
+    this.uniformData[8] = params.uvOffset[1];
+    this.uniformData[9] = dest.x;
+    this.uniformData[10] = dest.y;
+    this.uniformData[11] = dest.w;
+    this.uniformData[12] = dest.h;
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
     const externalTexture = this.device.importExternalTexture({
@@ -165,7 +220,7 @@ export class PreviewEngine {
       colorAttachments: [
         {
           view: this.context.getCurrentTexture().createView(),
-          loadOp: "clear",
+          loadOp: params.clear ? "clear" : "load",
           storeOp: "store",
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
         },
@@ -186,8 +241,8 @@ export class PreviewEngine {
       colorAttachments: [
         {
           view: this.context.getCurrentTexture().createView(),
-          loadOp: 'clear',
-          storeOp: 'store',
+          loadOp: "clear",
+          storeOp: "store",
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
         },
       ],
@@ -213,31 +268,36 @@ const INLINE_SHADER = /* wgsl */ `
 struct Uniforms {
   fadeIn: f32, fadeOut: f32, duration: f32, elapsed: f32,
   opacity: f32, uvScaleX: f32, uvScaleY: f32, uvOffsetX: f32,
-  uvOffsetY: f32, _p0: f32, _p1: f32, _p2: f32,
+  uvOffsetY: f32, destX: f32, destY: f32, destW: f32, destH: f32,
+  _p0: f32, _p1: f32, _p2: f32,
 };
 
 struct VO { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32> };
 
 @vertex fn vs_main(@builtin(vertex_index) i: u32) -> VO {
-  var p = array<vec2<f32>,6>(
-    vec2(-1.,-1.), vec2(1.,-1.), vec2(-1.,1.),
-    vec2(-1.,1.),  vec2(1.,-1.), vec2(1.,1.));
+  var unit = array<vec2<f32>,6>(
+    vec2(0.,1.), vec2(1.,1.), vec2(0.,0.),
+    vec2(0.,0.), vec2(1.,1.), vec2(1.,0.));
   var t = array<vec2<f32>,6>(
     vec2(0.,1.), vec2(1.,1.), vec2(0.,0.),
     vec2(0.,0.), vec2(1.,1.), vec2(1.,0.));
-  let baseUv = t[i];
-  let uv = baseUv * vec2(u.uvScaleX, u.uvScaleY) + vec2(u.uvOffsetX, u.uvOffsetY);
-  return VO(vec4(p[i],0.,1.), uv);
+  let ndcLeft = u.destX * 2.0 - 1.0;
+  let ndcRight = (u.destX + u.destW) * 2.0 - 1.0;
+  let ndcTop = 1.0 - u.destY * 2.0;
+  let ndcBottom = 1.0 - (u.destY + u.destH) * 2.0;
+  let ndc = vec2(mix(ndcLeft, ndcRight, unit[i].x), mix(ndcBottom, ndcTop, unit[i].y));
+  let uv = t[i] * vec2(u.uvScaleX, u.uvScaleY) + vec2(u.uvOffsetX, u.uvOffsetY);
+  return VO(vec4(ndc,0.,1.), uv);
 }
 
 @fragment fn fs_main(v: VO) -> @location(0) vec4<f32> {
   var c = textureSampleBaseClampToEdge(videoTexture, videoSampler, v.uv);
-  c.a *= u.opacity;
   var fa = 1.0;
   if (u.fadeIn > 0.0 && u.elapsed < u.fadeIn) { fa = u.elapsed / u.fadeIn; }
   if (u.fadeOut > 0.0 && u.duration > 0.0 && u.elapsed > (u.duration - u.fadeOut)) {
     fa = min(fa, (u.duration - u.elapsed) / u.fadeOut);
   }
-  return vec4(c.rgb * clamp(fa, 0.0, 1.0), c.a);
+  fa = clamp(fa, 0.0, 1.0) * clamp(u.opacity, 0.0, 1.0);
+  return vec4(c.rgb * fa, c.a * fa);
 }
 `;

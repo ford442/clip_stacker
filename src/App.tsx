@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Clip,
   ClipGroup,
@@ -19,9 +19,15 @@ import {
   type RemoteProjectLoadProgressEvent,
   type MediaLibraryItem,
 } from "./utils/project";
+import { clampClipVolume } from "./utils/audioVolume";
 import { findMatchingClipIndex } from "./utils/clipMatching";
 import { DEFAULT_SCROLL_SPEED } from "./utils/textOverlay";
-import { reindexTransitions } from "./utils/transitions";
+import { reindexTransitions, shiftTransitionsForInsert } from "./utils/transitions";
+import {
+  duplicateClip,
+  removeClipFromGroups,
+  splitClipAt,
+} from "./utils/clipOperations";
 import { hybridMergeClips } from "./utils/hybrid-encoder";
 import {
   extractAudioToWav,
@@ -56,11 +62,12 @@ import { Timeline } from "./components/Timeline";
 import { TextOverlayPanel } from "./components/TextOverlayPanel";
 import { KeyboardShortcutsModal } from "./components/KeyboardShortcutsModal";
 import { MemoryWarningModal } from "./components/MemoryWarningModal";
+import { RecoveryModal } from "./components/RecoveryModal";
 import { useProjectSaveLoad } from "./hooks/useProjectSaveLoad";
 import { useRenderState } from "./hooks/useRenderState";
-
-/** localStorage key for the persisted remote storage auth token. */
-const STORAGE_AUTH_TOKEN_KEY = "clip_stacker:storage_auth_token";
+import { useEditHistory } from "./hooks/useEditHistory";
+import { useAutoSave } from "./hooks/useAutoSave";
+import { getTimelineClips } from "./utils/timelineClips";
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(", ");
@@ -85,13 +92,28 @@ type PendingRemoteUploadError = {
 };
 
 export function App() {
-  const [clips, setClips] = useState<Clip[]>([]);
-  const [clipGroups, setClipGroups] = useState<ClipGroup[]>([]);
-  const [transitions, setTransitions] = useState<ClipTransition[]>([]);
-  const [textOverlays, setTextOverlays] = useState<TextOverlay[]>([]);
-  const [selectedClipId, setSelectedClipId] = useState<string | null>(null);
+  const {
+    clips,
+    clipGroups,
+    transitions,
+    textOverlays,
+    selectedClipId,
+    setClips,
+    setClipGroups,
+    setTransitions,
+    setTextOverlays,
+    setSelectedClipId,
+    pushHistory,
+    pushHistoryDebounced,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    resetHistory,
+  } = useEditHistory();
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [showMemoryWarning, setShowMemoryWarning] = useState(false);
+  const [previewPlayheadTime, setPreviewPlayheadTime] = useState<number | null>(null);
   const pendingRenderRef = useRef<(() => Promise<void>) | null>(null);
 
   const {
@@ -153,6 +175,25 @@ export function App() {
     setTransitions,
     setTextOverlays,
     setStatus,
+    resetHistory,
+  });
+
+  const {
+    recoveryOffer,
+    isRecovering,
+    handleRecover,
+    handleDiscardRecovery,
+  } = useAutoSave({
+    clips,
+    clipGroups,
+    transitions,
+    textOverlays,
+    selectedClipId,
+    exportSettings,
+    setExportSettings,
+    resetHistory,
+    setStatus,
+    enabled: !isRendering,
   });
 
   // Ref to access Toolbar's triggerLoadDialog
@@ -166,16 +207,10 @@ export function App() {
   const [storageEndpoint, setStorageEndpoint] = useState(
     "https://storage.noahcohn.com/webhook/clip-stacker",
   );
-  const [storageAuthToken, setStorageAuthToken] = useState(
-    () => localStorage.getItem(STORAGE_AUTH_TOKEN_KEY) ?? "",
-  );
+  const [storageAuthToken, setStorageAuthToken] = useState(readStorageAuthToken);
   const handleStorageAuthTokenChange = useCallback((value: string) => {
     setStorageAuthToken(value);
-    if (value) {
-      localStorage.setItem(STORAGE_AUTH_TOKEN_KEY, value);
-    } else {
-      localStorage.removeItem(STORAGE_AUTH_TOKEN_KEY);
-    }
+    writeStorageAuthToken(value);
   }, []);
   const pendingRemoteUploadResolver = useRef<
     ((action: "retry" | "skip" | "abort") => void) | null
@@ -184,6 +219,13 @@ export function App() {
 
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
 
+  useEffect(() => {
+    if (!selectedClip) {
+      setPreviewPlayheadTime(null);
+      return;
+    }
+    setPreviewPlayheadTime(selectedClip.trimStart);
+  }, [selectedClip?.id, selectedClip?.trimStart]);
 
   // ---------------------------------------------------------------------------
   // Clip management helpers
@@ -251,10 +293,100 @@ export function App() {
     });
   }, []);
 
+  const insertClipAfter = useCallback(
+    (index: number, newClip: Clip) => {
+      setClips((prev) => {
+        const next = [...prev];
+        next.splice(index + 1, 0, newClip);
+        return next;
+      });
+      setTransitions((prev) => shiftTransitionsForInsert(prev, index + 1));
+    },
+    [setClips, setTransitions],
+  );
+
+  const handleDuplicateClip = useCallback(() => {
+    if (!selectedClipId) {
+      setStatus("Select a clip to duplicate.");
+      return;
+    }
+
+    const index = clips.findIndex((clip) => clip.id === selectedClipId);
+    if (index < 0) return;
+
+    pushHistory();
+    const source = clips[index];
+    const copy = duplicateClip(source);
+    insertClipAfter(index, copy);
+    setSelectedClipId(copy.id);
+    setPreviewPlayheadTime(copy.trimStart);
+    setOutputUrl(null);
+    setStatus(`Duplicated "${source.title}".`);
+  }, [
+    clips,
+    selectedClipId,
+    pushHistory,
+    insertClipAfter,
+    setSelectedClipId,
+    setStatus,
+    setOutputUrl,
+  ]);
+
+  const handleSplitClip = useCallback(() => {
+    if (!selectedClipId) {
+      setStatus("Select a clip to split.");
+      return;
+    }
+    if (previewPlayheadTime === null) {
+      setStatus("Move the preview playhead before splitting.");
+      return;
+    }
+
+    const index = clips.findIndex((clip) => clip.id === selectedClipId);
+    if (index < 0) return;
+
+    const source = clips[index];
+    const split = splitClipAt(source, previewPlayheadTime);
+    if (!split) {
+      setStatus(
+        "Cannot split here — place the playhead at least 0.1s inside the trimmed region.",
+      );
+      return;
+    }
+
+    pushHistory();
+    const [left, right] = split;
+    setClips((prev) => {
+      const next = [...prev];
+      next.splice(index, 1, left, right);
+      return next;
+    });
+    setTransitions((prev) => shiftTransitionsForInsert(prev, index + 1));
+    if (source.groupId) {
+      setClipGroups((prev) => removeClipFromGroups(prev, source));
+    }
+    setSelectedClipId(right.id);
+    setPreviewPlayheadTime(right.trimStart);
+    setOutputUrl(null);
+    setStatus(
+      `Split "${source.title}" at ${previewPlayheadTime.toFixed(2)}s.`,
+    );
+  }, [
+    clips,
+    selectedClipId,
+    previewPlayheadTime,
+    pushHistory,
+    setClipGroups,
+    setSelectedClipId,
+    setStatus,
+    setOutputUrl,
+  ]);
+
   const handleAddClips = useCallback(
     async (files: File[]) => {
       setStatus("Importing clips...");
       let added = 0;
+      let pushedHistory = false;
 
       for (const file of files) {
         const isVideo =
@@ -282,6 +414,10 @@ export function App() {
             audioFadeIn: 0,
             audioFadeOut: 0,
           };
+          if (!pushedHistory) {
+            pushHistory();
+            pushedHistory = true;
+          }
           addClipToState(newClip);
           setSelectedClipId(newClip.id);
           added++;
@@ -301,7 +437,7 @@ export function App() {
         );
       }
     },
-    [addClipToState],
+    [addClipToState, pushHistory],
   );
 
   const handleAddLibraryClip = useCallback(
@@ -331,6 +467,7 @@ export function App() {
           audioFadeOut: 0,
           remoteSourceUrl: item.url,
         };
+        pushHistory();
         addClipToState(newClip);
         setSelectedClipId(newClip.id);
         setOutputUrl(null);
@@ -341,7 +478,7 @@ export function App() {
         );
       }
     },
-    [addClipToState],
+    [addClipToState, pushHistory],
   );
 
   // ---------------------------------------------------------------------------
@@ -350,6 +487,7 @@ export function App() {
 
   const handleToggleVariant = useCallback(
     (groupId: string, variant: "A" | "B") => {
+      pushHistory();
       setClipGroups((prev) =>
         prev.map((g) =>
           g.id === groupId ? { ...g, activeVariant: variant } : g,
@@ -366,7 +504,7 @@ export function App() {
         });
       });
     },
-    [],
+    [pushHistory],
   );
 
   // ---------------------------------------------------------------------------
@@ -679,6 +817,9 @@ export function App() {
 
   const handleInspectorChange = useCallback(
     (values: ClipValues) => {
+      if (selectedClipId) {
+        pushHistoryDebounced(`inspector:${selectedClipId}`);
+      }
       setClips((prev) =>
         prev.map((clip) => {
           if (clip.id !== selectedClipId) return clip;
@@ -697,19 +838,15 @@ export function App() {
             width: Math.max(0, Number(values.width || 0)),
             height: Math.max(0, Number(values.height || 0)),
             opacity: Math.min(1, Math.max(0, Number(values.opacity ?? 1))),
-            volume: Math.min(2, Math.max(0, Number(values.volume ?? 1))),
+            volume: clampClipVolume(Number(values.volume ?? 1)),
           };
           sanitizeClipAdjustments(updated);
           return updated;
         }),
       );
     },
-    [selectedClipId],
+    [selectedClipId, pushHistoryDebounced],
   );
-
-  // ---------------------------------------------------------------------------
-  // RIFE frame interpolation
-  // ---------------------------------------------------------------------------
   const handleRife = useCallback(
     async (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
@@ -719,6 +856,7 @@ export function App() {
       // before any async work so we have a stable snapshot.
       const clipSnapshot = selectedClip;
 
+      pushHistory();
       setRifeProcessingClipId(clipSnapshot.id);
       setStatus("Preparing trimmed clip for RIFE…");
 
@@ -791,7 +929,7 @@ export function App() {
         setRifeProcessingClipId(null);
       }
     },
-    [selectedClip, rifeProcessingClipId],
+    [selectedClip, rifeProcessingClipId, pushHistory],
   );
 
   // ---------------------------------------------------------------------------
@@ -800,15 +938,17 @@ export function App() {
 
   const handleMoveUp = useCallback((index: number) => {
     if (index <= 0) return;
+    pushHistory();
     setClips((prev) => {
       const next = [...prev];
       [next[index - 1], next[index]] = [next[index], next[index - 1]];
       return next;
     });
     setTransitions((prev) => reindexAfterSwap(prev, index - 1, index));
-  }, []);
+  }, [pushHistory]);
 
   const handleMoveDown = useCallback((index: number) => {
+    pushHistory();
     setClips((prev) => {
       if (index >= prev.length - 1) return prev;
       const next = [...prev];
@@ -816,7 +956,7 @@ export function App() {
       return next;
     });
     setTransitions((prev) => reindexAfterSwap(prev, index, index + 1));
-  }, []);
+  }, [pushHistory]);
 
   /**
    * Drag-and-drop reorder: move clip at `fromIndex` to be inserted before
@@ -829,6 +969,7 @@ export function App() {
       // insertBefore === fromIndex means "insert before itself",
       // insertBefore === fromIndex + 1 means "insert after itself" — both are identity moves.
       if (insertBefore === fromIndex || insertBefore === fromIndex + 1) return;
+      pushHistory();
       setClips((prev) => {
         const next = [...prev];
         const [moved] = next.splice(fromIndex, 1);
@@ -839,7 +980,7 @@ export function App() {
       });
       // Transitions are positional (slot-based) so no index remapping is needed.
     },
-    [],
+    [pushHistory],
   );
 
   // ---------------------------------------------------------------------------
@@ -859,8 +1000,7 @@ export function App() {
         return;
       }
 
-      // Revoke the object URL to free memory
-      URL.revokeObjectURL(clipToDelete.objectUrl);
+      pushHistory();
 
       // Get the timeline index before removing the clip (for transition reindexing)
       const timelineClipsBeforeDeletion = getTimelineClips(clips, clipGroups);
@@ -901,7 +1041,7 @@ export function App() {
 
       setStatus(`Deleted "${clipTitle}".`);
     },
-    [clips, clipGroups, selectedClipId],
+    [clips, clipGroups, selectedClipId, pushHistory],
   );
 
   // ---------------------------------------------------------------------------
@@ -909,6 +1049,7 @@ export function App() {
   // ---------------------------------------------------------------------------
 
   const handleTransitionUpdate = useCallback((updated: ClipTransition) => {
+    pushHistoryDebounced(`transition:${updated.afterClipIndex}`);
     setTransitions((prev) => {
       const exists = prev.find(
         (t) => t.afterClipIndex === updated.afterClipIndex,
@@ -920,13 +1061,14 @@ export function App() {
       }
       return [...prev, updated];
     });
-  }, []);
+  }, [pushHistoryDebounced]);
 
   // ---------------------------------------------------------------------------
   // Text overlay management
   // ---------------------------------------------------------------------------
 
-  const handleAddTextOverlay = useCallback(() => {
+  const handleAddTextOverlay = useCallback((): string => {
+    pushHistory();
     const newOverlay: TextOverlay = {
       id: createClipId(),
       text: "Add your text here",
@@ -940,17 +1082,20 @@ export function App() {
       boxColor: "black@0.5",
     };
     setTextOverlays((prev) => [...prev, newOverlay]);
-  }, []);
+    return newOverlay.id;
+  }, [pushHistory]);
 
   const handleUpdateTextOverlay = useCallback((overlay: TextOverlay) => {
+    pushHistoryDebounced(`text-overlay:${overlay.id}`);
     setTextOverlays((prev) =>
       prev.map((o) => (o.id === overlay.id ? overlay : o)),
     );
-  }, []);
+  }, [pushHistoryDebounced]);
 
   const handleDeleteTextOverlay = useCallback((id: string) => {
+    pushHistory();
     setTextOverlays((prev) => prev.filter((o) => o.id !== id));
-  }, []);
+  }, [pushHistory]);
 
   // Helper functions for keyboard shortcuts
   // Memoize timeline clips computation to avoid unnecessary recalculation during re-renders
@@ -976,14 +1121,30 @@ export function App() {
     if (selectedClipId) handleDeleteClip(selectedClipId);
   }, [selectedClipId, handleDeleteClip]);
 
+  const handleUndo = useCallback(() => {
+    if (!canUndo) return;
+    undo();
+    setStatus("Undid last edit.");
+  }, [canUndo, undo, setStatus]);
+
+  const handleRedo = useCallback(() => {
+    if (!canRedo) return;
+    redo();
+    setStatus("Redid last edit.");
+  }, [canRedo, redo, setStatus]);
+
   // Set up keyboard shortcuts with memoization to avoid unnecessary re-renders
   const shortcutsMap = useMemo(
     () => ({
       r: handleMerge,
-      s: handleSaveProject,
+      "ctrl+s": handleSaveProject,
+      s: handleSplitClip,
+      "ctrl+d": handleDuplicateClip,
       l: () => toolbarRef.current?.triggerLoadDialog(),
       delete: handleDeleteSelectedClip,
       backspace: handleDeleteSelectedClip,
+      "ctrl+z": handleUndo,
+      "ctrl+shift+z": handleRedo,
       "ctrl+arrowleft": handleMoveSelectedLeft,
       "ctrl+arrowright": handleMoveSelectedRight,
       "meta+arrowleft": handleMoveSelectedLeft,
@@ -993,9 +1154,13 @@ export function App() {
     [
       handleMerge,
       handleSaveProject,
+      handleSplitClip,
+      handleDuplicateClip,
       handleDeleteSelectedClip,
       handleMoveSelectedLeft,
       handleMoveSelectedRight,
+      handleUndo,
+      handleRedo,
     ],
   );
 
@@ -1023,6 +1188,10 @@ export function App() {
           ref={toolbarRef}
           onAddClips={handleAddClips}
           onMerge={handleMerge}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          canUndo={canUndo}
+          canRedo={canRedo}
           onSaveProject={handleSaveProject}
           onLoadProject={handleLoadProject}
           onShowKeyboardShortcuts={() => setShowKeyboardShortcuts(true)}
@@ -1079,8 +1248,15 @@ export function App() {
         />
         <Preview
           clip={selectedClip}
+          timelineClips={timelineClips}
+          clipGroups={clipGroups}
+          transitions={transitions}
+          textOverlays={textOverlays}
+          exportSettings={exportSettings}
           outputUrl={outputUrl}
           exportFilename={exportSettings.filename}
+          playheadTime={previewPlayheadTime}
+          onPlayheadChange={setPreviewPlayheadTime}
         />
         <Inspector
           clip={selectedClip}
@@ -1123,6 +1299,21 @@ export function App() {
         onConfirm={handleMemoryWarningConfirm}
         onCancel={handleMemoryWarningCancel}
       />
+
+      {recoveryOffer && (
+        <RecoveryModal
+          isOpen
+          savedAt={recoveryOffer.savedAt}
+          clipCount={recoveryOffer.clipCount}
+          textOverlayCount={recoveryOffer.textOverlayCount}
+          embeddedClipCount={recoveryOffer.embeddedClipCount}
+          referenceOnlyClipCount={recoveryOffer.referenceOnlyClipCount}
+          unrecoverableLocalClipCount={recoveryOffer.unrecoverableLocalClipCount}
+          isRecovering={isRecovering}
+          onRecover={handleRecover}
+          onDiscard={handleDiscardRecovery}
+        />
+      )}
     </main>
   );
 }
@@ -1130,26 +1321,6 @@ export function App() {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Return the clips that are currently "on the timeline" — resolving A/B groups
- * to their active variant.
- */
-function getTimelineClips(clips: Clip[], groups: ClipGroup[]): Clip[] {
-  if (groups.length === 0) return clips;
-
-  const activeGroupClipIds = new Set<string>();
-  const inactiveGroupClipIds = new Set<string>();
-
-  for (const group of groups) {
-    const active = group.variants[group.activeVariant];
-    const other = group.variants[group.activeVariant === "A" ? "B" : "A"];
-    if (active) activeGroupClipIds.add(active.id);
-    if (other) inactiveGroupClipIds.add(other.id);
-  }
-
-  return clips.filter((c) => !inactiveGroupClipIds.has(c.id));
-}
 
 /**
  * After swapping two adjacent clips at indices i and j (j = i+1),

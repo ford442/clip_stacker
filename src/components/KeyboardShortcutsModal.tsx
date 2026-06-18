@@ -5,7 +5,11 @@ interface Props {
 
 const SHORTCUTS = [
   { key: "R", description: "Render merge" },
-  { key: "S", description: "Save local project" },
+  { key: "Ctrl/Cmd+Z", description: "Undo last edit" },
+  { key: "Ctrl/Cmd+Shift+Z", description: "Redo last edit" },
+  { key: "Ctrl/Cmd+S", description: "Save local project" },
+  { key: "Ctrl/Cmd+D", description: "Duplicate selected clip" },
+  { key: "S", description: "Split selected clip at preview playhead" },
   { key: "L", description: "Load local project" },
   { key: "Delete / Backspace", description: "Delete selected clip" },
   { key: "Arrow Left (with Ctrl/Cmd)", description: "Move selected clip left" },

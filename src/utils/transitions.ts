@@ -5,6 +5,7 @@
 
 import type { Clip, ClipTransition, TransitionType, ExportSettings } from '../types';
 import { getClipDuration } from './project';
+import { audioVolumeFilterSegment } from './audioVolume';
 import { parseOutputResolution } from './resolution';
 
 // ---------------------------------------------------------------------------
@@ -123,6 +124,7 @@ export function buildTransitionFilterComplex(
       let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
       if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
+      af += audioVolumeFilterSegment(clip.volume ?? 1);
       parts.push(`${af}[a${i}]`);
     } else {
       // audio-only: black video
@@ -130,6 +132,7 @@ export function buildTransitionFilterComplex(
       let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
       if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
+      af += audioVolumeFilterSegment(clip.volume ?? 1);
       parts.push(`${af}[a${i}]`);
     }
   }
@@ -198,4 +201,18 @@ export function reindexTransitions(
       ...t,
       afterClipIndex: t.afterClipIndex > removedIndex ? t.afterClipIndex - 1 : t.afterClipIndex,
     }));
+}
+
+/** Shift transition indices when a clip is inserted on the timeline. */
+export function shiftTransitionsForInsert(
+  transitions: ClipTransition[],
+  insertIndex: number,
+): ClipTransition[] {
+  return transitions.map((transition) => ({
+    ...transition,
+    afterClipIndex:
+      transition.afterClipIndex >= insertIndex
+        ? transition.afterClipIndex + 1
+        : transition.afterClipIndex,
+  }));
 }

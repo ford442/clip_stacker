@@ -5,7 +5,9 @@ import { sanitizeFilename } from '../utils/filename';
 import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
 import { isOverlayOffCanvas } from '../utils/project';
 import { extractWaveformPeaks } from '../utils/waveform';
+import { clampClipVolume } from '../utils/audioVolume';
 import { WaveformCanvas } from './WaveformCanvas';
+import { FadeCanvasPreview } from './FadeCanvasPreview';
 
 interface ClipValues {
   title: string;
@@ -66,42 +68,14 @@ function formatSeconds(value: number): string {
   return String(Number(value.toFixed(2)));
 }
 
-function hasAdvancedLayoutValues(values: Pick<ClipValues, 'layerIndex' | 'x' | 'y' | 'width' | 'height' | 'opacity' | 'volume'>): boolean {
+function hasAdvancedLayoutValues(values: Pick<ClipValues, 'layerIndex' | 'x' | 'y' | 'width' | 'height' | 'opacity'>): boolean {
   return (
     parseNumber(values.layerIndex, 0) > DEFAULT_LAYOUT_VALUES.layerIndex ||
     parseNumber(values.x, 0) !== DEFAULT_LAYOUT_VALUES.x ||
     parseNumber(values.y, 0) !== DEFAULT_LAYOUT_VALUES.y ||
     parseNumber(values.width, 0) !== DEFAULT_LAYOUT_VALUES.width ||
     parseNumber(values.height, 0) !== DEFAULT_LAYOUT_VALUES.height ||
-    parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity ||
-    parseNumber(values.volume, 1) !== DEFAULT_LAYOUT_VALUES.volume
-  );
-}
-
-function FadePreview({
-  value,
-  duration,
-  direction,
-  tone,
-}: {
-  value: number;
-  duration: number;
-  direction: 'in' | 'out';
-  tone: 'video' | 'audio';
-}) {
-  const ratio = duration > 0 ? clamp(value / duration, 0, 1) : 0;
-  const size = Math.max(ratio * 100, value > 0 ? 8 : 0);
-
-  return (
-    <div className={`inspector-fade-preview inspector-fade-preview--${tone}`} aria-hidden="true">
-      <div className={`inspector-fade-preview-bar inspector-fade-preview-bar--${direction}`}>
-        <span
-          className="inspector-fade-preview-fill"
-          style={{ width: `${size}%` }}
-        />
-      </div>
-      <span className="inspector-fade-preview-label">{Math.round(ratio * 100)}%</span>
-    </div>
+    parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity
   );
 }
 
@@ -169,7 +143,6 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
         width: String(clip.width ?? 0),
         height: String(clip.height ?? 0),
         opacity: String(clip.opacity ?? 1),
-        volume: String(clip.volume ?? 1),
       }),
     );
   }, [clip]);
@@ -188,7 +161,6 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
         completedThumbs.current.add(clip.id);
         setThumbMap((prev) => ({ ...prev, [clip.id]: thumbs }));
       });
-      return;
     }
 
     if (completedWaves.current.has(clip.id) || generatingWaves.current.has(clip.id)) return;
@@ -271,6 +243,8 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
   const trimEndPct = (trimEnd / trimDuration) * 100;
   const currentThumbs = clip ? thumbMap[clip.id] : undefined;
   const currentWave = clip ? waveMap[clip.id] : undefined;
+  const volumeValue = clampClipVolume(parseNumber(values.volume, 1));
+  const volumePercent = Math.round(volumeValue * 100);
 
   const updateTrimStart = (nextStart: number) => {
     if (!clip) return;
@@ -389,12 +363,26 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
               onChange={(e) => update('videoFadeIn', e.target.value)}
             />
           </label>
-          <FadePreview
-            value={clamp(parseNumber(values.videoFadeIn, 0), 0, clipPreviewDuration / 2)}
-            duration={clipPreviewDuration}
-            direction="in"
-            tone="video"
-          />
+          {clip.kind === 'video' ? (
+            <FadeCanvasPreview
+              objectUrl={clip.objectUrl}
+              trimStart={trimStart}
+              trimEnd={trimEnd}
+              clipDuration={trimDuration}
+              fadeDuration={clamp(parseNumber(values.videoFadeIn, 0), 0, clipPreviewDuration / 2)}
+              direction="in"
+              tone="video"
+            />
+          ) : (
+            <FadeCanvasPreview
+              trimStart={trimStart}
+              trimEnd={trimEnd}
+              clipDuration={trimDuration}
+              fadeDuration={clamp(parseNumber(values.videoFadeIn, 0), 0, clipPreviewDuration / 2)}
+              direction="in"
+              tone="video"
+            />
+          )}
         </div>
         <div className="inspector-field-with-preview">
           <label>
@@ -407,12 +395,26 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
               onChange={(e) => update('videoFadeOut', e.target.value)}
             />
           </label>
-          <FadePreview
-            value={clamp(parseNumber(values.videoFadeOut, 0), 0, clipPreviewDuration / 2)}
-            duration={clipPreviewDuration}
-            direction="out"
-            tone="video"
-          />
+          {clip.kind === 'video' ? (
+            <FadeCanvasPreview
+              objectUrl={clip.objectUrl}
+              trimStart={trimStart}
+              trimEnd={trimEnd}
+              clipDuration={trimDuration}
+              fadeDuration={clamp(parseNumber(values.videoFadeOut, 0), 0, clipPreviewDuration / 2)}
+              direction="out"
+              tone="video"
+            />
+          ) : (
+            <FadeCanvasPreview
+              trimStart={trimStart}
+              trimEnd={trimEnd}
+              clipDuration={trimDuration}
+              fadeDuration={clamp(parseNumber(values.videoFadeOut, 0), 0, clipPreviewDuration / 2)}
+              direction="out"
+              tone="video"
+            />
+          )}
         </div>
         <div className="inspector-group-label">Audio fades</div>
         <div className="inspector-field-with-preview">
@@ -426,9 +428,12 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
               onChange={(e) => update('audioFadeIn', e.target.value)}
             />
           </label>
-          <FadePreview
-            value={clamp(parseNumber(values.audioFadeIn, 0), 0, clipPreviewDuration / 2)}
-            duration={clipPreviewDuration}
+          <FadeCanvasPreview
+            peaks={currentWave}
+            trimStart={trimStart}
+            trimEnd={trimEnd}
+            clipDuration={trimDuration}
+            fadeDuration={clamp(parseNumber(values.audioFadeIn, 0), 0, clipPreviewDuration / 2)}
             direction="in"
             tone="audio"
           />
@@ -444,12 +449,50 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
               onChange={(e) => update('audioFadeOut', e.target.value)}
             />
           </label>
-          <FadePreview
-            value={clamp(parseNumber(values.audioFadeOut, 0), 0, clipPreviewDuration / 2)}
-            duration={clipPreviewDuration}
+          <FadeCanvasPreview
+            peaks={currentWave}
+            trimStart={trimStart}
+            trimEnd={trimEnd}
+            clipDuration={trimDuration}
+            fadeDuration={clamp(parseNumber(values.audioFadeOut, 0), 0, clipPreviewDuration / 2)}
             direction="out"
             tone="audio"
           />
+        </div>
+        <div className="inspector-group-label">Volume</div>
+        <div className="inspector-volume-group">
+          <div className={`inspector-volume-waveform${currentWave ? '' : ' is-loading'}`}>
+            {currentWave ? (
+              <WaveformCanvas peaks={currentWave} height={40} />
+            ) : (
+              <span className="waveform-loading-icon">♫</span>
+            )}
+          </div>
+          <label className="inspector-volume-slider" title="Clip volume from 0% (muted) to 200% (double). Applied during render and preview.">
+            Volume {volumePercent}%
+            <input
+              type="range"
+              min="0"
+              max="2"
+              step="0.01"
+              value={volumeValue}
+              onChange={(e) => update('volume', e.target.value)}
+            />
+          </label>
+          <label
+            className="inspector-checkbox-label"
+            title="Mute this clip's audio entirely."
+          >
+            <input
+              type="checkbox"
+              checked={volumeValue <= 0}
+              onChange={(e) => update('volume', e.target.checked ? '0' : '1')}
+            />
+            Mute clip audio
+          </label>
+          <p className="inspector-hint">
+            Volume is baked into the final render via FFmpeg and reflected in preview playback.
+          </p>
         </div>
         {onExtractAudio && (
           <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Audio extraction</div>
@@ -602,40 +645,11 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
                   />
                 </label>
               )}
-              {parseNumber(values.layerIndex, 0) > 0 && (
-                <label title="Volume of this overlay's audio relative to the base track. 0 mutes it, 1 is unchanged, values above 1 boost it.">
-                  Overlay volume (0–2)
-                  <input
-                    type="number"
-                    min="0"
-                    max="2"
-                    step="0.05"
-                    value={values.volume}
-                    onChange={(e) => update('volume', e.target.value)}
-                  />
-                </label>
-              )}
-              {parseNumber(values.layerIndex, 0) > 0 && (
-                <label
-                  className="inspector-checkbox-label"
-                  title="Mute this overlay's audio entirely."
-                >
-                  <input
-                    type="checkbox"
-                    checked={parseNumber(values.volume, 1) <= 0}
-                    onChange={(e) =>
-                      update('volume', e.target.checked ? '0' : '1')
-                    }
-                  />
-                  Mute overlay audio
-                </label>
-              )}
               {parseNumber(values.layerIndex, 0) === 0 &&
-                (parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity ||
-                  parseNumber(values.volume, 1) !== DEFAULT_LAYOUT_VALUES.volume) && (
+                parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity && (
                   <p className="inspector-hint">
-                    Opacity and overlay volume only apply to overlay layers (layer index
-                    1+) and are ignored for the base layer.
+                    Opacity only applies to overlay layers (layer index 1+) and is ignored for the
+                    base layer.
                   </p>
                 )}
             </div>

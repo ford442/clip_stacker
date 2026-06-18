@@ -12,6 +12,10 @@ struct Uniforms {
   uvScaleY: f32,
   uvOffsetX: f32,
   uvOffsetY: f32,
+  destX: f32,
+  destY: f32,
+  destW: f32,
+  destH: f32,
   _pad0: f32,
   _pad1: f32,
   _pad2: f32,
@@ -25,13 +29,13 @@ struct VertexOutput {
 // Full-screen quad using 6 vertices (2 triangles)
 @vertex
 fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
-  var positions = array<vec2<f32>, 6>(
-    vec2<f32>(-1.0, -1.0),
-    vec2<f32>( 1.0, -1.0),
-    vec2<f32>(-1.0,  1.0),
-    vec2<f32>(-1.0,  1.0),
-    vec2<f32>( 1.0, -1.0),
-    vec2<f32>( 1.0,  1.0),
+  var unitPositions = array<vec2<f32>, 6>(
+    vec2<f32>(0.0, 1.0),
+    vec2<f32>(1.0, 1.0),
+    vec2<f32>(0.0, 0.0),
+    vec2<f32>(0.0, 0.0),
+    vec2<f32>(1.0, 1.0),
+    vec2<f32>(1.0, 0.0),
   );
   var uvs = array<vec2<f32>, 6>(
     vec2<f32>(0.0, 1.0),
@@ -41,8 +45,17 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
     vec2<f32>(1.0, 1.0),
     vec2<f32>(1.0, 0.0),
   );
+
+  let unit = unitPositions[idx];
+  let ndcLeft = u.destX * 2.0 - 1.0;
+  let ndcRight = (u.destX + u.destW) * 2.0 - 1.0;
+  let ndcTop = 1.0 - u.destY * 2.0;
+  let ndcBottom = 1.0 - (u.destY + u.destH) * 2.0;
+  let ndcX = mix(ndcLeft, ndcRight, unit.x);
+  let ndcY = mix(ndcBottom, ndcTop, unit.y);
+
   var out: VertexOutput;
-  out.pos = vec4<f32>(positions[idx], 0.0, 1.0);
+  out.pos = vec4<f32>(ndcX, ndcY, 0.0, 1.0);
   let baseUv = uvs[idx];
   out.uv = baseUv * vec2<f32>(u.uvScaleX, u.uvScaleY) + vec2<f32>(u.uvOffsetX, u.uvOffsetY);
   return out;
@@ -51,7 +64,6 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   var color = textureSampleBaseClampToEdge(videoTexture, videoSampler, in.uv);
-  color.a *= u.opacity;
 
   var fadeAlpha = 1.0;
   if (u.fadeIn > 0.0 && u.elapsed < u.fadeIn) {
@@ -61,8 +73,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let fadeOutAlpha = (u.duration - u.elapsed) / u.fadeOut;
     fadeAlpha = min(fadeAlpha, fadeOutAlpha);
   }
-  fadeAlpha = clamp(fadeAlpha, 0.0, 1.0);
+  fadeAlpha = clamp(fadeAlpha, 0.0, 1.0) * clamp(u.opacity, 0.0, 1.0);
 
-  color = vec4<f32>(color.rgb * fadeAlpha, color.a);
-  return color;
+  return vec4<f32>(color.rgb * fadeAlpha, color.a * fadeAlpha);
 }

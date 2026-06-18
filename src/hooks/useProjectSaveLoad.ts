@@ -1,5 +1,13 @@
 import { useCallback, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, TextOverlay } from "../types";
+import type { EditSnapshot } from "../utils/editHistory";
+import {
+  summarizeProjectForSave,
+  EMPTY_PROJECT_SAVE_MESSAGE,
+  describeProjectSaveExportStatus,
+  describeProjectSaveSuccessMessage,
+  describeRemoteSaveSuccessMessage,
+} from "../utils/projectSave";
 import {
   serializeProjectWithMedia,
   applyProjectData,
@@ -31,6 +39,7 @@ export function useProjectSaveLoad({
   setTransitions,
   setTextOverlays,
   setStatus,
+  resetHistory,
 }: {
   clips: Clip[];
   clipGroups: ClipGroup[];
@@ -42,6 +51,7 @@ export function useProjectSaveLoad({
   setTransitions: (t: ClipTransition[]) => void;
   setTextOverlays: (to: TextOverlay[]) => void;
   setStatus: (s: string) => void;
+  resetHistory: (snapshot: EditSnapshot) => void;
 }) {
   const [isRemoteSaving, setIsRemoteSaving] = useState(false);
   const [isRemoteLoading, setIsRemoteLoading] = useState(false);
@@ -67,8 +77,14 @@ export function useProjectSaveLoad({
   );
 
   const handleSaveProject = useCallback(async () => {
+    const summary = summarizeProjectForSave(clips, transitions, textOverlays);
+    if (summary.isEmpty) {
+      setStatus(EMPTY_PROJECT_SAVE_MESSAGE);
+      return;
+    }
+
     try {
-      setStatus("Exporting project JSON with source media...");
+      setStatus(describeProjectSaveExportStatus(summary));
       const embedWarnings: string[] = [];
       const project = await serializeProjectWithMedia(
         clips,
@@ -88,7 +104,7 @@ export function useProjectSaveLoad({
       anchor.download = "clip_stacker-project.json";
       anchor.click();
       URL.revokeObjectURL(url);
-      let msg = "Project JSON exported with source media.";
+      let msg = describeProjectSaveSuccessMessage(summary);
       if (embedWarnings.length > 0) {
         msg += ` ⚠️ ${embedWarnings.join(" ")}`;
       }
@@ -112,13 +128,15 @@ export function useProjectSaveLoad({
           invalidColorWarnings,
           mediaDownloadWarnings,
         } = await applyProjectData(parsed, clips);
-        if (updatedClips.length > 0) {
-          setClips(updatedClips);
-          setClipGroups(loadedClipGroups);
-          setSelectedClipId(updatedClips[updatedClips.length - 1].id);
-        }
-        setTransitions(loadedTransitions);
-        setTextOverlays(loadedOverlays);
+        const selectedId =
+          updatedClips.length > 0 ? updatedClips[updatedClips.length - 1].id : null;
+        resetHistory({
+          clips: updatedClips,
+          clipGroups: loadedClipGroups,
+          transitions: loadedTransitions,
+          textOverlays: loadedOverlays,
+          selectedClipId: selectedId,
+        });
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
@@ -142,11 +160,18 @@ export function useProjectSaveLoad({
       setTransitions,
       setTextOverlays,
       setStatus,
+      resetHistory,
     ],
   );
 
   const handleSaveRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
+      const summary = summarizeProjectForSave(clips, transitions, textOverlays);
+      if (summary.isEmpty) {
+        setStatus(EMPTY_PROJECT_SAVE_MESSAGE);
+        return;
+      }
+
       try {
         setIsRemoteSaving(true);
         const client = new ContaboStorageManagerClient(endpoint, authToken);
@@ -225,7 +250,7 @@ export function useProjectSaveLoad({
         );
         setStatus("Saving project manifest to remote storage...");
         await client.save(projectName, project);
-        setStatus(`Remote save complete (${projectName})`);
+        setStatus(describeRemoteSaveSuccessMessage(projectName, summary));
       } catch (error) {
         setStatus(
           `Could not save project to remote storage: ${(error as Error).message}`,
@@ -265,13 +290,15 @@ export function useProjectSaveLoad({
           },
         });
 
-        if (updatedClips.length > 0) {
-          setClips(updatedClips);
-          setClipGroups(loadedClipGroups);
-          setSelectedClipId(updatedClips[updatedClips.length - 1].id);
-        }
-        setTransitions(loadedTransitions);
-        setTextOverlays(loadedOverlays);
+        const selectedId =
+          updatedClips.length > 0 ? updatedClips[updatedClips.length - 1].id : null;
+        resetHistory({
+          clips: updatedClips,
+          clipGroups: loadedClipGroups,
+          transitions: loadedTransitions,
+          textOverlays: loadedOverlays,
+          selectedClipId: selectedId,
+        });
 
         let msg = `Remote project loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
@@ -301,6 +328,7 @@ export function useProjectSaveLoad({
       setTransitions,
       setTextOverlays,
       setStatus,
+      resetHistory,
     ],
   );
 

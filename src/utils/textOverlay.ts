@@ -1,5 +1,5 @@
 /**
- * Helpers for the scrolling-ticker text overlay mode.
+ * Helpers for text overlays rendered via FFmpeg's `drawtext` filter.
  *
  * `scrollSpeed` is expressed as a percentage of the output video's width
  * crossed per second, rather than a raw px/s value. This keeps the
@@ -8,10 +8,32 @@
  * 720p or 4K.
  */
 
+import type { TextOverlay } from '../types';
+import { isValidFfmpegColor } from './color';
+
+/** Virtual font filename written to the FFmpeg VFS before rendering. */
+export const DRAWTEXT_FONT_FILE = 'roboto.ttf';
+
 /** Default scroll speed: ~5 seconds to cross the screen. */
 export const DEFAULT_SCROLL_SPEED = 20;
 export const MIN_SCROLL_SPEED = 1;
 export const MAX_SCROLL_SPEED = 200;
+
+/**
+ * Escape user text for FFmpeg `drawtext`'s `text=` option inside a
+ * single-quoted filter value. Handles `\`, `'`, `:`, `,`, `%`, and newlines.
+ */
+export function escapeDrawtext(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/:/g, '\\:')
+    .replace(/,/g, '\\,')
+    .replace(/%/g, '\\%')
+    .replace(/\r\n/g, '\\n')
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\n');
+}
 
 /** Clamp a scroll speed to a sane, non-zero range. */
 export function clampScrollSpeed(value: number): number {
@@ -36,4 +58,45 @@ export function estimateScrollCrossingSeconds(scrollSpeed: number): number {
 export function buildScrollXExpression(scrollSpeed: number): string {
   const fraction = clampScrollSpeed(scrollSpeed) / 100;
   return `w+tw-(t*w*${fraction.toFixed(4)})`;
+}
+
+/**
+ * Build a single `drawtext=...` filter expression for one TextOverlay.
+ * User text is escaped before being embedded in the filter graph.
+ */
+export function buildDrawtextFilter(
+  overlay: TextOverlay,
+  fontFile: string = DRAWTEXT_FONT_FILE,
+): string {
+  if (!isValidFfmpegColor(overlay.fontcolor)) {
+    throw new Error(
+      `Text overlay "${overlay.text.slice(0, 20)}" has an invalid font color: "${overlay.fontcolor}". ` +
+        `Use a named color (e.g. "white"), "#RRGGBB", or "0xRRGGBB".`,
+    );
+  }
+  if (overlay.box && !isValidFfmpegColor(overlay.boxColor)) {
+    throw new Error(
+      `Text overlay "${overlay.text.slice(0, 20)}" has an invalid box color: "${overlay.boxColor}". ` +
+        `Use a named color (e.g. "black@0.5"), "#RRGGBB", or "0xRRGGBB", optionally with "@alpha".`,
+    );
+  }
+
+  const x = overlay.scrolling
+    ? buildScrollXExpression(overlay.scrollSpeed)
+    : String(overlay.x);
+
+  const parts: string[] = [
+    `fontfile=${fontFile}`,
+    `text='${escapeDrawtext(overlay.text)}'`,
+    `x=${x}`,
+    `y=${overlay.y}`,
+    `fontsize=${overlay.fontsize}`,
+    `fontcolor=${overlay.fontcolor}`,
+  ];
+
+  if (overlay.box) {
+    parts.push(`box=1`, `boxcolor=${overlay.boxColor}`);
+  }
+
+  return `drawtext=${parts.join(':')}`;
 }

@@ -1,10 +1,17 @@
 import type { Clip, ClipTransition, TextOverlay } from '../types';
+import { clipHasVolumeAdjustment } from './audioVolume';
 
 /** Mirrors ffmpegService clipNeedsEffects — shared for encoder path selection. */
 export function clipNeedsEffects(clip: Clip): boolean {
   if (clip.kind === 'audio') return true;
   if (clip.rifeProcessed) return true;
-  return clip.videoFadeIn > 0 || clip.videoFadeOut > 0 || clip.audioFadeIn > 0 || clip.audioFadeOut > 0;
+  return (
+    clip.videoFadeIn > 0 ||
+    clip.videoFadeOut > 0 ||
+    clip.audioFadeIn > 0 ||
+    clip.audioFadeOut > 0 ||
+    clipHasVolumeAdjustment(clip)
+  );
 }
 
 export function hasActiveTransitions(transitions: ClipTransition[]): boolean {

@@ -68,7 +68,24 @@ npm run deploy
 
 Runs `npm run build` then uploads `dist/` to `test.1ink.us/clip-stacker` via SFTP using `deploy.py`.
 
-For Apache deployments, `public/.htaccess` is copied into `dist/` during the build so the deployed `/clip-stacker/` directory serves the required COOP/COEP headers for FFmpeg WASM. nginx deployments still need the equivalent headers configured in the server's location block.
+For Apache deployments, `public/.htaccess` is copied into `dist/` during the build so the deployed `/clip-stacker/` directory serves the required COOP/COEP headers for FFmpeg WASM, plus a `Content-Security-Policy` header aligned with the CSP meta tag in `index.html`. nginx deployments still need the equivalent headers configured in the server's location block.
+
+### Content-Security-Policy
+
+The app ships with a CSP that allows:
+
+- `'wasm-unsafe-eval'` and `worker-src blob:` for FFmpeg WebAssembly
+- `blob:` / `data:` / `https:` for media previews, renders, and remote storage downloads
+- `https:` / `wss:` for user-configurable storage endpoints, CDN fallbacks, and HuggingFace RIFE
+
+`connect-src` and `media-src` intentionally allow `https:` because storage endpoints and signed media URLs are not known at build time.
+
+### Storage backend hardening
+
+The client can only mitigate token theft so far (session-scoped storage + CSP). For stronger protection, extend `contabo_storage_manager` to:
+
+1. **Session token exchange** — `POST /webhook/clip-stacker/session` accepts a long-lived API key once and returns a short-lived JWT (e.g. 15 minutes) used for subsequent requests.
+2. **Presigned media URLs** — return time-limited signed GET/PUT URLs for media uploads and downloads so the Bearer token is not sent on every media fetch.
 
 ## Project Structure
 
@@ -121,6 +138,10 @@ Example full URL: `https://storage.example.com/webhook/clip-stacker`
 ### Authentication
 
 Auth is optional and handled via `Authorization: Bearer <token>` header. If your deployment requires authentication, provide an API key or bearer token in the app's optional auth token field. The client automatically prefixes the token with `Bearer` if not already present.
+
+The token is stored in **sessionStorage** (tab-scoped) — not `localStorage` — and is cleared when the browser tab is closed. A one-time migration removes any legacy copy from `localStorage` on first load.
+
+> **Security note:** For production deployments, prefer short-lived session tokens or presigned media URLs on the storage backend so a compromised tab session has limited blast radius. See [Storage backend hardening](#storage-backend-hardening) below.
 
 ### Errors & Diagnostics (Never Silent)
 

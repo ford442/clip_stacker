@@ -99,6 +99,17 @@ describe("utils/project", () => {
       expect(clip.videoFadeIn).toBeLessThanOrEqual(0.49); // Safe margin
       expect(clip.videoFadeOut).toBe(0);
     });
+
+    it("should clamp volume to 0–2", () => {
+      const clip = createTestClip("test", 5);
+      clip.volume = 3;
+      sanitizeClipAdjustments(clip);
+      expect(clip.volume).toBe(2);
+
+      clip.volume = -0.5;
+      sanitizeClipAdjustments(clip);
+      expect(clip.volume).toBe(0);
+    });
   });
 
   // =========================================================================
@@ -129,6 +140,13 @@ describe("utils/project", () => {
       const project = serializeProject(clips, [], [], []);
       expect(project.clips[0].groupId).toBe("group1");
       expect(project.clips[0].groupVariant).toBe("A");
+    });
+
+    it("should serialize non-default clip volume", () => {
+      const clips = [createTestClip("clip1", 5)];
+      clips[0].volume = 0.75;
+      const project = serializeProject(clips, [], [], []);
+      expect(project.clips[0].volume).toBe(0.75);
     });
 
     it("should serialize transitions", () => {

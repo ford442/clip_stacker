@@ -7,6 +7,10 @@ import { ProgressBar } from './ProgressBar';
 interface Props {
   onAddClips: (files: File[]) => void;
   onMerge: () => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
   onSaveProject: () => void;
   onLoadProject: (file: File) => void;
   onTriggerLoadDialog?: () => void;
@@ -43,6 +47,10 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
   {
     onAddClips,
     onMerge,
+    onUndo,
+    onRedo,
+    canUndo = false,
+    canRedo = false,
     onSaveProject,
     onLoadProject,
     onTriggerLoadDialog,
@@ -134,11 +142,33 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
         >
           ▶ Render
         </button>
+        {onUndo && (
+          <button
+            type="button"
+            onClick={onUndo}
+            disabled={!canUndo}
+            aria-keyshortcuts="ctrl+z"
+            title="Undo last edit (Ctrl/Cmd+Z)"
+          >
+            ↩ Undo
+          </button>
+        )}
+        {onRedo && (
+          <button
+            type="button"
+            onClick={onRedo}
+            disabled={!canRedo}
+            aria-keyshortcuts="ctrl+shift+z"
+            title="Redo last edit (Ctrl/Cmd+Shift+Z)"
+          >
+            ↪ Redo
+          </button>
+        )}
         <button
           type="button"
           onClick={onSaveProject}
-          aria-keyshortcuts="s"
-          title="Save local project (S)"
+          aria-keyshortcuts="ctrl+s"
+          title="Save local project (Ctrl/Cmd+S)"
         >
           Save project
         </button>

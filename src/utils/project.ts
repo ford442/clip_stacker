@@ -10,6 +10,7 @@ import type {
   SerializedClipGroup,
 } from '../types';
 import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
+import { clampClipVolume } from './audioVolume';
 import { sanitizeFfmpegColor } from './color';
 import { clampScrollSpeed, DEFAULT_SCROLL_SPEED } from './textOverlay';
 
@@ -84,6 +85,9 @@ export function sanitizeClipAdjustments(clip: Clip): void {
   clip.videoFadeOut = Math.min(Math.max(0, clip.videoFadeOut), maxFade);
   clip.audioFadeIn = Math.min(Math.max(0, clip.audioFadeIn), maxFade);
   clip.audioFadeOut = Math.min(Math.max(0, clip.audioFadeOut), maxFade);
+  if (clip.volume != null) {
+    clip.volume = clampClipVolume(clip.volume);
+  }
 }
 
 export function serializeProject(
@@ -106,6 +110,7 @@ export function serializeProject(
       videoFadeOut: clip.videoFadeOut,
       audioFadeIn: clip.audioFadeIn,
       audioFadeOut: clip.audioFadeOut,
+      ...(clip.volume != null && clip.volume !== 1 ? { volume: clip.volume } : {}),
       fileName: clip.file.name,
       fileType: clip.file.type || undefined,
       ...(clip.groupId ? { groupId: clip.groupId } : {}),
@@ -118,7 +123,7 @@ export function serializeProject(
         processedFps: clip.processedFps,
         rifeMode: clip.rifeMode,
       } : {}),
-      ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1) || (clip.volume != null && clip.volume !== 1)
+      ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1)
         ? {
             layerIndex: clip.layerIndex ?? 0,
             x: clip.x ?? 0,
@@ -126,7 +131,6 @@ export function serializeProject(
             width: clip.width ?? 0,
             height: clip.height ?? 0,
             opacity: clip.opacity ?? 1,
-            volume: clip.volume ?? 1,
           }
         : {}),
     })),
@@ -646,7 +650,7 @@ export async function applyProjectData(
         const restoredDuration = Number(savedClip.duration);
         const effectiveDuration = Number.isFinite(restoredDuration) ? restoredDuration : duration;
         liveClip = {
-          id: createClipId(),
+          id: savedClip.id || createClipId(),
           file,
           objectUrl,
           title: savedClip.title || savedClip.fileName,
