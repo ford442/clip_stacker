@@ -14,9 +14,10 @@ import {
   getClipDuration,
 } from './project';
 import { parseOutputResolution } from './resolution';
-import { clampScrollSpeed } from './textOverlay';
+import { resolveScrollingX } from './textOverlay';
 import { computeTotalDuration } from './transitions';
 import { getTimelineClips } from './timelineClips';
+import { capPreviewResolution, DEFAULT_PREVIEW_MAX_HEIGHT } from './previewBudget';
 
 export type PreviewLayerKind = 'base' | 'pip' | 'text';
 
@@ -73,11 +74,54 @@ export type PreviewCompositionLayer = PreviewClipLayer | PreviewTextLayer;
 export interface PreviewCompositionPlan {
   globalTime: number;
   totalDuration: number;
+  /** Capped preview canvas width (px) — what the compositor draws into. */
   canvasWidth: number;
+  /** Capped preview canvas height (px). */
   canvasHeight: number;
+  /**
+   * Preview/output scale factor (≤ 1). Layer coordinates are already baked at
+   * this scale; text fontsize is scaled by it at draw time.
+   */
+  scale: number;
+  /** True when the preview resolution was reduced below the output resolution. */
+  capped: boolean;
   /** Bottom → top draw order. */
   layers: PreviewCompositionLayer[];
   isEmpty: boolean;
+}
+
+/**
+ * Common surface implemented by both timeline preview backends (WebGPU
+ * `TimelinePreviewEngine` and Canvas2D `TimelineCanvas2DRenderer`) so the
+ * preview UI can drive either one interchangeably.
+ */
+export interface TimelineCompositor {
+  /** Build the plan for `globalTime` and composite it onto the canvas. */
+  renderTimelineFrame(
+    clips: Clip[],
+    groups: ClipGroup[],
+    transitions: ClipTransition[],
+    overlays: TextOverlay[],
+    settings: Pick<ExportSettings, 'outputResolution'> | undefined,
+    globalTime: number,
+  ): Promise<PreviewCompositionPlan>;
+  syncClips(clips: Clip[]): void;
+  /** Pause pooled decoders for idle teardown (preview paused/backgrounded). */
+  pauseDecoders(): void;
+  destroy(): void;
+}
+
+/** Capped preview canvas geometry plus the output→preview scale factor. */
+interface CanvasGeometry {
+  /** Full output resolution (where clip x/y/width/height are authored). */
+  outputWidth: number;
+  outputHeight: number;
+  /** Capped preview canvas dimensions actually drawn. */
+  canvasWidth: number;
+  canvasHeight: number;
+  /** canvasHeight / outputHeight (≤ 1). */
+  scale: number;
+  capped: boolean;
 }
 
 interface ClipTimelineSegment {
@@ -177,41 +221,55 @@ export function buildClipTimelineSegments(
   return segments;
 }
 
-function resolveCanvasSize(settings?: Pick<ExportSettings, 'outputResolution'>): {
-  canvasWidth: number;
-  canvasHeight: number;
-} {
+function resolveCanvasSize(
+  settings: Pick<ExportSettings, 'outputResolution'> | undefined,
+  maxHeight: number,
+): CanvasGeometry {
   const { width, height } = parseOutputResolution(settings?.outputResolution);
+  const outputWidth = width || DEFAULT_CANVAS_WIDTH;
+  const outputHeight = height || DEFAULT_CANVAS_HEIGHT;
+  const capped = capPreviewResolution(outputWidth, outputHeight, maxHeight);
   return {
-    canvasWidth: width || DEFAULT_CANVAS_WIDTH,
-    canvasHeight: height || DEFAULT_CANVAS_HEIGHT,
+    outputWidth,
+    outputHeight,
+    canvasWidth: capped.width,
+    canvasHeight: capped.height,
+    scale: capped.scale,
+    capped: capped.capped,
   };
 }
 
-function resolveClipRect(
-  clip: Clip,
-  canvasWidth: number,
-  canvasHeight: number,
-): PreviewPipRect {
+/**
+ * Resolve a clip's destination rect. Layout math (PiP placement/size) is done in
+ * full output-resolution space — where the clip's x/y/width/height are authored —
+ * then scaled by `geom.scale` into the capped preview canvas so a downscaled
+ * preview stays geometrically faithful to the export.
+ */
+function resolveClipRect(clip: Clip, geom: CanvasGeometry): PreviewPipRect {
   if (isBaseClip(clip)) {
-    return { x: 0, y: 0, width: canvasWidth, height: canvasHeight };
+    return { x: 0, y: 0, width: geom.canvasWidth, height: geom.canvasHeight };
   }
 
-  const { x, y } = clampOverlayPosition(clip, canvasWidth, canvasHeight);
+  const { x, y } = clampOverlayPosition(clip, geom.outputWidth, geom.outputHeight);
   const width =
     clip.width && clip.width > 0
       ? clip.width
       : clip.videoWidth && clip.videoWidth > 0
         ? clip.videoWidth
-        : canvasWidth;
+        : geom.outputWidth;
   const height =
     clip.height && clip.height > 0
       ? clip.height
       : clip.videoHeight && clip.videoHeight > 0
         ? clip.videoHeight
-        : canvasHeight;
+        : geom.outputHeight;
 
-  return { x, y, width, height };
+  return {
+    x: x * geom.scale,
+    y: y * geom.scale,
+    width: width * geom.scale,
+    height: height * geom.scale,
+  };
 }
 
 function isClipActiveAtTime(segment: ClipTimelineSegment, globalTime: number): boolean {
@@ -280,8 +338,7 @@ function buildScheduledClipLayer(
   globalTime: number,
   segments: ClipTimelineSegment[],
   transitions: ClipTransition[],
-  canvasWidth: number,
-  canvasHeight: number,
+  geom: CanvasGeometry,
 ): PreviewClipLayer | null {
   if (!isClipActiveAtTime(segment, globalTime)) return null;
 
@@ -303,7 +360,7 @@ function buildScheduledClipLayer(
     clipDuration: segment.duration,
     sourceTime: segment.clip.trimStart + localElapsed,
     opacity: clipLayerOpacity(segment.clip, localElapsed, segment.duration, crossfade),
-    rect: resolveClipRect(segment.clip, canvasWidth, canvasHeight),
+    rect: resolveClipRect(segment.clip, geom),
     crossfade,
   };
 }
@@ -312,8 +369,7 @@ function buildOutgoingCrossfadeLayer(
   segment: ClipTimelineSegment,
   crossfade: PreviewTransitionCrossfade,
   globalTime: number,
-  canvasWidth: number,
-  canvasHeight: number,
+  geom: CanvasGeometry,
 ): PreviewClipLayer {
   const outgoingElapsed = globalTime - segment.startTime;
   const outgoingCrossfade: PreviewTransitionCrossfade = {
@@ -335,7 +391,7 @@ function buildOutgoingCrossfadeLayer(
       segment.duration,
       outgoingCrossfade,
     ),
-    rect: resolveClipRect(segment.clip, canvasWidth, canvasHeight),
+    rect: resolveClipRect(segment.clip, geom),
     crossfade: outgoingCrossfade,
   };
 }
@@ -353,8 +409,7 @@ function collectScheduledClipLayers(
   segments: ClipTimelineSegment[],
   transitions: ClipTransition[],
   globalTime: number,
-  canvasWidth: number,
-  canvasHeight: number,
+  geom: CanvasGeometry,
 ): PreviewClipLayer[] {
   const clipLayers: PreviewClipLayer[] = [];
 
@@ -374,8 +429,7 @@ function collectScheduledClipLayers(
           segments[segment.scheduleIndex - 1],
           crossfade,
           globalTime,
-          canvasWidth,
-          canvasHeight,
+          geom,
         ),
       );
       const incomingLayer = buildScheduledClipLayer(
@@ -383,8 +437,7 @@ function collectScheduledClipLayers(
         globalTime,
         segments,
         transitions,
-        canvasWidth,
-        canvasHeight,
+        geom,
       );
       if (incomingLayer) clipLayers.push(incomingLayer);
       continue;
@@ -408,8 +461,7 @@ function collectScheduledClipLayers(
       globalTime,
       segments,
       transitions,
-      canvasWidth,
-      canvasHeight,
+      geom,
     );
     if (layer) clipLayers.push(layer);
   }
@@ -422,8 +474,7 @@ function buildPipLayers(
   pipClips: Array<{ clip: Clip; timelineIndex: number }>,
   globalTime: number,
   totalDuration: number,
-  canvasWidth: number,
-  canvasHeight: number,
+  geom: CanvasGeometry,
 ): PreviewClipLayer[] {
   if (globalTime < 0 || globalTime >= totalDuration) return [];
 
@@ -446,27 +497,17 @@ function buildPipLayers(
         clipDuration: duration,
         sourceTime: clip.trimStart + localElapsed,
         opacity: clipLayerOpacity(clip, localElapsed, duration, null),
-        rect: resolveClipRect(clip, canvasWidth, canvasHeight),
+        rect: resolveClipRect(clip, geom),
         crossfade: null,
       };
     });
-}
-
-function resolveTextOverlayX(
-  overlay: TextOverlay,
-  globalTime: number,
-  canvasWidth: number,
-): number {
-  if (!overlay.scrolling) return overlay.x;
-  const fraction = clampScrollSpeed(overlay.scrollSpeed) / 100;
-  return canvasWidth - globalTime * canvasWidth * fraction;
 }
 
 function buildTextLayers(
   overlays: TextOverlay[],
   globalTime: number,
   totalDuration: number,
-  canvasWidth: number,
+  geom: CanvasGeometry,
 ): PreviewTextLayer[] {
   if (overlays.length === 0 || totalDuration <= 0) return [];
   if (globalTime < 0 || globalTime > totalDuration) return [];
@@ -477,8 +518,13 @@ function buildTextLayers(
     overlay,
     timelineIndex: index,
     zIndex: 2000 + index,
-    x: resolveTextOverlayX(overlay, globalTime, canvasWidth),
-    y: overlay.y,
+    // Scrolling x is computed in capped-canvas space (refined at draw time with
+    // the measured text width); static x/y are authored in output space and
+    // scaled into the preview canvas.
+    x: overlay.scrolling
+      ? resolveScrollingX(overlay.scrollSpeed, globalTime, geom.canvasWidth)
+      : overlay.x * geom.scale,
+    y: overlay.y * geom.scale,
     opacity: 1,
   }));
 }
@@ -493,9 +539,11 @@ export function buildPreviewCompositionPlan(
   overlays: TextOverlay[],
   settings: Pick<ExportSettings, 'outputResolution'> | undefined,
   globalTime: number,
+  maxHeight: number = DEFAULT_PREVIEW_MAX_HEIGHT,
 ): PreviewCompositionPlan {
   const timelineClips = getTimelineClips(clips, groups);
-  const { canvasWidth, canvasHeight } = resolveCanvasSize(settings);
+  const geom = resolveCanvasSize(settings, maxHeight);
+  const { canvasWidth, canvasHeight, scale, capped } = geom;
   const isEmpty = timelineClips.length === 0 && overlays.length === 0;
 
   const pipClips = timelineClips
@@ -529,6 +577,8 @@ export function buildPreviewCompositionPlan(
       totalDuration,
       canvasWidth,
       canvasHeight,
+      scale,
+      capped,
       layers: [],
       isEmpty,
     };
@@ -539,24 +589,12 @@ export function buildPreviewCompositionPlan(
       segments,
       scheduleTransitions,
       globalTime,
-      canvasWidth,
-      canvasHeight,
+      geom,
     ),
-    ...buildPipLayers(
-      pipClips,
-      globalTime,
-      totalDuration,
-      canvasWidth,
-      canvasHeight,
-    ),
+    ...buildPipLayers(pipClips, globalTime, totalDuration, geom),
   ];
 
-  const textLayers = buildTextLayers(
-    overlays,
-    globalTime,
-    totalDuration,
-    canvasWidth,
-  );
+  const textLayers = buildTextLayers(overlays, globalTime, totalDuration, geom);
 
   const layers = [...clipLayers, ...textLayers].sort((a, b) => a.zIndex - b.zIndex);
 
@@ -565,6 +603,8 @@ export function buildPreviewCompositionPlan(
     totalDuration,
     canvasWidth,
     canvasHeight,
+    scale,
+    capped,
     layers,
     isEmpty,
   };

@@ -11,10 +11,25 @@ import { computeTotalDuration } from "../utils/transitions";
 import { useMediaVolume } from "../hooks/useMediaVolume";
 import { PreviewEngine } from "../webgpu/previewEngine";
 import {
-  renderTimelinePreviewFrame,
   shouldUseTimelinePreview,
   TimelinePreviewEngine,
 } from "../webgpu/timelinePreview";
+import {
+  renderTextOverlayCanvas,
+  TimelineCanvas2DRenderer,
+} from "../utils/canvas-renderer";
+import type { TimelineCompositor } from "../utils/previewComposition";
+import {
+  detectCapabilities,
+  isCanvas2dAvailable,
+  previewBackendLabel,
+  selectPreviewBackend,
+  type PreviewBackend,
+} from "../utils/feature-detector";
+import { evaluatePreviewBudget } from "../utils/previewBudget";
+import { previewMetrics } from "../utils/previewMetrics";
+import { parseOutputResolution } from "../utils/resolution";
+import { createRenderScheduler } from "../utils/seekCoalescer";
 
 interface Props {
   clip: Clip | null;
@@ -71,7 +86,7 @@ export function Preview({
     return (
       <section className="panel">
         <h2>Preview</h2>
-        <TimelineWebGPUPreview
+        <TimelineCompositorPreview
           timelineClips={timelineClips}
           clipGroups={clipGroups}
           transitions={transitions}
@@ -133,7 +148,7 @@ interface TimelinePreviewProps {
   onPlayheadChange?: (time: number) => void;
 }
 
-function TimelineWebGPUPreview({
+function TimelineCompositorPreview({
   timelineClips,
   clipGroups,
   transitions,
@@ -143,14 +158,23 @@ function TimelineWebGPUPreview({
   onPlayheadChange,
 }: TimelinePreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const engineRef = useRef<TimelinePreviewEngine | null>(null);
+  const textCanvasRef = useRef<HTMLCanvasElement>(null);
+  const engineRef = useRef<TimelineCompositor | null>(null);
+  const schedulerRef = useRef<ReturnType<typeof createRenderScheduler> | null>(
+    null,
+  );
   const rafRef = useRef<number>(0);
   const playingRef = useRef(false);
   const globalTimeRef = useRef(playheadTime ?? 0);
   const renderTokenRef = useRef(0);
-  const [gpuActive, setGpuActive] = useState(false);
+  const backendRef = useRef<PreviewBackend>("unavailable");
+  const [backend, setBackend] = useState<PreviewBackend>("unavailable");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [degradationMessage, setDegradationMessage] = useState<string | null>(
+    null,
+  );
 
+  const previewActive = backend !== "unavailable";
   const totalDuration = computeTotalDuration(timelineClips, transitions);
 
   const renderAt = useCallback(
@@ -158,9 +182,9 @@ function TimelineWebGPUPreview({
       const engine = engineRef.current;
       if (!engine) return;
       const token = ++renderTokenRef.current;
+      const frameStart = performance.now();
       try {
-        await renderTimelinePreviewFrame(
-          engine,
+        const plan = await engine.renderTimelineFrame(
           timelineClips,
           clipGroups,
           transitions,
@@ -168,44 +192,96 @@ function TimelineWebGPUPreview({
           exportSettings,
           globalTime,
         );
+        previewMetrics.recordFrame(performance.now() - frameStart);
+        previewMetrics.maybeLog();
+
+        // Final pass: draw text overlays onto the stacked 2D canvas above the
+        // video composite (works identically for both backends).
+        if (token === renderTokenRef.current && textCanvasRef.current) {
+          renderTextOverlayCanvas(textCanvasRef.current, plan);
+        }
+
+        if (token === renderTokenRef.current) {
+          const { height: outputHeight } = parseOutputResolution(
+            exportSettings?.outputResolution,
+          );
+          const budget = evaluatePreviewBudget({
+            backend: backendRef.current,
+            capped: plan.capped,
+            outputHeight,
+            cappedHeight: plan.canvasHeight,
+            layerCount: plan.layers.length,
+          });
+          setDegradationMessage(budget.message);
+        }
       } catch {
         if (token === renderTokenRef.current) {
-          setGpuActive(false);
+          setBackend("unavailable");
+          backendRef.current = "unavailable";
         }
       }
     },
-    [
-      timelineClips,
-      clipGroups,
-      transitions,
-      textOverlays,
-      exportSettings,
-    ],
+    [timelineClips, clipGroups, transitions, textOverlays, exportSettings],
   );
+
+  const requestRender = useCallback((globalTime: number) => {
+    schedulerRef.current?.request(globalTime);
+  }, []);
+
+  useEffect(() => {
+    schedulerRef.current = createRenderScheduler(renderAt);
+    return () => {
+      schedulerRef.current?.cancel();
+      schedulerRef.current = null;
+    };
+  }, [renderAt]);
 
   useEffect(() => {
     let alive = true;
-    let engine: TimelinePreviewEngine | null = null;
+    let engine: TimelineCompositor | null = null;
 
     async function init() {
       const canvas = canvasRef.current;
-      if (!canvas || !("gpu" in navigator)) return;
+      if (!canvas) return;
+
+      // Feature-detect and pick the backend before touching the canvas (a
+      // canvas can only host one context type, so we must not attempt WebGPU
+      // unless detection says it will work).
+      const caps = await detectCapabilities();
+      if (!alive) return;
+      const estimatedLayers = timelineClips.length + textOverlays.length;
+      const chosen = selectPreviewBackend(
+        caps,
+        estimatedLayers,
+        isCanvas2dAvailable(),
+      );
 
       try {
-        engine = await TimelinePreviewEngine.create(canvas, timelineClips);
-        if (!alive) {
-          engine.destroy();
-          return;
+        if (chosen === "webgpu") {
+          engine = await TimelinePreviewEngine.create(canvas, timelineClips);
+        } else if (chosen === "canvas2d") {
+          engine = TimelineCanvas2DRenderer.create(canvas, timelineClips);
         }
-        engineRef.current = engine;
-        setGpuActive(true);
-        const time = playheadTime ?? globalTimeRef.current;
-        globalTimeRef.current = time;
-        await renderAt(time);
       } catch {
-        engineRef.current = null;
-        setGpuActive(false);
+        engine = null;
       }
+
+      if (!alive) {
+        engine?.destroy();
+        return;
+      }
+      if (!engine) {
+        engineRef.current = null;
+        setBackend("unavailable");
+        return;
+      }
+
+      engineRef.current = engine;
+      backendRef.current = chosen;
+      setBackend(chosen);
+      const time = playheadTime ?? globalTimeRef.current;
+      globalTimeRef.current = time;
+      await renderAt(time);
     }
 
     void init();
@@ -213,9 +289,12 @@ function TimelineWebGPUPreview({
     return () => {
       alive = false;
       cancelAnimationFrame(rafRef.current);
+      schedulerRef.current?.cancel();
+      engine?.pauseDecoders();
       engine?.destroy();
       engineRef.current = null;
-      setGpuActive(false);
+      backendRef.current = "unavailable";
+      setBackend("unavailable");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -224,7 +303,7 @@ function TimelineWebGPUPreview({
     engineRef.current?.syncClips(timelineClips);
     const time = playheadTime ?? globalTimeRef.current;
     globalTimeRef.current = time;
-    void renderAt(time);
+    requestRender(time);
   }, [
     timelineClips,
     clipGroups,
@@ -232,12 +311,19 @@ function TimelineWebGPUPreview({
     textOverlays,
     exportSettings,
     playheadTime,
-    renderAt,
+    requestRender,
   ]);
 
   useEffect(() => {
     playingRef.current = isPlaying;
-    if (!isPlaying || !gpuActive) return;
+    if (isPlaying || !previewActive) return;
+    cancelAnimationFrame(rafRef.current);
+    engineRef.current?.pauseDecoders();
+  }, [isPlaying, previewActive]);
+
+  useEffect(() => {
+    playingRef.current = isPlaying;
+    if (!isPlaying || !previewActive) return;
 
     let last = performance.now();
     const tick = (now: number) => {
@@ -247,7 +333,7 @@ function TimelineWebGPUPreview({
       const next = Math.min(totalDuration, globalTimeRef.current + dt);
       globalTimeRef.current = next;
       onPlayheadChange?.(next);
-      void renderAt(next);
+      requestRender(next);
       if (next >= totalDuration - 1e-3) {
         setIsPlaying(false);
         return;
@@ -257,7 +343,7 @@ function TimelineWebGPUPreview({
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, gpuActive, totalDuration, onPlayheadChange, renderAt]);
+  }, [isPlaying, previewActive, totalDuration, onPlayheadChange, requestRender]);
 
   const togglePlayback = () => {
     if (isPlaying) {
@@ -275,22 +361,38 @@ function TimelineWebGPUPreview({
 
   return (
     <div className="preview-video-wrapper">
-      <canvas
-        ref={canvasRef}
-        className="preview-timeline-canvas"
-        style={gpuActive ? undefined : { display: "none" }}
-        aria-label="WebGPU timeline composition preview"
-        width={1280}
-        height={720}
-        onClick={togglePlayback}
-      />
-      {!gpuActive && (
+      <div
+        className="preview-canvas-stack"
+        style={previewActive ? undefined : { display: "none" }}
+      >
+        <canvas
+          ref={canvasRef}
+          className="preview-timeline-canvas"
+          aria-label="Timeline composition preview"
+          width={1280}
+          height={720}
+          onClick={togglePlayback}
+        />
+        <canvas
+          ref={textCanvasRef}
+          className="preview-text-overlay-canvas"
+          aria-hidden="true"
+          width={1280}
+          height={720}
+        />
+      </div>
+      {!previewActive && (
         <div className="muted" style={{ fontSize: "0.82rem" }}>
-          WebGPU timeline preview unavailable — use a Chromium browser with GPU
-          support.
+          Timeline preview unavailable — this browser supports neither WebGPU nor
+          a 2D canvas context.
         </div>
       )}
-      {gpuActive && (
+      {degradationMessage && (
+        <p className="preview-degradation-notice" role="status">
+          {degradationMessage}
+        </p>
+      )}
+      {previewActive && (
         <div className="preview-gpu-controls">
           <button type="button" onClick={togglePlayback} aria-label="Play/Pause">
             {isPlaying ? "⏸ Pause" : "▶ Play"}
@@ -307,15 +409,19 @@ function TimelineWebGPUPreview({
                 const next = Number(e.target.value);
                 globalTimeRef.current = next;
                 onPlayheadChange?.(next);
-                void renderAt(next);
+                requestRender(next);
               }}
             />
           </label>
           <span
             className="preview-gpu-badge"
-            title="Rendering timeline composition with WebGPU"
+            title={
+              backend === "webgpu"
+                ? "Rendering timeline composition with WebGPU"
+                : "Rendering timeline composition with Canvas2D (WebGPU fallback)"
+            }
           >
-            WebGPU Timeline
+            {previewBackendLabel(backend)}
           </span>
         </div>
       )}

@@ -3,6 +3,7 @@ import {
   clampScrollSpeed,
   estimateScrollCrossingSeconds,
   buildScrollXExpression,
+  resolveScrollingX,
   escapeDrawtext,
   buildDrawtextFilter,
   DEFAULT_SCROLL_SPEED,
@@ -52,6 +53,24 @@ describe("buildScrollXExpression", () => {
   it("produces a resolution-independent fraction for other speeds", () => {
     expect(buildScrollXExpression(50)).toBe("w+tw-(t*w*0.5000)");
     expect(buildScrollXExpression(100)).toBe("w+tw-(t*w*1.0000)");
+  });
+});
+
+describe("resolveScrollingX", () => {
+  it("matches the FFmpeg expression w+tw-(t*w*fraction)", () => {
+    // scrollSpeed 20 -> fraction 0.2; at t=0 the text starts off the right edge.
+    expect(resolveScrollingX(20, 0, 1280, 40)).toBe(1320);
+    expect(resolveScrollingX(20, 1, 1280, 40)).toBe(1320 - 256);
+  });
+
+  it("defaults textWidth to 0 (width-agnostic approximation)", () => {
+    expect(resolveScrollingX(20, 1, 1280)).toBe(1280 - 256);
+  });
+
+  it("clamps the scroll speed before computing", () => {
+    expect(resolveScrollingX(0, 1, 1000, 0)).toBe(
+      1000 - 1000 * (MIN_SCROLL_SPEED / 100),
+    );
   });
 });
 

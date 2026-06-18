@@ -71,6 +71,58 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
   return _cached;
 }
 
+// ---------------------------------------------------------------------------
+// Preview backend selection
+// ---------------------------------------------------------------------------
+
+/** Which compositor drives the live timeline preview. */
+export type PreviewBackend = "webgpu" | "canvas2d" | "unavailable";
+
+/**
+ * Max simultaneous layers the WebGPU preview path is budgeted for. Beyond this
+ * the Canvas2D fallback (which composites layers with plain drawImage calls and
+ * has no per-layer bind-group/uniform-buffer cost) is used instead.
+ */
+export const WEBGPU_LAYER_BUDGET = 16;
+
+/**
+ * Choose the preview compositor backend.
+ *
+ * WebGPU is preferred when available and within the layer budget; otherwise the
+ * Canvas2D fallback is used. `unavailable` is only returned when even a 2D
+ * context cannot be created (the caller should then show a degraded message).
+ */
+export function selectPreviewBackend(
+  caps: Pick<BrowserCapabilities, "webgpu">,
+  layerCount = 0,
+  canvas2dAvailable = true,
+): PreviewBackend {
+  if (caps.webgpu && layerCount <= WEBGPU_LAYER_BUDGET) return "webgpu";
+  if (canvas2dAvailable) return "canvas2d";
+  return "unavailable";
+}
+
+/** Short human-readable label for the active preview backend (UI badge). */
+export function previewBackendLabel(backend: PreviewBackend): string {
+  switch (backend) {
+    case "webgpu":
+      return "WebGPU Timeline";
+    case "canvas2d":
+      return "Canvas2D Timeline";
+    default:
+      return "Preview unavailable";
+  }
+}
+
+/** Probe whether a 2D canvas context can be created in this environment. */
+export function isCanvas2dAvailable(): boolean {
+  try {
+    return !!document.createElement("canvas").getContext("2d");
+  } catch {
+    return false;
+  }
+}
+
 /** Return a human-readable summary of detected capabilities. */
 export function formatCapabilities(caps: BrowserCapabilities): string {
   const lines: string[] = [];

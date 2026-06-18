@@ -3,62 +3,16 @@ import {
   buildPreviewCompositionPlan,
   type PreviewClipLayer,
   type PreviewCompositionPlan,
+  type TimelineCompositor,
 } from '../utils/previewComposition';
+import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
+import { previewMetrics } from '../utils/previewMetrics';
 import { computeLetterboxUv } from './exportCompositor';
 import { PreviewEngine, type NormalizedDestRect } from './previewEngine';
 
-const SEEK_TOLERANCE_SECONDS = 0.04;
-
-/** Hidden video elements keyed by clip id — one decoder per source clip. */
-export class ClipMediaPool {
-  private readonly videos = new Map<string, HTMLVideoElement>();
-
-  getVideo(clip: Clip): HTMLVideoElement {
-    const existing = this.videos.get(clip.id);
-    if (existing) {
-      if (existing.src !== clip.objectUrl) {
-        existing.src = clip.objectUrl;
-      }
-      return existing;
-    }
-
-    const video = document.createElement('video');
-    video.muted = true;
-    video.playsInline = true;
-    video.crossOrigin = 'anonymous';
-    video.preload = 'auto';
-    video.src = clip.objectUrl;
-    video.style.cssText =
-      'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;';
-    document.body.appendChild(video);
-    this.videos.set(clip.id, video);
-    return video;
-  }
-
-  remove(clipId: string): void {
-    const video = this.videos.get(clipId);
-    if (!video) return;
-    video.pause();
-    video.removeAttribute('src');
-    video.load();
-    if (video.parentElement) video.parentElement.removeChild(video);
-    this.videos.delete(clipId);
-  }
-
-  destroy(): void {
-    for (const clipId of [...this.videos.keys()]) {
-      this.remove(clipId);
-    }
-  }
-
-  pruneExcept(keepIds: ReadonlySet<string>): void {
-    for (const clipId of [...this.videos.keys()]) {
-      if (!keepIds.has(clipId)) {
-        this.remove(clipId);
-      }
-    }
-  }
-}
+// Re-exported for backwards compatibility — the pool now lives in utils so the
+// Canvas2D fallback compositor can share it without importing webgpu.
+export { ClipMediaPool, seekVideoTo };
 
 export function toNormalizedDestRect(
   rect: PreviewClipLayer['rect'],
@@ -71,29 +25,6 @@ export function toNormalizedDestRect(
     w: rect.width / canvasWidth,
     h: rect.height / canvasHeight,
   };
-}
-
-export async function seekVideoTo(
-  video: HTMLVideoElement,
-  time: number,
-): Promise<void> {
-  const clamped = Math.max(0, time);
-  if (Math.abs(video.currentTime - clamped) <= SEEK_TOLERANCE_SECONDS) return;
-
-  video.pause();
-  video.currentTime = clamped;
-
-  await new Promise<void>((resolve) => {
-    if (Math.abs(video.currentTime - clamped) <= SEEK_TOLERANCE_SECONDS) {
-      resolve();
-      return;
-    }
-    const onSeeked = () => {
-      video.removeEventListener('seeked', onSeeked);
-      resolve();
-    };
-    video.addEventListener('seeked', onSeeked);
-  });
 }
 
 async function captureVideoFrame(
@@ -111,7 +42,7 @@ async function captureVideoFrame(
  * WebGPU timeline compositor — renders a composition plan with multiple
  * video layers (base cuts, dissolves, PiP overlays).
  */
-export class TimelinePreviewEngine {
+export class TimelinePreviewEngine implements TimelineCompositor {
   private readonly engine: PreviewEngine;
   private readonly mediaPool: ClipMediaPool;
   private readonly canvas: HTMLCanvasElement;
@@ -157,13 +88,17 @@ export class TimelinePreviewEngine {
       return;
     }
 
+    const drawnClipIds = new Set<string>();
     let isFirstLayer = true;
     for (const layer of clipLayers) {
       const clip = this.clipsById.get(layer.clipId);
       if (!clip || clip.kind !== 'video') continue;
 
       const video = this.mediaPool.getVideo(clip);
+      const seekStart = performance.now();
       await seekVideoTo(video, layer.sourceTime);
+      previewMetrics.recordSeek(performance.now() - seekStart);
+      drawnClipIds.add(layer.clipId);
 
       const frame = await captureVideoFrame(video);
       if (!frame) continue;
@@ -205,6 +140,34 @@ export class TimelinePreviewEngine {
     if (isFirstLayer) {
       this.engine.clearToBlack();
     }
+
+    // Cap live decoders, protecting the clips drawn this frame (those nearest
+    // the playhead), and report pool occupancy for dev metrics.
+    this.mediaPool.enforceBudget(drawnClipIds);
+    previewMetrics.setDecoderCount(this.mediaPool.size, this.mediaPool.limit);
+  }
+
+  /** Sync clips, build the plan for `globalTime`, and composite it (WebGPU). */
+  async renderTimelineFrame(
+    clips: Clip[],
+    groups: Parameters<typeof buildPreviewCompositionPlan>[1],
+    transitions: Parameters<typeof buildPreviewCompositionPlan>[2],
+    overlays: Parameters<typeof buildPreviewCompositionPlan>[3],
+    settings: Parameters<typeof buildPreviewCompositionPlan>[4],
+    globalTime: number,
+  ): Promise<PreviewCompositionPlan> {
+    this.syncClips(clips);
+    const plan = buildPreviewCompositionPlan(
+      clips,
+      groups,
+      transitions,
+      overlays,
+      settings,
+      globalTime,
+    );
+    this.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
+    await this.renderPlan(plan);
+    return plan;
   }
 
   syncClips(clips: Clip[]): void {
@@ -213,6 +176,10 @@ export class TimelinePreviewEngine {
       this.clipsById.set(clip.id, clip);
     }
     this.mediaPool.pruneExcept(new Set(clips.map((clip) => clip.id)));
+  }
+
+  pauseDecoders(): void {
+    this.mediaPool.pauseAll();
   }
 
   destroy(): void {
@@ -239,8 +206,7 @@ export async function renderTimelinePreviewFrame(
   settings: Parameters<typeof buildPreviewCompositionPlan>[4],
   globalTime: number,
 ): Promise<PreviewCompositionPlan> {
-  engine.syncClips(clips);
-  const plan = buildPreviewCompositionPlan(
+  return engine.renderTimelineFrame(
     clips,
     groups,
     transitions,
@@ -248,7 +214,4 @@ export async function renderTimelinePreviewFrame(
     settings,
     globalTime,
   );
-  engine.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
-  await engine.renderPlan(plan);
-  return plan;
 }

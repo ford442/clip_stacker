@@ -12,6 +12,17 @@
 
 import type { Clip } from "../types";
 import { getClipDuration } from "./project";
+import { ClipMediaPool, seekVideoTo } from "./clipMediaPool";
+import {
+  buildPreviewCompositionPlan,
+  type PreviewClipLayer,
+  type PreviewCompositionPlan,
+  type PreviewTextLayer,
+  type TimelineCompositor,
+} from "./previewComposition";
+import { ffmpegColorToCss, sanitizeFfmpegColor } from "./color";
+import { resolveScrollingX } from "./textOverlay";
+import { previewMetrics } from "./previewMetrics";
 
 const TARGET_WIDTH = 1280;
 const TARGET_HEIGHT = 720;
@@ -571,4 +582,285 @@ function computeFadeAlpha(
   if (fadeOut > 0 && elapsed > duration - fadeOut)
     alpha = Math.min(alpha, (duration - elapsed) / fadeOut);
   return Math.max(0, Math.min(1, alpha));
+}
+
+// ---------------------------------------------------------------------------
+// Canvas2D timeline compositor (WebGPU preview fallback)
+//
+// Mirrors the WebGPU TimelinePreviewEngine: draws the same composition plan,
+// one source-over layer at a time, with fades/crossfades pre-baked into each
+// layer's opacity. source-over with globalAlpha matches the WebGPU path's
+// premultiplied-alpha blend exactly, so the two backends are visually equal.
+// ---------------------------------------------------------------------------
+
+/** A decoded drawable plus its intrinsic dimensions, keyed by clip id. */
+export interface FrameSource {
+  image: CanvasImageSource;
+  /** Intrinsic source width (e.g. video.videoWidth). */
+  width: number;
+  /** Intrinsic source height (e.g. video.videoHeight). */
+  height: number;
+}
+
+function clampOpacity(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function drawClipLayer(
+  ctx: CanvasRenderingContext2D,
+  layer: PreviewClipLayer,
+  source: FrameSource,
+): void {
+  // Letterbox the source inside the layer's destination rect (full canvas for
+  // base clips, the PiP rect for overlays) — same layout as the export path.
+  const inner = calculateLetterboxRect(
+    source.width || layer.rect.width,
+    source.height || layer.rect.height,
+    layer.rect.width,
+    layer.rect.height,
+  );
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = clampOpacity(layer.opacity);
+  ctx.drawImage(
+    source.image,
+    layer.rect.x + inner.x,
+    layer.rect.y + inner.y,
+    inner.width,
+    inner.height,
+  );
+  ctx.globalAlpha = prevAlpha;
+}
+
+// Default fallbacks when an overlay carries an invalid FFmpeg color.
+const DEFAULT_FONT_COLOR = "white";
+const DEFAULT_BOX_COLOR = "black@0.5";
+
+/** Draw one text overlay (box + glyphs) onto the 2D context. */
+function drawTextLayer(
+  ctx: CanvasRenderingContext2D,
+  layer: PreviewTextLayer,
+  globalTime: number,
+  frameWidth: number,
+  scale: number,
+): void {
+  const overlay = layer.overlay;
+  if (!overlay.text) return;
+
+  const prevAlpha = ctx.globalAlpha;
+  const baseAlpha = clampOpacity(layer.opacity);
+  // Font size is authored in output space; scale it to match a downscaled
+  // preview canvas (layer.x/y are already scaled by the plan).
+  const fontsize = overlay.fontsize * scale;
+  ctx.textBaseline = "top";
+  ctx.font = `${fontsize}px sans-serif`;
+
+  const textWidth = ctx.measureText(overlay.text).width;
+  const textHeight = fontsize;
+
+  // Static overlays use the plan's x; scrolling ones are recomputed here with
+  // the measured text width so the ticker start matches the export path.
+  const x = overlay.scrolling
+    ? resolveScrollingX(overlay.scrollSpeed, globalTime, frameWidth, textWidth)
+    : layer.x;
+
+  if (overlay.box) {
+    const { color, alpha } = ffmpegColorToCss(
+      sanitizeFfmpegColor(overlay.boxColor, DEFAULT_BOX_COLOR),
+    );
+    const pad = Math.round(fontsize * 0.2);
+    ctx.globalAlpha = clampOpacity(baseAlpha * alpha);
+    ctx.fillStyle = color;
+    ctx.fillRect(
+      x - pad,
+      layer.y - pad,
+      textWidth + pad * 2,
+      textHeight + pad * 2,
+    );
+  }
+
+  const { color, alpha } = ffmpegColorToCss(
+    sanitizeFfmpegColor(overlay.fontcolor, DEFAULT_FONT_COLOR),
+  );
+  ctx.globalAlpha = clampOpacity(baseAlpha * alpha);
+  ctx.fillStyle = color;
+  ctx.fillText(overlay.text, x, layer.y);
+  ctx.globalAlpha = prevAlpha;
+}
+
+/**
+ * Composite one frame of a preview plan's *video* layers onto a 2D context.
+ *
+ * `frameSources` provides the decoded image (typically a seeked <video>) for
+ * each clip layer, keyed by `clipId`. Clip layers whose source is missing are
+ * skipped. Text overlays are NOT drawn here — they are a separate final pass
+ * (see {@link drawTextOverlays}) so they can render identically on top of the
+ * WebGPU or Canvas2D video composite.
+ */
+export function compositeFrame(
+  ctx: CanvasRenderingContext2D,
+  plan: PreviewCompositionPlan,
+  frameSources: ReadonlyMap<string, FrameSource>,
+): void {
+  const { canvasWidth, canvasHeight } = plan;
+
+  // Letterbox background (also clears the previous frame).
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  for (const layer of plan.layers) {
+    if (layer.kind === "text") continue;
+    const source = frameSources.get(layer.clipId);
+    if (!source) continue;
+    drawClipLayer(ctx, layer, source);
+  }
+}
+
+/**
+ * Final compositing pass: draw a plan's text overlays onto a 2D context. Used
+ * for both preview backends — the WebGPU path draws onto a stacked overlay
+ * canvas, the Canvas2D path onto the same overlay canvas above its video
+ * composite. Does not clear the context (the caller owns the surface).
+ */
+export function drawTextOverlays(
+  ctx: CanvasRenderingContext2D,
+  plan: PreviewCompositionPlan,
+): void {
+  for (const layer of plan.layers) {
+    if (layer.kind !== "text") continue;
+    drawTextLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
+  }
+}
+
+/**
+ * Resize a dedicated 2D overlay canvas to the plan's dimensions, clear it, and
+ * render the text overlays. The canvas is expected to be stacked transparently
+ * over the video composite canvas.
+ */
+export function renderTextOverlayCanvas(
+  canvas: HTMLCanvasElement,
+  plan: PreviewCompositionPlan,
+): void {
+  if (canvas.width !== plan.canvasWidth) canvas.width = plan.canvasWidth;
+  if (canvas.height !== plan.canvasHeight) canvas.height = plan.canvasHeight;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawTextOverlays(ctx, plan);
+}
+
+/**
+ * Canvas2D timeline preview compositor — the fallback used when WebGPU is
+ * unavailable or over the layer budget. Supports arbitrary `globalTime` seeks.
+ */
+export class TimelineCanvas2DRenderer implements TimelineCompositor {
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly mediaPool: ClipMediaPool;
+  private clipsById: Map<string, Clip>;
+
+  private constructor(
+    ctx: CanvasRenderingContext2D,
+    canvas: HTMLCanvasElement,
+    mediaPool: ClipMediaPool,
+    clips: Clip[],
+  ) {
+    this.ctx = ctx;
+    this.canvas = canvas;
+    this.mediaPool = mediaPool;
+    this.clipsById = new Map(clips.map((clip) => [clip.id, clip]));
+  }
+
+  static create(
+    canvas: HTMLCanvasElement,
+    clips: Clip[],
+  ): TimelineCanvas2DRenderer {
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("TimelineCanvas2DRenderer: 2D context unavailable");
+    }
+    return new TimelineCanvas2DRenderer(
+      ctx,
+      canvas,
+      new ClipMediaPool(),
+      clips,
+    );
+  }
+
+  resizeCanvas(width: number, height: number): void {
+    if (width > 0 && height > 0) {
+      if (this.canvas.width !== width || this.canvas.height !== height) {
+        this.canvas.width = width;
+        this.canvas.height = height;
+      }
+    }
+  }
+
+  async renderTimelineFrame(
+    clips: Clip[],
+    groups: Parameters<typeof buildPreviewCompositionPlan>[1],
+    transitions: Parameters<typeof buildPreviewCompositionPlan>[2],
+    overlays: Parameters<typeof buildPreviewCompositionPlan>[3],
+    settings: Parameters<typeof buildPreviewCompositionPlan>[4],
+    globalTime: number,
+  ): Promise<PreviewCompositionPlan> {
+    this.syncClips(clips);
+    const plan = buildPreviewCompositionPlan(
+      clips,
+      groups,
+      transitions,
+      overlays,
+      settings,
+      globalTime,
+    );
+    this.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
+    await this.renderPlan(plan);
+    return plan;
+  }
+
+  async renderPlan(plan: PreviewCompositionPlan): Promise<void> {
+    const frameSources = new Map<string, FrameSource>();
+    const drawnClipIds = new Set<string>();
+
+    for (const layer of plan.layers) {
+      if (layer.kind === "text") continue;
+      const clip = this.clipsById.get(layer.clipId);
+      if (!clip || clip.kind !== "video") continue;
+
+      const video = this.mediaPool.getVideo(clip);
+      const seekStart = performance.now();
+      await seekVideoTo(video, layer.sourceTime);
+      previewMetrics.recordSeek(performance.now() - seekStart);
+      drawnClipIds.add(layer.clipId);
+      if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) continue;
+
+      frameSources.set(layer.clipId, {
+        image: video,
+        width: video.videoWidth,
+        height: video.videoHeight,
+      });
+    }
+
+    compositeFrame(this.ctx, plan, frameSources);
+
+    // Cap live decoders, protecting the clips drawn this frame (those nearest
+    // the playhead), and report pool occupancy for dev metrics.
+    this.mediaPool.enforceBudget(drawnClipIds);
+    previewMetrics.setDecoderCount(this.mediaPool.size, this.mediaPool.limit);
+  }
+
+  syncClips(clips: Clip[]): void {
+    this.clipsById = new Map(clips.map((clip) => [clip.id, clip]));
+    this.mediaPool.pruneExcept(new Set(clips.map((clip) => clip.id)));
+  }
+
+  pauseDecoders(): void {
+    this.mediaPool.pauseAll();
+  }
+
+  destroy(): void {
+    this.mediaPool.destroy();
+  }
 }

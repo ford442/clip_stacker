@@ -79,3 +79,52 @@ export function sanitizeFfmpegColor(value: unknown, fallback: string): string {
   if (typeof value === "string" && isValidFfmpegColor(value)) return value;
   return fallback;
 }
+
+function clamp01(n: number): number {
+  return Math.max(0, Math.min(1, n));
+}
+
+/** Parse an `@alpha` suffix (float in [0,1], a hex byte, or `0x` hex byte). */
+function parseAlphaSuffix(alpha: string): number {
+  if (/^0x[0-9a-fA-F]{1,2}$/.test(alpha)) {
+    return clamp01(parseInt(alpha.slice(2), 16) / 255);
+  }
+  // Two hex digits containing a letter are unambiguously a hex byte.
+  if (/^[0-9a-fA-F]{2}$/.test(alpha) && /[a-fA-F]/.test(alpha)) {
+    return clamp01(parseInt(alpha, 16) / 255);
+  }
+  const n = Number(alpha);
+  if (!Number.isFinite(n)) return 1;
+  // FFmpeg alpha is a float in [0,1]; values above 1 are treated as a 0–255 byte.
+  return clamp01(n > 1 ? n / 255 : n);
+}
+
+/**
+ * Convert an FFmpeg color expression into a CSS color string plus a separate
+ * alpha factor, for rendering text overlays on a 2D canvas. The alpha is
+ * returned separately so callers can apply it via `globalAlpha` (composing it
+ * with any layer opacity). Assumes `value` is already a valid FFmpeg color
+ * (run it through {@link sanitizeFfmpegColor} first).
+ *
+ * Examples: `0xff8800` → `{ color: '#ff8800', alpha: 1 }`,
+ * `black@0.5` → `{ color: 'black', alpha: 0.5 }`.
+ */
+export function ffmpegColorToCss(value: string): {
+  color: string;
+  alpha: number;
+} {
+  const trimmed = (value ?? "").trim();
+  const atIndex = trimmed.indexOf("@");
+  const colorPart = atIndex === -1 ? trimmed : trimmed.slice(0, atIndex);
+  const alphaPart = atIndex === -1 ? null : trimmed.slice(atIndex + 1);
+
+  let color = colorPart;
+  if (color.toLowerCase().startsWith("0x")) {
+    color = `#${color.slice(2)}`;
+  }
+
+  return {
+    color: color || "white",
+    alpha: alphaPart === null ? 1 : parseAlphaSuffix(alphaPart),
+  };
+}

@@ -61,6 +61,23 @@ export function buildScrollXExpression(scrollSpeed: number): string {
 }
 
 /**
+ * Numeric counterpart of {@link buildScrollXExpression} for live preview:
+ * the left edge of scrolling text at output time `t`, in pixels. Mirrors
+ * FFmpeg's `w+tw-(t*w*fraction)` so the ticker starts fully off the right
+ * edge (`textWidth` accounts for its own width) and crosses at the same rate
+ * as the export. Pass `textWidth = 0` for a width-agnostic approximation.
+ */
+export function resolveScrollingX(
+  scrollSpeed: number,
+  time: number,
+  frameWidth: number,
+  textWidth = 0,
+): number {
+  const fraction = clampScrollSpeed(scrollSpeed) / 100;
+  return frameWidth + textWidth - time * frameWidth * fraction;
+}
+
+/**
  * Build a single `drawtext=...` filter expression for one TextOverlay.
  * User text is escaped before being embedded in the filter graph.
  */
