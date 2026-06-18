@@ -114,11 +114,16 @@ export function StorageRow({
 
   return (
     <div className="storage-row">
-      <div className="storage-config">
+      <form
+        className="storage-config"
+        onSubmit={(e) => e.preventDefault()}
+      >
         <label>
           Auth token (optional)
           <input
             type="password"
+            name="authToken"
+            autoComplete="off"
             placeholder="Bearer token or API key"
             value={authToken}
             onChange={(e) => onAuthTokenChange(e.target.value)}
@@ -138,7 +143,7 @@ export function StorageRow({
           The auth token is saved for this browser tab session only and is
           cleared when you close the tab.
         </p>
-      </div>
+      </form>
 
       <div className="storage-actions">
         <label>
