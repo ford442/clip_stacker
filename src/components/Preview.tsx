@@ -472,7 +472,7 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
         setGpuActive(true);
 
         const drawLoop = () => {
-          if (!alive || !engine || video.paused || video.ended) {
+          if (!alive || !engine) {
             rafRef.current = requestAnimationFrame(drawLoop);
             return;
           }
