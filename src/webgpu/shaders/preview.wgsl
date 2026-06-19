@@ -38,12 +38,12 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
     vec2<f32>(1.0, 0.0),
   );
   var uvs = array<vec2<f32>, 6>(
-    vec2<f32>(0.0, 1.0),
-    vec2<f32>(1.0, 1.0),
     vec2<f32>(0.0, 0.0),
-    vec2<f32>(0.0, 0.0),
-    vec2<f32>(1.0, 1.0),
     vec2<f32>(1.0, 0.0),
+    vec2<f32>(0.0, 1.0),
+    vec2<f32>(0.0, 1.0),
+    vec2<f32>(1.0, 0.0),
+    vec2<f32>(1.0, 1.0),
   );
 
   let unit = unitPositions[idx];
