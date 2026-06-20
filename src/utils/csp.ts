@@ -10,7 +10,8 @@ export const CONTENT_SECURITY_POLICY = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self'",
-  "script-src 'self' 'wasm-unsafe-eval'",
+  // blob: required for @ffmpeg/util toBlobURL dynamic imports of the WASM core
+  "script-src 'self' 'wasm-unsafe-eval' blob:",
   "worker-src 'self' blob:",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' blob: data:",

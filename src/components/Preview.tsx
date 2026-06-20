@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import type {
   Clip,
   ClipGroup,
@@ -444,11 +444,21 @@ interface VideoPreviewProps {
   onPlayheadChange?: (time: number) => void;
 }
 
+/** Hidden but still decodable — `display:none` stops frame delivery in Chromium. */
+const HIDDEN_VIDEO_STYLE: CSSProperties = {
+  position: 'fixed',
+  opacity: 0,
+  pointerEvents: 'none',
+  width: 1,
+  height: 1,
+};
+
 function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPreviewProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<PreviewEngine | null>(null);
   const rafRef = useRef<number>(0);
+  const frameFailuresRef = useRef(0);
   const [gpuActive, setGpuActive] = useState(false);
 
   useMediaVolume(videoRef, clip.volume, clip.id);
@@ -470,6 +480,7 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
         }
         engineRef.current = engine;
         setGpuActive(true);
+        frameFailuresRef.current = 0;
 
         const drawLoop = () => {
           if (!alive || !engine) {
@@ -489,6 +500,7 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
           }
           try {
             const frame = new VideoFrame(video);
+            frameFailuresRef.current = 0;
             const elapsed = video.currentTime - clip.trimStart;
             const duration =
               (Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration) -
@@ -504,6 +516,13 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
             frame.close();
           } catch {
             // VideoFrame creation can fail on paused / seeking frames — skip
+            frameFailuresRef.current += 1;
+            if (frameFailuresRef.current >= 30) {
+              engine.destroy();
+              engineRef.current = null;
+              setGpuActive(false);
+              return;
+            }
           }
           rafRef.current = requestAnimationFrame(drawLoop);
         };
@@ -544,9 +563,11 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
         ref={videoRef}
         src={clip.objectUrl}
         controls={!gpuActive}
-        style={gpuActive ? { display: "none" } : undefined}
+        style={gpuActive ? HIDDEN_VIDEO_STYLE : undefined}
         aria-label={`Preview of ${clip.title} video. Press space to play/pause.`}
         crossOrigin="anonymous"
+        playsInline
+        preload="auto"
       />
       <canvas
         ref={canvasRef}
