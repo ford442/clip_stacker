@@ -1,3 +1,5 @@
+import { seekToFrame } from "./videoFrameCapture";
+
 export const MIN_CLIP_DURATION = 0.1;
 
 const MEDIA_LOAD_TIMEOUT_MS = 5000;
@@ -99,78 +101,83 @@ export async function extractThumbnails(
 ): Promise<string[]> {
   if (count <= 0) return [];
 
-  return new Promise((resolve) => {
-    const video = document.createElement("video");
-    video.muted = true;
-    video.preload = "auto";
+  const canvas = document.createElement("canvas");
+  canvas.width = THUMB_W;
+  canvas.height = THUMB_H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return [];
 
-    const canvas = document.createElement("canvas");
-    canvas.width = THUMB_W;
-    canvas.height = THUMB_H;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) {
-      resolve([]);
-      return;
-    }
+  const video = document.createElement("video");
+  video.muted = true;
+  video.playsInline = true;
+  // crossOrigin lets us draw (and read back via toDataURL) frames from remote
+  // storage URLs without tainting the canvas; harmless for blob: URLs.
+  video.crossOrigin = "anonymous";
+  video.preload = "auto";
+  // An offscreen-but-rendered element keeps the decoder delivering frames
+  // (display:none / detached elements can stop frame delivery in Chromium).
+  video.style.cssText =
+    "position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;";
+  document.body.appendChild(video);
+  video.src = objectUrl;
 
-    const end = isNaN(trimEnd) ? duration : Math.min(trimEnd, duration);
-    const start = Math.max(0, trimStart);
-    const range = Math.max(0.1, end - start);
-    const times = Array.from(
-      { length: count },
-      (_, j) => start + (range * (j + 0.5)) / count,
-    );
+  const end = isNaN(trimEnd) ? duration : Math.min(trimEnd, duration);
+  const start = Math.max(0, trimStart);
+  const range = Math.max(0.1, end - start);
+  const times = Array.from(
+    { length: count },
+    (_, j) => start + (range * (j + 0.5)) / count,
+  );
 
-    const thumbnails: string[] = [];
-    let frameIndex = 0;
-    let done = false;
-    let seekTimeoutId: ReturnType<typeof setTimeout> | null = null;
-    const overallTimeout = setTimeout(() => finish(), 30_000);
-
-    function finish() {
-      if (done) return;
-      done = true;
-      if (seekTimeoutId) clearTimeout(seekTimeoutId);
-      clearTimeout(overallTimeout);
-      video.src = "";
-      resolve(thumbnails);
-    }
-
-    function captureFrame() {
+  const thumbnails: string[] = [];
+  try {
+    await waitForVideoReady(video);
+    for (const t of times) {
+      const ready = await seekToFrame(video, t);
+      if (!ready) continue;
       try {
-        ctx!.drawImage(video, 0, 0, THUMB_W, THUMB_H);
+        ctx.drawImage(video, 0, 0, THUMB_W, THUMB_H);
         thumbnails.push(canvas.toDataURL("image/jpeg", 0.5));
       } catch {
-        /* skip frame on error */
+        /* skip frame on draw/readback error */
       }
     }
+  } catch {
+    /* metadata never loaded — return whatever we captured */
+  } finally {
+    video.removeAttribute("src");
+    video.load();
+    if (video.parentElement) video.parentElement.removeChild(video);
+  }
 
-    function seekToNext() {
-      if (frameIndex >= times.length) {
-        finish();
-        return;
-      }
-      if (seekTimeoutId) clearTimeout(seekTimeoutId);
-      seekTimeoutId = setTimeout(() => {
-        captureFrame();
-        frameIndex++;
-        seekToNext();
-      }, 1500);
-      video.currentTime = times[frameIndex];
+  return thumbnails;
+}
+
+/** Resolve once the video has enough data to seek/draw, or reject on error. */
+function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (video.readyState >= 2 /* HAVE_CURRENT_DATA */) {
+      resolve();
+      return;
     }
-
-    video.addEventListener("error", finish);
-    video.addEventListener("loadedmetadata", () => seekToNext(), {
-      once: true,
-    });
-    video.addEventListener("seeked", () => {
-      if (done) return;
-      if (seekTimeoutId) clearTimeout(seekTimeoutId);
-      captureFrame();
-      frameIndex++;
-      seekToNext();
-    });
-
-    video.src = objectUrl;
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      video.removeEventListener("loadeddata", onReady);
+      video.removeEventListener("error", onError);
+    };
+    const onReady = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("Could not load video for thumbnails"));
+    };
+    const timeoutId = setTimeout(() => {
+      if (video.readyState >= 2) onReady();
+      else onError();
+    }, MEDIA_LOAD_TIMEOUT_MS);
+    video.addEventListener("loadeddata", onReady, { once: true });
+    video.addEventListener("error", onError, { once: true });
   });
 }

@@ -9,6 +9,7 @@
  */
 
 import type { Clip } from '../types';
+import { seekToFrame } from './videoFrameCapture';
 
 export const SEEK_TOLERANCE_SECONDS = 0.04;
 
@@ -129,39 +130,11 @@ async function seekVideoToInternal(
   video: HTMLVideoElement,
   time: number,
 ): Promise<void> {
-  const clamped = Math.max(0, time);
-  if (Math.abs(video.currentTime - clamped) <= SEEK_TOLERANCE_SECONDS) return;
-
-  video.pause();
-  video.currentTime = clamped;
-
-  await new Promise<void>((resolve, reject) => {
-    if (Math.abs(video.currentTime - clamped) <= SEEK_TOLERANCE_SECONDS) {
-      resolve();
-      return;
-    }
-
-    let settled = false;
-    const finish = (action: 'resolve' | 'reject') => {
-      if (settled) return;
-      settled = true;
-      video.removeEventListener('seeked', onSeeked);
-      clearTimeout(timeoutId);
-      if (action === 'resolve') resolve();
-      else reject(new Error('seek timeout'));
-    };
-
-    const onSeeked = () => finish('resolve');
-    const timeoutId = setTimeout(() => {
-      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
-        finish('resolve');
-      } else {
-        finish('reject');
-      }
-    }, SEEK_TIMEOUT_MS);
-
-    video.addEventListener('seeked', onSeeked);
-  });
+  // Resolve only once a fresh frame for `time` is actually presented (gated on
+  // requestVideoFrameCallback), so the compositor never draws a blank/stale
+  // frame. A `false` result means the seek timed out or errored.
+  const ok = await seekToFrame(video, time, SEEK_TIMEOUT_MS);
+  if (!ok) throw new Error('seek timeout');
 }
 
 /**
