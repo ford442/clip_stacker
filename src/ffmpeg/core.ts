@@ -6,6 +6,7 @@ import type {
   TextOverlay,
 } from "../types";
 import { getClipDuration } from "../utils/project";
+import { resolveTargetResolution } from "../utils/resolution";
 import { audioVolumeFilterSegment, clipHasVolumeAdjustment } from "../utils/audioVolume";
 import { buildDrawtextFilter } from "../utils/textOverlay";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
@@ -245,7 +246,11 @@ export function getSafeExtension(
   return raw && /^[a-z0-9]+$/.test(raw) ? raw : defaultExtension;
 }
 
-export function buildSingleClipFilter(clip: Clip): string {
+export function buildSingleClipFilter(
+  clip: Clip,
+  targetWidth: number = OUTPUT_WIDTH,
+  targetHeight: number = OUTPUT_HEIGHT,
+): string {
   const duration = getClipDuration(clip);
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   const safeVideoOut = Math.max(0, duration - clip.videoFadeOut);
@@ -254,8 +259,8 @@ export function buildSingleClipFilter(clip: Clip): string {
 
   if (clip.kind === "video") {
     let v = `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS`;
-    v += `,scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`;
-    v += `,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
+    v += `,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease`;
+    v += `,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0)
       v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
@@ -270,7 +275,7 @@ export function buildSingleClipFilter(clip: Clip): string {
   } else {
     // Synthesize a black video track for audio-only clips at the master canvas size.
     parts.push(
-      `color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:d=${duration},format=yuv420p[vout]`,
+      `color=c=black:s=${targetWidth}x${targetHeight}:d=${duration},format=yuv420p[vout]`,
     );
 
     let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
@@ -549,6 +554,13 @@ export async function performTwoPassEncode(
 ): Promise<void> {
   emitProgress(onProgress, "FFmpeg re-encode (two-pass)", 0.12, false);
 
+  // Every clip is normalized to this single resolution so the stitched output
+  // never changes size mid-playback when clips have different dimensions.
+  const { width: targetWidth, height: targetHeight } = resolveTargetResolution(
+    clips,
+    settings,
+  );
+
   const intermediates: string[] = [];
   const pass1TotalDuration = clips.reduce(
     (sum, clip) => sum + getClipDuration(clip),
@@ -582,6 +594,8 @@ export async function performTwoPassEncode(
         onProgress,
         rangeStart,
         rangeEnd,
+        targetWidth,
+        targetHeight,
       ),
     );
     pass1ElapsedDuration += clipDuration;
@@ -606,11 +620,23 @@ export async function processClipPass1(
   onProgress: ProgressCallback | undefined,
   rangeStart: number,
   rangeEnd: number,
+  targetWidth: number = OUTPUT_WIDTH,
+  targetHeight: number = OUTPUT_HEIGHT,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
+  const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
 
-  if (!clipNeedsEffects(clip)) {
+  // A clip can be stream-copied only when it has no effects AND already matches
+  // the target resolution. Otherwise it must be re-encoded (scaled/padded) so
+  // every intermediate shares one resolution — concatenating mismatched sizes
+  // makes the stitched output change resolution when the clip changes.
+  const matchesTargetResolution =
+    clip.kind === "video" &&
+    clip.videoWidth === targetWidth &&
+    clip.videoHeight === targetHeight;
+
+  if (!clipNeedsEffects(clip) && matchesTargetResolution) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
     // Audio must be explicitly transcoded so the intermediate has a consistent
     // codec for concat — pure -c copy silently drops audio from non-MP4 sources.
@@ -651,6 +677,97 @@ export async function processClipPass1(
     return outName;
   }
 
+  // Normalize-only path: a clean video clip whose native size differs from the
+  // target. Scale/pad to the target resolution (and normalize audio to AAC) so
+  // it concatenates seamlessly. Handles clips without an audio stream by
+  // synthesizing silence, mirroring the lossless path.
+  if (!clipNeedsEffects(clip) && clip.kind === "video") {
+    onStatus(
+      `Pass 1 [${index + 1}/${total}]: Normalizing "${clip.title}" to ${targetWidth}x${targetHeight}...`,
+    );
+    const videoFilter =
+      `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS` +
+      `,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease` +
+      `,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[vout]`;
+    const audioFilter =
+      `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS` +
+      `,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo[aout]`;
+    const encodeTail = [
+      "-r",
+      "30",
+      "-c:v",
+      "libx264",
+      "-crf",
+      String(settings.crf),
+      "-preset",
+      settings.preset,
+      "-pix_fmt",
+      "yuv420p",
+      "-c:a",
+      "aac",
+      "-ar",
+      "44100",
+      "-ac",
+      "2",
+      "-b:a",
+      "192k",
+      outName,
+    ];
+    const progressCtx = {
+      stage: `Pass 1: ${clip.title}`,
+      totalDuration: clipDuration,
+      rangeStart,
+      rangeEnd,
+      onProgress,
+    };
+    try {
+      await safeExec(
+        ffmpeg,
+        [
+          "-i",
+          clip.inputName!,
+          "-filter_complex",
+          `${videoFilter};${audioFilter}`,
+          "-map",
+          "[vout]",
+          "-map",
+          "[aout]",
+          ...encodeTail,
+        ],
+        progressCtx,
+        `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}"`,
+      );
+    } catch (err) {
+      // Clip has no audio stream — add a silent AAC track so all intermediates
+      // share an identical stream layout for concat.
+      if (!NO_AUDIO_STREAM_RE.test((err as Error).message ?? "")) throw err;
+      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      await safeExec(
+        ffmpeg,
+        [
+          "-i",
+          clip.inputName!,
+          "-f",
+          "lavfi",
+          "-i",
+          "anullsrc=r=44100:cl=stereo",
+          "-filter_complex",
+          videoFilter,
+          "-map",
+          "[vout]",
+          "-map",
+          "1:a",
+          "-t",
+          String(clipDuration),
+          ...encodeTail,
+        ],
+        progressCtx,
+        `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}" (silent audio)`,
+      );
+    }
+    return outName;
+  }
+
   // Re-encode path: clip has fades, is audio-only, or is RIFE-processed.
   onStatus(`Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}"...`);
   await safeExec(
@@ -659,7 +776,7 @@ export async function processClipPass1(
       "-i",
       clip.inputName!,
       "-filter_complex",
-      buildSingleClipFilter(clip),
+      buildSingleClipFilter(clip, targetWidth, targetHeight),
       "-map",
       "[vout]",
       "-map",

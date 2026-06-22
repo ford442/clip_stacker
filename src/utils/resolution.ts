@@ -75,3 +75,33 @@ export function formatOutputResolution(settings: ExportSettings): string {
   const { width, height } = parseOutputResolution(settings.outputResolution);
   return `${width}x${height}`;
 }
+
+/** Round down to the nearest even integer (yuv420p encoders require even dims). */
+function toEvenDimension(value: number): number {
+  return Math.max(2, Math.floor(value / 2) * 2);
+}
+
+/**
+ * The single resolution every clip must be normalized to so the stitched output
+ * keeps one consistent size.
+ *
+ * - Fixed output resolution (720p/1080p/custom): that resolution.
+ * - Auto/original: the first video clip that exposes its dimensions acts as the
+ *   master canvas; every other clip is scaled/padded to fit. Falls back to the
+ *   default canvas when no clip exposes dimensions.
+ */
+export function resolveTargetResolution(clips: Clip[], settings: ExportSettings): OutputResolution {
+  if (usesFixedOutputResolution(settings)) {
+    return parseOutputResolution(settings.outputResolution);
+  }
+  const base = clips.find(
+    (clip) => clip.kind === 'video' && !!clip.videoWidth && !!clip.videoHeight,
+  );
+  if (base?.videoWidth && base?.videoHeight) {
+    return {
+      width: toEvenDimension(base.videoWidth),
+      height: toEvenDimension(base.videoHeight),
+    };
+  }
+  return { width: DEFAULT_OUTPUT_WIDTH, height: DEFAULT_OUTPUT_HEIGHT };
+}
