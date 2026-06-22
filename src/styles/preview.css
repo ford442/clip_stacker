@@ -22,6 +22,17 @@ audio {
   max-width: 100%;
 }
 
+.preview-viewport {
+  position: relative;
+  margin: 0 auto;
+  max-width: 90vw;
+  max-height: 75vh;
+  overflow: hidden;
+  line-height: 0;
+  border-radius: var(--radius-sm);
+  background: #000;
+}
+
 .preview-canvas-stack {
   position: relative;
   line-height: 0;
@@ -39,18 +50,21 @@ audio {
   image-rendering: auto;
 }
 
-/* Single-clip WebGPU preview: fit within the panel and never exceed the
-   viewport so 4K sources don't render at native CSS pixels. */
+/* Single-clip WebGPU preview: sized by .preview-viewport (viewport %). */
 .preview-single-canvas {
   display: block;
   width: 100%;
-  max-width: 100%;
-  max-height: 75vh;
-  height: auto;
+  height: 100%;
   border-radius: var(--radius-sm);
   background: #000;
   cursor: pointer;
   image-rendering: auto;
+}
+
+.preview-viewport video {
+  width: 100%;
+  height: 100%;
+  margin-bottom: 0;
 }
 
 /* Text overlays are drawn on a transparent 2D canvas stacked over the video
