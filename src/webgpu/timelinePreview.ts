@@ -4,6 +4,7 @@ import {
   type PreviewClipLayer,
   type PreviewCompositionPlan,
   type TimelineCompositor,
+  type TimelineRenderOptions,
 } from '../utils/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
 import { previewMetrics } from '../utils/previewMetrics';
@@ -77,31 +78,45 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     }
   }
 
-  async renderPlan(plan: PreviewCompositionPlan): Promise<void> {
+  async renderPlan(
+    plan: PreviewCompositionPlan,
+    options?: TimelineRenderOptions,
+  ): Promise<void> {
+    if (options?.isCancelled?.()) return;
+
     const clipLayers = plan.layers.filter(
       (layer): layer is PreviewClipLayer =>
         layer.kind === 'base' || layer.kind === 'pip',
     );
 
     if (clipLayers.length === 0) {
-      this.engine.clearToBlack();
+      if (!options?.isCancelled?.()) {
+        this.engine.clearToBlack();
+      }
       return;
     }
 
     const drawnClipIds = new Set<string>();
     let isFirstLayer = true;
     for (const layer of clipLayers) {
+      if (options?.isCancelled?.()) return;
+
       const clip = this.clipsById.get(layer.clipId);
       if (!clip || clip.kind !== 'video') continue;
 
       const video = this.mediaPool.getVideo(clip);
       const seekStart = performance.now();
       await seekVideoTo(video, layer.sourceTime);
+      if (options?.isCancelled?.()) return;
       previewMetrics.recordSeek(performance.now() - seekStart);
       drawnClipIds.add(layer.clipId);
 
       const frame = await captureVideoFrame(video);
       if (!frame) continue;
+      if (options?.isCancelled?.()) {
+        frame.close();
+        return;
+      }
 
       const destWidth =
         layer.kind === 'pip' ? layer.rect.width : plan.canvasWidth;
@@ -138,8 +153,12 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     }
 
     if (isFirstLayer) {
-      this.engine.clearToBlack();
+      if (!options?.isCancelled?.()) {
+        this.engine.clearToBlack();
+      }
     }
+
+    if (options?.isCancelled?.()) return;
 
     // Cap live decoders, protecting the clips drawn this frame (those nearest
     // the playhead), and report pool occupancy for dev metrics.
@@ -155,6 +174,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     overlays: Parameters<typeof buildPreviewCompositionPlan>[3],
     settings: Parameters<typeof buildPreviewCompositionPlan>[4],
     globalTime: number,
+    options?: TimelineRenderOptions,
   ): Promise<PreviewCompositionPlan> {
     this.syncClips(clips);
     const plan = buildPreviewCompositionPlan(
@@ -165,8 +185,10 @@ export class TimelinePreviewEngine implements TimelineCompositor {
       settings,
       globalTime,
     );
+    if (options?.isCancelled?.()) return plan;
     this.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
-    await this.renderPlan(plan);
+    if (options?.isCancelled?.()) return plan;
+    await this.renderPlan(plan, options);
     return plan;
   }
 

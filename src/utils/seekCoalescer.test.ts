@@ -61,6 +61,28 @@ describe('createRenderScheduler', () => {
     expect(render).toHaveBeenCalledTimes(1);
   });
 
+  it('invokes onSuperseded when a newer request arrives during render', async () => {
+    let resolveRender: (() => void) | undefined;
+    const render = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRender = resolve;
+        }),
+    );
+    const onSuperseded = vi.fn();
+    const scheduler = createRenderScheduler(render, onSuperseded);
+
+    scheduler.request(1);
+    scheduler.request(2);
+
+    expect(onSuperseded).toHaveBeenCalledTimes(1);
+
+    resolveRender?.();
+    await vi.runAllTimersAsync();
+
+    expect(render).toHaveBeenLastCalledWith(2);
+  });
+
   it('reports isRendering while a render promise is in flight', async () => {
     let resolveRender: (() => void) | undefined;
     const render = vi.fn(

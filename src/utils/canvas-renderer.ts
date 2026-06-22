@@ -19,6 +19,7 @@ import {
   type PreviewCompositionPlan,
   type PreviewTextLayer,
   type TimelineCompositor,
+  type TimelineRenderOptions,
 } from "./previewComposition";
 import { ffmpegColorToCss, sanitizeFfmpegColor } from "./color";
 import { resolveScrollingX } from "./textOverlay";
@@ -805,6 +806,7 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
     overlays: Parameters<typeof buildPreviewCompositionPlan>[3],
     settings: Parameters<typeof buildPreviewCompositionPlan>[4],
     globalTime: number,
+    options?: TimelineRenderOptions,
   ): Promise<PreviewCompositionPlan> {
     this.syncClips(clips);
     const plan = buildPreviewCompositionPlan(
@@ -815,16 +817,24 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
       settings,
       globalTime,
     );
+    if (options?.isCancelled?.()) return plan;
     this.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
-    await this.renderPlan(plan);
+    if (options?.isCancelled?.()) return plan;
+    await this.renderPlan(plan, options);
     return plan;
   }
 
-  async renderPlan(plan: PreviewCompositionPlan): Promise<void> {
+  async renderPlan(
+    plan: PreviewCompositionPlan,
+    options?: TimelineRenderOptions,
+  ): Promise<void> {
+    if (options?.isCancelled?.()) return;
+
     const frameSources = new Map<string, FrameSource>();
     const drawnClipIds = new Set<string>();
 
     for (const layer of plan.layers) {
+      if (options?.isCancelled?.()) return;
       if (layer.kind === "text") continue;
       const clip = this.clipsById.get(layer.clipId);
       if (!clip || clip.kind !== "video") continue;
@@ -832,6 +842,7 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
       const video = this.mediaPool.getVideo(clip);
       const seekStart = performance.now();
       await seekVideoTo(video, layer.sourceTime);
+      if (options?.isCancelled?.()) return;
       previewMetrics.recordSeek(performance.now() - seekStart);
       drawnClipIds.add(layer.clipId);
       if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) continue;
@@ -843,6 +854,7 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
       });
     }
 
+    if (options?.isCancelled?.()) return;
     compositeFrame(this.ctx, plan, frameSources);
 
     // Cap live decoders, protecting the clips drawn this frame (those nearest

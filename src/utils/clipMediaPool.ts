@@ -12,6 +12,9 @@ import type { Clip } from '../types';
 
 export const SEEK_TOLERANCE_SECONDS = 0.04;
 
+/** Max wait for a `<video>` seek before giving up on that layer. */
+export const SEEK_TIMEOUT_MS = 2500;
+
 /**
  * Maximum simultaneous hidden-<video> decoders kept alive. Beyond this the pool
  * evicts the least-recently-used decoders (which, because active clips are
@@ -19,6 +22,13 @@ export const SEEK_TOLERANCE_SECONDS = 0.04;
  * timeline does not accumulate unbounded decoder memory.
  */
 export const DEFAULT_MAX_DECODERS = 8;
+
+interface VideoSeekQueue {
+  latestTime: number | null;
+  active: boolean;
+}
+
+const seekQueues = new WeakMap<HTMLVideoElement, VideoSeekQueue>();
 
 /**
  * Hidden video elements keyed by clip id — one decoder per source clip, bounded
@@ -46,6 +56,7 @@ export class ClipMediaPool {
     if (existing) {
       if (existing.src !== clip.objectUrl) {
         existing.src = clip.objectUrl;
+        existing.load();
       }
       // Move to the most-recently-used end of the LRU order.
       this.videos.delete(clip.id);
@@ -74,6 +85,7 @@ export class ClipMediaPool {
     video.load();
     if (video.parentElement) video.parentElement.removeChild(video);
     this.videos.delete(clipId);
+    seekQueues.delete(video);
   }
 
   destroy(): void {
@@ -113,7 +125,7 @@ export class ClipMediaPool {
   }
 }
 
-export async function seekVideoTo(
+async function seekVideoToInternal(
   video: HTMLVideoElement,
   time: number,
 ): Promise<void> {
@@ -123,15 +135,65 @@ export async function seekVideoTo(
   video.pause();
   video.currentTime = clamped;
 
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     if (Math.abs(video.currentTime - clamped) <= SEEK_TOLERANCE_SECONDS) {
       resolve();
       return;
     }
-    const onSeeked = () => {
+
+    let settled = false;
+    const finish = (action: 'resolve' | 'reject') => {
+      if (settled) return;
+      settled = true;
       video.removeEventListener('seeked', onSeeked);
-      resolve();
+      clearTimeout(timeoutId);
+      if (action === 'resolve') resolve();
+      else reject(new Error('seek timeout'));
     };
+
+    const onSeeked = () => finish('resolve');
+    const timeoutId = setTimeout(() => {
+      if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) {
+        finish('resolve');
+      } else {
+        finish('reject');
+      }
+    }, SEEK_TIMEOUT_MS);
+
     video.addEventListener('seeked', onSeeked);
   });
+}
+
+/**
+ * Seek a pooled decoder to `time`, coalescing rapid requests on the same
+ * element so only the latest target is honored.
+ */
+export async function seekVideoTo(
+  video: HTMLVideoElement,
+  time: number,
+): Promise<void> {
+  let queue = seekQueues.get(video);
+  if (!queue) {
+    queue = { latestTime: null, active: false };
+    seekQueues.set(video, queue);
+  }
+
+  queue.latestTime = Math.max(0, time);
+  if (queue.active) return;
+
+  queue.active = true;
+  try {
+    while (queue.latestTime !== null) {
+      const target = queue.latestTime;
+      queue.latestTime = null;
+      try {
+        await seekVideoToInternal(video, target);
+      } catch {
+        // Timed-out seek — the capture step will skip this layer.
+        break;
+      }
+    }
+  } finally {
+    queue.active = false;
+  }
 }
