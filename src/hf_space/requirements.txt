@@ -1,0 +1,9 @@
+gradio
+scikit-video
+numpy
+opencv-python
+tqdm
+requests
+torch
+torchvision
+moviepy==1.0.3
