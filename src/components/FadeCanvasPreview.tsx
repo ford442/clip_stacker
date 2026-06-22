@@ -1,12 +1,25 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, type CSSProperties } from 'react';
 import {
   computeFadePreviewAlpha,
   getFadePreviewTiming,
   type FadeDirection,
 } from '../utils/fadePreview';
+import { seekToFrame } from '../utils/videoFrameCapture';
 
 const PREVIEW_WIDTH = 88;
 const PREVIEW_HEIGHT = 72;
+
+/**
+ * Offscreen but still *rendered* — `hidden` / `display:none` stops Chromium from
+ * delivering decoded frames, which left this preview permanently blank.
+ */
+const OFFSCREEN_VIDEO_STYLE: CSSProperties = {
+  position: 'fixed',
+  opacity: 0,
+  pointerEvents: 'none',
+  width: 1,
+  height: 1,
+};
 
 interface Props {
   objectUrl?: string;
@@ -88,7 +101,6 @@ export function FadeCanvasPreview({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const seekTokenRef = useRef(0);
-  const rafRef = useRef<number | null>(null);
 
   const timing = useMemo(
     () => getFadePreviewTiming(direction, trimStart, trimEnd, clipDuration, fadeDuration),
@@ -137,38 +149,47 @@ export function FadeCanvasPreview({
     }
 
     const token = ++seekTokenRef.current;
+    let cancelled = false;
 
-    const drawVideo = () => {
-      if (token !== seekTokenRef.current) return;
-      ctx.clearRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-      try {
-        ctx.drawImage(video, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-      } catch {
-        ctx.fillStyle = 'rgba(6, 9, 15, 0.95)';
-        ctx.fillRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
-      }
-      applyFadeOverlay(ctx, PREVIEW_WIDTH, PREVIEW_HEIGHT, alpha);
+    const drawBackground = () => {
+      ctx.fillStyle = 'rgba(6, 9, 15, 0.95)';
+      ctx.fillRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
     };
 
-    const onSeeked = () => drawVideo();
-    video.addEventListener('seeked', onSeeked);
-
-    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null;
-      if (video.readyState >= 2 && Math.abs(video.currentTime - timing.seekTime) < 0.05) {
-        drawVideo();
-      } else {
-        video.currentTime = timing.seekTime;
+    void (async () => {
+      // Wait until the element can produce a frame, then seek to the fade
+      // boundary and draw only once that frame is actually presented.
+      if (video.readyState < 2 /* HAVE_CURRENT_DATA */) {
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            video.removeEventListener('loadeddata', done);
+            video.removeEventListener('error', done);
+            resolve();
+          };
+          video.addEventListener('loadeddata', done, { once: true });
+          video.addEventListener('error', done, { once: true });
+        });
       }
-    });
+      if (cancelled || token !== seekTokenRef.current) return;
+
+      const ready = await seekToFrame(video, timing.seekTime);
+      if (cancelled || token !== seekTokenRef.current) return;
+
+      ctx.clearRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+      if (ready) {
+        try {
+          ctx.drawImage(video, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+        } catch {
+          drawBackground();
+        }
+      } else {
+        drawBackground();
+      }
+      applyFadeOverlay(ctx, PREVIEW_WIDTH, PREVIEW_HEIGHT, alpha);
+    })();
 
     return () => {
-      video.removeEventListener('seeked', onSeeked);
-      if (rafRef.current !== null) {
-        cancelAnimationFrame(rafRef.current);
-        rafRef.current = null;
-      }
+      cancelled = true;
     };
   }, [tone, objectUrl, peaks, timing.seekTime, alpha]);
 
@@ -178,7 +199,14 @@ export function FadeCanvasPreview({
       aria-hidden="true"
     >
       {tone === 'video' && (
-        <video ref={videoRef} muted playsInline preload="auto" hidden />
+        <video
+          ref={videoRef}
+          muted
+          playsInline
+          preload="auto"
+          crossOrigin="anonymous"
+          style={OFFSCREEN_VIDEO_STYLE}
+        />
       )}
       <canvas
         ref={canvasRef}
