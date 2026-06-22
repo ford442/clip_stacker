@@ -19,6 +19,7 @@ audio {
 .preview-video-wrapper {
   display: grid;
   gap: 0.5rem;
+  max-width: 100%;
 }
 
 .preview-canvas-stack {
@@ -29,9 +30,27 @@ audio {
 .preview-timeline-canvas {
   display: block;
   width: 100%;
+  max-width: 100%;
+  max-height: 75vh;
+  height: auto;
   border-radius: var(--radius-sm);
   background: #000;
   cursor: pointer;
+  image-rendering: auto;
+}
+
+/* Single-clip WebGPU preview: fit within the panel and never exceed the
+   viewport so 4K sources don't render at native CSS pixels. */
+.preview-single-canvas {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  max-height: 75vh;
+  height: auto;
+  border-radius: var(--radius-sm);
+  background: #000;
+  cursor: pointer;
+  image-rendering: auto;
 }
 
 /* Text overlays are drawn on a transparent 2D canvas stacked over the video
@@ -40,6 +59,8 @@ audio {
   position: absolute;
   inset: 0;
   width: 100%;
+  max-width: 100%;
+  max-height: 75vh;
   height: 100%;
   border-radius: var(--radius-sm);
   pointer-events: none;

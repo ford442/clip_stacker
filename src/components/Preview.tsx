@@ -9,6 +9,7 @@ import type {
 import { sanitizeFilename } from "../utils/filename";
 import { computeTotalDuration } from "../utils/transitions";
 import { useMediaVolume } from "../hooks/useMediaVolume";
+import { usePreviewSize } from "../hooks/usePreviewSize";
 import { PreviewEngine } from "../webgpu/previewEngine";
 import {
   shouldUseTimelinePreview,
@@ -157,6 +158,7 @@ function TimelineCompositorPreview({
   playheadTime,
   onPlayheadChange,
 }: TimelinePreviewProps) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textCanvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<TimelineCompositor | null>(null);
@@ -178,6 +180,16 @@ function TimelineCompositorPreview({
   const previewActive = backend !== "unavailable";
   const totalDuration = computeTotalDuration(timelineClips, transitions);
 
+  const { width: outputWidth, height: outputHeight } = parseOutputResolution(
+    exportSettings?.outputResolution,
+  );
+  const timelineAspectRatio =
+    outputWidth > 0 && outputHeight > 0 ? outputWidth / outputHeight : 16 / 9;
+  const previewSize = usePreviewSize(wrapperRef, timelineAspectRatio, {
+    maxWidthPct: 0.9,
+    maxHeightPct: 0.75,
+  });
+
   const renderAt = useCallback(
     async (globalTime: number) => {
       const engine = engineRef.current;
@@ -193,7 +205,11 @@ function TimelineCompositorPreview({
           textOverlays,
           exportSettings,
           globalTime,
-          { isCancelled },
+          {
+            isCancelled,
+            maxHeight: previewSize?.canvasHeight,
+            maxWidth: previewSize?.canvasWidth,
+          },
         );
         if (isCancelled()) return;
 
@@ -203,7 +219,7 @@ function TimelineCompositorPreview({
 
         // Final pass: draw text overlays onto the stacked 2D canvas above the
         // video composite (works identically for both backends).
-        if (textCanvasRef.current) {
+        if (textCanvasRef.current && !isCancelled()) {
           renderTextOverlayCanvas(textCanvasRef.current, plan);
         }
 
@@ -227,7 +243,14 @@ function TimelineCompositorPreview({
         }
       }
     },
-    [timelineClips, clipGroups, transitions, textOverlays, exportSettings],
+    [
+      timelineClips,
+      clipGroups,
+      transitions,
+      textOverlays,
+      exportSettings,
+      previewSize,
+    ],
   );
 
   const requestRender = useCallback((globalTime: number) => {
@@ -369,7 +392,7 @@ function TimelineCompositorPreview({
   const displayTime = playheadTime ?? globalTimeRef.current;
 
   return (
-    <div className="preview-video-wrapper">
+    <div ref={wrapperRef} className="preview-video-wrapper">
       <div
         className="preview-canvas-stack"
         style={previewActive ? undefined : { display: "none" }}
@@ -463,12 +486,24 @@ const HIDDEN_VIDEO_STYLE: CSSProperties = {
 };
 
 function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPreviewProps) {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<PreviewEngine | null>(null);
   const rafRef = useRef<number>(0);
   const frameFailuresRef = useRef(0);
   const [gpuActive, setGpuActive] = useState(false);
+
+  const clipAspectRatio =
+    clip.videoWidth && clip.videoHeight && clip.videoHeight > 0
+      ? clip.videoWidth / clip.videoHeight
+      : 16 / 9;
+  const previewSize = usePreviewSize(wrapperRef, clipAspectRatio, {
+    maxWidthPct: 0.9,
+    maxHeightPct: 0.75,
+  });
+  const previewSizeRef = useRef(previewSize);
+  previewSizeRef.current = previewSize;
 
   useMediaVolume(videoRef, clip.volume, clip.id);
 
@@ -500,12 +535,13 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
             rafRef.current = requestAnimationFrame(drawLoop);
             return;
           }
-          if (
-            canvas.width !== video.videoWidth ||
-            canvas.height !== video.videoHeight
-          ) {
-            canvas.width = video.videoWidth || 1280;
-            canvas.height = video.videoHeight || 720;
+          const size = previewSizeRef.current;
+          const targetWidth = size?.canvasWidth || (video.videoWidth || 1280);
+          const targetHeight = size?.canvasHeight || (video.videoHeight || 720);
+          if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
+            canvas.width = targetWidth;
+            canvas.height = targetHeight;
+            engine.resize();
           }
           try {
             const frame = new VideoFrame(video);
@@ -585,7 +621,7 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
   }, [clip.id, onPlayheadChange]);
 
   return (
-    <div className="preview-video-wrapper">
+    <div ref={wrapperRef} className="preview-video-wrapper">
       <video
         ref={videoRef}
         src={clip.objectUrl}
@@ -598,6 +634,7 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
       />
       <canvas
         ref={canvasRef}
+        className="preview-single-canvas"
         style={gpuActive ? undefined : { display: "none" }}
         aria-label={`WebGPU preview of ${clip.title}`}
         width={1280}

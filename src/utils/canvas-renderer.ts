@@ -816,6 +816,8 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
       overlays,
       settings,
       globalTime,
+      options?.maxHeight,
+      options?.maxWidth,
     );
     if (options?.isCancelled?.()) return plan;
     this.resizeCanvas(plan.canvasWidth, plan.canvasHeight);

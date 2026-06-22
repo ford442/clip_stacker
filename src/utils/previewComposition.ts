@@ -75,6 +75,10 @@ export type PreviewCompositionLayer = PreviewClipLayer | PreviewTextLayer;
 export interface TimelineRenderOptions {
   /** Return true when this render is stale and must not touch the canvas. */
   isCancelled?: () => boolean;
+  /** Optional override for the preview height cap. */
+  maxHeight?: number;
+  /** Optional override for the preview width cap. */
+  maxWidth?: number;
 }
 
 export interface PreviewCompositionPlan {
@@ -228,21 +232,46 @@ export function buildClipTimelineSegments(
   return segments;
 }
 
+export interface CanvasSizeOptions {
+  maxHeight?: number;
+  maxWidth?: number;
+}
+
 function resolveCanvasSize(
   settings: Pick<ExportSettings, 'outputResolution'> | undefined,
-  maxHeight: number,
+  options: CanvasSizeOptions,
 ): CanvasGeometry {
   const { width, height } = parseOutputResolution(settings?.outputResolution);
   const outputWidth = width || DEFAULT_CANVAS_WIDTH;
   const outputHeight = height || DEFAULT_CANVAS_HEIGHT;
-  const capped = capPreviewResolution(outputWidth, outputHeight, maxHeight);
+
+  let canvasWidth = outputWidth;
+  let canvasHeight = outputHeight;
+  let scale = 1;
+  let capped = false;
+
+  const maxHeight = options.maxHeight ?? DEFAULT_PREVIEW_MAX_HEIGHT;
+  const heightCap = capPreviewResolution(canvasWidth, canvasHeight, maxHeight);
+  canvasWidth = heightCap.width;
+  canvasHeight = heightCap.height;
+  scale = heightCap.scale;
+  capped = heightCap.capped;
+
+  if (options.maxWidth && canvasWidth > options.maxWidth) {
+    const widthScale = options.maxWidth / canvasWidth;
+    canvasWidth = options.maxWidth;
+    canvasHeight = Math.max(1, Math.round(canvasHeight * widthScale));
+    scale *= widthScale;
+    capped = true;
+  }
+
   return {
     outputWidth,
     outputHeight,
-    canvasWidth: capped.width,
-    canvasHeight: capped.height,
-    scale: capped.scale,
-    capped: capped.capped,
+    canvasWidth,
+    canvasHeight,
+    scale,
+    capped,
   };
 }
 
@@ -547,9 +576,10 @@ export function buildPreviewCompositionPlan(
   settings: Pick<ExportSettings, 'outputResolution'> | undefined,
   globalTime: number,
   maxHeight: number = DEFAULT_PREVIEW_MAX_HEIGHT,
+  maxWidth?: number,
 ): PreviewCompositionPlan {
   const timelineClips = getTimelineClips(clips, groups);
-  const geom = resolveCanvasSize(settings, maxHeight);
+  const geom = resolveCanvasSize(settings, { maxHeight, maxWidth });
   const { canvasWidth, canvasHeight, scale, capped } = geom;
   const isEmpty = timelineClips.length === 0 && overlays.length === 0;
 

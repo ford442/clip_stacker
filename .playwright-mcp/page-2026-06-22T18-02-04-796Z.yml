@@ -1,0 +1,70 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - heading "clip_stacker" [level=1] [ref=e5]
+    - paragraph [ref=e6]: Upload, trim, reorder, fade, and merge clips into one MP4.
+  - generic [ref=e7]:
+    - generic [ref=e8]:
+      - generic [ref=e9]:
+        - text: Add clips (MP4 / WAV / MP3)
+        - button "Add clips (MP4 / WAV / MP3)" [ref=e10]
+      - button "▶ Render" [ref=e11]
+      - button "↩ Undo" [disabled] [ref=e12]
+      - button "↪ Redo" [disabled] [ref=e13]
+      - button "Save project" [ref=e14]
+      - button "Load project" [ref=e15]
+      - button "⌨️ Help" [ref=e16]
+      - button "🔄 Reset FFmpeg" [ref=e17]
+      - button "📋 Copy Debug" [ref=e18]
+      - 'generic "Rescaling exports auto-use hardware H.264 when available (WebCodecs/WebGPU), with FFmpeg audio mux and CPU fallback. WebCodecs: yes · Hardware H.264: no · WebGPU: no · MediaRecorder: yes" [ref=e19]':
+        - text: ⚡ GPU
+        - generic "Use canvas compositor with audio-reactive effects" [ref=e20]:
+          - checkbox "Canvas" [ref=e21]
+          - text: Canvas
+        - generic "Force re-encoding even when lossless concat is available" [ref=e22]:
+          - checkbox "Force re-encode" [ref=e23]
+          - text: Force re-encode
+    - paragraph [ref=e24]
+    - generic [ref=e25]:
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - text: Auth token (optional)
+          - textbox "Auth token (optional)" [ref=e28]:
+            - /placeholder: Bearer token or API key
+        - paragraph [ref=e29]: The auth token is saved for this browser tab session only and is cleared when you close the tab.
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - text: Project name
+          - textbox "Project name" [ref=e32]: default-project
+        - button "Save remote" [ref=e33]
+        - button "Load remote" [ref=e34]
+        - button "Refresh list" [ref=e35]
+      - paragraph [ref=e36]: No saved projects found. Click "Refresh list" after saving.
+    - generic [ref=e37]:
+      - generic [ref=e38]:
+        - heading "Media library" [level=3] [ref=e39]
+        - button "Refresh list" [ref=e40]
+      - paragraph [ref=e41]: No remote media found yet. Clips uploaded via "Save remote" will appear here for reuse in other projects.
+  - generic [ref=e42]:
+    - generic [ref=e43]:
+      - heading "Library" [level=2] [ref=e44]
+      - paragraph [ref=e45]: No clips yet. Add clips above.
+      - list "Clip library"
+    - generic [ref=e46]:
+      - heading "Preview" [level=2] [ref=e47]
+      - generic [ref=e48]: No clip selected.
+    - generic [ref=e49]:
+      - generic [ref=e50]:
+        - tab "Clip tab" [selected] [ref=e51]: Clip
+        - tab "Export tab" [ref=e52]: Export
+      - generic [ref=e54]: Select a clip to edit trim and fades.
+  - generic [ref=e55]:
+    - heading "Timeline" [level=2] [ref=e56]
+    - paragraph [ref=e57]: No clips added yet.
+  - generic [ref=e58]:
+    - generic [ref=e59]:
+      - heading "Text Overlays" [level=2] [ref=e60]
+      - button "+ Add Text" [ref=e61]
+    - paragraph [ref=e62]:
+      - text: No text overlays yet. Click
+      - strong [ref=e63]: + Add Text
+      - text: to create a news ticker or caption that will be burned into the exported video.

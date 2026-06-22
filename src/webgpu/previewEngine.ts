@@ -53,13 +53,32 @@ export class PreviewEngine {
     pipeline: GPURenderPipeline,
     sampler: GPUSampler,
     uniformBuffer: GPUBuffer,
+    format: GPUTextureFormat,
   ) {
     this.device = device;
     this.context = context;
     this.pipeline = pipeline;
     this.sampler = sampler;
     this.uniformBuffer = uniformBuffer;
+    this.format = format;
+    this.canvas = document.createElement('canvas');
   }
+
+  /**
+   * Reconfigure the WebGPU canvas context after the canvas element is resized.
+   * Without this, getCurrentTexture() may continue to serve the old size.
+   */
+  resize(): void {
+    if (this.destroyed) return;
+    this.context.configure({
+      device: this.device,
+      format: this.format,
+      alphaMode: "premultiplied",
+    });
+  }
+
+  private format: GPUTextureFormat;
+  private canvas: HTMLCanvasElement;
 
   static async create(canvas: HTMLCanvasElement): Promise<PreviewEngine> {
     const adapter = await navigator.gpu.requestAdapter({
@@ -131,7 +150,9 @@ export class PreviewEngine {
       primitive: { topology: "triangle-list" },
     });
 
-    return new PreviewEngine(device, context, pipeline, sampler, uniformBuffer);
+    const engine = new PreviewEngine(device, context, pipeline, sampler, uniformBuffer, format);
+    engine.canvas = canvas;
+    return engine;
   }
 
   /**

@@ -74,6 +74,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
       if (this.canvas.width !== width || this.canvas.height !== height) {
         this.canvas.width = width;
         this.canvas.height = height;
+        this.engine.resize();
       }
     }
   }
@@ -184,6 +185,8 @@ export class TimelinePreviewEngine implements TimelineCompositor {
       overlays,
       settings,
       globalTime,
+      options?.maxHeight,
+      options?.maxWidth,
     );
     if (options?.isCancelled?.()) return plan;
     this.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
@@ -227,6 +230,7 @@ export async function renderTimelinePreviewFrame(
   overlays: Parameters<typeof buildPreviewCompositionPlan>[3],
   settings: Parameters<typeof buildPreviewCompositionPlan>[4],
   globalTime: number,
+  options?: TimelineRenderOptions,
 ): Promise<PreviewCompositionPlan> {
   return engine.renderTimelineFrame(
     clips,
@@ -235,5 +239,6 @@ export async function renderTimelinePreviewFrame(
     overlays,
     settings,
     globalTime,
+    options,
   );
 }
