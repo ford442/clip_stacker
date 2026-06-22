@@ -167,6 +167,7 @@ function TimelineCompositorPreview({
   const playingRef = useRef(false);
   const globalTimeRef = useRef(playheadTime ?? 0);
   const renderTokenRef = useRef(0);
+  const renderFailuresRef = useRef(0);
   const backendRef = useRef<PreviewBackend>("unavailable");
   const [backend, setBackend] = useState<PreviewBackend>("unavailable");
   const [isPlaying, setIsPlaying] = useState(false);
@@ -182,6 +183,7 @@ function TimelineCompositorPreview({
       const engine = engineRef.current;
       if (!engine) return;
       const token = ++renderTokenRef.current;
+      const isCancelled = () => token !== renderTokenRef.current;
       const frameStart = performance.now();
       try {
         const plan = await engine.renderTimelineFrame(
@@ -191,31 +193,35 @@ function TimelineCompositorPreview({
           textOverlays,
           exportSettings,
           globalTime,
+          { isCancelled },
         );
+        if (isCancelled()) return;
+
         previewMetrics.recordFrame(performance.now() - frameStart);
         previewMetrics.maybeLog();
+        renderFailuresRef.current = 0;
 
         // Final pass: draw text overlays onto the stacked 2D canvas above the
         // video composite (works identically for both backends).
-        if (token === renderTokenRef.current && textCanvasRef.current) {
+        if (textCanvasRef.current) {
           renderTextOverlayCanvas(textCanvasRef.current, plan);
         }
 
-        if (token === renderTokenRef.current) {
-          const { height: outputHeight } = parseOutputResolution(
-            exportSettings?.outputResolution,
-          );
-          const budget = evaluatePreviewBudget({
-            backend: backendRef.current,
-            capped: plan.capped,
-            outputHeight,
-            cappedHeight: plan.canvasHeight,
-            layerCount: plan.layers.length,
-          });
-          setDegradationMessage(budget.message);
-        }
+        const { height: outputHeight } = parseOutputResolution(
+          exportSettings?.outputResolution,
+        );
+        const budget = evaluatePreviewBudget({
+          backend: backendRef.current,
+          capped: plan.capped,
+          outputHeight,
+          cappedHeight: plan.canvasHeight,
+          layerCount: plan.layers.length,
+        });
+        setDegradationMessage(budget.message);
       } catch {
-        if (token === renderTokenRef.current) {
+        if (isCancelled()) return;
+        renderFailuresRef.current += 1;
+        if (renderFailuresRef.current >= 5) {
           setBackend("unavailable");
           backendRef.current = "unavailable";
         }
@@ -229,7 +235,9 @@ function TimelineCompositorPreview({
   }, []);
 
   useEffect(() => {
-    schedulerRef.current = createRenderScheduler(renderAt);
+    schedulerRef.current = createRenderScheduler(renderAt, () => {
+      renderTokenRef.current += 1;
+    });
     return () => {
       schedulerRef.current?.cancel();
       schedulerRef.current = null;
@@ -279,6 +287,7 @@ function TimelineCompositorPreview({
       engineRef.current = engine;
       backendRef.current = chosen;
       setBackend(chosen);
+      renderFailuresRef.current = 0;
       const time = playheadTime ?? globalTimeRef.current;
       globalTimeRef.current = time;
       await renderAt(time);
@@ -542,7 +551,25 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
       setGpuActive(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clip.id]);
+  }, [clip.id, clip.objectUrl]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || playheadTime == null || !Number.isFinite(playheadTime)) return;
+
+    const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
+    const target = Math.max(clip.trimStart, Math.min(playheadTime, trimEnd));
+    if (Math.abs(video.currentTime - target) > 0.05) {
+      video.currentTime = target;
+    }
+  }, [
+    clip.id,
+    clip.objectUrl,
+    clip.trimStart,
+    clip.trimEnd,
+    clip.duration,
+    playheadTime,
+  ]);
 
   useEffect(() => {
     const video = videoRef.current;

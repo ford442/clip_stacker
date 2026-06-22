@@ -19,6 +19,8 @@ export interface RenderScheduler {
 
 export function createRenderScheduler(
   render: (time: number) => Promise<void>,
+  /** Called when a newer render supersedes one already in flight. */
+  onSuperseded?: () => void,
 ): RenderScheduler {
   let rendering = false;
   let pending: number | null = null;
@@ -44,6 +46,7 @@ export function createRenderScheduler(
       if (rendering) {
         // Keep only the most recent target while a render is in flight.
         pending = time;
+        onSuperseded?.();
         return;
       }
       run(time);

@@ -71,6 +71,12 @@ export interface PreviewTextLayer {
 
 export type PreviewCompositionLayer = PreviewClipLayer | PreviewTextLayer;
 
+/** Optional controls passed into timeline preview renders. */
+export interface TimelineRenderOptions {
+  /** Return true when this render is stale and must not touch the canvas. */
+  isCancelled?: () => boolean;
+}
+
 export interface PreviewCompositionPlan {
   globalTime: number;
   totalDuration: number;
@@ -104,6 +110,7 @@ export interface TimelineCompositor {
     overlays: TextOverlay[],
     settings: Pick<ExportSettings, 'outputResolution'> | undefined,
     globalTime: number,
+    options?: TimelineRenderOptions,
   ): Promise<PreviewCompositionPlan>;
   syncClips(clips: Clip[]): void;
   /** Pause pooled decoders for idle teardown (preview paused/backgrounded). */
