@@ -74,7 +74,7 @@ For Apache deployments, `public/.htaccess` is copied into `dist/` during the bui
 
 The app ships with a CSP that allows:
 
-- `'wasm-unsafe-eval'` and `worker-src blob:` for FFmpeg WebAssembly
+- `'wasm-unsafe-eval'`, `script-src blob:`, and `worker-src blob:` for FFmpeg WebAssembly (dynamic core imports via blob URLs)
 - `blob:` / `data:` / `https:` for media previews, renders, and remote storage downloads
 - `https:` / `wss:` for user-configurable storage endpoints, CDN fallbacks, and HuggingFace RIFE
 
