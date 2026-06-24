@@ -9,7 +9,12 @@ import type {
 import { sanitizeFilename } from "../utils/filename";
 import { computeTotalDuration } from "../utils/transitions";
 import { useMediaVolume } from "../hooks/useMediaVolume";
-import { usePreviewSize } from "../hooks/usePreviewSize";
+import {
+  DEFAULT_PREVIEW_CONSTRAINTS,
+  PREVIEW_SIZE_THRESHOLD_PX,
+  VIEWPORT_PREVIEW_CONSTRAINTS,
+  usePreviewSize,
+} from "../hooks/usePreviewSize";
 import { PreviewEngine } from "../webgpu/previewEngine";
 import {
   shouldUseTimelinePreview,
@@ -185,10 +190,9 @@ function TimelineCompositorPreview({
   );
   const timelineAspectRatio =
     outputWidth > 0 && outputHeight > 0 ? outputWidth / outputHeight : 16 / 9;
-  const previewSize = usePreviewSize(wrapperRef, timelineAspectRatio, {
-    maxWidthPct: 0.9,
-    maxHeightPct: 0.75,
-  });
+  const previewSize = usePreviewSize(wrapperRef, timelineAspectRatio, DEFAULT_PREVIEW_CONSTRAINTS);
+  const previewSizeRef = useRef(previewSize);
+  previewSizeRef.current = previewSize;
 
   const renderAt = useCallback(
     async (globalTime: number) => {
@@ -197,6 +201,7 @@ function TimelineCompositorPreview({
       const token = ++renderTokenRef.current;
       const isCancelled = () => token !== renderTokenRef.current;
       const frameStart = performance.now();
+      const size = previewSizeRef.current;
       try {
         const plan = await engine.renderTimelineFrame(
           timelineClips,
@@ -207,8 +212,8 @@ function TimelineCompositorPreview({
           globalTime,
           {
             isCancelled,
-            maxHeight: previewSize?.canvasHeight,
-            maxWidth: previewSize?.canvasWidth,
+            maxHeight: size?.canvasHeight,
+            maxWidth: size?.canvasWidth,
           },
         );
         if (isCancelled()) return;
@@ -243,14 +248,7 @@ function TimelineCompositorPreview({
         }
       }
     },
-    [
-      timelineClips,
-      clipGroups,
-      transitions,
-      textOverlays,
-      exportSettings,
-      previewSize,
-    ],
+    [timelineClips, clipGroups, transitions, textOverlays, exportSettings],
   );
 
   const requestRender = useCallback((globalTime: number) => {
@@ -345,6 +343,11 @@ function TimelineCompositorPreview({
     playheadTime,
     requestRender,
   ]);
+
+  useEffect(() => {
+    if (!previewSize) return;
+    requestRender(playheadTime ?? globalTimeRef.current);
+  }, [previewSize, playheadTime, requestRender]);
 
   useEffect(() => {
     playingRef.current = isPlaying;
@@ -486,35 +489,117 @@ const HIDDEN_VIDEO_STYLE: CSSProperties = {
 };
 
 function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPreviewProps) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<PreviewEngine | null>(null);
   const rafRef = useRef<number>(0);
   const frameFailuresRef = useRef(0);
+  const webGpuAvailable =
+    typeof navigator !== "undefined" && "gpu" in navigator;
   const [gpuActive, setGpuActive] = useState(false);
+  const [gpuFallback, setGpuFallback] = useState(!webGpuAvailable);
+  const [hasFrame, setHasFrame] = useState(false);
 
   const clipAspectRatio =
     clip.videoWidth && clip.videoHeight && clip.videoHeight > 0
       ? clip.videoWidth / clip.videoHeight
       : 16 / 9;
-  const previewSize = usePreviewSize(wrapperRef, clipAspectRatio, {
-    maxWidthPct: 0.9,
-    maxHeightPct: 0.75,
-  });
+  const previewSize = usePreviewSize(viewportRef, clipAspectRatio, VIEWPORT_PREVIEW_CONSTRAINTS);
   const previewSizeRef = useRef(previewSize);
   previewSizeRef.current = previewSize;
 
   useMediaVolume(videoRef, clip.volume, clip.id);
 
   useEffect(() => {
+    setHasFrame(false);
+    setGpuActive(false);
+    setGpuFallback(!webGpuAvailable);
+  }, [clip.id, clip.objectUrl, webGpuAvailable]);
+
+  useEffect(() => {
     let alive = true;
     let engine: PreviewEngine | null = null;
+    let rvfcHandle = 0;
+
+    const resizeCanvasIfNeeded = (
+      canvas: HTMLCanvasElement,
+      eng: PreviewEngine,
+    ) => {
+      const size = previewSizeRef.current;
+      if (!size) return;
+      const { canvasWidth: targetWidth, canvasHeight: targetHeight } = size;
+      if (
+        Math.abs(canvas.width - targetWidth) < PREVIEW_SIZE_THRESHOLD_PX &&
+        Math.abs(canvas.height - targetHeight) < PREVIEW_SIZE_THRESHOLD_PX
+      ) {
+        return;
+      }
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      eng.resize();
+    };
+
+    const drawOneFrame = () => {
+      const canvas = canvasRef.current;
+      const video = videoRef.current;
+      if (!alive || !engine || !canvas || !video) return;
+
+      if (video.readyState < 2) return;
+
+      resizeCanvasIfNeeded(canvas, engine);
+
+      try {
+        const frame = new VideoFrame(video);
+        frameFailuresRef.current = 0;
+        const elapsed = video.currentTime - clip.trimStart;
+        const duration =
+          (Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration) -
+          clip.trimStart;
+        engine.renderFrame(
+          frame,
+          elapsed,
+          duration,
+          clip.videoFadeIn,
+          clip.videoFadeOut,
+          clip.opacity ?? 1,
+        );
+        frame.close();
+        setHasFrame(true);
+      } catch {
+        frameFailuresRef.current += 1;
+        if (frameFailuresRef.current >= 30) {
+          engine.destroy();
+          engineRef.current = null;
+          setGpuActive(false);
+          setGpuFallback(true);
+          setHasFrame(false);
+        }
+      }
+    };
+
+    const scheduleNextFrame = () => {
+      if (!alive || !engine) return;
+      const video = videoRef.current;
+      if (!video) return;
+
+      if (!video.paused && "requestVideoFrameCallback" in video) {
+        rvfcHandle = video.requestVideoFrameCallback(() => {
+          drawOneFrame();
+          scheduleNextFrame();
+        });
+      } else {
+        rafRef.current = requestAnimationFrame(() => {
+          drawOneFrame();
+          scheduleNextFrame();
+        });
+      }
+    };
 
     async function init() {
       const canvas = canvasRef.current;
       const video = videoRef.current;
-      if (!canvas || !video || !("gpu" in navigator)) return;
+      if (!canvas || !video || !webGpuAvailable) return;
 
       try {
         engine = await PreviewEngine.create(canvas);
@@ -525,73 +610,33 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
         engineRef.current = engine;
         setGpuActive(true);
         frameFailuresRef.current = 0;
-
-        const drawLoop = () => {
-          if (!alive || !engine) {
-            rafRef.current = requestAnimationFrame(drawLoop);
-            return;
-          }
-          if (video.readyState < 2) {
-            rafRef.current = requestAnimationFrame(drawLoop);
-            return;
-          }
-          const size = previewSizeRef.current;
-          const targetWidth = size?.canvasWidth || (video.videoWidth || 1280);
-          const targetHeight = size?.canvasHeight || (video.videoHeight || 720);
-          if (canvas.width !== targetWidth || canvas.height !== targetHeight) {
-            canvas.width = targetWidth;
-            canvas.height = targetHeight;
-            engine.resize();
-          }
-          try {
-            const frame = new VideoFrame(video);
-            frameFailuresRef.current = 0;
-            const elapsed = video.currentTime - clip.trimStart;
-            const duration =
-              (Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration) -
-              clip.trimStart;
-            engine.renderFrame(
-              frame,
-              elapsed,
-              duration,
-              clip.videoFadeIn,
-              clip.videoFadeOut,
-              clip.opacity ?? 1,
-            );
-            frame.close();
-          } catch {
-            // VideoFrame creation can fail on paused / seeking frames — skip
-            frameFailuresRef.current += 1;
-            if (frameFailuresRef.current >= 30) {
-              engine.destroy();
-              engineRef.current = null;
-              setGpuActive(false);
-              return;
-            }
-          }
-          rafRef.current = requestAnimationFrame(drawLoop);
-        };
-        rafRef.current = requestAnimationFrame(drawLoop);
+        scheduleNextFrame();
       } catch {
         engineRef.current = null;
+        setGpuFallback(true);
       }
     }
 
-    init();
+    void init();
 
     return () => {
       alive = false;
       cancelAnimationFrame(rafRef.current);
+      const video = videoRef.current;
+      if (video && rvfcHandle && "cancelVideoFrameCallback" in video) {
+        video.cancelVideoFrameCallback(rvfcHandle);
+      }
       engine?.destroy();
       engineRef.current = null;
       setGpuActive(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clip.id, clip.objectUrl]);
+  }, [clip.id, clip.objectUrl, webGpuAvailable]);
 
   useEffect(() => {
     const video = videoRef.current;
     if (!video || playheadTime == null || !Number.isFinite(playheadTime)) return;
+    if (!video.paused) return;
 
     const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     const target = Math.max(clip.trimStart, Math.min(playheadTime, trimEnd));
@@ -620,31 +665,44 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
     };
   }, [clip.id, onPlayheadChange]);
 
+  const viewportStyle = previewSize
+    ? { width: previewSize.cssWidth, height: previewSize.cssHeight }
+    : undefined;
+
   return (
-    <div ref={wrapperRef} className="preview-video-wrapper">
-      <video
-        ref={videoRef}
-        src={clip.objectUrl}
-        controls={!gpuActive}
-        style={gpuActive ? HIDDEN_VIDEO_STYLE : undefined}
-        aria-label={`Preview of ${clip.title} video. Press space to play/pause.`}
-        crossOrigin="anonymous"
-        playsInline
-        preload="auto"
-      />
-      <canvas
-        ref={canvasRef}
-        className="preview-single-canvas"
-        style={gpuActive ? undefined : { display: "none" }}
-        aria-label={`WebGPU preview of ${clip.title}`}
-        width={1280}
-        height={720}
-        onClick={() => {
-          const v = videoRef.current;
-          if (!v) return;
-          v.paused ? v.play() : v.pause();
-        }}
-      />
+    <div className="preview-video-wrapper">
+      <div
+        ref={viewportRef}
+        className="preview-viewport"
+        style={viewportStyle}
+      >
+        <video
+          ref={videoRef}
+          src={clip.objectUrl}
+          controls={gpuFallback}
+          style={gpuFallback ? undefined : HIDDEN_VIDEO_STYLE}
+          aria-label={`Preview of ${clip.title} video. Press space to play/pause.`}
+          crossOrigin="anonymous"
+          playsInline
+          preload="auto"
+        />
+        <canvas
+          ref={canvasRef}
+          className="preview-single-canvas"
+          style={{
+            display: gpuActive ? "block" : "none",
+            visibility: hasFrame ? "visible" : "hidden",
+          }}
+          aria-label={`WebGPU preview of ${clip.title}`}
+          width={1280}
+          height={720}
+          onClick={() => {
+            const v = videoRef.current;
+            if (!v) return;
+            v.paused ? v.play() : v.pause();
+          }}
+        />
+      </div>
       {gpuActive && (
         <div className="preview-gpu-controls">
           <button
