@@ -1,92 +1,173 @@
 /**
  * Unit tests for stitchClipsOnGpu in src/utils/huggingface.ts.
  *
- * @gradio/client is mocked so tests never touch the network. They focus on:
- *   - the empty-input guard
- *   - the positional payload sent to the "/stitch" endpoint
- *   - resolving the Gradio file output (Blob / URL string / { url }) to a Blob
- *   - progress event ordering
+ * The Space is reached through the raw Gradio HTTP API (NOT @gradio/client,
+ * which hardcodes credentials:"include" and fails CORS against HF's wildcard
+ * origin). `fetch` is mocked to walk the upload → /call → SSE → download flow.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const mockPredict = vi.fn();
-const mockConnect = vi.fn(async () => ({ predict: mockPredict }));
-
-vi.mock("@gradio/client", () => ({
-  Client: { connect: (...args: unknown[]) => mockConnect(...args) },
-}));
-
-import { stitchClipsOnGpu } from "./huggingface";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { processClipWithRIFE, stitchClipsOnGpu } from "./huggingface";
 
 function makeBlob(text = "clip"): Blob {
   return new Blob([text], { type: "video/mp4" });
 }
 
+/** Build a Response-like object for the mocked fetch. */
+function jsonResponse(body: unknown, ok = true, status = 200) {
+  return { ok, status, json: async () => body } as unknown as Response;
+}
+
+/** A Response whose body streams the given SSE text once. */
+function sseResponse(text: string) {
+  const bytes = new TextEncoder().encode(text);
+  let sent = false;
+  return {
+    ok: true,
+    status: 200,
+    body: {
+      getReader() {
+        return {
+          read: async () =>
+            sent
+              ? { value: undefined, done: true }
+              : ((sent = true), { value: bytes, done: false }),
+        };
+      },
+    },
+  } as unknown as Response;
+}
+
+const COMPLETE_SSE =
+  'event: complete\ndata: [{"path":"/tmp/out.mp4","url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/out.mp4"}]\n\n';
+
 describe("stitchClipsOnGpu", () => {
   beforeEach(() => {
-    mockPredict.mockReset();
-    mockConnect.mockClear();
+    vi.restoreAllMocks();
   });
-
-  it("rejects when there are no clips to stitch", async () => {
-    await expect(stitchClipsOnGpu([], "1920x1080")).rejects.toThrow(
-      /no video clips/i,
-    );
-    expect(mockConnect).not.toHaveBeenCalled();
-  });
-
-  it("sends clips, resolution, and default audio args to /stitch", async () => {
-    const outBlob = makeBlob("stitched");
-    mockPredict.mockResolvedValue({ data: [outBlob] });
-
-    const clips = [makeBlob("a"), makeBlob("b")];
-    const result = await stitchClipsOnGpu(clips, "1280x720");
-
-    expect(mockConnect).toHaveBeenCalledWith("1inkusFace/RIFE");
-    const [endpoint, payload] = mockPredict.mock.calls[0];
-    expect(endpoint).toBe("/stitch");
-    expect(payload[0]).toBe(clips);
-    expect(payload[1]).toBe("1280x720");
-    expect(payload[2]).toBeNull();
-    expect(payload[3]).toBe("Keep original audio");
-    expect(result.blob).toBe(outBlob);
-  });
-
-  it("downloads the output when the space returns a { url } object", async () => {
-    const downloaded = makeBlob("downloaded");
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: true, blob: async () => downloaded });
-    vi.stubGlobal("fetch", fetchMock);
-
-    mockPredict.mockResolvedValue({
-      data: [{ url: "https://example.com/out.mp4" }],
-    });
-
-    const result = await stitchClipsOnGpu([makeBlob()], "1920x1080");
-    expect(fetchMock).toHaveBeenCalledWith("https://example.com/out.mp4");
-    expect(result.blob).toBe(downloaded);
-
+  afterEach(() => {
     vi.unstubAllGlobals();
   });
 
-  it("emits uploading → processing → downloading progress events", async () => {
-    mockPredict.mockResolvedValue({ data: [makeBlob("stitched")] });
-    const stages: string[] = [];
+  it("rejects when there are no clips to stitch", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(stitchClipsOnGpu([], "1920x1080")).rejects.toThrow(
+      /no video clips/i,
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 
+  it("uploads, calls /stitch, and downloads the result without credentials", async () => {
+    const stitched = makeBlob("stitched");
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1")) return sseResponse(COMPLETE_SSE);
+      if (url.includes("file=")) {
+        return { ok: true, status: 200, blob: async () => stitched } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch ${url} ${init?.method ?? ""}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await stitchClipsOnGpu([makeBlob("a")], "1280x720");
+    expect(result.blob).toBe(stitched);
+
+    // Every request must omit credentials (the whole point of the rework).
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1] as RequestInit | undefined)?.credentials).toBe("omit");
+    }
+
+    // The /call payload carries FileData + resolution + default audio args.
+    const callInvocation = fetchMock.mock.calls.find(([u]) =>
+      String(u).endsWith("/call/stitch"),
+    );
+    const body = JSON.parse((callInvocation![1] as RequestInit).body as string);
+    expect(body.data[0]).toEqual([
+      { path: "/tmp/clip_0.mp4", meta: { _type: "gradio.FileData" } },
+    ]);
+    expect(body.data[1]).toBe("1280x720");
+    expect(body.data[3]).toBe("Keep original audio");
+  });
+
+  it("surfaces an error event from the result stream", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1"))
+        return sseResponse('event: error\ndata: boom\n\n');
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(stitchClipsOnGpu([makeBlob()], "1920x1080")).rejects.toThrow(
+      /GPU stitch failed/,
+    );
+  });
+
+  it("fails clearly when the upload is rejected", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(null, false, 503),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(stitchClipsOnGpu([makeBlob()], "1920x1080")).rejects.toThrow(
+      /GPU stitch failed/,
+    );
+  });
+
+  it("emits uploading → processing → downloading progress events", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1")) return sseResponse(COMPLETE_SSE);
+      return { ok: true, status: 200, blob: async () => makeBlob() } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stages: string[] = [];
     await stitchClipsOnGpu([makeBlob()], "1920x1080", (e) =>
       stages.push(e.stage),
     );
-
     expect(stages[0]).toBe("uploading");
     expect(stages).toContain("processing");
     expect(stages[stages.length - 1]).toBe("downloading");
   });
+});
 
-  it("wraps prediction errors with a GPU stitch message", async () => {
-    mockPredict.mockRejectedValue(new Error("boom"));
-    await expect(stitchClipsOnGpu([makeBlob()], "1920x1080")).rejects.toThrow(
-      /GPU stitch failed: boom/,
+describe("processClipWithRIFE", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("uploads + calls /interpolate_video with credentials omitted", async () => {
+    const processed = makeBlob("rife");
+    const sse =
+      'event: complete\ndata: [{"url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/r.mp4"}]\n\n';
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/in.mp4"]);
+      if (url.endsWith("/call/interpolate_video"))
+        return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/interpolate_video/ev1")) return sseResponse(sse);
+      return { ok: true, status: 200, blob: async () => processed } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processClipWithRIFE(makeBlob(), 4, "boomerang");
+    expect(result.blob).toBe(processed);
+
+    const call = fetchMock.mock.calls.find(([u]) =>
+      String(u).endsWith("/call/interpolate_video"),
     );
+    const body = JSON.parse((call![1] as RequestInit).body as string);
+    expect(body.data[0]).toEqual({
+      path: "/tmp/in.mp4",
+      meta: { _type: "gradio.FileData" },
+    });
+    expect(body.data[1]).toBe("4");
+    expect(body.data[2]).toBe(true);
+    for (const c of fetchMock.mock.calls) {
+      expect((c[1] as RequestInit | undefined)?.credentials).toBe("omit");
+    }
   });
 });
