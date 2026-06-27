@@ -117,3 +117,110 @@ export async function processClipWithRIFE(
 
   return { blob: outputBlob };
 }
+
+/**
+ * Resolve a Gradio prediction output (Blob, URL string, or `{ url }` object)
+ * into a Blob, downloading it if necessary.
+ */
+async function resolveGradioFileOutput(
+  output: unknown,
+  label: string,
+): Promise<Blob> {
+  if (output instanceof Blob) return output;
+  if (typeof output === "string") {
+    const response = await fetch(output);
+    if (!response.ok) {
+      throw new Error(`Failed to download ${label} (HTTP ${response.status})`);
+    }
+    return response.blob();
+  }
+  if (typeof output === "object" && output !== null && "url" in output) {
+    const url = (output as { url: string }).url;
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to download ${label} (HTTP ${response.status})`);
+    }
+    return response.blob();
+  }
+  throw new Error(`Unexpected ${label} output format.`);
+}
+
+export interface GpuStitchResult {
+  blob: Blob;
+}
+
+/**
+ * Stitch multiple (already-trimmed) video clips into one MP4 on the HuggingFace
+ * space's GPU. The space normalizes every clip to `resolution` (scale + pad)
+ * before concatenating, so the result keeps a single resolution even when the
+ * source clips have different native sizes.
+ *
+ * Note: this path concatenates clips at the target resolution only — it does
+ * NOT apply fades, transitions, PiP, text overlays, or per-clip volume. Those
+ * remain the responsibility of the in-browser FFmpeg render path.
+ *
+ * @param clipBlobs  - Trimmed video clips, in timeline order.
+ * @param resolution - Target resolution as "WIDTHxHEIGHT" (e.g. "1920x1080").
+ * @param onProgress - Optional progress callback.
+ */
+export async function stitchClipsOnGpu(
+  clipBlobs: Blob[],
+  resolution: string,
+  onProgress?: (event: RifeProgressEvent) => void,
+): Promise<GpuStitchResult> {
+  if (clipBlobs.length === 0) {
+    throw new Error("No video clips to stitch.");
+  }
+
+  onProgress?.({
+    stage: "uploading",
+    progress: 0,
+    message: "Connecting to stitch space…",
+  });
+
+  const client = await Client.connect("1inkusFace/RIFE");
+
+  onProgress?.({
+    stage: "uploading",
+    progress: 20,
+    message: `Uploading ${clipBlobs.length} clip${clipBlobs.length > 1 ? "s" : ""} to GPU…`,
+  });
+
+  let result: { data: unknown[] };
+  try {
+    onProgress?.({
+      stage: "processing",
+      progress: null,
+      message: `Stitching ${clipBlobs.length} clips at ${resolution} on GPU…`,
+    });
+
+    // Positional payload matching the space's /stitch endpoint inputs:
+    //   [files, resolution_choice, audio_file, audio_mode, overlay_vol]
+    result = (await client.predict("/stitch", [
+      clipBlobs,
+      resolution,
+      null,
+      "Keep original audio",
+      1,
+    ])) as { data: unknown[] };
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`GPU stitch failed: ${message}`);
+  }
+
+  onProgress?.({
+    stage: "downloading",
+    progress: 80,
+    message: "Downloading stitched video…",
+  });
+
+  const output = result.data?.[0];
+  if (!output) {
+    throw new Error("GPU stitch returned no output.");
+  }
+  const blob = await resolveGradioFileOutput(output, "stitched video");
+
+  onProgress?.({ stage: "downloading", progress: 100, message: "Done." });
+
+  return { blob };
+}

@@ -7,6 +7,8 @@ import { ProgressBar } from './ProgressBar';
 interface Props {
   onAddClips: (files: File[]) => void;
   onMerge: () => void;
+  /** Offload resolution-normalization + concat to the HuggingFace GPU space. */
+  onGpuStitch?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
   canUndo?: boolean;
@@ -47,6 +49,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
   {
     onAddClips,
     onMerge,
+    onGpuStitch,
     onUndo,
     onRedo,
     canUndo = false,
@@ -142,6 +145,16 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
         >
           ▶ Render
         </button>
+        {onGpuStitch && (
+          <button
+            type="button"
+            onClick={onGpuStitch}
+            disabled={isRendering}
+            title="Stitch clips at one resolution on the HuggingFace GPU space (native FFmpeg, higher quality). Ignores fades/transitions/PiP/overlays — use Render for those."
+          >
+            ☁ GPU Stitch
+          </button>
+        )}
         {onUndo && (
           <button
             type="button"

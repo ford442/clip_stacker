@@ -597,7 +597,6 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch", css=CSS) as demo:
     # ── helpers: sel_num is 1-based in UI, 0-based in Python ─────────────────
     def _sel0(sel_num):
         return max(0, int(sel_num) - 1)
-
     def _wrap_up(p, t, s):
         p, t, panel, new_s = move_up(p, t, _sel0(s))
         return p, t, panel, new_s + 1   # back to 1-based
@@ -650,6 +649,43 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch", css=CSS) as demo:
         fn=stitch_videos,
         inputs=[paths_state, res_sel, audio_input, audio_mode, audio_volume],
         outputs=stitch_out
+    )
+
+    # ── Headless API endpoint for the clip_stacker web app ───────────────────
+    # The UI "Stitch" button takes a gr.State (paths_state) as its first input,
+    # which is NOT callable through @gradio/client. This endpoint exposes the
+    # same stitch_videos() pipeline with plain gr.File inputs so the web app can
+    # call client.predict("/stitch", [...]) directly. Components are hidden — it
+    # exists only to register the named "/stitch" API route.
+    api_files = gr.File(
+        file_count="multiple", file_types=["video"], visible=False,
+    )
+    api_res = gr.Textbox(value="1920x1080", visible=False)
+    api_audio = gr.Audio(type="filepath", sources=["upload"], visible=False)
+    api_mode = gr.Textbox(value="Keep original audio", visible=False)
+    api_vol = gr.Number(value=1.0, visible=False)
+    api_out = gr.Video(visible=False)
+    api_btn = gr.Button("stitch_api", visible=False)
+
+    def stitch_api(files, resolution_choice, audio_file, audio_mode, overlay_vol):
+        """Normalize every uploaded clip to one resolution, then concat + mux.
+
+        `files` is a list of uploaded video file objects (gr.File multiple). We
+        reuse the existing stitch_videos() pipeline, which scales/pads each clip
+        to `resolution_choice` so the stitched output keeps one resolution.
+        """
+        if not files:
+            return None
+        paths = [f.name if hasattr(f, "name") else str(f) for f in files]
+        return stitch_videos(
+            paths, resolution_choice, audio_file, audio_mode, overlay_vol,
+        )
+
+    api_btn.click(
+        fn=stitch_api,
+        inputs=[api_files, api_res, api_audio, api_mode, api_vol],
+        outputs=api_out,
+        api_name="stitch",
     )
 
     # Load the Javascript into the demo
