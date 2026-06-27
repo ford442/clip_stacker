@@ -68,6 +68,7 @@ import { useRenderState } from "./hooks/useRenderState";
 import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { getTimelineClips } from "./utils/timelineClips";
+import { resolveTargetResolution } from "./utils/resolution";
 import {
   readStorageAuthToken,
   writeStorageAuthToken,
@@ -651,6 +652,74 @@ export function App() {
     await performRender();
   }, [clips, clipGroups, performRender]);
 
+  // GPU stitch: offload resolution-normalization + concat to the HuggingFace
+  // space. Each clip is trimmed in-browser (cheap, lossless copy), then all
+  // clips are uploaded and stitched at one resolution on the GPU. This path
+  // ignores fades/transitions/PiP/overlays — use the normal Render for those.
+  const handleGpuStitch = useCallback(async () => {
+    const timelineClips = getTimelineClips(clips, clipGroups).filter(
+      (clip) => clip.kind === "video",
+    );
+    if (timelineClips.length === 0) {
+      setStatus("Add at least one video clip before GPU stitching.");
+      return;
+    }
+
+    try {
+      if (outputUrl) URL.revokeObjectURL(outputUrl);
+      setOutputUrl(null);
+      setEncoderPath("");
+      setRenderPlan(null);
+      setIsRendering(true);
+      setProgressIndeterminate(true);
+      setProgressValue(null);
+      setProgressStage("GPU stitch");
+
+      // Step 1: trim each clip in timeline order (FFmpeg lossless copy).
+      const clipBlobs: Blob[] = [];
+      for (let i = 0; i < timelineClips.length; i++) {
+        setStatus(
+          `Preparing clip ${i + 1}/${timelineClips.length} for GPU stitch…`,
+        );
+        clipBlobs.push(
+          await extractTrimmedVideoClip(timelineClips[i], setStatus),
+        );
+      }
+
+      // Step 2: upload + stitch at one resolution on the GPU.
+      const { width, height } = resolveTargetResolution(
+        timelineClips,
+        exportSettings,
+      );
+      const resolution = `${width}x${height}`;
+      const { stitchClipsOnGpu } = await import("./utils/huggingface");
+      const { blob } = await stitchClipsOnGpu(
+        clipBlobs,
+        resolution,
+        (event) => setStatus(event.message ?? `GPU stitch: ${event.stage}…`),
+      );
+
+      const url = URL.createObjectURL(blob);
+      setOutputUrl(url);
+      setEncoderPath("gpu-stitch");
+      setStatus(
+        `✅ GPU stitch complete at ${resolution}. Download your merged MP4.`,
+      );
+      setProgressStage("GPU stitch complete");
+      setProgressValue(1);
+      setProgressIndeterminate(false);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : String(error);
+      setStatus(`GPU stitch failed: ${message}`);
+      console.error("GPU stitch error:", error);
+    } finally {
+      setIsRendering(false);
+      setProgressIndeterminate(false);
+      aggressiveCleanupFFmpegVFS().catch(() => {});
+    }
+  }, [clips, clipGroups, exportSettings, outputUrl]);
+
   const handleMemoryWarningConfirm = useCallback(() => {
     setShowMemoryWarning(false);
     if (pendingRenderRef.current) {
@@ -1192,6 +1261,7 @@ export function App() {
           ref={toolbarRef}
           onAddClips={handleAddClips}
           onMerge={handleMerge}
+          onGpuStitch={handleGpuStitch}
           onUndo={handleUndo}
           onRedo={handleRedo}
           canUndo={canUndo}

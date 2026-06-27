@@ -6,6 +6,7 @@ import {
   clipMatchesOutputResolution,
   clipsHaveMixedVideoDimensions,
   clipsNeedResolutionNormalization,
+  resolveTargetResolution,
   usesFixedOutputResolution,
 } from './resolution';
 
@@ -66,5 +67,41 @@ describe('resolution helpers', () => {
         makeClip({ id: 'clip-2', videoWidth: 1280, videoHeight: 720 }),
       ]),
     ).toBe(false);
+  });
+
+  describe('resolveTargetResolution', () => {
+    const autoSettings = {
+      ...DEFAULT_EXPORT_SETTINGS,
+      resolutionPreset: 'original' as const,
+      outputResolution: 'original',
+    };
+
+    it('uses the fixed output resolution when one is configured', () => {
+      const settings = {
+        ...DEFAULT_EXPORT_SETTINGS,
+        resolutionPreset: undefined,
+        outputResolution: '1920x1080',
+      };
+      const clips = [makeClip({ videoWidth: 640, videoHeight: 480 })];
+      expect(resolveTargetResolution(clips, settings)).toEqual({ width: 1920, height: 1080 });
+    });
+
+    it('normalizes mixed clips to the first video clip when resolution is auto', () => {
+      const clips = [
+        makeClip({ videoWidth: 1920, videoHeight: 1080 }),
+        makeClip({ id: 'clip-2', videoWidth: 1280, videoHeight: 720 }),
+      ];
+      expect(resolveTargetResolution(clips, autoSettings)).toEqual({ width: 1920, height: 1080 });
+    });
+
+    it('rounds odd auto dimensions down to even values', () => {
+      const clips = [makeClip({ videoWidth: 1281, videoHeight: 721 })];
+      expect(resolveTargetResolution(clips, autoSettings)).toEqual({ width: 1280, height: 720 });
+    });
+
+    it('falls back to the default canvas when no clip exposes dimensions', () => {
+      const clips = [makeClip({ videoWidth: undefined, videoHeight: undefined })];
+      expect(resolveTargetResolution(clips, autoSettings)).toEqual({ width: 1280, height: 720 });
+    });
   });
 });
