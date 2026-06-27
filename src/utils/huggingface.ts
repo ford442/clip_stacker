@@ -7,8 +7,6 @@
  * artifacts across scene cuts.
  */
 
-import { Client } from "@gradio/client";
-
 export type RifeMode = "interpolation" | "boomerang";
 
 export interface RifeProgressEvent {
@@ -43,34 +41,34 @@ export async function processClipWithRIFE(
     message: "Connecting to RIFE space…",
   });
 
-  const client = await Client.connect("1inkusFace/RIFE");
-
-  onProgress?.({
-    stage: "uploading",
-    progress: 20,
-    message: "Uploading clip to RIFE…",
-  });
-
-  // The 1inkusFace/RIFE space exposes its frame-interpolation endpoint as
-  // "/interpolate_video", accepting:
-  //   - video: file handle / blob
-  //   - multiplier: string ("2", "4", or "8")
-  //   - boomerang: boolean
+  // Uses the raw Gradio HTTP API with credentials:"omit" rather than
+  // @gradio/client — see the note on stitchClipsOnGpu for why the bundled
+  // client cannot reach a public HF Space from a deployed browser origin.
   const isBoomerang = mode === "boomerang";
 
-  let result: { data: unknown[] };
+  let output: unknown;
   try {
+    onProgress?.({
+      stage: "uploading",
+      progress: 20,
+      message: "Uploading clip to RIFE…",
+    });
+    const [path] = await uploadFilesToSpace([videoBlob]);
+
     onProgress?.({
       stage: "processing",
       progress: null,
       message: "Processing with RIFE…",
     });
 
-    result = (await client.predict("/interpolate_video", {
-      video: videoBlob,
-      multiplier: String(multiplier),
-      boomerang: isBoomerang,
-    })) as { data: unknown[] };
+    // The space's interpolate_video endpoint accepts:
+    //   [video (FileData), multiplier ("2"/"4"/"8"), boomerang (bool)]
+    const data = await callSpaceEndpoint("interpolate_video", [
+      { path, meta: { _type: "gradio.FileData" } },
+      String(multiplier),
+      isBoomerang,
+    ]);
+    output = data?.[0];
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`RIFE processing failed: ${message}`);
@@ -82,67 +80,14 @@ export async function processClipWithRIFE(
     message: "Downloading processed clip…",
   });
 
-  // The space returns a file URL or a blob-like object in result.data[0]
-  const output = result.data?.[0];
   if (!output) {
     throw new Error("RIFE returned no output.");
   }
-
-  let outputBlob: Blob;
-  if (output instanceof Blob) {
-    outputBlob = output;
-  } else if (typeof output === "string") {
-    // Could be a URL
-    const response = await fetch(output);
-    if (!response.ok) {
-      throw new Error(
-        `Failed to download RIFE output (HTTP ${response.status})`,
-      );
-    }
-    outputBlob = await response.blob();
-  } else if (typeof output === "object" && output !== null && "url" in output) {
-    const url = (output as { url: string }).url;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(
-        `Failed to download RIFE output (HTTP ${response.status})`,
-      );
-    }
-    outputBlob = await response.blob();
-  } else {
-    throw new Error("Unexpected RIFE output format.");
-  }
+  const outputBlob = await downloadSpaceFile(output, "RIFE output");
 
   onProgress?.({ stage: "downloading", progress: 100, message: "Done." });
 
   return { blob: outputBlob };
-}
-
-/**
- * Resolve a Gradio prediction output (Blob, URL string, or `{ url }` object)
- * into a Blob, downloading it if necessary.
- */
-async function resolveGradioFileOutput(
-  output: unknown,
-  label: string,
-): Promise<Blob> {
-  if (output instanceof Blob) return output;
-  if (typeof output === "string") {
-    const response = await fetch(output);
-    if (!response.ok) {
-      throw new Error(`Failed to download ${label} (HTTP ${response.status})`);
-    }
-    return response.blob();
-  }
-  if (typeof output === "object" && output !== null && "url" in output) {
-    const url = (output as { url: string }).url;
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`Failed to download ${label} (HTTP ${response.status})`);
-    }
-    return response.blob();
-  }
-  throw new Error(`Unexpected ${label} output format.`);
 }
 
 export interface GpuStitchResult {
@@ -178,16 +123,22 @@ export async function stitchClipsOnGpu(
     message: "Connecting to stitch space…",
   });
 
-  const client = await Client.connect("1inkusFace/RIFE");
-
-  onProgress?.({
-    stage: "uploading",
-    progress: 20,
-    message: `Uploading ${clipBlobs.length} clip${clipBlobs.length > 1 ? "s" : ""} to GPU…`,
-  });
-
-  let result: { data: unknown[] };
+  let output: unknown;
   try {
+    // NOTE: we deliberately do NOT use @gradio/client here. That client hard-
+    // codes `credentials: "include"` on every request, and HuggingFace serves
+    // public Spaces with `Access-Control-Allow-Origin: *`. Browsers forbid
+    // credentialed requests against a wildcard origin, so Client.connect() fails
+    // CORS preflight from any deployed origin. Talking to the Gradio HTTP API
+    // directly with `credentials: "omit"` is compatible with the wildcard CORS.
+
+    onProgress?.({
+      stage: "uploading",
+      progress: 20,
+      message: `Uploading ${clipBlobs.length} clip${clipBlobs.length > 1 ? "s" : ""} to GPU…`,
+    });
+    const uploadedPaths = await uploadFilesToSpace(clipBlobs);
+
     onProgress?.({
       stage: "processing",
       progress: null,
@@ -196,13 +147,18 @@ export async function stitchClipsOnGpu(
 
     // Positional payload matching the space's /stitch endpoint inputs:
     //   [files, resolution_choice, audio_file, audio_mode, overlay_vol]
-    result = (await client.predict("/stitch", [
-      clipBlobs,
+    const fileData = uploadedPaths.map((path) => ({
+      path,
+      meta: { _type: "gradio.FileData" },
+    }));
+    const data = await callSpaceEndpoint("stitch", [
+      fileData,
       resolution,
       null,
       "Keep original audio",
       1,
-    ])) as { data: unknown[] };
+    ]);
+    output = data?.[0];
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`GPU stitch failed: ${message}`);
@@ -214,13 +170,144 @@ export async function stitchClipsOnGpu(
     message: "Downloading stitched video…",
   });
 
-  const output = result.data?.[0];
   if (!output) {
     throw new Error("GPU stitch returned no output.");
   }
-  const blob = await resolveGradioFileOutput(output, "stitched video");
+  const blob = await downloadSpaceFile(output, "stitched video");
 
   onProgress?.({ stage: "downloading", progress: 100, message: "Done." });
 
   return { blob };
+}
+
+// ---------------------------------------------------------------------------
+// Raw Gradio HTTP API helpers (credentials-omit, CORS-safe for public Spaces)
+// ---------------------------------------------------------------------------
+
+/** Public host for the 1inkusFace/RIFE Space (Gradio 5 `/gradio_api` routes). */
+const SPACE_BASE_URL = "https://1inkusface-rife.hf.space";
+const SPACE_API_PREFIX = "/gradio_api";
+
+/**
+ * Upload blobs to the Space and return the server-side file paths Gradio
+ * assigns them (used to reference the files in a subsequent endpoint call).
+ */
+async function uploadFilesToSpace(blobs: Blob[]): Promise<string[]> {
+  const form = new FormData();
+  blobs.forEach((blob, i) => form.append("files", blob, `clip_${i}.mp4`));
+
+  const response = await fetch(`${SPACE_BASE_URL}${SPACE_API_PREFIX}/upload`, {
+    method: "POST",
+    body: form,
+    credentials: "omit",
+  });
+  if (!response.ok) {
+    throw new Error(`Upload to space failed (HTTP ${response.status})`);
+  }
+  const paths = (await response.json()) as unknown;
+  if (!Array.isArray(paths) || paths.some((p) => typeof p !== "string")) {
+    throw new Error("Unexpected upload response from space.");
+  }
+  return paths as string[];
+}
+
+/**
+ * Invoke a named Gradio endpoint (`api_name`) via the `/call` protocol and
+ * return its output `data` array. Posts the input payload, receives an
+ * `event_id`, then reads the Server-Sent Events result stream.
+ */
+async function callSpaceEndpoint(
+  apiName: string,
+  data: unknown[],
+): Promise<unknown[]> {
+  const callUrl = `${SPACE_BASE_URL}${SPACE_API_PREFIX}/call/${apiName}`;
+  const postRes = await fetch(callUrl, {
+    method: "POST",
+    credentials: "omit",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ data }),
+  });
+  if (!postRes.ok) {
+    throw new Error(`Space call failed (HTTP ${postRes.status})`);
+  }
+  const { event_id: eventId } = (await postRes.json()) as { event_id?: string };
+  if (!eventId) {
+    throw new Error("Space call did not return an event id.");
+  }
+
+  const streamRes = await fetch(`${callUrl}/${eventId}`, {
+    credentials: "omit",
+  });
+  if (!streamRes.ok || !streamRes.body) {
+    throw new Error(`Space result stream failed (HTTP ${streamRes.status})`);
+  }
+  return readGradioEventStream(streamRes.body);
+}
+
+/**
+ * Parse a Gradio `/call` Server-Sent Events stream, resolving with the payload
+ * of the `complete` event (or rejecting on an `error` event).
+ */
+async function readGradioEventStream(
+  body: ReadableStream<Uint8Array>,
+): Promise<unknown[]> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let currentEvent = "";
+
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let nl: number;
+    while ((nl = buffer.indexOf("\n")) !== -1) {
+      const line = buffer.slice(0, nl).replace(/\r$/, "");
+      buffer = buffer.slice(nl + 1);
+
+      if (line.startsWith("event:")) {
+        currentEvent = line.slice(6).trim();
+      } else if (line.startsWith("data:")) {
+        const payload = line.slice(5).trim();
+        if (currentEvent === "complete") {
+          return JSON.parse(payload) as unknown[];
+        }
+        if (currentEvent === "error") {
+          throw new Error(`Space reported an error: ${payload || "unknown"}`);
+        }
+      }
+    }
+  }
+  throw new Error("Space result stream ended without a complete event.");
+}
+
+/**
+ * Download a Gradio file output (a `{ path, url }` FileData object, a bare URL
+ * string, or a Blob) as a Blob, resolving relative Space URLs against the host.
+ */
+async function downloadSpaceFile(output: unknown, label: string): Promise<Blob> {
+  if (output instanceof Blob) return output;
+
+  let url: string | undefined;
+  if (typeof output === "string") {
+    url = output;
+  } else if (typeof output === "object" && output !== null) {
+    const file = output as { url?: string; path?: string };
+    url =
+      file.url ??
+      (file.path
+        ? `${SPACE_BASE_URL}${SPACE_API_PREFIX}/file=${file.path}`
+        : undefined);
+  }
+  if (!url) {
+    throw new Error(`Unexpected ${label} output format.`);
+  }
+  if (url.startsWith("/")) url = `${SPACE_BASE_URL}${url}`;
+
+  const response = await fetch(url, { credentials: "omit" });
+  if (!response.ok) {
+    throw new Error(`Failed to download ${label} (HTTP ${response.status})`);
+  }
+  return response.blob();
 }

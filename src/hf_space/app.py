@@ -512,7 +512,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch", css=CSS) as demo:
 
             interp_btn.click(interpolate_video,
                              inputs=[video_input, multi_select, boomerang_check],
-                             outputs=video_output)
+                             outputs=video_output,
+                             api_name="interpolate_video")
 
         # ── Tab 2 ─────────────────────────────────────────────────────────────
         with gr.TabItem("2. Stitch Videos"):
