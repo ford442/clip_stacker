@@ -51,6 +51,8 @@ export class FfmpegManager {
   private fontLoaded = false;
   private readonly logBuffer: string[] = [];
   private lastErrorLog: string | null = null;
+  private lastCommand: string[] | null = null;
+  private lastFilterComplex: string | null = null;
   activeLogProgress: FfmpegLogProgressContext | null = null;
 
   private readonly useWorker: boolean;
@@ -139,6 +141,24 @@ export class FfmpegManager {
 
   getLastError(): string | null {
     return this.lastErrorLog;
+  }
+
+  setLastCommand(args: string[]): void {
+    this.lastCommand = [...args];
+    const filterIdx = args.indexOf('-filter_complex');
+    if (filterIdx >= 0 && filterIdx + 1 < args.length) {
+      this.lastFilterComplex = args[filterIdx + 1];
+    } else {
+      this.lastFilterComplex = null;
+    }
+  }
+
+  getLastCommand(): string[] | null {
+    return this.lastCommand ? [...this.lastCommand] : null;
+  }
+
+  getLastFilterComplex(): string | null {
+    return this.lastFilterComplex;
   }
 
   clearLogs(): void {

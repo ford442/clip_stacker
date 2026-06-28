@@ -37,12 +37,11 @@ import {
   aggressiveCleanupFFmpegVFS,
   resetFFmpegInstance,
   getLastFfmpegLogs,
-  getLastFfmpegError,
-  getFfmpegEnvironmentDiagnostics,
   clearFfmpegLogs,
   isFfmpegLoadFailed,
   isFfmpegLoading,
   ensureFfmpeg,
+  normalizeError,
 } from "./ffmpeg/ffmpegService";
 import type { RenderProgressUpdate } from "./ffmpeg/ffmpegService";
 import {
@@ -63,6 +62,7 @@ import { TextOverlayPanel } from "./components/TextOverlayPanel";
 import { KeyboardShortcutsModal } from "./components/KeyboardShortcutsModal";
 import { MemoryWarningModal } from "./components/MemoryWarningModal";
 import { RecoveryModal } from "./components/RecoveryModal";
+import { RenderFailurePanel } from "./components/RenderFailurePanel";
 import { useProjectSaveLoad } from "./hooks/useProjectSaveLoad";
 import { useRenderState } from "./hooks/useRenderState";
 import { useEditHistory } from "./hooks/useEditHistory";
@@ -73,6 +73,7 @@ import {
   readStorageAuthToken,
   writeStorageAuthToken,
 } from "./utils/storageAuth";
+import { generateDebugReport } from "./utils/debugReport";
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(", ");
@@ -155,6 +156,11 @@ export function App() {
     rifeProcessingClipId,
     setRifeProcessingClipId,
   } = useRenderState();
+
+  const [renderFailureMessage, setRenderFailureMessage] = useState<string | null>(
+    null,
+  );
+  const [lastRenderError, setLastRenderError] = useState<unknown>(null);
 
   const {
     handleSaveProject,
@@ -536,6 +542,8 @@ export function App() {
       setEncoderPath("");
       setRenderPlan(null);
       setOutputUrl(null);
+      setRenderFailureMessage(null);
+      setLastRenderError(null);
       setIsRendering(true);
       setProgressStage("Preparing render");
       setProgressValue(0);
@@ -600,17 +608,19 @@ export function App() {
       setProgressValue(1);
       setProgressIndeterminate(false);
     } catch (error) {
-      const err = error as Error;
-      // Always log the full detailed message (includes embedded FFmpeg logs from our safe wrappers).
-      console.error("Render failed (full details):", err);
+      // Fixed "Render failed: undefined" by normalizing worker string errors.
+      const errMsg = normalizeError(error);
+      console.error("Render failed (full details):", error);
       const recentLogs = getLastFfmpegLogs(30).join("\n");
       if (recentLogs) {
         console.error("Last captured FFmpeg logs:\n" + recentLogs);
       }
-      const message = /FFmpeg failed to/i.test(err.message)
-        ? err.message
-        : `Render failed: ${err.message}`;
+      const message = /FFmpeg failed to/i.test(errMsg)
+        ? errMsg
+        : `Render failed: ${errMsg}`;
       setStatus(message);
+      setRenderFailureMessage(message);
+      setLastRenderError(error);
       // Surface FFmpeg load failures separately so the retry button appears.
       if (isFfmpegLoadFailed()) {
         setFfmpegFailed(true);
@@ -736,47 +746,38 @@ export function App() {
 
   /** Copy rich diagnostics (status + render plan + last FFmpeg logs + browser info) to clipboard. */
   const handleCopyDebugInfo = useCallback(async () => {
-    const lines: string[] = [];
-    lines.push(`clip_stacker debug report — ${new Date().toISOString()}`);
-    lines.push(`Status: ${status || "(empty)"}`);
-    if (renderPlan) {
-      lines.push(
-        `Render plan: ${renderPlan.description} | ${renderPlan.reason} | willReencode=${renderPlan.willReencode}`,
-      );
-    }
-    lines.push(`Encoder last used: ${encoderPath || "n/a"}`);
-    lines.push(
-      `Clips on timeline: ${getTimelineClips(clips, clipGroups).length}`,
-    );
-    const lastErr = getLastFfmpegError();
-    if (lastErr) lines.push(`Last FFmpeg error log: ${lastErr}`);
-    const logs = getLastFfmpegLogs(60);
-    if (logs.length > 0) {
-      lines.push("--- Last FFmpeg logs ---");
-      lines.push(...logs);
-      lines.push("--- End logs ---");
-    } else {
-      lines.push("(no FFmpeg logs captured in buffer)");
-    }
-    lines.push(`UA: ${navigator.userAgent}`);
-    lines.push(`CrossOriginIsolated: ${window.crossOriginIsolated}`);
-    lines.push("--- FFmpeg environment ---");
-    lines.push(...getFfmpegEnvironmentDiagnostics());
-    lines.push("--- End debug report ---");
-
-    const text = lines.join("\n");
+    const text = generateDebugReport({
+      status,
+      renderPlan,
+      encoderPath,
+      clips,
+      clipGroups,
+      transitions,
+      textOverlays,
+      exportSettings,
+      error: lastRenderError ?? undefined,
+    });
     try {
       await navigator.clipboard.writeText(text);
-      setStatus("Debug info copied to clipboard (include in bug reports).");
+      setStatus("Debug report copied to clipboard (include in bug reports).");
     } catch {
-      // Fallback: show in console + alert the first chunk
       console.log(text);
-      setStatus("Debug info logged to console (clipboard blocked).");
+      setStatus("Debug report logged to console (clipboard blocked).");
       window.alert(
-        "Debug info in console. First 800 chars:\n\n" + text.slice(0, 800),
+        "Debug report in console. First 800 chars:\n\n" + text.slice(0, 800),
       );
     }
-  }, [status, renderPlan, encoderPath, clips, clipGroups]);
+  }, [
+    status,
+    renderPlan,
+    encoderPath,
+    clips,
+    clipGroups,
+    transitions,
+    textOverlays,
+    exportSettings,
+    lastRenderError,
+  ]);
 
   const handleDebugResetFFmpeg = useCallback(async () => {
     setStatus("Resetting FFmpeg instance (debug action)...");
@@ -1289,6 +1290,18 @@ export function App() {
           isRendering={isRendering}
           renderPlan={renderPlan}
         />
+        {renderFailureMessage && !isRendering && (
+          <RenderFailurePanel
+            message={renderFailureMessage}
+            renderPlan={renderPlan}
+            onCopyDebug={handleCopyDebugInfo}
+            onRetry={() => {
+              setRenderFailureMessage(null);
+              void performRender();
+            }}
+            onDismiss={() => setRenderFailureMessage(null)}
+          />
+        )}
         <StorageRow
           endpoint={storageEndpoint}
           authToken={storageAuthToken}
