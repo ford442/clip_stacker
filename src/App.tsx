@@ -680,6 +680,8 @@ export function App() {
       setOutputUrl(null);
       setEncoderPath("");
       setRenderPlan(null);
+      setRenderFailureMessage(null);
+      setLastRenderError(null);
       setIsRendering(true);
       setProgressIndeterminate(true);
       setProgressValue(null);
@@ -719,10 +721,18 @@ export function App() {
       setProgressValue(1);
       setProgressIndeterminate(false);
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message : String(error);
-      setStatus(`GPU stitch failed: ${message}`);
+      const errMsg = normalizeError(error);
       console.error("GPU stitch error:", error);
+      const recentLogs = getLastFfmpegLogs(30).join("\n");
+      if (recentLogs) {
+        console.error("Last captured FFmpeg logs:\n" + recentLogs);
+      }
+      const message = errMsg.startsWith("GPU stitch failed:")
+        ? errMsg
+        : `GPU stitch failed: ${errMsg}`;
+      setStatus(message);
+      setRenderFailureMessage(message);
+      setLastRenderError(error);
     } finally {
       setIsRendering(false);
       setProgressIndeterminate(false);
