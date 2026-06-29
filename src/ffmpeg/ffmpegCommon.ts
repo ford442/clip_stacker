@@ -32,6 +32,11 @@ export function extractErrorMessage(error: unknown): string {
   }
 }
 
+/** Normalize worker/string/Error throws into a display-safe message. */
+export function normalizeError(error: unknown): string {
+  return extractErrorMessage(error);
+}
+
 export function clampProgress(progress: number): number {
   return Math.max(0, Math.min(1, progress));
 }

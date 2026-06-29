@@ -1,0 +1,174 @@
+.render-failure-panel {
+  background: #1a1a2e;
+  border: 1px solid rgba(236, 201, 75, 0.35);
+  border-radius: var(--radius-sm, 7px);
+  padding: 1rem 1.25rem;
+  margin-top: 0.75rem;
+  box-shadow: var(--shadow-sm);
+}
+
+.rf-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.rf-icon {
+  color: #ecc94b;
+  font-size: 1.25rem;
+}
+
+.rf-title {
+  margin: 0;
+  flex: 1;
+  font-size: 1rem;
+  color: #ecc94b;
+}
+
+.rf-dismiss {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 1rem;
+  padding: 0.25rem;
+  line-height: 1;
+}
+
+.rf-dismiss:hover {
+  color: var(--text);
+}
+
+.rf-message {
+  margin: 0 0 0.75rem;
+  color: var(--text);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.rf-plan-summary {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-bottom: 0.75rem;
+}
+
+.render-failure-panel details {
+  margin-bottom: 0.5rem;
+}
+
+.render-failure-panel summary {
+  cursor: pointer;
+  color: #ecc94b;
+  font-size: 0.85rem;
+  font-weight: 600;
+  user-select: none;
+  padding: 0.25rem 0;
+}
+
+.render-failure-panel summary:hover {
+  color: #f6e05e;
+}
+
+.rf-command,
+.rf-filter {
+  background: #0d0d1a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 0.6rem 0.75rem;
+  margin: 0.35rem 0 0;
+  overflow-x: auto;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.rf-filter-label {
+  color: #63b3ed;
+}
+
+.rf-filter-func {
+  color: #68d391;
+}
+
+.rf-logs {
+  background: #0d0d1a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+  margin-top: 0.35rem;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.rf-log-line {
+  padding: 0.15rem 0.6rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.rf-log-line:last-child {
+  border-bottom: none;
+}
+
+.rf-log-error {
+  color: #fc8181;
+}
+
+.rf-log-warn {
+  color: #f6e05e;
+}
+
+.rf-log-progress {
+  color: #68d391;
+}
+
+.rf-log-info {
+  color: #a0aec0;
+}
+
+.rf-log-empty {
+  padding: 0.6rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.rf-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.rf-btn {
+  padding: 0.4rem 0.85rem;
+  border-radius: var(--radius-sm, 7px);
+  border: 1px solid rgba(236, 201, 75, 0.3);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+
+.rf-btn:hover {
+  background: rgba(236, 201, 75, 0.1);
+}
+
+.rf-btn-primary {
+  background: rgba(236, 201, 75, 0.15);
+  color: #ecc94b;
+  font-weight: 600;
+}
+
+.rf-btn-primary:hover {
+  background: rgba(236, 201, 75, 0.25);
+}
+
+.rf-btn-muted {
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--muted);
+}

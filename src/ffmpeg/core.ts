@@ -91,6 +91,14 @@ export function getLastFfmpegError(): string | null {
   return manager().getLastError();
 }
 
+export function getLastFfmpegCommand(): string[] | null {
+  return manager().getLastCommand();
+}
+
+export function getLastFfmpegFilterComplex(): string | null {
+  return manager().getLastFilterComplex();
+}
+
 export function clearFfmpegLogs(): void {
   manager().clearLogs();
 }
@@ -102,7 +110,7 @@ export function buildDetailedError(
   originalError: unknown,
 ): Error {
   const recent = getLastFfmpegLogs(25).join("\n");
-  const errMsg = (originalError as Error)?.message || String(originalError);
+  const errMsg = extractErrorMessage(originalError);
   const lastErr = getLastFfmpegError()
     ? `\nLast relevant FFmpeg log: ${getLastFfmpegError()}`
     : "";
@@ -115,6 +123,7 @@ export function buildDetailedError(
 
 export {
   extractErrorMessage,
+  normalizeError,
   clampProgress,
   emitProgress,
   emitLoadStatus,
@@ -173,6 +182,7 @@ export async function safeExec(
   operation: string,
 ): Promise<void> {
   try {
+    manager().setLastCommand(args);
     if (context) {
       await execWithFfmpegProgress(ffmpeg, args, context);
     } else {
