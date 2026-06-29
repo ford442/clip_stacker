@@ -12,6 +12,21 @@ function makeBlob(text = "clip"): Blob {
   return new Blob([text], { type: "video/mp4" });
 }
 
+/** Minimal MP4 header so assertValidMp4Blob passes in tests. */
+function makeMp4Blob(text = "clip"): Blob {
+  const header = new Uint8Array([
+    0, 0, 0, 20,
+    0x66, 0x74, 0x79, 0x70, // ftyp
+    0x69, 0x73, 0x6f, 0x6d,
+    0, 0, 0, 0,
+  ]);
+  const body = new TextEncoder().encode(text);
+  const merged = new Uint8Array(header.length + body.length);
+  merged.set(header);
+  merged.set(body, header.length);
+  return new Blob([merged], { type: "video/mp4" });
+}
+
 /** Build a Response-like object for the mocked fetch. */
 function jsonResponse(body: unknown, ok = true, status = 200) {
   return { ok, status, json: async () => body } as unknown as Response;
@@ -58,7 +73,7 @@ describe("stitchClipsOnGpu", () => {
   });
 
   it("uploads, calls /stitch, and downloads the result without credentials", async () => {
-    const stitched = makeBlob("stitched");
+    const stitched = makeMp4Blob("stitched");
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
@@ -95,13 +110,13 @@ describe("stitchClipsOnGpu", () => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1"))
-        return sseResponse('event: error\ndata: boom\n\n');
+        return sseResponse('event: error\ndata: null\n\n');
       throw new Error(`unexpected fetch ${url}`);
     });
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(stitchClipsOnGpu([makeBlob()], "1920x1080")).rejects.toThrow(
-      /GPU stitch failed/,
+      /GPU stitch failed.*cold start/i,
     );
   });
 
@@ -121,7 +136,7 @@ describe("stitchClipsOnGpu", () => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1")) return sseResponse(COMPLETE_SSE);
-      return { ok: true, status: 200, blob: async () => makeBlob() } as unknown as Response;
+      return { ok: true, status: 200, blob: async () => makeMp4Blob() } as unknown as Response;
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -133,6 +148,61 @@ describe("stitchClipsOnGpu", () => {
     expect(stages).toContain("processing");
     expect(stages[stages.length - 1]).toBe("downloading");
   });
+
+  it("fails clearly when the space returns an empty file reference", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1"))
+        return sseResponse('event: complete\ndata: [{}]\n\n');
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(stitchClipsOnGpu([makeBlob()], "1920x1080")).rejects.toThrow(
+      /GPU stitch failed.*no output/i,
+    );
+  });
+
+  it("rejects non-video download payloads with a preview", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1")) return sseResponse(COMPLETE_SSE);
+      if (url.includes("file=")) {
+        return {
+          ok: true,
+          status: 200,
+          blob: async () => new Blob(["Gradio error: queue full"], { type: "text/plain" }),
+        } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(stitchClipsOnGpu([makeBlob()], "1920x1080")).rejects.toThrow(
+      /Unexpected stitched video output format.*Gradio error/i,
+    );
+  });
+
+  it("accepts a bare server path string in the complete payload", async () => {
+    const stitched = makeMp4Blob("path-string");
+    const sse =
+      'event: complete\ndata: ["/tmp/out.mp4"]\n\n';
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1")) return sseResponse(sse);
+      if (url.includes("file=")) {
+        return { ok: true, status: 200, blob: async () => stitched } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await stitchClipsOnGpu([makeBlob()], "1280x720");
+    expect(result.blob).toBe(stitched);
+  });
 });
 
 describe("processClipWithRIFE", () => {
@@ -141,7 +211,7 @@ describe("processClipWithRIFE", () => {
   });
 
   it("uploads + calls /interpolate_video with credentials omitted", async () => {
-    const processed = makeBlob("rife");
+    const processed = makeMp4Blob("rife");
     const sse =
       'event: complete\ndata: [{"url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/r.mp4"}]\n\n';
     const fetchMock = vi.fn(async (url: string) => {

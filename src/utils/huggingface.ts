@@ -68,7 +68,7 @@ export async function processClipWithRIFE(
       String(multiplier),
       isBoomerang,
     ]);
-    output = data?.[0];
+    output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`RIFE processing failed: ${message}`);
@@ -80,7 +80,7 @@ export async function processClipWithRIFE(
     message: "Downloading processed clip…",
   });
 
-  if (!output) {
+  if (output == null) {
     throw new Error("RIFE returned no output.");
   }
   const outputBlob = await downloadSpaceFile(output, "RIFE output");
@@ -158,7 +158,7 @@ export async function stitchClipsOnGpu(
       "Keep original audio",
       1,
     ]);
-    output = data?.[0];
+    output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`GPU stitch failed: ${message}`);
@@ -170,8 +170,10 @@ export async function stitchClipsOnGpu(
     message: "Downloading stitched video…",
   });
 
-  if (!output) {
-    throw new Error("GPU stitch returned no output.");
+  if (output == null) {
+    throw new Error(
+      "GPU stitch failed: the space returned no output (it may have failed silently — retry after the Space finishes loading).",
+    );
   }
   const blob = await downloadSpaceFile(output, "stitched video");
 
@@ -271,10 +273,11 @@ async function readGradioEventStream(
       } else if (line.startsWith("data:")) {
         const payload = line.slice(5).trim();
         if (currentEvent === "complete") {
-          return JSON.parse(payload) as unknown[];
+          return parseGradioCompletePayload(payload);
         }
         if (currentEvent === "error") {
-          throw new Error(`Space reported an error: ${payload || "unknown"}`);
+          const detail = formatGradioErrorPayload(payload);
+          throw new Error(`Space reported an error: ${detail}`);
         }
       }
     }
@@ -282,32 +285,148 @@ async function readGradioEventStream(
   throw new Error("Space result stream ended without a complete event.");
 }
 
+/** Normalize Gradio `complete` SSE payloads into an output array. */
+function parseGradioCompletePayload(payload: string): unknown[] {
+  const parsed: unknown = JSON.parse(payload);
+  if (Array.isArray(parsed)) return parsed;
+  if (parsed && typeof parsed === "object") {
+    const record = parsed as { data?: unknown };
+    if (Array.isArray(record.data)) return record.data;
+    if ("path" in record || "url" in record || "name" in record) {
+      return [parsed];
+    }
+  }
+  return [parsed];
+}
+
+function formatGradioErrorPayload(payload: string): string {
+  if (!payload || payload === "null") {
+    return (
+      "the GPU space rejected the job (cold start, queue timeout, OOM, or invalid inputs)"
+    );
+  }
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (typeof parsed === "string" && parsed) return parsed;
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as { error?: unknown; message?: unknown };
+      if (typeof record.error === "string" && record.error) return record.error;
+      if (typeof record.message === "string" && record.message) {
+        return record.message;
+      }
+    }
+  } catch {
+    // fall through to raw payload
+  }
+  return payload;
+}
+
+/** Take the first output component value from a Gradio `complete` data array. */
+function extractGradioOutputValue(data: unknown[]): unknown {
+  const first = data[0];
+  if (first == null) return first;
+  if (typeof first !== "object") return first;
+
+  const record = first as Record<string, unknown>;
+  if (record.video != null) return record.video;
+  if (record.value != null) return record.value;
+
+  const path =
+    (typeof record.path === "string" && record.path) ||
+    (typeof record.name === "string" && record.name) ||
+    undefined;
+  const url = typeof record.url === "string" ? record.url : undefined;
+  if (!path && !url && Object.keys(record).length === 0) {
+    return null;
+  }
+  return first;
+}
+
+type SpaceFileRef = { url?: string; path?: string; name?: string };
+
+/** Resolve a Gradio FileData object, URL string, or Blob into a fetchable URL. */
+function resolveSpaceFileUrl(output: unknown): string | undefined {
+  if (output instanceof Blob) return undefined;
+
+  if (typeof output === "string") {
+    if (output.startsWith("http://") || output.startsWith("https://")) {
+      return output;
+    }
+    return `${SPACE_BASE_URL}${SPACE_API_PREFIX}/file=${encodeURIComponent(output)}`;
+  }
+
+  if (typeof output === "object" && output !== null) {
+    const file = output as SpaceFileRef;
+    if (typeof file.url === "string" && file.url) {
+      return file.url.startsWith("/")
+        ? `${SPACE_BASE_URL}${file.url}`
+        : file.url;
+    }
+    const path =
+      (typeof file.path === "string" && file.path) ||
+      (typeof file.name === "string" && file.name) ||
+      undefined;
+    if (path) {
+      return `${SPACE_BASE_URL}${SPACE_API_PREFIX}/file=${encodeURIComponent(path)}`;
+    }
+  }
+  return undefined;
+}
+
+function isMp4Container(bytes: Uint8Array): boolean {
+  return (
+    bytes.length >= 12 &&
+    String.fromCharCode(...bytes.slice(4, 8)) === "ftyp"
+  );
+}
+
+/** Guard that a downloaded blob is a real MP4 before handing it to FFmpeg. */
+async function assertValidMp4Blob(blob: Blob, label: string): Promise<Blob> {
+  const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
+  if (isMp4Container(header)) return blob;
+
+  if (!blob.type.startsWith("video/")) {
+    const preview = new TextDecoder()
+      .decode(await blob.slice(0, 256).arrayBuffer())
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 200);
+    throw new Error(
+      `Unexpected ${label} output format (non-video response${blob.type ? `, type=${blob.type}` : ""}${preview ? `: ${preview}` : ""}).`,
+    );
+  }
+
+  throw new Error(
+    `Unexpected ${label} video output format (missing MP4 ftyp box; got ${blob.type || "unknown type"}).`,
+  );
+}
+
 /**
  * Download a Gradio file output (a `{ path, url }` FileData object, a bare URL
  * string, or a Blob) as a Blob, resolving relative Space URLs against the host.
  */
 async function downloadSpaceFile(output: unknown, label: string): Promise<Blob> {
-  if (output instanceof Blob) return output;
+  if (output instanceof Blob) {
+    return assertValidMp4Blob(output, label);
+  }
 
-  let url: string | undefined;
-  if (typeof output === "string") {
-    url = output;
-  } else if (typeof output === "object" && output !== null) {
-    const file = output as { url?: string; path?: string };
-    url =
-      file.url ??
-      (file.path
-        ? `${SPACE_BASE_URL}${SPACE_API_PREFIX}/file=${file.path}`
-        : undefined);
-  }
+  const url = resolveSpaceFileUrl(output);
   if (!url) {
-    throw new Error(`Unexpected ${label} output format.`);
+    const summary =
+      output === null || output === undefined
+        ? "null"
+        : typeof output === "object"
+          ? JSON.stringify(output).slice(0, 200)
+          : String(output).slice(0, 200);
+    throw new Error(
+      `Unexpected ${label} output format (no downloadable file reference: ${summary}).`,
+    );
   }
-  if (url.startsWith("/")) url = `${SPACE_BASE_URL}${url}`;
 
   const response = await fetch(url, { credentials: "omit" });
   if (!response.ok) {
     throw new Error(`Failed to download ${label} (HTTP ${response.status})`);
   }
-  return response.blob();
+  const blob = await response.blob();
+  return assertValidMp4Blob(blob, label);
 }
