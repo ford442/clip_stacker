@@ -231,7 +231,13 @@ export async function stitchClipsOnGpu(
       null,
       "Keep original audio",
       1,
-    ]);
+    ], (message) => {
+      onProgress?.({
+        stage: "processing",
+        progress: null,
+        message,
+      });
+    });
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -264,6 +270,14 @@ export async function stitchClipsOnGpu(
 const SPACE_BASE_URL = "https://1inkusface-rife.hf.space";
 const SPACE_API_PREFIX = "/gradio_api";
 
+/** Retries for transient download failures (HF Spaces file URLs can flake). */
+const MAX_SPACE_DOWNLOAD_ATTEMPTS = 4;
+const SPACE_DOWNLOAD_RETRY_DELAY_MS = 750;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /**
  * Upload blobs to the Space and return the server-side file paths Gradio
  * assigns them (used to reference the files in a subsequent endpoint call).
@@ -295,6 +309,7 @@ async function uploadFilesToSpace(blobs: Blob[]): Promise<string[]> {
 async function callSpaceEndpoint(
   apiName: string,
   data: unknown[],
+  onStreamMessage?: (message: string) => void,
 ): Promise<unknown[]> {
   const callUrl = `${SPACE_BASE_URL}${SPACE_API_PREFIX}/call/${apiName}`;
   const postRes = await fetch(callUrl, {
@@ -317,7 +332,7 @@ async function callSpaceEndpoint(
   if (!streamRes.ok || !streamRes.body) {
     throw new Error(`Space result stream failed (HTTP ${streamRes.status})`);
   }
-  return readGradioEventStream(streamRes.body);
+  return readGradioEventStream(streamRes.body, onStreamMessage);
 }
 
 /**
@@ -326,6 +341,7 @@ async function callSpaceEndpoint(
  */
 async function readGradioEventStream(
   body: ReadableStream<Uint8Array>,
+  onStreamMessage?: (message: string) => void,
 ): Promise<unknown[]> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
@@ -353,6 +369,17 @@ async function readGradioEventStream(
           const detail = formatGradioErrorPayload(payload);
           throw new Error(`Space reported an error: ${detail}`);
         }
+        if (currentEvent === "heartbeat") {
+          onStreamMessage?.(
+            "GPU space still processing (normalizing clips can take a few minutes)…",
+          );
+        }
+        if (currentEvent === "progress") {
+          const progressMessage = formatGradioProgressPayload(payload);
+          if (progressMessage) {
+            onStreamMessage?.(progressMessage);
+          }
+        }
       }
     }
   }
@@ -371,6 +398,29 @@ function parseGradioCompletePayload(payload: string): unknown[] {
     }
   }
   return [parsed];
+}
+
+function formatGradioProgressPayload(payload: string): string | undefined {
+  if (!payload) return undefined;
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (typeof parsed === "string" && parsed) return parsed;
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as { progress?: unknown; desc?: unknown; message?: unknown };
+      const desc =
+        (typeof record.desc === "string" && record.desc) ||
+        (typeof record.message === "string" && record.message) ||
+        undefined;
+      if (desc) return desc;
+      if (typeof record.progress === "number" && Number.isFinite(record.progress)) {
+        const pct = Math.round(record.progress * 100);
+        return `GPU space progress: ${pct}%`;
+      }
+    }
+  } catch {
+    // ignore malformed progress payloads
+  }
+  return undefined;
 }
 
 function formatGradioErrorPayload(payload: string): string {
@@ -475,6 +525,28 @@ async function assertValidMp4Blob(blob: Blob, label: string): Promise<Blob> {
   );
 }
 
+async function fetchSpaceFileWithRetry(url: string, label: string): Promise<Response> {
+  let lastError: Error | undefined;
+  for (let attempt = 1; attempt <= MAX_SPACE_DOWNLOAD_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(url, { credentials: "omit" });
+      if (!response.ok) {
+        throw new Error(`Failed to download ${label} (HTTP ${response.status})`);
+      }
+      return response;
+    } catch (err: unknown) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+      if (attempt < MAX_SPACE_DOWNLOAD_ATTEMPTS) {
+        await delay(SPACE_DOWNLOAD_RETRY_DELAY_MS * attempt);
+      }
+    }
+  }
+  const detail = lastError?.message ?? "unknown network error";
+  throw new Error(
+    `Failed to download ${label} after ${MAX_SPACE_DOWNLOAD_ATTEMPTS} attempts (${detail}). The GPU job may have finished — try GPU Stitch again.`,
+  );
+}
+
 /**
  * Download a Gradio file output (a `{ path, url }` FileData object, a bare URL
  * string, or a Blob) as a Blob, resolving relative Space URLs against the host.
@@ -497,10 +569,7 @@ async function downloadSpaceFile(output: unknown, label: string): Promise<Blob> 
     );
   }
 
-  const response = await fetch(url, { credentials: "omit" });
-  if (!response.ok) {
-    throw new Error(`Failed to download ${label} (HTTP ${response.status})`);
-  }
+  const response = await fetchSpaceFileWithRetry(url, label);
   const blob = await response.blob();
   return assertValidMp4Blob(blob, label);
 }

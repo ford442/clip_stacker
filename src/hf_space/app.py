@@ -295,7 +295,7 @@ def morph_transition(frame_pair_video, frame_count, output_fps=30):
 
     return morph_out
 
-def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="Keep original audio", overlay_vol=1.0):
+def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="Keep original audio", overlay_vol=1.0, progress=gr.Progress()):
     if not video_files:
         return None
     try:
@@ -310,16 +310,22 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
     temp_dir = os.path.join(WORKSPACE_DIR, f"temp_stitch_{session_id}")
     os.makedirs(temp_dir, exist_ok=True)
 
-    # ── Step 1: Normalize clips — MAX QUALITY ───────────────────────
+    # ── Step 1: Normalize clips (scale/pad + common fps for concat) ──
+    # Use fps=30 in the filter graph instead of forcing 60 fps — upsampling
+    # 24 fps sources to 60 fps was the main cause of multi-minute normalizations.
+    # preset=fast keeps quality reasonable while cutting encode time sharply.
+    clip_count = len(video_files)
     normalized = []
     for i, vid_path in enumerate(video_files):
+        progress((i / max(clip_count, 1)) * 0.85, desc=f"Normalizing clip {i + 1}/{clip_count}")
         out = os.path.join(temp_dir, f"norm_{i}.mp4")
         scale = (f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-                 f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2")
+                 f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps=30")
         subprocess.run([
-            'ffmpeg', '-i', vid_path, '-r', '60', '-vf', scale,
-            '-c:v', 'libx264', '-preset', 'slow', '-crf', '17',
-            '-c:a', 'aac', '-b:a', '320k', '-ar', '44100',
+            'ffmpeg', '-i', vid_path, '-vf', scale,
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+            '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+            '-movflags', '+faststart',
             '-y', out
         ], check=True)
         normalized.append(out)
@@ -329,11 +335,15 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
         for p in normalized:
             f.write(f"file '{p}'\n")
            
+    progress(0.9, desc="Concatenating normalized clips")
+
     # ── Step 2: Concatenate videos (lossless) ───────────────────────
     subprocess.run([
         'ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_path,
         '-c', 'copy', '-y', concat_video
     ], check=True)
+
+    progress(0.95, desc="Finalizing stitched output")
 
     # ── Step 3: Audio handling — VIDEO length ALWAYS wins ───────────
     if audio_mode == "Replace with uploaded audio" and audio_file and os.path.exists(audio_file):

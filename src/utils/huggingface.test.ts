@@ -222,6 +222,51 @@ describe("stitchClipsOnGpu", () => {
     const result = await stitchClipsOnGpu([makeBlob()], "1280x720");
     expect(result.blob).toBe(stitched);
   });
+
+  it("retries transient download failures before succeeding", async () => {
+    const stitched = makeMp4Blob("retry-download");
+    let downloadAttempts = 0;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1")) return sseResponse(COMPLETE_SSE);
+      if (url.includes("file=")) {
+        downloadAttempts++;
+        if (downloadAttempts === 1) {
+          throw new TypeError("Failed to fetch");
+        }
+        return { ok: true, status: 200, blob: async () => stitched } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await stitchClipsOnGpu([makeBlob()], "1920x1080");
+    expect(result.blob).toBe(stitched);
+    expect(downloadAttempts).toBe(2);
+  });
+
+  it("surfaces heartbeat/progress messages while waiting for completion", async () => {
+    const stitched = makeMp4Blob("progress");
+    const sse =
+      'event: progress\ndata: {"progress":0.25,"desc":"Normalizing clip 1/2"}\n\n' +
+      'event: heartbeat\ndata: {"msg":"heartbeat"}\n\n' +
+      COMPLETE_SSE;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1")) return sseResponse(sse);
+      return { ok: true, status: 200, blob: async () => stitched } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const messages: string[] = [];
+    await stitchClipsOnGpu([makeBlob()], "1920x1080", (event) => {
+      if (event.message) messages.push(event.message);
+    });
+    expect(messages.some((m) => m.includes("Normalizing clip 1/2"))).toBe(true);
+    expect(messages.some((m) => m.includes("still processing"))).toBe(true);
+  });
 });
 
 describe("processClipWithRIFE", () => {

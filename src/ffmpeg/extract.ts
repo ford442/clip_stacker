@@ -102,7 +102,7 @@ export async function extractTrimmedVideoClip(
     }
   }
 
-  onStatus(`Preparing trimmed segment of "${clip.title}" for RIFE…`);
+  onStatus(`Preparing trimmed segment of "${clip.title}"…`);
 
   try {
     await safeWriteFile(
