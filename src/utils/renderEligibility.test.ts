@@ -25,7 +25,7 @@ describe('renderEligibility', () => {
     expect(canUseGpuVideoEncoder([makeClip()], [], [])).toBe(true);
   });
 
-  it('blocks GPU export for transitions and PiP', () => {
+  it('blocks GPU export for transitions when WebGPU is unavailable', () => {
     expect(
       canUseGpuVideoEncoder(
         [makeClip()],
@@ -33,6 +33,41 @@ describe('renderEligibility', () => {
         [],
       ),
     ).toBe(false);
-    expect(canUseGpuVideoEncoder([makeClip({ layerIndex: 1 })], [], [])).toBe(false);
+    expect(
+      canUseGpuVideoEncoder(
+        [makeClip()],
+        [{ afterClipIndex: 1, type: 'dissolve', duration: 0.5 }],
+        [],
+        { webGpuAvailable: true },
+      ),
+    ).toBe(true);
+    expect(canUseGpuVideoEncoder([makeClip({ layerIndex: 1 })], [], [])).toBe(
+      false,
+    );
+    expect(
+      canUseGpuVideoEncoder([makeClip({ layerIndex: 1 })], [], [], {
+        webGpuAvailable: true,
+      }),
+    ).toBe(true);
+  });
+
+  it('allows GPU timeline export when keyframes are present', () => {
+    expect(
+      canUseGpuVideoEncoder(
+        [
+          makeClip({
+            keyframes: {
+              opacity: [
+                { t: 0, value: 1 },
+                { t: 2, value: 0.5 },
+              ],
+            },
+          }),
+        ],
+        [],
+        [],
+        { webGpuAvailable: true },
+      ),
+    ).toBe(true);
   });
 });

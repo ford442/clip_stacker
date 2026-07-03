@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Clip,
   ClipGroup,
+  ClipKeyframes,
   ClipTransition,
   ExportSettings,
   TextOverlay,
@@ -9,12 +10,16 @@ import type {
 } from "./types";
 import { DEFAULT_EXPORT_SETTINGS } from "./types";
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from "./utils/media";
+import { createKenBurnsKeyframes } from "./utils/animatedLayout";
+import { resolveClipLocalTimeAtGlobal } from "./utils/previewComposition";
+import { computeTotalDuration } from "./utils/transitions";
 import {
   sanitizeClipAdjustments,
   serializeProjectWithMedia,
   applyProjectData,
   loadRemoteProject,
   downloadRemoteMedia,
+  getClipDuration,
   ContaboStorageManagerClient,
   type RemoteProjectLoadProgressEvent,
   type MediaLibraryItem,
@@ -23,6 +28,10 @@ import { clampClipVolume } from "./utils/audioVolume";
 import { findMatchingClipIndex } from "./utils/clipMatching";
 import { DEFAULT_SCROLL_SPEED } from "./utils/textOverlay";
 import { reindexTransitions, shiftTransitionsForInsert } from "./utils/transitions";
+import {
+  isMorphTransition,
+  shouldRegenerateMorph,
+} from "./utils/morphTransition";
 import {
   duplicateClip,
   removeClipFromGroups,
@@ -125,6 +134,8 @@ export function App() {
   const {
     exportSettings,
     setExportSettings,
+    colorGrade,
+    setColorGrade,
     forceFFmpeg,
     setForceFFmpeg,
     useCanvasRenderer,
@@ -180,6 +191,8 @@ export function App() {
     clipGroups,
     transitions,
     textOverlays,
+    colorGrade,
+    setColorGrade,
     setClips,
     setClipGroups,
     setSelectedClipId,
@@ -405,16 +418,20 @@ export function App() {
           file.name.toLowerCase().endsWith(".mp4");
         const isAudio =
           file.type.startsWith("audio/") || /\.(wav|mp3)$/i.test(file.name);
-        if (!isVideo && !isAudio) continue;
+        const isImage =
+          file.type.startsWith("image/") ||
+          /\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name);
+        if (!isVideo && !isAudio && !isImage) continue;
 
         try {
-          const { duration, objectUrl, videoWidth, videoHeight } = await getMediaInfo(file);
+          const { duration, objectUrl, videoWidth, videoHeight } =
+            await getMediaInfo(file);
           const newClip: Clip = {
             id: createClipId(),
             file,
             objectUrl,
             title: file.name,
-            kind: isVideo ? "video" : "audio",
+            kind: isAudio ? "audio" : "video",
             duration: Math.max(MIN_CLIP_DURATION, duration),
             videoWidth,
             videoHeight,
@@ -424,6 +441,7 @@ export function App() {
             videoFadeOut: 0,
             audioFadeIn: 0,
             audioFadeOut: 0,
+            ...(isImage ? { stillImage: true } : {}),
           };
           if (!pushedHistory) {
             pushHistory();
@@ -444,7 +462,7 @@ export function App() {
         setStatus(`${added} clip(s) imported.`);
       } else {
         setStatus(
-          "No media files could be imported. Check that files are valid MP4/WAV/MP3.",
+          "No media files could be imported. Check that files are valid MP4/WAV/MP3/JPEG/PNG.",
         );
       }
     },
@@ -587,6 +605,8 @@ export function App() {
         audioReactive,
         forceReencode,
         plan,
+        clipGroups,
+        colorGrade,
       );
       const url = URL.createObjectURL(result.blob);
       setOutputUrl(url);
@@ -931,6 +951,35 @@ export function App() {
     },
     [selectedClipId, pushHistoryDebounced],
   );
+
+  const handleClipKeyframesChange = useCallback(
+    (keyframes: ClipKeyframes | undefined) => {
+      if (!selectedClipId) return;
+      pushHistoryDebounced(`keyframes:${selectedClipId}`);
+      setClips((prev) =>
+        prev.map((clip) =>
+          clip.id === selectedClipId ? { ...clip, keyframes } : clip,
+        ),
+      );
+    },
+    [selectedClipId, pushHistoryDebounced],
+  );
+
+  const handleApplyKenBurns = useCallback(() => {
+    if (!selectedClipId) return;
+    pushHistory();
+    setClips((prev) =>
+      prev.map((clip) => {
+        if (clip.id !== selectedClipId) return clip;
+        return {
+          ...clip,
+          keyframes: createKenBurnsKeyframes(getClipDuration(clip)),
+        };
+      }),
+    );
+    setStatus("Ken Burns keyframes applied.");
+  }, [selectedClipId, pushHistory, setStatus]);
+
   const handleRife = useCallback(
     async (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
@@ -1132,20 +1181,60 @@ export function App() {
   // Transition management
   // ---------------------------------------------------------------------------
 
-  const handleTransitionUpdate = useCallback((updated: ClipTransition) => {
-    pushHistoryDebounced(`transition:${updated.afterClipIndex}`);
-    setTransitions((prev) => {
-      const exists = prev.find(
-        (t) => t.afterClipIndex === updated.afterClipIndex,
-      );
-      if (exists) {
-        return prev.map((t) =>
-          t.afterClipIndex === updated.afterClipIndex ? updated : t,
+  const [morphProcessingIndex, setMorphProcessingIndex] = useState<number | null>(
+    null,
+  );
+
+  const handleTransitionUpdate = useCallback(
+    (updated: ClipTransition) => {
+      pushHistoryDebounced(`transition:${updated.afterClipIndex}`);
+      let previous: ClipTransition | undefined;
+      setTransitions((prev) => {
+        previous = prev.find(
+          (t) => t.afterClipIndex === updated.afterClipIndex,
         );
+        const exists = previous !== undefined;
+        if (exists) {
+          return prev.map((t) =>
+            t.afterClipIndex === updated.afterClipIndex ? updated : t,
+          );
+        }
+        return [...prev, updated];
+      });
+
+      if (
+        isMorphTransition(updated) &&
+        shouldRegenerateMorph(previous, updated) &&
+        morphProcessingIndex === null
+      ) {
+        setMorphProcessingIndex(updated.afterClipIndex);
+        const clipsForMorph = getTimelineClips(clips, clipGroups);
+        void (async () => {
+          const { requestMorphSegment } = await import("./utils/morphGeneration");
+          await requestMorphSegment(
+            updated,
+            clipsForMorph,
+            setStatus,
+            (next) => {
+              setTransitions((prev) =>
+                prev.map((t) =>
+                  t.afterClipIndex === next.afterClipIndex ? next : t,
+                ),
+              );
+            },
+          );
+          setMorphProcessingIndex(null);
+        })();
       }
-      return [...prev, updated];
-    });
-  }, [pushHistoryDebounced]);
+    },
+    [
+      pushHistoryDebounced,
+      morphProcessingIndex,
+      clips,
+      clipGroups,
+      setStatus,
+    ],
+  );
 
   // ---------------------------------------------------------------------------
   // Text overlay management
@@ -1186,6 +1275,30 @@ export function App() {
   const timelineClips = useMemo(
     () => getTimelineClips(clips, clipGroups),
     [clips, clipGroups],
+  );
+
+  const selectedClipLocalTime = useMemo(() => {
+    if (!selectedClipId) return 0;
+    if (previewPlayheadTime === null) return 0;
+    const resolved = resolveClipLocalTimeAtGlobal(
+      clips,
+      clipGroups,
+      transitions,
+      selectedClipId,
+      previewPlayheadTime,
+    );
+    return resolved?.localTime ?? 0;
+  }, [
+    clips,
+    clipGroups,
+    transitions,
+    selectedClipId,
+    previewPlayheadTime,
+  ]);
+
+  const previewTotalDuration = useMemo(
+    () => computeTotalDuration(timelineClips, transitions),
+    [timelineClips, transitions],
   );
 
   const handleMoveSelectedLeft = useCallback(() => {
@@ -1350,6 +1463,7 @@ export function App() {
           transitions={transitions}
           textOverlays={textOverlays}
           exportSettings={exportSettings}
+          colorGrade={colorGrade}
           outputUrl={outputUrl}
           exportFilename={exportSettings.filename}
           playheadTime={previewPlayheadTime}
@@ -1358,7 +1472,12 @@ export function App() {
         <Inspector
           clip={selectedClip}
           exportSettings={exportSettings}
+          clipLocalTime={selectedClipLocalTime}
+          colorGrade={colorGrade}
+          onColorGradeChange={setColorGrade}
           onChange={handleInspectorChange}
+          onKeyframesChange={handleClipKeyframesChange}
+          onApplyKenBurns={handleApplyKenBurns}
           onExportSettingsChange={setExportSettings}
           onExtractAudio={handleExtractAudio}
           onRife={handleRife}
@@ -1376,10 +1495,13 @@ export function App() {
         onReorder={handleReorder}
         onTransitionUpdate={handleTransitionUpdate}
         onDelete={handleDeleteClip}
+        morphProcessingIndex={morphProcessingIndex}
       />
 
       <TextOverlayPanel
         overlays={textOverlays}
+        previewGlobalTime={previewPlayheadTime ?? 0}
+        totalDuration={previewTotalDuration}
         onAdd={handleAddTextOverlay}
         onUpdate={handleUpdateTextOverlay}
         onDelete={handleDeleteTextOverlay}

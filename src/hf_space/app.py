@@ -184,6 +184,58 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
             return boomerang_path
     return final_path
 
+@spaces.GPU(required=True)
+def morph_transition(frame_pair_video, frame_count, output_fps=30):
+    """Generate a morph segment from a 2-frame clip (A_last, B_first) via RIFE.
+
+    `frame_count` is the number of output frames to keep (spanning the transition
+    duration at `output_fps`). Returns a short MP4 of only the in-between frames.
+    """
+    if frame_pair_video is None:
+        return None
+
+    frame_count = max(2, int(frame_count))
+    output_fps = max(1.0, float(output_fps))
+
+    safe_input = os.path.join(WORKSPACE_DIR, f"morph_in_{uuid.uuid4().hex}.mp4")
+    shutil.copy(frame_pair_video, safe_input)
+
+    session_id = uuid.uuid4().hex
+    rife_out = os.path.join(WORKSPACE_DIR, f"morph_rife_{session_id}.mp4")
+    morph_out = os.path.join(WORKSPACE_DIR, f"morph_final_{session_id}.mp4")
+
+    # 2-frame input → (2-1)*multi + 1 frames from RIFE; pick multi to cover target.
+    multi = max(2, frame_count - 1)
+
+    r = subprocess.run(
+        ['python3', 'inference_video.py', '--video', safe_input,
+         '--output', rife_out, '--multi', str(multi), '--model', 'HDv3'],
+        capture_output=True, text=True, cwd=RIFE_DIR, timeout=300)
+
+    if r.returncode != 0:
+        raise Exception(f"RIFE morph failed: {r.stderr}")
+
+    src = rife_out if os.path.exists(rife_out) else rife_out.replace(".mp4", "_noaudio.mp4")
+    if not os.path.exists(src):
+        raise Exception("RIFE morph produced no output file.")
+
+    # Trim to the exact frame count and set output frame rate.
+    subprocess.run([
+        'ffmpeg', '-i', src,
+        '-vf', f'fps={output_fps}',
+        '-frames:v', str(frame_count),
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-movflags', '+faststart', '-an',
+        '-y', morph_out,
+    ], check=True, capture_output=True, text=True)
+
+    try:
+        os.remove(safe_input)
+    except OSError:
+        pass
+
+    return morph_out
+
 def get_duration(video_path):
     """Get exact video duration in seconds"""
     try:
@@ -687,6 +739,26 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch", css=CSS) as demo:
         inputs=[api_files, api_res, api_audio, api_mode, api_vol],
         outputs=api_out,
         api_name="stitch",
+    )
+
+    # Headless morph endpoint: 2-frame pair → RIFE in-betweens trimmed to frame_count.
+    morph_files = gr.File(file_count="single", file_types=["video"], visible=False)
+    morph_frame_count = gr.Number(value=15, visible=False)
+    morph_fps = gr.Number(value=30, visible=False)
+    morph_out = gr.Video(visible=False)
+    morph_btn = gr.Button("morph_api", visible=False)
+
+    def morph_api(frame_pair, frame_count, output_fps):
+        if not frame_pair:
+            return None
+        path = frame_pair.name if hasattr(frame_pair, "name") else str(frame_pair)
+        return morph_transition(path, frame_count, output_fps)
+
+    morph_btn.click(
+        fn=morph_api,
+        inputs=[morph_files, morph_frame_count, morph_fps],
+        outputs=morph_out,
+        api_name="morph",
     )
 
     # Load the Javascript into the demo

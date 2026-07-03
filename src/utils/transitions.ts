@@ -3,10 +3,12 @@
  * xfade (video) and acrossfade (audio) transitions between timeline clips.
  */
 
-import type { Clip, ClipTransition, TransitionType, ExportSettings } from '../types';
+import type { Clip, ClipTransition, ExportSettings } from '../types';
 import { getClipDuration } from './project';
 import { audioVolumeFilterSegment } from './audioVolume';
 import { parseOutputResolution } from './resolution';
+import { getXfadeName } from '../webgpu/transitions/registry';
+import { MORPH_TRANSITION_TYPE } from './morphTransition';
 
 // ---------------------------------------------------------------------------
 // Transition defaults
@@ -16,11 +18,21 @@ export const DEFAULT_TRANSITION_DURATION = 0.5; // seconds
 export const MIN_TRANSITION_DURATION = 0.1;
 export const MAX_TRANSITION_DURATION = 2.0;
 
-/** Map our active transition types to FFmpeg xfade transition names. 'none' is filtered out before this map is consulted. */
-export const XFADE_MAP: Partial<Record<TransitionType, string>> = {
-  dissolve: 'fade',
-  motion: 'smoothleft',
-};
+/** Map transition registry ids to FFmpeg xfade names for the CPU fallback path. */
+export function getTransitionXfadeName(type: string): string {
+  if (type === MORPH_TRANSITION_TYPE) return 'fade';
+  return getXfadeName(type);
+}
+
+/** @deprecated Use getTransitionXfadeName — kept for existing imports. */
+export const XFADE_MAP: Record<string, string> = new Proxy(
+  {},
+  {
+    get(_target, prop: string) {
+      return getXfadeName(prop);
+    },
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Timeline math
@@ -149,7 +161,7 @@ export function buildTransitionFilterComplex(
 
     if (t && t.duration > 0) {
       const offset = Math.max(0, accumulated - overlapSoFar - t.duration);
-      const xfadeType = XFADE_MAP[t.type] ?? 'fade';
+      const xfadeType = getTransitionXfadeName(t.type);
       const outV = i < clips.length - 1 ? `vt${i}` : 'vout';
       const outA = i < clips.length - 1 ? `at${i}` : 'aout';
 
@@ -185,7 +197,7 @@ export function buildTransitionFilterComplex(
 export function createDefaultTransitions(clips: Clip[]): ClipTransition[] {
   return clips.slice(1).map((_, i) => ({
     afterClipIndex: i + 1,
-    type: 'dissolve' as TransitionType,
+    type: 'dissolve',
     duration: DEFAULT_TRANSITION_DURATION,
   }));
 }

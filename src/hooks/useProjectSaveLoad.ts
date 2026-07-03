@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, TextOverlay } from "../types";
+import type { ColorGradeSettings } from "../utils/lut";
 import type { EditSnapshot } from "../utils/editHistory";
 import {
   summarizeProjectForSave,
@@ -33,6 +34,8 @@ export function useProjectSaveLoad({
   clipGroups,
   transitions,
   textOverlays,
+  colorGrade,
+  setColorGrade,
   setClips,
   setClipGroups,
   setSelectedClipId,
@@ -45,6 +48,8 @@ export function useProjectSaveLoad({
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  colorGrade: ColorGradeSettings;
+  setColorGrade: (settings: ColorGradeSettings) => void;
   setClips: (c: Clip[]) => void;
   setClipGroups: (cg: ClipGroup[]) => void;
   setSelectedClipId: (id: string | null) => void;
@@ -91,10 +96,7 @@ export function useProjectSaveLoad({
         transitions,
         textOverlays,
         clipGroups,
-        {
-          mediaMode: "embed",
-          onEmbedWarning: (message) => embedWarnings.push(message),
-        },
+        { mediaMode: "embed", onEmbedWarning: (message) => embedWarnings.push(message), colorGrade },
       );
       const payload = JSON.stringify(project, null, 2);
       const blob = new Blob([payload], { type: "application/json" });
@@ -112,7 +114,7 @@ export function useProjectSaveLoad({
     } catch (error) {
       setStatus(`Could not export project: ${(error as Error).message}`);
     }
-  }, [clips, clipGroups, transitions, textOverlays, setStatus]);
+  }, [clips, clipGroups, transitions, textOverlays, colorGrade, setStatus]);
 
   const handleLoadProject = useCallback(
     async (file: File) => {
@@ -123,6 +125,7 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          colorGrade: loadedColorGrade,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -137,6 +140,7 @@ export function useProjectSaveLoad({
           textOverlays: loadedOverlays,
           selectedClipId: selectedId,
         });
+        setColorGrade(loadedColorGrade);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
@@ -161,6 +165,7 @@ export function useProjectSaveLoad({
       setTextOverlays,
       setStatus,
       resetHistory,
+      setColorGrade,
     ],
   );
 
@@ -246,6 +251,7 @@ export function useProjectSaveLoad({
                 });
               });
             },
+            colorGrade,
           },
         );
         setStatus("Saving project manifest to remote storage...");
@@ -259,7 +265,7 @@ export function useProjectSaveLoad({
         setIsRemoteSaving(false);
       }
     },
-    [clips, clipGroups, transitions, textOverlays, setStatus],
+    [clips, clipGroups, transitions, textOverlays, colorGrade, setStatus],
   );
 
   const handleLoadRemote = useCallback(
@@ -273,6 +279,7 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          colorGrade: loadedColorGrade,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -299,6 +306,7 @@ export function useProjectSaveLoad({
           textOverlays: loadedOverlays,
           selectedClipId: selectedId,
         });
+        setColorGrade(loadedColorGrade);
 
         let msg = `Remote project loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
@@ -329,6 +337,7 @@ export function useProjectSaveLoad({
       setTextOverlays,
       setStatus,
       resetHistory,
+      setColorGrade,
     ],
   );
 

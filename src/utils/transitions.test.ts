@@ -277,6 +277,18 @@ describe("utils/transitions", () => {
       expect(filterComplex).toContain("transition=smoothleft");
     });
 
+    it('should map registry ids to FFmpeg xfade names', () => {
+      const clips = [
+        createTestClip("a", 5, 0, NaN),
+        createTestClip("b", 3, 0, NaN),
+      ];
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type: "glitch", duration: 0.5 },
+      ];
+      const filterComplex = buildTransitionFilterComplex(clips, transitions);
+      expect(filterComplex).toContain("transition=hlslice");
+    });
+
     it("should handle video and audio clips correctly", () => {
       const clips = [
         { ...createTestClip("a", 5), kind: "video" as const },

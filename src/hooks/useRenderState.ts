@@ -1,10 +1,14 @@
 import { useState } from "react";
 import type { ExportSettings, RenderPlan } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
+import { DEFAULT_COLOR_GRADE, type ColorGradeSettings } from "../utils/lut";
 
 export function useRenderState() {
   const [exportSettings, setExportSettings] = useState<ExportSettings>(
     DEFAULT_EXPORT_SETTINGS,
+  );
+  const [colorGrade, setColorGrade] = useState<ColorGradeSettings>(
+    DEFAULT_COLOR_GRADE,
   );
   const [forceFFmpeg, setForceFFmpeg] = useState(false);
   const [useCanvasRenderer, setUseCanvasRenderer] = useState(false);
@@ -29,6 +33,8 @@ export function useRenderState() {
   return {
     exportSettings,
     setExportSettings,
+    colorGrade,
+    setColorGrade,
     forceFFmpeg,
     setForceFFmpeg,
     useCanvasRenderer,

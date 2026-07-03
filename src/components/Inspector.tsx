@@ -1,13 +1,17 @@
 import { useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
-import type { Clip, ExportSettings } from '../types';
+import type { Clip, ClipAnimatableProp, ClipKeyframes, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { sanitizeFilename } from '../utils/filename';
 import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
-import { isOverlayOffCanvas } from '../utils/project';
+import { getClipDuration, isOverlayOffCanvas } from '../utils/project';
 import { extractWaveformPeaks } from '../utils/waveform';
 import { clampClipVolume } from '../utils/audioVolume';
+import { clipHasKeyframes } from '../utils/animatedLayout';
 import { WaveformCanvas } from './WaveformCanvas';
 import { FadeCanvasPreview } from './FadeCanvasPreview';
+import { KeyframeMiniEditor } from './KeyframeMiniEditor';
+import { ColorGradePicker } from './ColorGradePicker';
+import type { ColorGradeSettings } from '../utils/lut';
 
 interface ClipValues {
   title: string;
@@ -30,12 +34,58 @@ interface ClipValues {
 interface Props {
   clip: Clip | null;
   exportSettings: ExportSettings;
+  clipLocalTime?: number;
   onChange: (values: ClipValues) => void;
+  onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
+  onApplyKenBurns?: () => void;
   onExportSettingsChange: (settings: ExportSettings) => void;
+  colorGrade?: ColorGradeSettings;
+  onColorGradeChange?: (settings: ColorGradeSettings) => void;
   onExtractAudio?: () => void;
   onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
   rifeProcessing?: boolean;
 }
+
+const PIP_KEYFRAME_PROPS: Array<{
+  prop: ClipAnimatableProp;
+  label: string;
+  step: number;
+  min?: number;
+  max?: number;
+  defaultValue: (clip: Clip) => number;
+}> = [
+  { prop: 'x', label: 'X position', step: 1, defaultValue: (c) => c.x ?? 0 },
+  { prop: 'y', label: 'Y position', step: 1, defaultValue: (c) => c.y ?? 0 },
+  {
+    prop: 'width',
+    label: 'Width',
+    step: 1,
+    min: 0,
+    defaultValue: (c) => c.width ?? c.videoWidth ?? 0,
+  },
+  {
+    prop: 'height',
+    label: 'Height',
+    step: 1,
+    min: 0,
+    defaultValue: (c) => c.height ?? c.videoHeight ?? 0,
+  },
+  { prop: 'opacity', label: 'Opacity', step: 0.05, min: 0, max: 1, defaultValue: (c) => c.opacity ?? 1 },
+];
+
+const KEN_BURNS_PROPS: Array<{
+  prop: ClipAnimatableProp;
+  label: string;
+  step: number;
+  min?: number;
+  max?: number;
+  defaultValue: number;
+}> = [
+  { prop: 'uvScaleX', label: 'Zoom X', step: 0.01, min: 0.1, max: 2, defaultValue: 1 },
+  { prop: 'uvScaleY', label: 'Zoom Y', step: 0.01, min: 0.1, max: 2, defaultValue: 1 },
+  { prop: 'uvOffsetX', label: 'Pan X', step: 0.01, min: -1, max: 1, defaultValue: 0 },
+  { prop: 'uvOffsetY', label: 'Pan Y', step: 0.01, min: -1, max: 1, defaultValue: 0 },
+];
 
 type Tab = 'clip' | 'export';
 
@@ -89,9 +139,23 @@ function findMatchingPreset(settings: ExportSettings): string {
   )?.name || 'custom';
 }
 
-export function Inspector({ clip, exportSettings, onChange, onExportSettingsChange, onExtractAudio, onRife, rifeProcessing }: Props) {
+export function Inspector({
+  clip,
+  exportSettings,
+  clipLocalTime = 0,
+  onChange,
+  onKeyframesChange,
+  onApplyKenBurns,
+  onExportSettingsChange,
+  colorGrade,
+  onColorGradeChange,
+  onExtractAudio,
+  onRife,
+  rifeProcessing,
+}: Props) {
   const [tab, setTab] = useState<Tab>('clip');
   const [rifeMultiplier, setRifeMultiplier] = useState<2 | 4>(2);
+  const [activeKeyframeProp, setActiveKeyframeProp] = useState<ClipAnimatableProp>('x');
   const inspectorRef = useRef<HTMLDivElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
@@ -655,6 +719,84 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
             </div>
           </details>
         )}
+        {clip.kind === 'video' && onKeyframesChange && (
+          <details
+            className="inspector-disclosure"
+            open={clip.stillImage || clipHasKeyframes(clip) || parseNumber(values.layerIndex, 0) > 0}
+          >
+            <summary>
+              Keyframe animation
+              {clipHasKeyframes(clip) ? ' • active' : ''}
+            </summary>
+            <div className="inspector-disclosure-content">
+              {clip.stillImage && (
+                <>
+                  <p className="inspector-hint">
+                    Still image clip — use Ken Burns for pan/zoom, or animate layout on overlay
+                    layers.
+                  </p>
+                  {onApplyKenBurns && (
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={onApplyKenBurns}
+                    >
+                      Apply Ken Burns preset
+                    </button>
+                  )}
+                </>
+              )}
+              <label className="kf-prop-picker">
+                Property
+                <select
+                  value={activeKeyframeProp}
+                  onChange={(e) =>
+                    setActiveKeyframeProp(e.target.value as ClipAnimatableProp)
+                  }
+                >
+                  {(clip.stillImage
+                    ? [...PIP_KEYFRAME_PROPS, ...KEN_BURNS_PROPS]
+                    : PIP_KEYFRAME_PROPS
+                  ).map((item) => (
+                    <option key={item.prop} value={item.prop}>
+                      {item.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {(() => {
+                const meta =
+                  [...PIP_KEYFRAME_PROPS, ...KEN_BURNS_PROPS].find(
+                    (item) => item.prop === activeKeyframeProp,
+                  ) ?? PIP_KEYFRAME_PROPS[0];
+                const defaultValue =
+                  'defaultValue' in meta && typeof meta.defaultValue === 'function'
+                    ? meta.defaultValue(clip)
+                    : meta.defaultValue;
+                return (
+                  <KeyframeMiniEditor
+                    label={meta.label}
+                    duration={getClipDuration(clip)}
+                    currentTime={clipLocalTime}
+                    keyframes={clip.keyframes?.[activeKeyframeProp]}
+                    defaultValue={defaultValue}
+                    min={meta.min}
+                    max={meta.max}
+                    step={meta.step}
+                    onChange={(track) => {
+                      const next: ClipKeyframes = { ...(clip.keyframes ?? {}) };
+                      if (track?.length) next[activeKeyframeProp] = track;
+                      else delete next[activeKeyframeProp];
+                      onKeyframesChange(
+                        Object.keys(next).length > 0 ? next : undefined,
+                      );
+                    }}
+                  />
+                );
+              })()}
+            </div>
+          </details>
+        )}
       </div>
     );
   };
@@ -758,6 +900,10 @@ export function Inspector({ clip, exportSettings, onChange, onExportSettingsChan
         Lower CRF = better quality, larger file.<br />
         Faster preset = quicker encode, slightly larger file.
       </p>
+
+      {colorGrade && onColorGradeChange && (
+        <ColorGradePicker settings={colorGrade} onChange={onColorGradeChange} />
+      )}
 
       <div className="inspector-group-label">WebCodecs (GPU path)</div>
       <label title="Target video bitrate for WebCodecs encoder in Mbps">

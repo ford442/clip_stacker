@@ -2,6 +2,9 @@ import { seekToFrame } from "./videoFrameCapture";
 
 export const MIN_CLIP_DURATION = 0.1;
 
+/** Default on-timeline duration when importing a still image (seconds). */
+export const STILL_IMAGE_DEFAULT_DURATION = 5;
+
 const MEDIA_LOAD_TIMEOUT_MS = 5000;
 
 export interface MediaInfo {
@@ -74,7 +77,41 @@ function loadMediaInfo(
   });
 }
 
+function isImageFile(file: File): boolean {
+  return (
+    file.type.startsWith('image/') ||
+    /\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name)
+  );
+}
+
+function loadImageInfo(file: File): Promise<MediaInfo> {
+  return new Promise((resolve, reject) => {
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
+    const onLoad = () => {
+      img.removeEventListener('load', onLoad);
+      img.removeEventListener('error', onError);
+      resolve({
+        duration: STILL_IMAGE_DEFAULT_DURATION,
+        objectUrl,
+        videoWidth: img.naturalWidth,
+        videoHeight: img.naturalHeight,
+      });
+    };
+    const onError = () => {
+      img.removeEventListener('load', onLoad);
+      img.removeEventListener('error', onError);
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Could not load image'));
+    };
+    img.addEventListener('load', onLoad);
+    img.addEventListener('error', onError);
+    img.src = objectUrl;
+  });
+}
+
 export function getMediaInfo(file: File): Promise<MediaInfo> {
+  if (isImageFile(file)) return loadImageInfo(file);
   return loadMediaInfo(file, true);
 }
 

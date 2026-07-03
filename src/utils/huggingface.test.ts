@@ -6,7 +6,7 @@
  * origin). `fetch` is mocked to walk the upload → /call → SSE → download flow.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { processClipWithRIFE, stitchClipsOnGpu } from "./huggingface";
+import { processClipWithRIFE, stitchClipsOnGpu, generateMorphTransition } from "./huggingface";
 
 function makeBlob(text = "clip"): Blob {
   return new Blob([text], { type: "video/mp4" });
@@ -239,5 +239,34 @@ describe("processClipWithRIFE", () => {
     for (const c of fetchMock.mock.calls) {
       expect((c[1] as RequestInit | undefined)?.credentials).toBe("omit");
     }
+  });
+});
+
+describe("generateMorphTransition", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("uploads a frame pair and calls /morph with frame count", async () => {
+    const processed = makeMp4Blob("morph");
+    const sse =
+      'event: complete\ndata: [{"url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/m.mp4"}]\n\n';
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/pair.mp4"]);
+      if (url.endsWith("/call/morph")) return jsonResponse({ event_id: "ev2" });
+      if (url.includes("/call/morph/ev2")) return sseResponse(sse);
+      return { ok: true, status: 200, blob: async () => processed } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await generateMorphTransition(makeMp4Blob("pair"), 15);
+    expect(result.blob).toBe(processed);
+    expect(result.frameCount).toBe(15);
+    expect(result.duration).toBeCloseTo(0.5);
+
+    const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/call/morph"));
+    const body = JSON.parse((call![1] as RequestInit).body as string);
+    expect(body.data[1]).toBe(15);
+    expect(body.data[2]).toBe(30);
   });
 });

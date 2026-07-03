@@ -20,6 +20,14 @@ export interface RifeResult {
   blob: Blob;
 }
 
+export interface MorphTransitionResult {
+  blob: Blob;
+  duration: number;
+  frameCount: number;
+}
+
+const MORPH_OUTPUT_FPS = 30;
+
 /**
  * Send a trimmed video Blob to the HuggingFace RIFE space and return
  * the processed video as a Blob.
@@ -88,6 +96,72 @@ export async function processClipWithRIFE(
   onProgress?.({ stage: "downloading", progress: 100, message: "Done." });
 
   return { blob: outputBlob };
+}
+
+/**
+ * Generate a RIFE morph segment from a 2-frame clip (A_last, B_first).
+ *
+ * @param framePairBlob - Two-frame MP4 from extractMorphFramePair.
+ * @param frameCount    - Number of output frames (duration × fps).
+ * @param onProgress    - Optional progress callback (upload / processing / download).
+ */
+export async function generateMorphTransition(
+  framePairBlob: Blob,
+  frameCount: number,
+  onProgress?: (event: RifeProgressEvent) => void,
+): Promise<MorphTransitionResult> {
+  const safeFrameCount = Math.max(2, Math.round(frameCount));
+
+  onProgress?.({
+    stage: 'uploading',
+    progress: 0,
+    message: 'Connecting to RIFE morph space…',
+  });
+
+  let output: unknown;
+  try {
+    onProgress?.({
+      stage: 'uploading',
+      progress: 20,
+      message: 'Uploading morph frame pair…',
+    });
+    const [path] = await uploadFilesToSpace([framePairBlob]);
+
+    onProgress?.({
+      stage: 'processing',
+      progress: null,
+      message: `Generating ${safeFrameCount} morph frames with RIFE…`,
+    });
+
+    const data = await callSpaceEndpoint('morph', [
+      { path, meta: { _type: 'gradio.FileData' } },
+      safeFrameCount,
+      MORPH_OUTPUT_FPS,
+    ]);
+    output = extractGradioOutputValue(data);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Morph transition failed: ${message}`);
+  }
+
+  onProgress?.({
+    stage: 'downloading',
+    progress: 80,
+    message: 'Downloading morph segment…',
+  });
+
+  if (output == null) {
+    throw new Error(
+      'Morph transition failed: the space returned no output (it may be cold or timed out).',
+    );
+  }
+
+  const outputBlob = await downloadSpaceFile(output, 'morph segment');
+  const duration = safeFrameCount / MORPH_OUTPUT_FPS;
+
+  onProgress?.({ stage: 'downloading', progress: 100, message: 'Morph segment ready.' });
+
+  return { blob: outputBlob, duration, frameCount: safeFrameCount };
 }
 
 export interface GpuStitchResult {

@@ -27,6 +27,7 @@ interface Props {
   onReorder: (fromIndex: number, insertBefore: number) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
   onDelete: (id: string) => void;
+  morphProcessingIndex?: number | null;
 }
 
 function effectiveDur(clip: Clip): number {
@@ -38,6 +39,7 @@ const TRANSITION_COLORS: Record<string, string> = {
   none: 'var(--border)',
   dissolve: '#7c4dff',
   motion: '#f06292',
+  morph: '#26c6da',
 };
 
 interface ClipLayout {
@@ -89,6 +91,7 @@ export function Timeline({
   onReorder,
   onTransitionUpdate,
   onDelete,
+  morphProcessingIndex = null,
 }: Props) {
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
@@ -502,6 +505,9 @@ export function Timeline({
           transition={editingTransition}
           clipATitle={clips[editingTransition.afterClipIndex - 1]?.title ?? 'Previous clip'}
           clipBTitle={clips[editingTransition.afterClipIndex]?.title ?? 'Next clip'}
+          morphProcessing={
+            morphProcessingIndex === editingTransition.afterClipIndex
+          }
           onUpdate={(updated) => {
             onTransitionUpdate(updated);
             setEditingTransition(updated);

@@ -34,6 +34,18 @@ describe('timelinePreview', () => {
     expect(shouldUseTimelinePreview([makeClip('audio', { kind: 'audio' })])).toBe(
       false,
     );
+    expect(
+      shouldUseTimelinePreview([
+        makeClip('still', { stillImage: true }),
+      ]),
+    ).toBe(true);
+    expect(
+      shouldUseTimelinePreview([
+        makeClip('a', {
+          keyframes: { x: [{ t: 0, value: 0 }, { t: 1, value: 100 }] },
+        }),
+      ]),
+    ).toBe(true);
   });
 
   it('normalizes PiP destination rects for shader uniforms', () => {

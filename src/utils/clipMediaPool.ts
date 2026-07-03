@@ -39,6 +39,7 @@ const seekQueues = new WeakMap<HTMLVideoElement, VideoSeekQueue>();
  */
 export class ClipMediaPool {
   private readonly videos = new Map<string, HTMLVideoElement>();
+  private readonly stillImages = new Map<string, HTMLImageElement>();
 
   constructor(private readonly maxDecoders: number = DEFAULT_MAX_DECODERS) {}
 
@@ -53,15 +54,19 @@ export class ClipMediaPool {
   }
 
   getVideo(clip: Clip): HTMLVideoElement {
-    const existing = this.videos.get(clip.id);
+    return this.getVideoForUrl(clip.id, clip.objectUrl);
+  }
+
+  /** Decoder for synthetic timeline layers (e.g. RIFE morph segments). */
+  getVideoForUrl(id: string, objectUrl: string): HTMLVideoElement {
+    const existing = this.videos.get(id);
     if (existing) {
-      if (existing.src !== clip.objectUrl) {
-        existing.src = clip.objectUrl;
+      if (existing.src !== objectUrl) {
+        existing.src = objectUrl;
         existing.load();
       }
-      // Move to the most-recently-used end of the LRU order.
-      this.videos.delete(clip.id);
-      this.videos.set(clip.id, existing);
+      this.videos.delete(id);
+      this.videos.set(id, existing);
       return existing;
     }
 
@@ -70,12 +75,33 @@ export class ClipMediaPool {
     video.playsInline = true;
     video.crossOrigin = 'anonymous';
     video.preload = 'auto';
-    video.src = clip.objectUrl;
+    video.src = objectUrl;
     video.style.cssText =
       'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;';
     document.body.appendChild(video);
-    this.videos.set(clip.id, video);
+    this.videos.set(id, video);
     return video;
+  }
+
+  getStillImage(clip: Pick<import('../types').Clip, 'id' | 'objectUrl'>): HTMLImageElement {
+    const existing = this.stillImages.get(clip.id);
+    if (existing) {
+      if (existing.src !== clip.objectUrl) {
+        existing.src = clip.objectUrl;
+      }
+      this.stillImages.delete(clip.id);
+      this.stillImages.set(clip.id, existing);
+      return existing;
+    }
+
+    const img = document.createElement('img');
+    img.crossOrigin = 'anonymous';
+    img.src = clip.objectUrl;
+    img.style.cssText =
+      'position:fixed;opacity:0;pointer-events:none;width:1px;height:1px;';
+    document.body.appendChild(img);
+    this.stillImages.set(clip.id, img);
+    return img;
   }
 
   remove(clipId: string): void {
@@ -87,16 +113,26 @@ export class ClipMediaPool {
     if (video.parentElement) video.parentElement.removeChild(video);
     this.videos.delete(clipId);
     seekQueues.delete(video);
+
+    const img = this.stillImages.get(clipId);
+    if (img) {
+      img.removeAttribute('src');
+      if (img.parentElement) img.parentElement.removeChild(img);
+      this.stillImages.delete(clipId);
+    }
   }
 
   destroy(): void {
-    for (const clipId of [...this.videos.keys()]) {
+    for (const clipId of [...this.videos.keys(), ...this.stillImages.keys()]) {
       this.remove(clipId);
     }
   }
 
   pruneExcept(keepIds: ReadonlySet<string>): void {
-    for (const clipId of [...this.videos.keys()]) {
+    for (const clipId of new Set([
+      ...this.videos.keys(),
+      ...this.stillImages.keys(),
+    ])) {
       if (!keepIds.has(clipId)) {
         this.remove(clipId);
       }

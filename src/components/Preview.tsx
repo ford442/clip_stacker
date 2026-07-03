@@ -6,6 +6,7 @@ import type {
   ExportSettings,
   TextOverlay,
 } from "../types";
+import type { ColorGradeSettings } from "../utils/lut";
 import { sanitizeFilename } from "../utils/filename";
 import { computeTotalDuration } from "../utils/transitions";
 import { useMediaVolume } from "../hooks/useMediaVolume";
@@ -44,6 +45,7 @@ interface Props {
   transitions?: ClipTransition[];
   textOverlays?: TextOverlay[];
   exportSettings?: ExportSettings;
+  colorGrade?: ColorGradeSettings;
   outputUrl: string | null;
   exportFilename?: string;
   playheadTime?: number | null;
@@ -62,6 +64,7 @@ export function Preview({
   transitions = [],
   textOverlays = [],
   exportSettings,
+  colorGrade,
   outputUrl,
   exportFilename,
   playheadTime,
@@ -86,7 +89,11 @@ export function Preview({
     );
   }
 
-  const useTimeline = shouldUseTimelinePreview(timelineClips);
+  const useTimeline = shouldUseTimelinePreview(
+    timelineClips,
+    transitions,
+    textOverlays,
+  );
 
   if (useTimeline) {
     return (
@@ -98,6 +105,7 @@ export function Preview({
           transitions={transitions}
           textOverlays={textOverlays}
           exportSettings={exportSettings}
+          colorGrade={colorGrade}
           playheadTime={playheadTime}
           onPlayheadChange={onPlayheadChange}
         />
@@ -121,6 +129,7 @@ export function Preview({
         <WebGPUVideoPreview
           clip={clip}
           playheadTime={playheadTime}
+          colorGrade={colorGrade}
           onPlayheadChange={onPlayheadChange}
         />
       </section>
@@ -150,6 +159,7 @@ interface TimelinePreviewProps {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   exportSettings?: ExportSettings;
+  colorGrade?: ColorGradeSettings;
   playheadTime?: number | null;
   onPlayheadChange?: (time: number) => void;
 }
@@ -160,6 +170,7 @@ function TimelineCompositorPreview({
   transitions,
   textOverlays,
   exportSettings,
+  colorGrade,
   playheadTime,
   onPlayheadChange,
 }: TimelinePreviewProps) {
@@ -214,6 +225,7 @@ function TimelineCompositorPreview({
             isCancelled,
             maxHeight: size?.canvasHeight,
             maxWidth: size?.canvasWidth,
+            colorGrade,
           },
         );
         if (isCancelled()) return;
@@ -248,7 +260,7 @@ function TimelineCompositorPreview({
         }
       }
     },
-    [timelineClips, clipGroups, transitions, textOverlays, exportSettings],
+    [timelineClips, clipGroups, transitions, textOverlays, exportSettings, colorGrade],
   );
 
   const requestRender = useCallback((globalTime: number) => {
@@ -476,6 +488,7 @@ function TimelineCompositorPreview({
 interface VideoPreviewProps {
   clip: Clip;
   playheadTime?: number | null;
+  colorGrade?: ColorGradeSettings;
   onPlayheadChange?: (time: number) => void;
 }
 
@@ -488,7 +501,12 @@ const HIDDEN_VIDEO_STYLE: CSSProperties = {
   height: 1,
 };
 
-function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPreviewProps) {
+function WebGPUVideoPreview({
+  clip,
+  playheadTime,
+  colorGrade,
+  onPlayheadChange,
+}: VideoPreviewProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -515,7 +533,7 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
     setHasFrame(false);
     setGpuActive(false);
     setGpuFallback(!webGpuAvailable);
-  }, [clip.id, clip.objectUrl, webGpuAvailable]);
+  }, [clip.id, clip.objectUrl, webGpuAvailable, colorGrade]);
 
   useEffect(() => {
     let alive = true;
@@ -564,6 +582,9 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
           clip.videoFadeOut,
           clip.opacity ?? 1,
         );
+        if (colorGrade) {
+          engine.applyColorGrade(colorGrade);
+        }
         frame.close();
         setHasFrame(true);
       } catch {
@@ -631,7 +652,7 @@ function WebGPUVideoPreview({ clip, playheadTime, onPlayheadChange }: VideoPrevi
       setGpuActive(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clip.id, clip.objectUrl, webGpuAvailable]);
+  }, [clip.id, clip.objectUrl, webGpuAvailable, colorGrade]);
 
   useEffect(() => {
     const video = videoRef.current;

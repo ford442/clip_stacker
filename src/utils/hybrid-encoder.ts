@@ -10,13 +10,15 @@
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */
 
-import type { Clip, ExportSettings, ClipTransition, TextOverlay, RenderPlan } from '../types';
+import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay, RenderPlan } from '../types';
+import { DEFAULT_COLOR_GRADE, type ColorGradeSettings } from '../utils/lut';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 import { encodeVideoWithWebCodecs, isWebCodecsAvailable } from './webcodecs';
 import { canUseGpuVideoEncoder } from './renderEligibility';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
+import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 
 export type EncoderPath = 'webcodecs' | 'ffmpeg' | 'canvas';
 
@@ -41,6 +43,8 @@ export async function hybridMergeClips(
   audioReactive = true,
   forceReencode = false,
   renderPlan?: RenderPlan,
+  clipGroups: ClipGroup[] = [],
+  colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
@@ -61,7 +65,13 @@ export async function hybridMergeClips(
   }
 
   // -- GPU WebCodecs path (video hardware encode + FFmpeg audio mux) --------
-  const gpuEligible = canUseGpuVideoEncoder(clips, transitions, textOverlays, { forceFFmpeg, useCanvas });
+  const webGpuAvailable = await isWebGpuExportAvailable();
+  const gpuEligible = canUseGpuVideoEncoder(clips, transitions, textOverlays, {
+    forceFFmpeg,
+    useCanvas,
+    webGpuAvailable,
+    colorGrade,
+  });
   const needsVideoNormalize = clipsNeedResolutionNormalization(clips, settings) || forceReencode;
   const { width, height } = parseOutputResolution(settings.outputResolution);
 
@@ -71,7 +81,17 @@ export async function hybridMergeClips(
       try {
         onStatus('GPU path selected (hardware H.264 + FFmpeg audio mux)...');
         onProgress?.({ stage: 'GPU encoder selected', progress: 0, indeterminate: false });
-        const videoBlob = await encodeVideoWithWebCodecs(clips, settings, onStatus, onProgress, 'auto');
+        const videoBlob = await encodeVideoWithWebCodecs(
+          clips,
+          settings,
+          onStatus,
+          onProgress,
+          'auto',
+          transitions,
+          textOverlays,
+          clipGroups,
+          colorGrade,
+        );
         onStatus('Muxing GPU video with source audio via FFmpeg...');
         const blob = await muxVideoWithAudio(videoBlob, clips, settings, onStatus, onProgress);
         return { blob, path: 'webcodecs', renderPlan: effectiveRenderPlan };

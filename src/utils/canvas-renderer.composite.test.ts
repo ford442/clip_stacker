@@ -24,8 +24,12 @@ function makeMockCtx() {
     fillRect(x: number, y: number, w: number, h: number) {
       calls.push(['fillRect', this.globalAlpha, this.fillStyle, x, y, w, h]);
     },
-    drawImage(img: unknown, x: number, y: number, w: number, h: number) {
-      calls.push(['drawImage', this.globalAlpha, x, y, w, h]);
+    drawImage(img: unknown, ...args: number[]) {
+      if (args.length === 4) {
+        calls.push(['drawImage', this.globalAlpha, args[0], args[1], args[2], args[3]]);
+      } else if (args.length === 8) {
+        calls.push(['drawImage', this.globalAlpha, args[4], args[5], args[6], args[7]]);
+      }
     },
     fillText(text: string, x: number, y: number) {
       calls.push(['fillText', this.globalAlpha, this.fillStyle, text, x, y]);

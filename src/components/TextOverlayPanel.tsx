@@ -1,14 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import type { TextOverlay } from "../types";
+import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from "../types";
 import { isValidFfmpegColor } from "../utils/color";
 import {
   estimateScrollCrossingSeconds,
   MIN_SCROLL_SPEED,
   MAX_SCROLL_SPEED,
 } from "../utils/textOverlay";
+import { textOverlayHasKeyframes } from "../utils/animatedLayout";
+import { KeyframeMiniEditor } from "./KeyframeMiniEditor";
 
 interface Props {
   overlays: TextOverlay[];
+  previewGlobalTime?: number;
+  totalDuration?: number;
   onAdd: () => string;
   onUpdate: (overlay: TextOverlay) => void;
   onDelete: (id: string) => void;
@@ -16,11 +20,15 @@ interface Props {
 
 export function TextOverlayPanel({
   overlays,
+  previewGlobalTime = 0,
+  totalDuration = 60,
   onAdd,
   onUpdate,
   onDelete,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [activeKeyframeProp, setActiveKeyframeProp] =
+    useState<TextAnimatableProp>("x");
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   useEffect(() => {
@@ -272,6 +280,70 @@ export function TextOverlayPanel({
                       )}
                     </label>
                   )}
+
+                  <details
+                    className="inspector-disclosure"
+                    open={textOverlayHasKeyframes(overlay)}
+                    style={{ marginTop: "0.5rem" }}
+                  >
+                    <summary>
+                      Keyframe animation
+                      {textOverlayHasKeyframes(overlay) ? " • active" : ""}
+                    </summary>
+                    <div className="inspector-disclosure-content">
+                      <label className="kf-prop-picker">
+                        Property
+                        <select
+                          value={activeKeyframeProp}
+                          onChange={(e) =>
+                            setActiveKeyframeProp(
+                              e.target.value as TextAnimatableProp,
+                            )
+                          }
+                        >
+                          {!overlay.scrolling && (
+                            <option value="x">X position</option>
+                          )}
+                          <option value="y">Y position</option>
+                          <option value="opacity">Opacity</option>
+                        </select>
+                      </label>
+                      <KeyframeMiniEditor
+                        label={
+                          activeKeyframeProp === "x"
+                            ? "X position"
+                            : activeKeyframeProp === "y"
+                              ? "Y position"
+                              : "Opacity"
+                        }
+                        duration={Math.max(totalDuration, 0.1)}
+                        currentTime={previewGlobalTime}
+                        keyframes={overlay.keyframes?.[activeKeyframeProp]}
+                        defaultValue={
+                          activeKeyframeProp === "x"
+                            ? overlay.x
+                            : activeKeyframeProp === "y"
+                              ? overlay.y
+                              : 1
+                        }
+                        min={activeKeyframeProp === "opacity" ? 0 : undefined}
+                        max={activeKeyframeProp === "opacity" ? 1 : undefined}
+                        step={activeKeyframeProp === "opacity" ? 0.05 : 1}
+                        onChange={(track) => {
+                          const next: TextOverlayKeyframes = {
+                            ...(overlay.keyframes ?? {}),
+                          };
+                          if (track?.length) next[activeKeyframeProp] = track;
+                          else delete next[activeKeyframeProp];
+                          onUpdate({
+                            ...overlay,
+                            keyframes:
+                              Object.keys(next).length > 0 ? next : undefined,
+                          });
+                        }}
+                      />
+                    </div>
+                  </details>
 
                   <p className="inspector-hint" style={{ marginTop: "0.5rem" }}>
                     Font: Roboto Regular (loaded automatically from CDN). For

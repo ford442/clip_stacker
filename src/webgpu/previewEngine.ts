@@ -1,4 +1,14 @@
 import previewShader from "./shaders/preview.wgsl?raw";
+import {
+  createTransitionPipelineCache,
+  renderTransitionPass,
+  TRANSITION_UNIFORM_FLOATS,
+  type TransitionPipelineCache,
+} from "./transitions/transitionPass";
+import type { TransitionRenderParams } from "./transitions/types";
+import { LutPass } from "./lutPass";
+import type { ColorGradeSettings } from "../utils/lut";
+import { isColorGradeActive, resolveLutData } from "../utils/lut";
 
 /**
  * WebGPU-based clip preview engine.
@@ -45,6 +55,10 @@ export class PreviewEngine {
   private sampler: GPUSampler;
   private uniformBuffer: GPUBuffer;
   private uniformData = new Float32Array(UNIFORM_FLOATS);
+  private transitionUniformBuffer: GPUBuffer;
+  private transitionUniformData = new Float32Array(TRANSITION_UNIFORM_FLOATS);
+  private transitionPipelineCache: TransitionPipelineCache;
+  private lutPass: LutPass;
   private destroyed = false;
 
   private constructor(
@@ -53,6 +67,9 @@ export class PreviewEngine {
     pipeline: GPURenderPipeline,
     sampler: GPUSampler,
     uniformBuffer: GPUBuffer,
+    transitionUniformBuffer: GPUBuffer,
+    transitionPipelineCache: TransitionPipelineCache,
+    lutPass: LutPass,
     format: GPUTextureFormat,
   ) {
     this.device = device;
@@ -60,6 +77,9 @@ export class PreviewEngine {
     this.pipeline = pipeline;
     this.sampler = sampler;
     this.uniformBuffer = uniformBuffer;
+    this.transitionUniformBuffer = transitionUniformBuffer;
+    this.transitionPipelineCache = transitionPipelineCache;
+    this.lutPass = lutPass;
     this.format = format;
     this.canvas = document.createElement('canvas');
   }
@@ -104,6 +124,14 @@ export class PreviewEngine {
       size: UNIFORM_FLOATS * 4,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+
+    const transitionUniformBuffer = device.createBuffer({
+      size: TRANSITION_UNIFORM_FLOATS * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    const transitionPipelineCache = createTransitionPipelineCache(device, format);
+    const lutPass = LutPass.create(device, format);
 
     const bindGroupLayout = device.createBindGroupLayout({
       entries: [
@@ -150,7 +178,17 @@ export class PreviewEngine {
       primitive: { topology: "triangle-list" },
     });
 
-    const engine = new PreviewEngine(device, context, pipeline, sampler, uniformBuffer, format);
+    const engine = new PreviewEngine(
+      device,
+      context,
+      pipeline,
+      sampler,
+      uniformBuffer,
+      transitionUniformBuffer,
+      transitionPipelineCache,
+      lutPass,
+      format,
+    );
     engine.canvas = canvas;
     return engine;
   }
@@ -238,6 +276,34 @@ export class PreviewEngine {
     this.device.queue.submit([encoder.finish()]);
   }
 
+  /**
+   * Render a GPU transition between two video frames (preview + export).
+   * Caller must close() both VideoFrames after this returns.
+   */
+  renderTransition(
+    fromFrame: VideoFrame,
+    toFrame: VideoFrame,
+    transitionId: string,
+    params: TransitionRenderParams,
+  ): void {
+    if (this.destroyed) return;
+
+    renderTransitionPass(
+      this.device,
+      this.context,
+      this.transitionPipelineCache,
+      this.sampler,
+      this.transitionUniformBuffer,
+      this.transitionUniformData,
+      fromFrame,
+      toFrame,
+      transitionId,
+      params,
+      this.canvas.width,
+      this.canvas.height,
+    );
+  }
+
   /** Clear the canvas to black without sampling a video frame. */
   clearToBlack(): void {
     if (this.destroyed) return;
@@ -256,10 +322,27 @@ export class PreviewEngine {
     this.device.queue.submit([encoder.finish()]);
   }
 
+  /** Apply a 3D LUT as the final pass on the current canvas contents. */
+  applyColorGrade(settings: ColorGradeSettings): void {
+    if (this.destroyed || !isColorGradeActive(settings)) return;
+    const lut = resolveLutData(settings);
+    if (!lut) return;
+    this.lutPass.setLut(this.device, lut);
+    this.lutPass.apply(
+      this.device,
+      this.context,
+      this.canvas.width,
+      this.canvas.height,
+      settings.intensity,
+    );
+  }
+
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     this.uniformBuffer.destroy();
+    this.transitionUniformBuffer.destroy();
+    this.lutPass.destroy();
     this.device.destroy();
   }
 }

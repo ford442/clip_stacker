@@ -1,4 +1,25 @@
+import type { Keyframe } from '../utils/keyframes';
+
 export type ClipKind = 'video' | 'audio';
+
+/** Animatable scalar properties on clips (PiP layout + Ken Burns UV). */
+export type ClipAnimatableProp =
+  | 'x'
+  | 'y'
+  | 'width'
+  | 'height'
+  | 'opacity'
+  | 'uvScaleX'
+  | 'uvScaleY'
+  | 'uvOffsetX'
+  | 'uvOffsetY';
+
+export type ClipKeyframes = Partial<Record<ClipAnimatableProp, Keyframe[]>>;
+
+/** Animatable properties on text overlays. */
+export type TextAnimatableProp = 'x' | 'y' | 'opacity';
+
+export type TextOverlayKeyframes = Partial<Record<TextAnimatableProp, Keyframe[]>>;
 
 export interface Clip {
   id: string;
@@ -61,6 +82,10 @@ export interface Clip {
   opacity?: number;
   /** Per-clip audio volume multiplier (0 = muted, 1 = unchanged, 2 = double). */
   volume?: number;
+  /** Optional per-property keyframe animation (local clip time in seconds). */
+  keyframes?: ClipKeyframes;
+  /** True when the source is a still image (Ken Burns / UV keyframes). */
+  stillImage?: boolean;
 }
 
 export interface SerializedClip {
@@ -107,9 +132,29 @@ export interface SerializedClip {
   height?: number;
   opacity?: number;
   volume?: number;
+  keyframes?: ClipKeyframes;
+  stillImage?: boolean;
 }
 
-export type TransitionType = 'none' | 'dissolve' | 'motion';
+export type TransitionType = 'none' | (string & {});
+
+/** RIFE-generated in-between frames for a morph cut transition. */
+export interface MorphTransitionSegment {
+  objectUrl: string;
+  fileName: string;
+  duration: number;
+  status: 'pending' | 'generating' | 'ready' | 'failed';
+  error?: string;
+}
+
+export interface SerializedMorphSegment {
+  fileName: string;
+  duration: number;
+  status: MorphTransitionSegment['status'];
+  error?: string;
+  /** Embedded morph segment bytes for project portability. */
+  sourceMediaDataUrl?: string;
+}
 
 /** Defines the transition between clip[index-1] and clip[index] in the timeline. */
 export interface ClipTransition {
@@ -118,12 +163,18 @@ export interface ClipTransition {
   type: TransitionType;
   /** Overlap duration in seconds (0 for hard cut). */
   duration: number;
+  /** Per-transition shader uniforms (keys match registry param defs). */
+  params?: Record<string, number>;
+  /** Populated for `type: 'morph'` after RIFE generates the in-between segment. */
+  morphSegment?: MorphTransitionSegment;
 }
 
 export interface SerializedTransition {
   afterClipIndex: number;
   type: TransitionType;
   duration: number;
+  params?: Record<string, number>;
+  morphSegment?: SerializedMorphSegment;
 }
 
 /** A group of up to two variants (A = original, B = edited) for A/B comparison. */
@@ -243,6 +294,8 @@ export interface TextOverlay {
   box: boolean;
   /** Box color — supports alpha, e.g. 'black@0.5' or '0x000000@0.5' */
   boxColor: string;
+  /** Optional keyframe animation (time = seconds on the output timeline). */
+  keyframes?: TextOverlayKeyframes;
 }
 
 export interface SerializedClipGroup {
@@ -255,6 +308,8 @@ export interface Project {
   clipGroups?: SerializedClipGroup[];
   transitions?: SerializedTransition[];
   textOverlays?: TextOverlay[];
+  /** Final-stage 3D LUT color grade applied on the WebGPU export path. */
+  colorGrade?: import('../utils/lut').ColorGradeSettings;
   /**
    * How source media was stored when this project was saved. Used on load
    * to pick between `sourceMediaDataUrl` and `sourceMediaUrl` authoritatively,

@@ -31,6 +31,7 @@ interface FrameInstance {
 }
 
 let renderLayer: ReturnType<typeof vi.fn>;
+let renderTransition: ReturnType<typeof vi.fn>;
 let clearToBlack: ReturnType<typeof vi.fn>;
 let createdFrames: FrameInstance[];
 
@@ -87,11 +88,13 @@ async function renderClipsAt(clips: Clip[], globalTime: number) {
 
 beforeEach(() => {
   renderLayer = vi.fn();
+  renderTransition = vi.fn();
   clearToBlack = vi.fn();
   createdFrames = [];
 
   vi.mocked(PreviewEngine.create).mockResolvedValue({
     renderLayer,
+    renderTransition,
     clearToBlack,
     destroy: vi.fn(),
   } as unknown as PreviewEngine);
@@ -181,7 +184,7 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     expect(pipParams.opacity).toBeCloseTo(0.5);
   });
 
-  it('draws outgoing + incoming layers with complementary opacity during a dissolve', async () => {
+  it('renders a GPU transition pass during dissolve overlaps', async () => {
     const clips = [makeClip('a'), makeClip('b')];
     const transitions = [{ afterClipIndex: 1, type: 'dissolve' as const, duration: 2 }];
 
@@ -196,17 +199,17 @@ describe('TimelinePreviewEngine.renderPlan', () => {
       engine as unknown as { renderPlan: (p: typeof plan) => Promise<void> }
     ).renderPlan(plan);
 
-    expect(renderLayer).toHaveBeenCalledTimes(2);
+    expect(renderTransition).toHaveBeenCalledTimes(1);
+    expect(renderLayer).not.toHaveBeenCalled();
 
-    const outgoing = renderLayer.mock.calls[0][1] as LayerRenderParams;
-    const incoming = renderLayer.mock.calls[1][1] as LayerRenderParams;
-
-    // Outgoing clip draws first (clears), fading out; incoming draws over it.
-    expect(outgoing.clear).toBe(true);
-    expect(incoming.clear).toBe(false);
-    expect(outgoing.opacity).toBeCloseTo(0.5);
-    expect(incoming.opacity).toBeCloseTo(0.5);
-    expect(outgoing.opacity + incoming.opacity).toBeCloseTo(1);
+    const transitionId = renderTransition.mock.calls[0][2];
+    const transitionParams = renderTransition.mock.calls[0][3] as {
+      progress: number;
+      clear: boolean;
+    };
+    expect(transitionId).toBe('dissolve');
+    expect(transitionParams.progress).toBeCloseTo(0.5);
+    expect(transitionParams.clear).toBe(true);
   });
 
   it('clears to black when no clip layer is active at the playhead', async () => {

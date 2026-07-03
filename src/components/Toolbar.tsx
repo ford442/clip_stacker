@@ -131,7 +131,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
           <input
             ref={clipInputRef}
             type="file"
-            accept="video/mp4,audio/wav,audio/x-wav,audio/mpeg,.mp4,.wav,.mp3"
+            accept="video/mp4,audio/wav,audio/x-wav,audio/mpeg,image/jpeg,image/png,image/webp,.mp4,.wav,.mp3,.jpg,.jpeg,.png,.webp"
             multiple
             onChange={handleClipChange}
           />

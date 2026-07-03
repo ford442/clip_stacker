@@ -1,0 +1,115 @@
+/* ============================================================
+   Keyframe mini editor
+   ============================================================ */
+.kf-editor {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.kf-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.kf-editor-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.kf-editor-value {
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold-bright);
+}
+
+.kf-track {
+  position: relative;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  overflow: visible;
+}
+
+.kf-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--gold);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.kf-key {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  padding: 0;
+  border-radius: 2px;
+  border: 1px solid var(--gold-bright);
+  background: var(--gold-dim);
+  cursor: grab;
+  z-index: 2;
+}
+
+.kf-key:active {
+  cursor: grabbing;
+}
+
+.kf-editor-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.kf-btn {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.45rem;
+}
+
+.kf-key-list {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.kf-key-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr;
+  gap: 0.35rem;
+  align-items: end;
+}
+
+.kf-key-field {
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.kf-key-field input,
+.kf-key-field select,
+.kf-prop-picker select {
+  width: 100%;
+}
+
+.color-grade-file-input {
+  display: none;
+}
+
+.color-grade-picker {
+  display: grid;
+  gap: 0.65rem;
+  margin: 0.5rem 0;
+}
+
+.color-grade-upload-btn {
+  justify-self: start;
+  font-size: 0.78rem;
+}

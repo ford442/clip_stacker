@@ -150,6 +150,102 @@ export async function extractTrimmedVideoClip(
   }
 }
 
+const MORPH_EXTRACT_FPS = 30;
+
+/**
+ * Build a 2-frame MP4 (last frame of clipA, first frame of clipB) for RIFE morph.
+ */
+export async function extractMorphFramePair(
+  clipA: Clip,
+  clipB: Clip,
+  onStatus: StatusCallback,
+): Promise<Blob> {
+  clearFfmpegLogs();
+
+  if (clipA.kind !== 'video' || clipB.kind !== 'video') {
+    throw new Error('Morph transitions require video clips on both sides.');
+  }
+
+  const ffmpeg = await ensureFfmpeg(onStatus);
+
+  const extA = getSafeExtension(clipA.file.name, 'mp4');
+  const extB = getSafeExtension(clipB.file.name, 'mp4');
+  const inputA = `morph-a.${extA}`;
+  const inputB = `morph-b.${extB}`;
+  const frameA = 'morph_frame_a.png';
+  const frameB = 'morph_frame_b.png';
+  const outputName = 'morph_pair.mp4';
+
+  const endA = Number.isFinite(clipA.trimEnd) ? clipA.trimEnd : clipA.duration;
+  const startB = clipB.trimStart;
+  const lastFrameTime = Math.max(clipA.trimStart, endA - 1 / MORPH_EXTRACT_FPS);
+
+  for (const name of [inputA, inputB, frameA, frameB, outputName]) {
+    try {
+      await ffmpeg.deleteFile(name);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  onStatus('Extracting morph frame pair…');
+
+  try {
+    await safeWriteFile(ffmpeg, inputA, await fetchFile(clipA.file), 'morph write A');
+    await safeWriteFile(ffmpeg, inputB, await fetchFile(clipB.file), 'morph write B');
+
+    await safeExec(
+      ffmpeg,
+      [
+        '-ss', String(lastFrameTime),
+        '-i', inputA,
+        '-vframes', '1',
+        '-y', frameA,
+      ],
+      null,
+      'morph extract last frame of A',
+    );
+
+    await safeExec(
+      ffmpeg,
+      [
+        '-ss', String(startB),
+        '-i', inputB,
+        '-vframes', '1',
+        '-y', frameB,
+      ],
+      null,
+      'morph extract first frame of B',
+    );
+
+    await safeExec(
+      ffmpeg,
+      [
+        '-loop', '1', '-t', String(1 / MORPH_EXTRACT_FPS), '-i', frameA,
+        '-loop', '1', '-t', String(1 / MORPH_EXTRACT_FPS), '-i', frameB,
+        '-filter_complex', '[0:v][1:v]concat=n=2:v=1:a=0',
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-r', String(MORPH_EXTRACT_FPS),
+        '-y', outputName,
+      ],
+      null,
+      'morph build 2-frame pair',
+    );
+
+    const output = await safeReadFile(ffmpeg, outputName, 'morph pair read');
+    const plain = new Uint8Array(output).buffer as ArrayBuffer;
+    onStatus('Morph frame pair ready.');
+    return new Blob([plain], { type: 'video/mp4' });
+  } finally {
+    for (const name of [inputA, inputB, frameA, frameB, outputName]) {
+      try {
+        await ffmpeg.deleteFile(name);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
 /**
  * Attach the original clip audio (respecting the clip's current trim window) to
  * a processed video blob, such as a RIFE-interpolated segment that no longer

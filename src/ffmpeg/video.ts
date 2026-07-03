@@ -10,7 +10,7 @@ import type {
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration, clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
 import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
-import { buildTransitionFilterComplex, XFADE_MAP } from "../utils/transitions";
+import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -182,7 +182,7 @@ export function buildPipFilterComplex(
 
       if (t) {
         const offset = Math.max(0, accumulated - overlapSoFar - t.duration);
-        const xfadeType = XFADE_MAP[t.type] ?? "fade";
+        const xfadeType = getTransitionXfadeName(t.type);
         parts.push(
           `[${currentV}][v${idx}]xfade=transition=${xfadeType}:duration=${t.duration}:offset=${offset.toFixed(4)}[${outV}]`,
         );

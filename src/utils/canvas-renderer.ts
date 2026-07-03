@@ -24,6 +24,11 @@ import {
 import { ffmpegColorToCss, sanitizeFfmpegColor } from "./color";
 import { resolveScrollingX } from "./textOverlay";
 import { previewMetrics } from "./previewMetrics";
+import {
+  combineLetterboxWithLayerUv,
+  computeLetterboxUv,
+  uvRectToSourcePixels,
+} from "../webgpu/exportCompositor";
 
 const TARGET_WIDTH = 1280;
 const TARGET_HEIGHT = 720;
@@ -612,18 +617,24 @@ function drawClipLayer(
   layer: PreviewClipLayer,
   source: FrameSource,
 ): void {
-  // Letterbox the source inside the layer's destination rect (full canvas for
-  // base clips, the PiP rect for overlays) — same layout as the export path.
-  const inner = calculateLetterboxRect(
-    source.width || layer.rect.width,
-    source.height || layer.rect.height,
-    layer.rect.width,
-    layer.rect.height,
-  );
+  const destWidth = layer.rect.width;
+  const destHeight = layer.rect.height;
+  const srcW = source.width || destWidth;
+  const srcH = source.height || destHeight;
+
+  const letterbox = computeLetterboxUv(srcW, srcH, destWidth, destHeight);
+  const uv = combineLetterboxWithLayerUv(letterbox, layer.uvScale, layer.uvOffset);
+  const crop = uvRectToSourcePixels(srcW, srcH, uv);
+
+  const inner = calculateLetterboxRect(srcW, srcH, destWidth, destHeight);
   const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = clampOpacity(layer.opacity);
   ctx.drawImage(
     source.image,
+    crop.sx,
+    crop.sy,
+    crop.sw,
+    crop.sh,
     layer.rect.x + inner.x,
     layer.rect.y + inner.y,
     inner.width,
@@ -838,8 +849,47 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
     for (const layer of plan.layers) {
       if (options?.isCancelled?.()) return;
       if (layer.kind === "text") continue;
+
+      if (layer.mediaObjectUrl) {
+        const video = this.mediaPool.getVideoForUrl(
+          layer.clipId,
+          layer.mediaObjectUrl,
+        );
+        const seekStart = performance.now();
+        await seekVideoTo(video, layer.sourceTime);
+        if (options?.isCancelled?.()) return;
+        previewMetrics.recordSeek(performance.now() - seekStart);
+        drawnClipIds.add(layer.clipId);
+        if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) continue;
+
+        frameSources.set(layer.clipId, {
+          image: video,
+          width: video.videoWidth,
+          height: video.videoHeight,
+        });
+        continue;
+      }
+
       const clip = this.clipsById.get(layer.clipId);
       if (!clip || clip.kind !== "video") continue;
+
+      if (clip.stillImage) {
+        const img = this.mediaPool.getStillImage(clip);
+        if (!img.complete) {
+          await new Promise<void>((resolve) => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+          });
+        }
+        if (img.naturalWidth <= 0) continue;
+        drawnClipIds.add(layer.clipId);
+        frameSources.set(layer.clipId, {
+          image: img,
+          width: img.naturalWidth,
+          height: img.naturalHeight,
+        });
+        continue;
+      }
 
       const video = this.mediaPool.getVideo(clip);
       const seekStart = performance.now();

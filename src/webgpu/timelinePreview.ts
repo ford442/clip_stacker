@@ -1,4 +1,9 @@
-import type { Clip } from '../types';
+/**
+ * WebGPU timeline preview — renders transition pairs via the shared WGSL registry.
+ */
+
+import type { Clip, ClipTransition, TextOverlay } from '../types';
+import { projectHasKeyframeAnimation } from '../utils/animatedLayout';
 import {
   buildPreviewCompositionPlan,
   type PreviewClipLayer,
@@ -8,8 +13,13 @@ import {
 } from '../utils/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
 import { previewMetrics } from '../utils/previewMetrics';
-import { computeLetterboxUv } from './exportCompositor';
+import {
+  combineLetterboxWithLayerUv,
+  computeLetterboxUv,
+} from './exportCompositor';
 import { PreviewEngine, type NormalizedDestRect } from './previewEngine';
+import { isRegisteredTransitionType } from './transitions/registry';
+import type { TransitionRenderParams } from './transitions/types';
 
 // Re-exported for backwards compatibility — the pool now lives in utils so the
 // Canvas2D fallback compositor can share it without importing webgpu.
@@ -39,9 +49,75 @@ async function captureVideoFrame(
   }
 }
 
+async function captureStillFrame(
+  img: HTMLImageElement,
+): Promise<VideoFrame | null> {
+  if (!img.complete || img.naturalWidth <= 0) return null;
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = img.naturalWidth;
+    canvas.height = img.naturalHeight;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0);
+    return new VideoFrame(canvas, { timestamp: 0 });
+  } catch {
+    return null;
+  }
+}
+
+function isGpuTransitionPair(
+  outgoing: PreviewClipLayer,
+  incoming: PreviewClipLayer,
+): boolean {
+  if (!outgoing.crossfade || !incoming.crossfade) return false;
+  if (outgoing.crossfade.role !== 'outgoing' || incoming.crossfade.role !== 'incoming') {
+    return false;
+  }
+  if (outgoing.clipId !== outgoing.crossfade.outgoingClipId) return false;
+  if (incoming.clipId !== incoming.crossfade.incomingClipId) return false;
+  return isRegisteredTransitionType(outgoing.crossfade.type);
+}
+
+async function prepareClipFrame(
+  layer: PreviewClipLayer,
+  clip: Clip,
+  mediaPool: ClipMediaPool,
+  options?: TimelineRenderOptions,
+): Promise<VideoFrame | null> {
+  const video = mediaPool.getVideo(clip);
+  const seekStart = performance.now();
+  await seekVideoTo(video, layer.sourceTime);
+  if (options?.isCancelled?.()) return null;
+  previewMetrics.recordSeek(performance.now() - seekStart);
+  return captureVideoFrame(video);
+}
+
+function letterboxForLayer(
+  layer: PreviewClipLayer,
+  video: HTMLVideoElement,
+  frame: VideoFrame,
+  plan: PreviewCompositionPlan,
+): { uvScale: [number, number]; uvOffset: [number, number] } {
+  const destWidth =
+    layer.kind === 'pip' ? layer.rect.width : plan.canvasWidth;
+  const destHeight =
+    layer.kind === 'pip' ? layer.rect.height : plan.canvasHeight;
+  const videoWidth = video.videoWidth || frame.displayWidth || destWidth;
+  const videoHeight =
+    video.videoHeight || frame.displayHeight || destHeight;
+  const letterbox = computeLetterboxUv(
+    videoWidth,
+    videoHeight,
+    destWidth,
+    destHeight,
+  );
+  return combineLetterboxWithLayerUv(letterbox, layer.uvScale, layer.uvOffset);
+}
+
 /**
  * WebGPU timeline compositor — renders a composition plan with multiple
- * video layers (base cuts, dissolves, PiP overlays).
+ * video layers (base cuts, GPU transitions, PiP overlays).
  */
 export class TimelinePreviewEngine implements TimelineCompositor {
   private readonly engine: PreviewEngine;
@@ -99,38 +175,178 @@ export class TimelinePreviewEngine implements TimelineCompositor {
 
     const drawnClipIds = new Set<string>();
     let isFirstLayer = true;
-    for (const layer of clipLayers) {
+
+    for (let index = 0; index < clipLayers.length; index++) {
       if (options?.isCancelled?.()) return;
+
+      const layer = clipLayers[index];
+      const nextLayer = clipLayers[index + 1];
+
+      if (
+        nextLayer &&
+        isGpuTransitionPair(layer, nextLayer) &&
+        layer.crossfade &&
+        nextLayer.crossfade
+      ) {
+        const outgoingClip = this.clipsById.get(layer.clipId);
+        const incomingClip = this.clipsById.get(nextLayer.clipId);
+        if (
+          outgoingClip?.kind === 'video' &&
+          incomingClip?.kind === 'video'
+        ) {
+          const outgoingVideo = this.mediaPool.getVideo(outgoingClip);
+          const incomingVideo = this.mediaPool.getVideo(incomingClip);
+          const fromFrame = await prepareClipFrame(
+            layer,
+            outgoingClip,
+            this.mediaPool,
+            options,
+          );
+          const toFrame = await prepareClipFrame(
+            nextLayer,
+            incomingClip,
+            this.mediaPool,
+            options,
+          );
+          drawnClipIds.add(layer.clipId);
+          drawnClipIds.add(nextLayer.clipId);
+
+          if (fromFrame && toFrame) {
+            if (options?.isCancelled?.()) {
+              fromFrame.close();
+              toFrame.close();
+              return;
+            }
+
+            const fromLetterbox = letterboxForLayer(
+              layer,
+              outgoingVideo,
+              fromFrame,
+              plan,
+            );
+            const toLetterbox = letterboxForLayer(
+              nextLayer,
+              incomingVideo,
+              toFrame,
+              plan,
+            );
+
+            const transitionParams: TransitionRenderParams = {
+              progress: layer.crossfade.progress,
+              fromUvScale: [
+                fromLetterbox.uvScale[0],
+                fromLetterbox.uvScale[1],
+              ],
+              fromUvOffset: [
+                fromLetterbox.uvOffset[0],
+                fromLetterbox.uvOffset[1],
+              ],
+              toUvScale: [toLetterbox.uvScale[0], toLetterbox.uvScale[1]],
+              toUvOffset: [toLetterbox.uvOffset[0], toLetterbox.uvOffset[1]],
+              destRect: { x: 0, y: 0, w: 1, h: 1 },
+              custom: layer.crossfade.params,
+              clear: isFirstLayer,
+            };
+
+            this.engine.renderTransition(
+              fromFrame,
+              toFrame,
+              layer.crossfade.type,
+              transitionParams,
+            );
+            fromFrame.close();
+            toFrame.close();
+            isFirstLayer = false;
+            index += 1;
+            continue;
+          }
+
+          fromFrame?.close();
+          toFrame?.close();
+        }
+      }
 
       const clip = this.clipsById.get(layer.clipId);
+      const mediaUrl = layer.mediaObjectUrl;
+      if (mediaUrl) {
+        const video = this.mediaPool.getVideoForUrl(layer.clipId, mediaUrl);
+        const seekStart = performance.now();
+        await seekVideoTo(video, layer.sourceTime);
+        if (options?.isCancelled?.()) return;
+        previewMetrics.recordSeek(performance.now() - seekStart);
+        drawnClipIds.add(layer.clipId);
+
+        const frame = await captureVideoFrame(video);
+        if (!frame) continue;
+        if (options?.isCancelled?.()) {
+          frame.close();
+          return;
+        }
+
+        const { uvScale, uvOffset } = letterboxForLayer(
+          layer,
+          video,
+          frame,
+          plan,
+        );
+
+        this.engine.renderLayer(frame, {
+          elapsed: layer.localElapsed,
+          duration: layer.clipDuration,
+          fadeIn: 0,
+          fadeOut: 0,
+          opacity: layer.opacity,
+          uvScale,
+          uvOffset,
+          destRect: { x: 0, y: 0, w: 1, h: 1 },
+          clear: isFirstLayer,
+        });
+        frame.close();
+        isFirstLayer = false;
+        continue;
+      }
+
       if (!clip || clip.kind !== 'video') continue;
 
-      const video = this.mediaPool.getVideo(clip);
-      const seekStart = performance.now();
-      await seekVideoTo(video, layer.sourceTime);
-      if (options?.isCancelled?.()) return;
-      previewMetrics.recordSeek(performance.now() - seekStart);
-      drawnClipIds.add(layer.clipId);
+      let frame: VideoFrame | null = null;
+      let videoWidth = plan.canvasWidth;
+      let videoHeight = plan.canvasHeight;
 
-      const frame = await captureVideoFrame(video);
+      if (clip.stillImage) {
+        const img = this.mediaPool.getStillImage(clip);
+        if (!img.complete) {
+          await new Promise<void>((resolve) => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+          });
+        }
+        frame = await captureStillFrame(img);
+        videoWidth = img.naturalWidth || videoWidth;
+        videoHeight = img.naturalHeight || videoHeight;
+      } else {
+        const video = this.mediaPool.getVideo(clip);
+        const seekStart = performance.now();
+        await seekVideoTo(video, layer.sourceTime);
+        if (options?.isCancelled?.()) return;
+        previewMetrics.recordSeek(performance.now() - seekStart);
+        frame = await captureVideoFrame(video);
+        videoWidth = video.videoWidth || videoWidth;
+        videoHeight = video.videoHeight || videoHeight;
+      }
+
       if (!frame) continue;
       if (options?.isCancelled?.()) {
         frame.close();
         return;
       }
+      drawnClipIds.add(layer.clipId);
 
-      const destWidth =
-        layer.kind === 'pip' ? layer.rect.width : plan.canvasWidth;
-      const destHeight =
-        layer.kind === 'pip' ? layer.rect.height : plan.canvasHeight;
-      const videoWidth = video.videoWidth || frame.displayWidth || destWidth;
-      const videoHeight =
-        video.videoHeight || frame.displayHeight || destHeight;
-      const { uvScale, uvOffset } = computeLetterboxUv(
-        videoWidth,
-        videoHeight,
-        destWidth,
-        destHeight,
+      const fakeVideo = { videoWidth, videoHeight } as HTMLVideoElement;
+      const { uvScale, uvOffset } = letterboxForLayer(
+        layer,
+        fakeVideo,
+        frame,
+        plan,
       );
 
       const destRect =
@@ -161,8 +377,10 @@ export class TimelinePreviewEngine implements TimelineCompositor {
 
     if (options?.isCancelled?.()) return;
 
-    // Cap live decoders, protecting the clips drawn this frame (those nearest
-    // the playhead), and report pool occupancy for dev metrics.
+    if (options?.colorGrade) {
+      this.engine.applyColorGrade(options.colorGrade);
+    }
+
     this.mediaPool.enforceBudget(drawnClipIds);
     previewMetrics.setDecoderCount(this.mediaPool.size, this.mediaPool.limit);
   }
@@ -213,8 +431,14 @@ export class TimelinePreviewEngine implements TimelineCompositor {
   }
 }
 
-export function shouldUseTimelinePreview(clips: Clip[]): boolean {
+export function shouldUseTimelinePreview(
+  clips: Clip[],
+  transitions: ClipTransition[] = [],
+  textOverlays: TextOverlay[] = [],
+): boolean {
   if (clips.length === 0) return false;
+  if (projectHasKeyframeAnimation(clips, textOverlays)) return true;
+  if (clips.some((clip) => clip.stillImage)) return true;
   const hasVideo = clips.some((clip) => clip.kind === 'video');
   if (!hasVideo) return false;
   return (
@@ -241,4 +465,9 @@ export async function renderTimelinePreviewFrame(
     globalTime,
     options,
   );
+}
+
+/** Expose the underlying preview engine for export compositing. */
+export function getTimelinePreviewEngine(engine: TimelinePreviewEngine): PreviewEngine {
+  return (engine as unknown as { engine: PreviewEngine }).engine;
 }

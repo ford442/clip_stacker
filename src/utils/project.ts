@@ -13,6 +13,8 @@ import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
 import { clampClipVolume } from './audioVolume';
 import { sanitizeFfmpegColor } from './color';
 import { clampScrollSpeed, DEFAULT_SCROLL_SPEED } from './textOverlay';
+import type { ColorGradeSettings } from './lut';
+import { DEFAULT_COLOR_GRADE, isColorGradeActive } from './lut';
 
 const FADE_SAFETY_MARGIN = 0.01;
 
@@ -95,6 +97,7 @@ export function serializeProject(
   transitions: ClipTransition[] = [],
   textOverlays: TextOverlay[] = [],
   clipGroups: ClipGroup[] = [],
+  colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
 ): Project {
   return {
     clips: clips.map((clip): SerializedClip => ({
@@ -123,7 +126,14 @@ export function serializeProject(
         processedFps: clip.processedFps,
         rifeMode: clip.rifeMode,
       } : {}),
-      ...((clip.layerIndex ?? 0) > 0 || clip.x || clip.y || clip.width || clip.height || (clip.opacity != null && clip.opacity !== 1)
+      ...((clip.layerIndex ?? 0) > 0 ||
+      clip.x ||
+      clip.y ||
+      clip.width ||
+      clip.height ||
+      (clip.opacity != null && clip.opacity !== 1) ||
+      clip.keyframes ||
+      clip.stillImage
         ? {
             layerIndex: clip.layerIndex ?? 0,
             x: clip.x ?? 0,
@@ -133,11 +143,24 @@ export function serializeProject(
             opacity: clip.opacity ?? 1,
           }
         : {}),
+      ...(clip.keyframes ? { keyframes: clip.keyframes } : {}),
+      ...(clip.stillImage ? { stillImage: true } : {}),
     })),
     transitions: transitions.map((t): SerializedTransition => ({
       afterClipIndex: t.afterClipIndex,
       type: t.type,
       duration: t.duration,
+      ...(t.params ? { params: t.params } : {}),
+      ...(t.morphSegment
+        ? {
+            morphSegment: {
+              fileName: t.morphSegment.fileName,
+              duration: t.morphSegment.duration,
+              status: t.morphSegment.status,
+              ...(t.morphSegment.error ? { error: t.morphSegment.error } : {}),
+            },
+          }
+        : {}),
     })),
     ...(clipGroups.length > 0
     ? {
@@ -148,12 +171,14 @@ export function serializeProject(
       }
     : {}),
     ...(textOverlays.length > 0 ? { textOverlays } : {}),
+    ...(isColorGradeActive(colorGrade) ? { colorGrade } : {}),
   };
 }
 
 interface SerializeProjectOptions {
   mediaMode?: 'metadata' | 'embed' | 'remote';
   mediaClient?: ContaboStorageManagerClient;
+  colorGrade?: ColorGradeSettings;
   onRemoteUploadProgress?: (event: RemoteUploadProgressEvent) => void;
   onRemoteUploadError?: (
     event: RemoteUploadErrorEvent,
@@ -188,6 +213,7 @@ export interface AppliedProjectData {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  colorGrade: ColorGradeSettings;
   skippedClipCount: number;
   skippedClipFileNames: string[];
   /** Human-readable descriptions of invalid color values that were reset to defaults. */
@@ -528,7 +554,13 @@ export async function serializeProjectWithMedia(
   options: SerializeProjectOptions = {},
 ): Promise<Project> {
   const mediaMode = options.mediaMode ?? 'metadata';
-  const project = serializeProject(clips, transitions, textOverlays, clipGroups);
+  const project = serializeProject(
+    clips,
+    transitions,
+    textOverlays,
+    clipGroups,
+    options.colorGrade ?? DEFAULT_COLOR_GRADE,
+  );
   if (mediaMode === 'metadata') return project;
 
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));
@@ -705,6 +737,8 @@ export async function applyProjectData(
     if (savedClip.height != null) liveClip.height = Number(savedClip.height);
     if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
     if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
+    if (savedClip.keyframes) liveClip.keyframes = savedClip.keyframes;
+    if (savedClip.stillImage) liveClip.stillImage = savedClip.stillImage;
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
   }
@@ -739,6 +773,18 @@ export async function applyProjectData(
         afterClipIndex: Number(t.afterClipIndex),
         type: t.type ?? 'dissolve',
         duration: Number(t.duration ?? 0.5),
+        ...(t.params ? { params: t.params } : {}),
+        ...(t.morphSegment
+          ? {
+              morphSegment: {
+                objectUrl: '',
+                fileName: t.morphSegment.fileName ?? 'morph.mp4',
+                duration: Number(t.morphSegment.duration ?? t.duration ?? 0.5),
+                status: t.morphSegment.status ?? 'pending',
+                ...(t.morphSegment.error ? { error: t.morphSegment.error } : {}),
+              },
+            }
+          : {}),
       }))
     : [];
 
@@ -775,7 +821,32 @@ export async function applyProjectData(
       })
     : [];
 
-  return { clips: mapped, clipGroups, transitions, textOverlays, skippedClipCount: skippedCount, skippedClipFileNames, invalidColorWarnings, mediaDownloadWarnings };
+  const colorGrade: ColorGradeSettings = project.colorGrade
+    ? {
+        lutId: project.colorGrade.lutId ?? DEFAULT_COLOR_GRADE.lutId,
+        intensity: Number.isFinite(project.colorGrade.intensity)
+          ? Math.max(0, Math.min(1, project.colorGrade.intensity))
+          : DEFAULT_COLOR_GRADE.intensity,
+        ...(project.colorGrade.customCubeText
+          ? { customCubeText: project.colorGrade.customCubeText }
+          : {}),
+        ...(project.colorGrade.customFileName
+          ? { customFileName: project.colorGrade.customFileName }
+          : {}),
+      }
+    : DEFAULT_COLOR_GRADE;
+
+  return {
+    clips: mapped,
+    clipGroups,
+    transitions,
+    textOverlays,
+    colorGrade,
+    skippedClipCount: skippedCount,
+    skippedClipFileNames,
+    invalidColorWarnings,
+    mediaDownloadWarnings,
+  };
 }
 
 export async function loadRemoteProject(

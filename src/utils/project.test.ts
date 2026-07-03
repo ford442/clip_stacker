@@ -216,6 +216,31 @@ describe("utils/project", () => {
       expect(project.clips[0].height).toBe(400);
       expect(project.clips[0].opacity).toBe(0.8);
     });
+
+    it('should serialize keyframes and stillImage flag', () => {
+      const clip = createTestClip('clip1', 5);
+      clip.stillImage = true;
+      clip.keyframes = {
+        uvScaleX: [
+          { t: 0, value: 1, easing: { type: 'linear' } },
+          { t: 5, value: 0.86 },
+        ],
+        opacity: [{ t: 0, value: 1 }],
+      };
+      const project = serializeProject([clip], [], [], []);
+      expect(project.clips[0].stillImage).toBe(true);
+      expect(project.clips[0].keyframes?.uvScaleX).toHaveLength(2);
+      expect(project.clips[0].keyframes?.opacity).toHaveLength(1);
+    });
+
+    it('should serialize color grade settings', () => {
+      const project = serializeProject([], [], [], [], {
+        lutId: 'film',
+        intensity: 0.75,
+      });
+      expect(project.colorGrade?.lutId).toBe('film');
+      expect(project.colorGrade?.intensity).toBe(0.75);
+    });
   });
 
   // =========================================================================
@@ -507,6 +532,66 @@ describe("utils/project", () => {
       expect(result.clips[0].width).toBe(300);
       expect(result.clips[0].height).toBe(200);
       expect(result.clips[0].opacity).toBe(0.7);
+    });
+
+    it('should restore keyframes and stillImage from saved project', async () => {
+      const sourceClips = [createTestClip('source1', 5, 'photo.jpg')];
+      sourceClips[0].file = new File([], 'photo.jpg', { type: 'image/jpeg' });
+
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Photo',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: 'photo.jpg',
+            stillImage: true,
+            keyframes: {
+              x: [{ t: 0, value: 10 }, { t: 2, value: 50 }],
+            },
+          },
+        ],
+      };
+
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.clips[0].stillImage).toBe(true);
+      expect(result.clips[0].keyframes?.x).toHaveLength(2);
+    });
+
+    it('should restore color grade from saved project', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: 'source1.mp4',
+          },
+        ],
+        colorGrade: {
+          lutId: 'teal-orange',
+          intensity: 0.6,
+        },
+      };
+
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.colorGrade.lutId).toBe('teal-orange');
+      expect(result.colorGrade.intensity).toBe(0.6);
     });
   });
 
