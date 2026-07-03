@@ -119,7 +119,6 @@ def setup_environment():
                 f.write(content)
 
 setup_environment()
-import skvideo.io
 
 # ── Core processing ───────────────────────────────────────────────────────────
 
@@ -137,18 +136,84 @@ def get_fps(video_path):
     except:
         return 30.0
 
-def create_boomerang_loop(input_path, output_path, fps):
+def get_duration(video_path):
+    """Get exact video duration in seconds"""
     try:
-        videodata = skvideo.io.vread(input_path)
-        final = np.concatenate((videodata, videodata[::-1]), axis=0)
-        skvideo.io.vwrite(output_path, final,
-                          inputdict={'-r': str(fps)},
-                          outputdict={'-c:v': 'libx264', '-pix_fmt': 'yuv420p',
-                                      '-r': str(fps), '-preset': 'slow',
-                                      '-crf': '17', '-movflags': '+faststart'})
-        return True
+        cmd = ['ffprobe', '-v', 'error', '-show_entries',
+               'format=duration', '-of',
+               'default=noprint_wrappers=1:nokey=1', video_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        return float(result.stdout.strip())
     except:
+        print("⚠️ Could not detect duration, falling back to default behavior")
+        return None
+
+def rife_timeout_seconds(video_path, multi):
+    """Scale RIFE subprocess timeout with clip length and interpolation factor."""
+    duration = get_duration(video_path) or 60.0
+    try:
+        multi_val = max(1, int(str(multi).strip().replace("x", "") or "2"))
+    except ValueError:
+        multi_val = 2
+    # Base overhead plus generous per-second budget scaled by interpolation factor.
+    return max(300, int(duration * multi_val * 45 + 120))
+
+def run_rife_inference(video_path, output_path, multi, label="RIFE"):
+    """Run inference_video.py with a duration-aware timeout."""
+    timeout = rife_timeout_seconds(video_path, multi)
+    try:
+        return subprocess.run(
+            ['python3', 'inference_video.py', '--video', video_path,
+             '--output', output_path, '--multi', str(multi), '--model', 'HDv3'],
+            capture_output=True, text=True, cwd=RIFE_DIR, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        duration = get_duration(video_path)
+        dur_str = f"{duration:.1f}s" if duration is not None else "unknown duration"
+        raise Exception(
+            f"{label} inference timed out after {timeout}s "
+            f"(input {dur_str}, {multi}x multiplier). "
+            "Try a shorter clip or a lower multiplier."
+        ) from e
+
+def create_boomerang_loop(input_path, output_path, fps):
+    """Forward + reversed concat via FFmpeg (no full-frame NumPy load)."""
+    session_id = uuid.uuid4().hex
+    reversed_path = os.path.join(WORKSPACE_DIR, f"boom_rev_{session_id}.mp4")
+    forward_path = os.path.join(WORKSPACE_DIR, f"boom_fwd_{session_id}.mp4")
+    list_path = os.path.join(WORKSPACE_DIR, f"boom_list_{session_id}.txt")
+    encode_args = [
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        '-r', str(fps), '-preset', 'slow', '-crf', '17', '-an',
+    ]
+    try:
+        subprocess.run(
+            ['ffmpeg', '-i', input_path, '-vf', 'reverse', *encode_args,
+             '-y', reversed_path],
+            check=True, capture_output=True, text=True,
+        )
+        subprocess.run(
+            ['ffmpeg', '-i', input_path, *encode_args, '-y', forward_path],
+            check=True, capture_output=True, text=True,
+        )
+        with open(list_path, 'w') as f:
+            f.write(f"file '{forward_path}'\n")
+            f.write(f"file '{reversed_path}'\n")
+        subprocess.run([
+            'ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_path,
+            '-c', 'copy', '-movflags', '+faststart', '-y', output_path,
+        ], check=True, capture_output=True, text=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Boomerang failed: {e.stderr or e}")
         return False
+    finally:
+        for p in (reversed_path, forward_path, list_path):
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except OSError:
+                pass
 
 @spaces.GPU(required=True)
 def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
@@ -165,11 +230,8 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
     boomerang_path = os.path.join(WORKSPACE_DIR, f"final_boom_{session_id}.mp4")
     no_audio = output_path.replace(".mp4", "_noaudio.mp4")
 
-    r = subprocess.run(
-        ['python3', 'inference_video.py', '--video', safe_input,
-         '--output', output_path, '--multi', factor, '--model', 'HDv3'],
-        capture_output=True, text=True, cwd=RIFE_DIR, timeout=300)
-    
+    r = run_rife_inference(safe_input, output_path, factor, label="RIFE")
+
     if r.returncode != 0:
         raise Exception(f"RIFE failed: {r.stderr}")
     
@@ -207,10 +269,7 @@ def morph_transition(frame_pair_video, frame_count, output_fps=30):
     # 2-frame input → (2-1)*multi + 1 frames from RIFE; pick multi to cover target.
     multi = max(2, frame_count - 1)
 
-    r = subprocess.run(
-        ['python3', 'inference_video.py', '--video', safe_input,
-         '--output', rife_out, '--multi', str(multi), '--model', 'HDv3'],
-        capture_output=True, text=True, cwd=RIFE_DIR, timeout=300)
+    r = run_rife_inference(safe_input, rife_out, multi, label="RIFE morph")
 
     if r.returncode != 0:
         raise Exception(f"RIFE morph failed: {r.stderr}")
@@ -236,18 +295,6 @@ def morph_transition(frame_pair_video, frame_count, output_fps=30):
 
     return morph_out
 
-def get_duration(video_path):
-    """Get exact video duration in seconds"""
-    try:
-        cmd = ['ffprobe', '-v', 'error', '-show_entries',
-               'format=duration', '-of',
-               'default=noprint_wrappers=1:nokey=1', video_path]
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return float(result.stdout.strip())
-    except:
-        print("⚠️ Could not detect duration, falling back to default behavior")
-        return None
-        
 def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="Keep original audio", overlay_vol=1.0):
     if not video_files:
         return None
@@ -436,84 +483,6 @@ def remove_clip(paths, thumbs, sel):
     new_sel = max(0, min(sel, len(paths) - 1))
     return paths, thumbs, render_panel(paths, thumbs, new_sel), new_sel
 
-def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="Keep original audio", overlay_vol=1.0):
-    if not video_files:
-        return None
-    try:
-        target_w, target_h = resolution_choice.split("x")
-    except:
-        target_w, target_h = "1920", "1080"
-    
-    session_id = uuid.uuid4().hex
-    list_path = os.path.join(WORKSPACE_DIR, f"stitch_list_{session_id}.txt")
-    concat_video = os.path.join(WORKSPACE_DIR, f"concat_{session_id}.mp4")
-    output_final = os.path.join(WORKSPACE_DIR, f"final_stitched_{session_id}.mp4")
-    temp_dir = os.path.join(WORKSPACE_DIR, f"temp_stitch_{session_id}")
-    os.makedirs(temp_dir, exist_ok=True)
-
-    # ── Step 1: Normalize clips ─────────────────────────────────────
-    normalized = []
-    for i, vid_path in enumerate(video_files):
-        out = os.path.join(temp_dir, f"norm_{i}.mp4")
-        scale = (f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-                 f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2")
-        subprocess.run([
-            'ffmpeg', '-i', vid_path, '-r', '60', '-vf', scale,
-            '-c:v', 'libx264', '-crf', '23',
-            '-c:a', 'aac', '-ar', '44100', '-y', out
-        ], check=True)
-        normalized.append(out)
-
-    # Write concat list
-    with open(list_path, 'w') as f:
-        for p in normalized:
-            f.write(f"file '{p}'\n")
-           
-    # ── Step 2: Concatenate videos ─────────────────────────────────
-    subprocess.run([
-        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_path,
-        '-c', 'copy', '-y', concat_video
-    ], check=True)
-
-    # ── Step 3: Final audio handling (FIXED) ───────────────────────
-    cmd = ['ffmpeg', '-i', concat_video, '-y']
-
-    if audio_mode == "Replace with uploaded audio" and audio_file and os.path.exists(audio_file):
-        # Replace original audio completely
-        cmd += ['-i', audio_file,
-                '-map', '0:v:0',
-                '-map', '1:a:0',
-                '-c:v', 'copy',
-                '-c:a', 'aac',
-                '-shortest',
-                output_final]
-
-    elif audio_mode == "Overlay/Mix uploaded audio on top" and audio_file and os.path.exists(audio_file):
-        # Proper mix: volume only on uploaded track + amix
-        vol = float(overlay_vol)
-        filter_complex = f"[1:a]volume={vol}[a1];[0:a][a1]amix=inputs=2:duration=first:dropout_transition=3[a]"
-        cmd += ['-i', audio_file,
-                '-filter_complex', filter_complex,
-                '-map', '0:v:0',
-                '-map', '[a]',
-                '-c:v', 'copy',
-                '-c:a', 'aac',
-                '-shortest',
-                output_final]
-    else:
-        # Keep original audio
-        cmd += ['-c', 'copy', output_final]
-
-    subprocess.run(cmd, check=True)
-
-    # Cleanup
-    shutil.rmtree(temp_dir, ignore_errors=True)
-    for p in [concat_video, list_path]:
-        if os.path.exists(p):
-            os.remove(p)
-
-    return output_final
-    
 # ── Gradio UI ─────────────────────────────────────────────────────────────────
 
 CSS = """
