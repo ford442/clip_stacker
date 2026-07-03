@@ -46,7 +46,7 @@ jobs:
           DEPLOY_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.target || 'test' }}
         run: |
           if [ -z "$DEPLOY_TOKEN" ]; then
-            echo "DEPLOY_TOKEN secret is not configured — skipping deploy."
-            exit 0
+            echo "::error::DEPLOY_TOKEN secret is not configured — cannot deploy to test.1ink.us."
+            exit 1
           fi
           python3 deploy.py

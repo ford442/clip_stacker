@@ -185,6 +185,25 @@ describe("stitchClipsOnGpu", () => {
     );
   });
 
+  it("unwraps Gradio 5 VideoData { video, subtitles } from /stitch", async () => {
+    const stitched = makeMp4Blob("video-data");
+    const sse =
+      'event: complete\ndata: [{"video":{"path":"/tmp/out.mp4","url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/out.mp4"},"subtitles":null}]\n\n';
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
+      if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/stitch/ev1")) return sseResponse(sse);
+      if (url.includes("file=")) {
+        return { ok: true, status: 200, blob: async () => stitched } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await stitchClipsOnGpu([makeBlob()], "1920x1080");
+    expect(result.blob).toBe(stitched);
+  });
+
   it("accepts a bare server path string in the complete payload", async () => {
     const stitched = makeMp4Blob("path-string");
     const sse =
