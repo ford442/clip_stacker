@@ -49,6 +49,8 @@ export class FfmpegManager {
   private loadFailed = false;
   private loadGeneration = 0;
   private fontLoaded = false;
+  /** Virtual font filenames that have been written to the current VFS. */
+  private readonly loadedFonts = new Set<string>();
   private readonly logBuffer: string[] = [];
   private lastErrorLog: string | null = null;
   private lastCommand: string[] | null = null;
@@ -82,12 +84,24 @@ export class FfmpegManager {
     return this.instance;
   }
 
-  isFontLoaded(): boolean {
+  isFontLoaded(name?: string): boolean {
+    if (name) return this.loadedFonts.has(name);
     return this.fontLoaded;
   }
 
-  setFontLoaded(value: boolean): void {
-    this.fontLoaded = value;
+  /** Mark a specific virtual font filename as loaded in the current VFS. */
+  markFontLoaded(name: string): void {
+    this.loadedFonts.add(name);
+    // Maintain legacy flag for the historical default roboto.
+    if (name === 'roboto.ttf') {
+      this.fontLoaded = true;
+    }
+  }
+
+  /** Clear all per-instance font tracking (called on reset/new instance). */
+  resetFonts(): void {
+    this.fontLoaded = false;
+    this.loadedFonts.clear();
   }
 
   recordLog(message: string): void {
@@ -193,7 +207,7 @@ export class FfmpegManager {
     onStatus: StatusCallback,
     onProgress?: ProgressCallback,
   ): Promise<IFfmpegRuntime> {
-    this.fontLoaded = false;
+    this.resetFonts();
     this.attachWorkerLogListener();
 
     emitLoadStatus(
@@ -358,7 +372,7 @@ export class FfmpegManager {
           this.loadingPromise = null;
           this.loadFailed = true;
           this.instance = null;
-          this.fontLoaded = false;
+          this.resetFonts();
         }
         throw err;
       });
@@ -403,7 +417,7 @@ export class FfmpegManager {
     }
     this.loadingPromise = null;
     this.loadFailed = false;
-    this.fontLoaded = false;
+    this.resetFonts();
     this.workerRuntime = null;
     this.detachWorkerLogListener();
     if (this.useWorker) {

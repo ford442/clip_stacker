@@ -22,7 +22,7 @@ import {
   type TimelineRenderOptions,
 } from "./previewComposition";
 import { ffmpegColorToCss, sanitizeFfmpegColor } from "./color";
-import { resolveScrollingX } from "./textOverlay";
+import { getBundledFont, resolveScrollingX } from "./textOverlay";
 import { previewMetrics } from "./previewMetrics";
 import {
   combineLetterboxWithLayerUv,
@@ -664,7 +664,9 @@ function drawTextLayer(
   // preview canvas (layer.x/y are already scaled by the plan).
   const fontsize = overlay.fontsize * scale;
   ctx.textBaseline = "top";
-  ctx.font = `${fontsize}px sans-serif`;
+  const family = getBundledFont(overlay.font).familyName;
+  // Quote the family to be safe with names containing spaces.
+  ctx.font = `${fontsize}px "${family}"`;
 
   const textWidth = ctx.measureText(overlay.text).width;
   const textHeight = fontsize;
@@ -761,6 +763,99 @@ export function renderTextOverlayCanvas(
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   drawTextOverlays(ctx, plan);
+}
+
+/**
+ * Async variant that supports shader-filled overlays.
+ * For 'solid' overlays it uses the fast 2D path. For 'shader' overlays it
+ * uses the WebGPU text fill renderer (when available) to produce matching
+ * procedural results for preview and export.
+ */
+export async function renderTextOverlaysAsync(
+  canvas: HTMLCanvasElement,
+  plan: PreviewCompositionPlan,
+): Promise<void> {
+  if (canvas.width !== plan.canvasWidth) canvas.width = plan.canvasWidth;
+  if (canvas.height !== plan.canvasHeight) canvas.height = plan.canvasHeight;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Quick path: no shader fills -> existing behavior
+  const hasShader = plan.layers.some(
+    (l: any) => l.kind === 'text' && (l.overlay as any)?.fill === 'shader',
+  );
+  if (!hasShader) {
+    drawTextOverlays(ctx, plan);
+    return;
+  }
+
+  // Mixed path: draw solid and shader layers appropriately.
+  // We draw box rects (flat) for all, then glyphs via solid or GPU fill.
+  for (const layer of plan.layers) {
+    if (layer.kind !== 'text') continue;
+    const overlay = (layer as any).overlay as import('../types').TextOverlay;
+    if (!overlay || !overlay.text) continue;
+
+    const useShader = overlay.fill === 'shader';
+    // Draw box first (flat color) if requested — same for both modes.
+    if (overlay.box) {
+      const { color, alpha } = ffmpegColorToCss(
+        sanitizeFfmpegColor(overlay.boxColor, DEFAULT_BOX_COLOR),
+      );
+      const prev = ctx.globalAlpha;
+      ctx.globalAlpha = Math.max(0, Math.min(1, (layer as any).opacity ?? 1)) * alpha;
+      const fs = overlay.fontsize * plan.scale;
+      const pad = Math.round(fs * 0.2);
+      // Approximate text width using current font for box sizing (best effort)
+      const family = getBundledFont(overlay.font).familyName;
+      ctx.font = `${fs}px "${family}"`;
+      ctx.textBaseline = 'top';
+      const tw = ctx.measureText(overlay.text).width;
+      const x = (overlay as any).scrolling
+        ? resolveScrollingX(overlay.scrollSpeed, plan.globalTime, plan.canvasWidth, tw)
+        : (layer as any).x;
+      ctx.fillStyle = color;
+      ctx.fillRect(x - pad, (layer as any).y - pad, tw + pad * 2, fs + pad * 2);
+      ctx.globalAlpha = prev;
+    }
+
+    if (useShader) {
+      // GPU fill path
+      try {
+        const { getTextFillRenderer } = await import('../webgpu/text/textFill');
+        const renderer = await getTextFillRenderer();
+        // Build a mask for just this overlay at plan res
+        const { createSingleOverlayGlyphMask } = await import('./textMask');
+        const mask = createSingleOverlayGlyphMask(
+          overlay,
+          plan.globalTime,
+          plan.canvasWidth,
+          plan.canvasHeight,
+        );
+        const filled = await renderer.render(mask, {
+          time: plan.globalTime,
+          shaderId: overlay.shaderId,
+          params: overlay.shaderParams,
+          width: plan.canvasWidth,
+          height: plan.canvasHeight,
+        });
+        // Draw the filled glyphs at full opacity for the layer (opacity baked in mask or fill)
+        const prev = ctx.globalAlpha;
+        ctx.globalAlpha = Math.max(0, Math.min(1, (layer as any).opacity ?? 1));
+        ctx.drawImage(filled, 0, 0);
+        ctx.globalAlpha = prev;
+      } catch {
+        // Fallback to solid if GPU path fails
+        drawTextLayer(ctx, layer as any, plan.globalTime, plan.canvasWidth, plan.scale);
+      }
+    } else {
+      // Solid path reuses existing per-layer draw (color + alpha)
+      drawTextLayer(ctx, layer as any, plan.globalTime, plan.canvasWidth, plan.scale);
+    }
+  }
 }
 
 /**

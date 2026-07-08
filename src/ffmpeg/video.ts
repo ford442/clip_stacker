@@ -44,6 +44,7 @@ import {
   _doLoadFfmpeg,
   ensureFfmpeg,
   ensureFont,
+  ensureFontsForOverlays,
   buildDrawtextFilter,
   appendTextOverlayFilters,
   mergeClipsLossless,
@@ -270,7 +271,7 @@ export async function mergeClipsWithCompositing(
   );
 
   if (textOverlays.length > 0) {
-    await ensureFont(ffmpeg, onStatus);
+    await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);
     filterComplex = appendTextOverlayFilters(filterComplex, textOverlays);
   }
 

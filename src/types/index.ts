@@ -278,6 +278,11 @@ export interface TextOverlay {
   fontsize: number;
   /** Font color — any FFmpeg color value: name ('white'), hex ('#ffffff'), or '0xRRGGBB' */
   fontcolor: string;
+  /**
+   * Bundled font id to use for this overlay (e.g. 'roboto', 'robotoBold', 'serif', 'mono').
+   * If omitted or unknown at load time, falls back to the default (Roboto Regular).
+   */
+  font?: string;
   /** X position in pixels from left (ignored for scrolling text, which starts off-screen right) */
   x: number;
   /** Y position in pixels from top */
@@ -296,6 +301,21 @@ export interface TextOverlay {
   boxColor: string;
   /** Optional keyframe animation (time = seconds on the output timeline). */
   keyframes?: TextOverlayKeyframes;
+
+  /**
+   * Fill mode for the text glyphs.
+   * - 'solid': use flat fontcolor (current behavior, works on all paths including FFmpeg)
+   * - 'shader': procedural WGSL fill sampled inside the glyph mask (GPU paths only)
+   * Defaults to 'solid' when omitted.
+   */
+  fill?: 'solid' | 'shader';
+  /**
+   * Identifier of a registered shader fill when fill === 'shader'.
+   * Unknown ids fall back to solid on load with a warning.
+   */
+  shaderId?: string;
+  /** Per-shader numeric parameters (uniforms). Keys are shader-defined. */
+  shaderParams?: Record<string, number>;
 }
 
 export interface SerializedClipGroup {

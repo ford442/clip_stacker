@@ -70,4 +70,18 @@ describe('renderEligibility', () => {
       ),
     ).toBe(true);
   });
+
+  it('requires WebGPU for shader-filled text overlays', () => {
+    const ov = {
+      id: 't1', text: 'Hi', fontsize: 24, fontcolor: 'white', x: 0, y: 0,
+      scrolling: false, scrollSpeed: 20, box: false, boxColor: 'black@0.5',
+      fill: 'shader' as const, shaderId: 'gradient',
+    };
+    // Without webGpuAvailable, cannot use GPU encoder
+    expect(canUseGpuVideoEncoder([makeClip()], [], [ov as any])).toBe(false);
+    // With webGpuAvailable, allowed (shader forces timeline GPU path)
+    expect(
+      canUseGpuVideoEncoder([makeClip()], [], [ov as any], { webGpuAvailable: true }),
+    ).toBe(true);
+  });
 });

@@ -23,6 +23,7 @@ import {
 } from "../webgpu/timelinePreview";
 import {
   renderTextOverlayCanvas,
+  renderTextOverlaysAsync,
   TimelineCanvas2DRenderer,
 } from "../utils/canvas-renderer";
 import type { TimelineCompositor } from "../utils/previewComposition";
@@ -237,7 +238,11 @@ function TimelineCompositorPreview({
         // Final pass: draw text overlays onto the stacked 2D canvas above the
         // video composite (works identically for both backends).
         if (textCanvasRef.current && !isCancelled()) {
-          renderTextOverlayCanvas(textCanvasRef.current, plan);
+          if (textOverlays.some((o) => o.fill === 'shader')) {
+            await renderTextOverlaysAsync(textCanvasRef.current, plan);
+          } else {
+            renderTextOverlayCanvas(textCanvasRef.current, plan);
+          }
         }
 
         const { height: outputHeight } = parseOutputResolution(
@@ -320,6 +325,9 @@ function TimelineCompositorPreview({
       engineRef.current = engine;
       backendRef.current = chosen;
       setBackend(chosen);
+      if (textOverlays.some((o) => o.fill === 'shader') && chosen !== 'webgpu') {
+        setDegradationMessage('Shader text requires WebGPU — using solid fallback for preview/export.');
+      }
       renderFailuresRef.current = 0;
       const time = playheadTime ?? globalTimeRef.current;
       globalTimeRef.current = time;

@@ -39,3 +39,30 @@ Non-obvious caveats:
 - Dependencies are installed with `npm install`, not `npm ci`: the committed `package-lock.json` historically drifted from `package.json` (missing optional `@esbuild/*` platform packages), which makes `npm ci` abort.
 - `npm run dev` does not render in a CSP-enforcing browser as-is. `index.html` ships a static `Content-Security-Policy` meta tag with `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-inline'`), which blocks Vite's injected inline React-refresh/HMR preamble script and leaves a blank page with `@vitejs/plugin-react can't detect preamble` console errors. To run/verify the app in the browser, use the production build instead: `npm run build` then `npm run preview` (serves on `http://localhost:4173/`, no inline scripts, CSP-clean). Do not relax the CSP just to make dev mode load unless that is the actual task.
 - FFmpeg WASM needs cross-origin isolation; both the dev and preview servers already set the required COOP/COEP headers, so use those servers rather than a generic static server.
+
+## Text overlay fonts
+
+Text overlays (`TextOverlay`) carry an optional `font` id (string). When omitted or unknown on load, the overlay falls back to the default Roboto Regular for backward compatibility with old projects.
+
+Bundled fonts live in `public/fonts/` and are registered in one place:
+
+- `src/utils/textOverlay.ts` — `BUNDLED_FONTS`, `getBundledFont(id)`, `resolveFontFileForOverlay`, `buildDrawtextFilter`
+- `src/ffmpeg/core.ts` — `ensureFont` / `ensureFontsForOverlays`, `FONT_URL_BY_VIRTUAL` (virtual name → fetch URL)
+- `src/utils/canvas-renderer.ts` — `drawTextLayer` sets `ctx.font` using the CSS `familyName`
+- `src/styles/fonts.css` — `@font-face` declarations (required for Canvas2D metrics)
+- `src/utils/project.ts` — `applyProjectData` resolves font ids with safe fallback; `serializeProject` round-trips the id as-is
+
+Adding a font:
+
+1. Place a license-safe `.ttf` in `public/fonts/`.
+2. Add an entry to `BUNDLED_FONTS` with stable `id`, display `label`, CSS `familyName`, `fileName`, and `virtualName` (the name written to the FFmpeg VFS).
+3. Add a matching `@font-face` in `src/styles/fonts.css` pointing at `/fonts/<fileName>`.
+4. If the virtual name is new, add a URL mapping in `FONT_URL_BY_VIRTUAL` in `core.ts`.
+5. Add or update tests in `textOverlay.test.ts` (filter strings) and `project.test.ts` (round-trip + unknown fallback).
+6. Update docs (README table + this section).
+
+Current small set (license notes):
+- Roboto Regular/Bold — Apache License 2.0 (Google)
+- DejaVu Serif / Sans Mono — Bitstream Vera fonts (public domain-like) + DejaVu additions (free)
+
+Never embed user-supplied custom fonts (out of scope).

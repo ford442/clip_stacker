@@ -21,7 +21,7 @@ import { computeTotalDuration } from './transitions';
 import { shouldUseTimelineGpuExport } from './renderEligibility';
 import { DEFAULT_COLOR_GRADE, type ColorGradeSettings } from './lut';
 import { buildPreviewCompositionPlan } from './previewComposition';
-import { drawTextOverlays } from './canvas-renderer';
+import { drawTextOverlays, renderTextOverlaysAsync } from './canvas-renderer';
 import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
 import { getTimelineClips } from './timelineClips';
@@ -311,7 +311,12 @@ async function encodeTimelineComposite(
 
       exportCtx.drawImage(videoCanvas, 0, 0);
       if (textOverlays.length > 0) {
-        drawTextOverlays(exportCtx, plan);
+        const hasShader = textOverlays.some((o) => o.fill === 'shader');
+        if (hasShader) {
+          await renderTextOverlaysAsync(exportCtx.canvas, plan);
+        } else {
+          drawTextOverlays(exportCtx, plan);
+        }
       }
 
       const frame = new VideoFrame(exportCanvas, {

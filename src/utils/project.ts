@@ -12,7 +12,13 @@ import type {
 import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
 import { clampClipVolume } from './audioVolume';
 import { sanitizeFfmpegColor } from './color';
-import { clampScrollSpeed, DEFAULT_SCROLL_SPEED } from './textOverlay';
+import {
+  clampScrollSpeed,
+  DEFAULT_FONT_ID,
+  DEFAULT_SCROLL_SPEED,
+  getBundledFont,
+} from './textOverlay';
+import { isKnownTextShader } from '../webgpu/text/registry';
 import type { ColorGradeSettings } from './lut';
 import { DEFAULT_COLOR_GRADE, isColorGradeActive } from './lut';
 
@@ -806,6 +812,25 @@ export async function applyProjectData(
             `Text overlay ${label}: invalid box color "${rawBoxColor}" reset to ${boxColor}.`,
           );
         }
+        // Font family: resolve with safe fallback to default (Roboto) for
+        // overlays saved without the field or with an unrecognized id.
+        const rawFont = typeof o.font === 'string' && o.font.trim() ? o.font.trim() : undefined;
+        const resolved = getBundledFont(rawFont);
+        // Fill / shader handling
+        const rawFill = (o as any).fill;
+        const fill: 'solid' | 'shader' | undefined =
+          rawFill === 'shader' ? 'shader' : rawFill === 'solid' ? 'solid' : undefined;
+        const rawShaderId = typeof (o as any).shaderId === 'string' ? (o as any).shaderId.trim() : undefined;
+        const shaderId = rawShaderId && isKnownTextShader(rawShaderId) ? rawShaderId : undefined;
+        if (rawShaderId && !isKnownTextShader(rawShaderId)) {
+          invalidColorWarnings.push(
+            `Text overlay ${label}: unknown shader "${rawShaderId}" — falling back to solid color.`,
+          );
+        }
+        const shaderParams =
+          (o as any).shaderParams && typeof (o as any).shaderParams === 'object'
+            ? { ...(o as any).shaderParams }
+            : undefined;
         return {
           id: String(o.id ?? ''),
           text: String(o.text ?? ''),
@@ -817,6 +842,10 @@ export async function applyProjectData(
           scrollSpeed: clampScrollSpeed(Number(o.scrollSpeed ?? DEFAULT_SCROLL_SPEED)),
           box: Boolean(o.box),
           boxColor,
+          ...(resolved.id !== DEFAULT_FONT_ID ? { font: resolved.id } : {}),
+          ...(fill ? { fill } : {}),
+          ...(shaderId ? { shaderId } : {}),
+          ...(shaderParams ? { shaderParams } : {}),
         };
       })
     : [];

@@ -6,6 +6,10 @@ import {
   resolveScrollingX,
   escapeDrawtext,
   buildDrawtextFilter,
+  resolveFontFileForOverlay,
+  getBundledFont,
+  BUNDLED_FONTS,
+  DEFAULT_FONT_ID,
   DEFAULT_SCROLL_SPEED,
   MIN_SCROLL_SPEED,
   MAX_SCROLL_SPEED,
@@ -125,5 +129,75 @@ describe("buildDrawtextFilter", () => {
         boxColor: "black@0.5",
       }),
     ).toThrow(/invalid font color/i);
+  });
+
+  it("uses the default roboto fontfile when font is omitted", () => {
+    const filter = buildDrawtextFilter({
+      id: "o1",
+      text: "Hi",
+      fontsize: 24,
+      fontcolor: "white",
+      x: 0,
+      y: 0,
+      scrolling: false,
+      scrollSpeed: 20,
+      box: false,
+      boxColor: "black@0.5",
+    });
+    expect(filter).toContain("fontfile=roboto.ttf");
+  });
+
+  it("emits the correct fontfile for explicit font ids", () => {
+    const base = {
+      id: "o1",
+      text: "Hi",
+      fontsize: 24,
+      fontcolor: "white",
+      x: 0,
+      y: 0,
+      scrolling: false,
+      scrollSpeed: 20,
+      box: false,
+      boxColor: "black@0.5",
+    } as const;
+
+    expect(buildDrawtextFilter({ ...base, font: "roboto" })).toContain(
+      "fontfile=roboto.ttf",
+    );
+    expect(buildDrawtextFilter({ ...base, font: "robotoBold" })).toContain(
+      "fontfile=robotoBold.ttf",
+    );
+    expect(buildDrawtextFilter({ ...base, font: "serif" })).toContain(
+      "fontfile=serif.ttf",
+    );
+    expect(buildDrawtextFilter({ ...base, font: "mono" })).toContain(
+      "fontfile=mono.ttf",
+    );
+  });
+
+  it("resolveFontFileForOverlay returns the virtual name for the overlay font", () => {
+    expect(
+      resolveFontFileForOverlay({ font: "serif" } as any),
+    ).toBe("serif.ttf");
+    expect(resolveFontFileForOverlay({} as any)).toBe("roboto.ttf");
+  });
+});
+
+describe("font registry", () => {
+  it("exposes at least 3 bundled fonts", () => {
+    expect(BUNDLED_FONTS.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("getBundledFont returns the default for undefined / unknown", () => {
+    const def = getBundledFont(undefined);
+    expect(def.id).toBe(DEFAULT_FONT_ID);
+    expect(getBundledFont("nope").id).toBe(DEFAULT_FONT_ID);
+    expect(getBundledFont(null as any).id).toBe(DEFAULT_FONT_ID);
+  });
+
+  it("getBundledFont resolves known ids", () => {
+    expect(getBundledFont("roboto").label).toMatch(/Roboto/i);
+    expect(getBundledFont("serif").familyName).toMatch(/Serif/i);
+    expect(getBundledFont("mono").virtualName).toBe("mono.ttf");
   });
 });

@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 import type { Clip, TextOverlay } from '../types';
 import { buildPreviewCompositionPlan } from './previewComposition';
 import { drawTextOverlays } from './canvas-renderer';
+import { getBundledFont } from './textOverlay';
 
 type Call = [op: string, ...args: unknown[]];
 
@@ -120,5 +121,16 @@ describe('drawTextOverlays', () => {
 
   it('draws nothing when there are no overlays', () => {
     expect(draw([], 1)).toHaveLength(0);
+  });
+
+  it('uses the selected font family for ctx.font (spot-check via registry + draw)', () => {
+    // Draw with explicit font id; verify the family name we will feed to ctx.font.
+    const fam = getBundledFont('mono').familyName;
+    expect(fam).toMatch(/Mono/i);
+
+    // Exercise the draw path with a mono overlay; it must not throw and must produce a fillText.
+    const calls = draw([overlay({ text: 'Mono', font: 'mono' })], 0.5);
+    const text = calls.filter((c) => c[0] === 'fillText');
+    expect(text.length).toBeGreaterThan(0);
   });
 });

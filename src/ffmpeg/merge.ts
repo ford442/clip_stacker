@@ -40,6 +40,7 @@ import {
   withTimeout,
   ensureFfmpeg,
   ensureFont,
+  ensureFontsForOverlays,
   buildDrawtextFilter,
   mergeClipsLossless,
   performTwoPassEncode,
@@ -240,7 +241,7 @@ export async function mergeClips(
   let finalFileName = "stacked.mp4";
 
   if (textOverlays.length > 0 && !textOverlaysApplied) {
-    await ensureFont(ffmpeg, onStatus);
+    await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);
 
     const vfFilter = textOverlays
       .map((overlay) => buildDrawtextFilter(overlay))

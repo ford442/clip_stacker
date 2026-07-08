@@ -184,6 +184,27 @@ describe("utils/project", () => {
       expect(project.textOverlays).toHaveLength(1);
     });
 
+    it("should round-trip an explicit font id through serialize", () => {
+      const clips = [createTestClip("clip1", 5)];
+      const textOverlays: TextOverlay[] = [
+        {
+          id: "text1",
+          text: "Ticker",
+          fontsize: 28,
+          fontcolor: "white",
+          x: 0,
+          y: 0,
+          scrolling: true,
+          scrollSpeed: 30,
+          box: false,
+          boxColor: "black@0.5",
+          font: "mono",
+        },
+      ];
+      const project = serializeProject(clips, [], textOverlays, []);
+      expect(project.textOverlays?.[0]?.font).toBe("mono");
+    });
+
     it("should serialize clip groups", () => {
       const clips = [createTestClip("a", 5)];
       const clipGroups: ClipGroup[] = [
@@ -458,6 +479,126 @@ describe("utils/project", () => {
       expect(result.textOverlays[0].fontcolor).toBe("yellow");
       expect(result.textOverlays[0].boxColor).toBe("black@0.5");
       expect(result.invalidColorWarnings).toHaveLength(0);
+    });
+
+    it("should default text overlay font to roboto when field is absent (backward compat)", async () => {
+      const sourceClips = [createTestClip("a", 5)];
+      const project: Project = {
+        clips: [],
+        textOverlays: [
+          {
+            id: "ov1",
+            text: "Legacy",
+            fontsize: 32,
+            fontcolor: "white",
+            x: 10,
+            y: 10,
+            scrolling: false,
+            scrollSpeed: 20,
+            box: false,
+            boxColor: "black@0.5",
+            // no 'font' field on purpose
+          } as TextOverlay,
+        ],
+      };
+      const result = await applyProjectData(project, sourceClips);
+      // When default, we omit the field on restore to keep shape minimal
+      expect(result.textOverlays[0].font).toBeUndefined();
+    });
+
+    it("should preserve a valid explicit font id through apply", async () => {
+      const sourceClips = [createTestClip("a", 5)];
+      const project: Project = {
+        clips: [],
+        textOverlays: [
+          {
+            id: "ov1",
+            text: "Bold",
+            fontsize: 32,
+            fontcolor: "white",
+            x: 10,
+            y: 10,
+            scrolling: false,
+            scrollSpeed: 20,
+            box: false,
+            boxColor: "black@0.5",
+            font: "robotoBold",
+          },
+        ],
+      };
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.textOverlays[0].font).toBe("robotoBold");
+    });
+
+    it("should fall back to default for unknown font id without crashing", async () => {
+      const sourceClips = [createTestClip("a", 5)];
+      const project: Project = {
+        clips: [],
+        textOverlays: [
+          {
+            id: "ov1",
+            text: "Weird",
+            fontsize: 32,
+            fontcolor: "white",
+            x: 10,
+            y: 10,
+            scrolling: false,
+            scrollSpeed: 20,
+            box: false,
+            boxColor: "black@0.5",
+            font: "nonexistent-font",
+          },
+        ],
+      };
+      const result = await applyProjectData(project, sourceClips);
+      // Falls back; we don't persist default in the restored object
+      expect(result.textOverlays[0].font).toBeUndefined();
+    });
+
+    it("should preserve shader fill fields and warn on unknown shaderId", async () => {
+      const sourceClips = [createTestClip("a", 5)];
+      const project: Project = {
+        clips: [],
+        textOverlays: [
+          {
+            id: "ov1",
+            text: "FX",
+            fontsize: 30,
+            fontcolor: "white",
+            x: 5,
+            y: 5,
+            scrolling: false,
+            scrollSpeed: 20,
+            box: true,
+            boxColor: "black@0.3",
+            fill: "shader",
+            shaderId: "gradient",
+            shaderParams: { speed: 2.5 },
+          } as any,
+          {
+            id: "ov2",
+            text: "BadFX",
+            fontsize: 20,
+            fontcolor: "white",
+            x: 0,
+            y: 0,
+            scrolling: false,
+            scrollSpeed: 20,
+            box: false,
+            boxColor: "black@0.5",
+            fill: "shader",
+            shaderId: "nope-shader",
+          } as any,
+        ],
+      };
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.textOverlays[0].fill).toBe("shader");
+      expect(result.textOverlays[0].shaderId).toBe("gradient");
+      expect(result.textOverlays[0].shaderParams?.speed).toBeCloseTo(2.5);
+      // Unknown shader falls back and emits a warning
+      expect(result.textOverlays[1].fill).toBe("shader");
+      expect(result.textOverlays[1].shaderId).toBeUndefined();
+      expect(result.invalidColorWarnings.some((w) => /unknown shader/i.test(w))).toBe(true);
     });
 
     it("should throw error if project is invalid", async () => {

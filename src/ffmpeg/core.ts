@@ -8,7 +8,10 @@ import type {
 import { getClipDuration } from "../utils/project";
 import { resolveTargetResolution } from "../utils/resolution";
 import { audioVolumeFilterSegment, clipHasVolumeAdjustment } from "../utils/audioVolume";
-import { buildDrawtextFilter } from "../utils/textOverlay";
+import {
+  buildDrawtextFilter,
+  resolveFontFileForOverlay,
+} from "../utils/textOverlay";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   buildFfmpegLoadErrorMessage,
@@ -66,6 +69,14 @@ export const PASS1_PROGRESS_END = 0.85;
  */
 export const FONT_CDN_URL = "/fonts/Roboto-Regular.ttf";
 export const FONT_VIRTUAL_NAME = "roboto.ttf";
+
+/** Map from virtual filename to its public URL for all bundled fonts. */
+const FONT_URL_BY_VIRTUAL: Record<string, string> = {
+  "roboto.ttf": "/fonts/Roboto-Regular.ttf",
+  "robotoBold.ttf": "/fonts/Roboto-Bold.ttf",
+  "serif.ttf": "/fonts/DejaVuSerif.ttf",
+  "mono.ttf": "/fonts/DejaVuSansMono.ttf",
+};
 
 function manager(): FfmpegManager {
   return getFfmpegManager();
@@ -307,32 +318,48 @@ export async function ensureFfmpeg(
 }
 
 /**
- * Fetch the Roboto Regular TTF font and write it to the FFmpeg virtual filesystem.
- * Called automatically before any render that uses text overlays.
- * Subsequent calls are no-ops once the font is loaded for the current FFmpeg instance.
+ * Fetch a bundled TTF font and write it to the FFmpeg virtual filesystem.
+ * If `virtualName` is omitted, loads the default Roboto Regular.
+ * Subsequent calls for the same virtual name are no-ops for the current instance.
  */
 export async function ensureFont(
   ffmpeg: IFfmpegRuntime,
   onStatus: StatusCallback,
+  virtualName: string = FONT_VIRTUAL_NAME,
 ): Promise<void> {
   const mgr = manager();
-  if (mgr.isFontLoaded()) return;
+  if (mgr.isFontLoaded(virtualName)) return;
+  const url = FONT_URL_BY_VIRTUAL[virtualName] ?? FONT_CDN_URL;
   onStatus("Loading font for text overlays...");
   try {
-    const fontData = await fetchFile(FONT_CDN_URL);
-    await safeWriteFile(
-      ffmpeg,
-      FONT_VIRTUAL_NAME,
-      fontData,
-      "ensureFont write",
-    );
-    mgr.setFontLoaded(true);
+    const fontData = await fetchFile(url);
+    await safeWriteFile(ffmpeg, virtualName, fontData, "ensureFont write");
+    mgr.markFontLoaded(virtualName);
   } catch (err) {
     // If already a detailed error from safeWrite, rethrow as-is
     if ((err as any).ffmpegLogs) throw err;
     throw new Error(
       `Failed to load font for text overlays: ${(err as Error).message}`,
     );
+  }
+}
+
+/**
+ * Ensure all fonts required by the given overlays are present in the
+ * FFmpeg VFS. Safe to call with an empty list (no-op).
+ */
+export async function ensureFontsForOverlays(
+  ffmpeg: IFfmpegRuntime,
+  onStatus: StatusCallback,
+  overlays: TextOverlay[],
+): Promise<void> {
+  const needed = new Set<string>();
+  for (const o of overlays) {
+    const vname = resolveFontFileForOverlay(o);
+    needed.add(vname);
+  }
+  for (const vname of needed) {
+    await ensureFont(ffmpeg, onStatus, vname);
   }
 }
 
@@ -887,7 +914,7 @@ export async function mergeClipsWithTransitions(
 
   let effectiveFilterComplex = filterComplex;
   if (textOverlays.length > 0) {
-    await ensureFont(ffmpeg, onStatus);
+    await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);
     effectiveFilterComplex = appendTextOverlayFilters(filterComplex, textOverlays);
   }
 

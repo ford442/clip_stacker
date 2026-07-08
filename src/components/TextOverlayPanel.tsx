@@ -2,10 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from "../types";
 import { isValidFfmpegColor } from "../utils/color";
 import {
+  BUNDLED_FONTS,
   estimateScrollCrossingSeconds,
+  getBundledFont,
   MIN_SCROLL_SPEED,
   MAX_SCROLL_SPEED,
 } from "../utils/textOverlay";
+import { TEXT_SHADERS, getTextShader, resolveShaderParams } from "../webgpu/text/registry";
 import { textOverlayHasKeyframes } from "../utils/animatedLayout";
 import { KeyframeMiniEditor } from "./KeyframeMiniEditor";
 
@@ -172,6 +175,96 @@ export function TextOverlayPanel({
                         </p>
                       )}
                     </label>
+                  </div>
+
+                  <label style={{ marginTop: "0.25rem" }}>
+                    Font family
+                    <select
+                      value={overlay.font ?? "roboto"}
+                      onChange={(e) => set(overlay, "font", e.target.value)}
+                    >
+                      {BUNDLED_FONTS.map((f) => (
+                        <option key={f.id} value={f.id}>
+                          {f.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div style={{ marginTop: "0.25rem" }}>
+                    <div className="inspector-group-label">Fill</div>
+                    <div className="tol-mode-row">
+                      <label className="tol-radio-label">
+                        <input
+                          type="radio"
+                          name={`fill-${overlay.id}`}
+                          checked={(overlay.fill ?? 'solid') === 'solid'}
+                          onChange={() => onUpdate({ ...overlay, fill: 'solid', shaderId: undefined })}
+                        />
+                        Solid color
+                      </label>
+                      <label className="tol-radio-label">
+                        <input
+                          type="radio"
+                          name={`fill-${overlay.id}`}
+                          checked={overlay.fill === 'shader'}
+                          onChange={() => onUpdate({ ...overlay, fill: 'shader', shaderId: overlay.shaderId || TEXT_SHADERS[0]?.id })}
+                        />
+                        Shader
+                      </label>
+                    </div>
+                    {overlay.fill === 'shader' && (
+                      <div style={{ marginTop: '0.25rem' }}>
+                        <label>
+                          Shader
+                          <select
+                            value={overlay.shaderId || TEXT_SHADERS[0]?.id || ''}
+                            onChange={(e) => {
+                              const id = e.target.value;
+                              const nextParams = resolveShaderParams(id, overlay.shaderParams);
+                              onUpdate({ ...overlay, shaderId: id, shaderParams: nextParams });
+                            }}
+                          >
+                            {TEXT_SHADERS.map((s) => (
+                              <option key={s.id} value={s.id}>{s.label}</option>
+                            ))}
+                          </select>
+                        </label>
+                        {(() => {
+                          const def = getTextShader(overlay.shaderId);
+                          const params = def?.params ?? [];
+                          if (!params.length) return null;
+                          return (
+                            <div style={{ marginTop: '0.25rem' }}>
+                              {params.map((p) => {
+                                const cur = (overlay.shaderParams && overlay.shaderParams[p.key]) ?? p.default;
+                                return (
+                                  <label key={p.key} style={{ display: 'block', marginBottom: '0.15rem' }}>
+                                    {p.label}
+                                    <input
+                                      type="range"
+                                      min={p.min ?? 0}
+                                      max={p.max ?? 1}
+                                      step={p.step ?? 0.01}
+                                      value={cur}
+                                      onChange={(e) => {
+                                        const val = Number(e.target.value);
+                                        const next = { ...(overlay.shaderParams || {}), [p.key]: val };
+                                        onUpdate({ ...overlay, shaderParams: next });
+                                      }}
+                                    />
+                                    <span style={{ marginLeft: '0.35rem', fontSize: '0.8em' }}>{cur.toFixed(2)}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
+                        <p className="inspector-hint" style={{ marginTop: '0.2rem' }}>
+                          Shader text uses WebGPU (preview + GPU export). FFmpeg path will use solid fallback.
+                        </p>
+                      </div>
+                    )}
                   </div>
 
                   <div
@@ -346,8 +439,8 @@ export function TextOverlayPanel({
                   </details>
 
                   <p className="inspector-hint" style={{ marginTop: "0.5rem" }}>
-                    Font: Roboto Regular (loaded automatically from CDN). For
-                    1280×720 output, Y=670 places text near the bottom.
+                    Font is burned in at export time. For 1280×720 output,
+                    Y=670 places text near the bottom.
                   </p>
                 </div>
               )}

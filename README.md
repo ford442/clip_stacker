@@ -156,6 +156,23 @@ Render and "Extract Audio" **never fail silently**. All FFmpeg `exec`/`writeFile
 
 See `docs/render-test-matrix.md` for manual test cases.
 
+### Fonts for text overlays
+
+Text overlays support a small set of bundled, license-safe fonts. The same typeface is used for Canvas 2D preview and FFmpeg `drawtext` export so glyph metrics match.
+
+Bundled fonts (under `public/fonts/`):
+
+| id          | Label            | File                | Virtual (FFmpeg) |
+|-------------|------------------|---------------------|------------------|
+| roboto      | Roboto Regular   | Roboto-Regular.ttf  | roboto.ttf       |
+| robotoBold  | Roboto Bold      | Roboto-Bold.ttf     | robotoBold.ttf   |
+| serif       | Serif            | DejaVuSerif.ttf     | serif.ttf        |
+| mono        | Monospace        | DejaVuSansMono.ttf  | mono.ttf         |
+
+- Default for new and legacy overlays (no `font` field) is `roboto`.
+- `TextOverlay.font` stores the id; unknown ids fall back to the default on load.
+- Adding a font: drop a `.ttf` into `public/fonts/`, register it in `BUNDLED_FONTS` (src/utils/textOverlay.ts), add a matching `@font-face` in `src/styles/fonts.css`, and (if needed) an entry in `FONT_URL_BY_VIRTUAL` (src/ffmpeg/core.ts).
+
 If a render or extract does nothing / stops with no message:
 - Check the browser console (all `[FFmpeg]` lines are now printed).
 - Immediately click **📋 Copy Debug** — it includes status, render plan, recent logs, UA, and `crossOriginIsolated`.

@@ -1,0 +1,40 @@
+/**
+ * Bundled font faces for text overlays.
+ * These enable Canvas 2D preview to render with the same typefaces used
+ * by FFmpeg drawtext at export time, so glyph metrics match.
+ *
+ * Files are served from /fonts/* (public/fonts/).
+ * Only the faces needed for overlays are declared here.
+ */
+
+@font-face {
+  font-family: "Roboto";
+  src: url("/fonts/Roboto-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Roboto Bold";
+  src: url("/fonts/Roboto-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "DejaVu Serif";
+  src: url("/fonts/DejaVuSerif.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "DejaVu Sans Mono";
+  src: url("/fonts/DejaVuSansMono.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
