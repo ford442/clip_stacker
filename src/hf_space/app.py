@@ -388,141 +388,111 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
 
     return output_final
 
-# ── Reorder panel: pure Python state + explicit buttons ───────────────────────
+# ── Clip reorder: Gallery + pure Python state (no JS bridge) ──────────────────
 
-def _card_html(i, path, data_uri, selected):
-    """One clip card. We add class='clip-card' and data-idx='{i}' to make it clickable by JS."""
-    name   = os.path.basename(path)
-    border = "3px solid #00ddff" if selected else "2px solid #444"
-    bg     = "#0d3a5a" if selected else "#1e1e1e"
-    shadow = "0 0 15px #00ddff88" if selected else "none"
-    cursor = "default" if selected else "pointer"
-    
-    img    = (f'<img src="{data_uri}" style="width:100%;height:88px;'
-              f'object-fit:cover;border-radius:6px 6px 0 0;display:block;" />'
-              if data_uri else
-              '<div style="width:100%;height:88px;background:#2a2a2a;'
-              'border-radius:6px 6px 0 0;display:flex;align-items:center;'
-              'justify-content:center;font-size:28px;color:#555;">🎬</div>')
-    
-    # Notice the added class="clip-card" and data-idx="{i}"
-    return f"""
-<div class="clip-card" data-idx="{i}" style="
-    width:156px;flex-shrink:0;border-radius:8px;
-    border:{border};background:{bg};
-    box-shadow:{shadow}; cursor:{cursor};
-    transition: all 0.2s ease;
-">
-    {img}
-    <div style="padding:5px 7px;font-size:10px;color:#bbb;
-                white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"
-         title="{name}">
-        <span style="color:#666;margin-right:4px;">#{i+1}</span>{name}
-    </div>
-</div>"""
+def gallery_items(thumbs):
+    """Gradio Gallery value from (data_uri, label) pairs."""
+    return [(uri, label) for uri, label in thumbs]
 
-def render_panel(paths, thumbs, sel_idx):
-    """Render the clip strip as HTML."""
+def selection_label(paths, sel):
     if not paths:
-        return """<div style="
-            font-family:monospace;color:#555;text-align:center;
-            padding:48px 20px;border:2px dashed #333;border-radius:12px;
-            background:#111;font-size:14px;">
-            📂 Upload clips above — they'll appear here
-        </div>"""
+        return "_Upload clips above — click a thumbnail to select it._"
+    sel = max(0, min(int(sel), len(paths) - 1))
+    name = os.path.basename(paths[sel])
+    return f"**Selected:** clip **{sel + 1}** of **{len(paths)}** — `{name}`"
 
-    cards = ""
-    for i, path in enumerate(paths):
-        uri = thumbs[i][0] if thumbs and i < len(thumbs) else None
-        cards += _card_html(i, path, uri, i == sel_idx)
+def position_choices(count):
+    return [str(i + 1) for i in range(count)]
 
-    return f"""<div style="
-        background:#111;border-radius:12px;padding:14px;
-        border:1px solid #2a2a2a;font-family:monospace;
-    ">
-        <div style="color:#bbb;font-size:13px;margin-bottom:10px;">
-            **Click a clip** to select it, then use ↑ / ↓ to reorder or ✕ to remove.
-        </div>
-        <div id="clip-container" style="display:flex;flex-wrap:nowrap;gap:10px;
-                    overflow-x:auto;padding-bottom:6px;min-height:130px;
-                    align-items:flex-start;">
-            {cards}
-        </div>
-    </div>"""
+def reorder_panel_outputs(paths, thumbs, sel):
+    """Single place to build every Stitch-tab reorder UI update."""
+    if not paths:
+        return (
+            [],
+            [],
+            gr.update(value=[], selected_index=None),
+            0,
+            selection_label([], 0),
+            gr.update(choices=[], value=None),
+        )
+    sel = max(0, min(int(sel), len(paths) - 1))
+    choices = position_choices(len(paths))
+    return (
+        paths,
+        thumbs,
+        gr.update(value=gallery_items(thumbs), selected_index=sel),
+        sel,
+        selection_label(paths, sel),
+        gr.update(choices=choices, value=str(sel + 1)),
+    )
 
-# ── State callbacks ───────────────────────────────────────────────────────────
+def reorder_clip(paths, thumbs, sel, to_idx):
+    """Move the selected clip to `to_idx` (0-based) in one step."""
+    if not paths:
+        return reorder_panel_outputs([], [], 0)
+    sel = max(0, min(int(sel), len(paths) - 1))
+    to_idx = max(0, min(int(to_idx), len(paths) - 1))
+    if sel != to_idx:
+        path = paths.pop(sel)
+        thumb = thumbs.pop(sel)
+        paths.insert(to_idx, path)
+        thumbs.insert(to_idx, thumb)
+        sel = to_idx
+    return reorder_panel_outputs(paths, thumbs, sel)
 
 def handle_upload(files):
     if not files:
-        return [], [], render_panel([], [], 0), 1
-        
+        return reorder_panel_outputs([], [], 0)
+
     paths = []
     for f in files:
         src = f.name if hasattr(f, "name") else str(f)
         dst = os.path.join(WORKSPACE_DIR, f"uploaded_{uuid.uuid4().hex}.mp4")
         shutil.copy(src, dst)
         paths.append(dst)
-        
+
     thumbs = create_thumbs(paths)
-    return paths, thumbs, render_panel(paths, thumbs, 0), 1
+    return reorder_panel_outputs(paths, thumbs, 0)
+
+def on_gallery_select(paths, thumbs, sel, evt: gr.SelectData):
+    if not paths or not evt.selected:
+        return reorder_panel_outputs(paths or [], thumbs or [], sel)[3:]
+    idx = int(evt.index)
+    return reorder_panel_outputs(paths, thumbs, idx)[3:]
 
 def move_up(paths, thumbs, sel):
     sel = int(sel)
-    if not paths or sel <= 0:
-        return paths, thumbs, render_panel(paths, thumbs, sel), sel
-    paths[sel], paths[sel-1] = paths[sel-1], paths[sel]
-    thumbs[sel], thumbs[sel-1] = thumbs[sel-1], thumbs[sel]
-    new_sel = sel - 1
-    return paths, thumbs, render_panel(paths, thumbs, new_sel), new_sel
+    return reorder_clip(paths, thumbs, sel, sel - 1)
 
 def move_down(paths, thumbs, sel):
     sel = int(sel)
-    if not paths or sel >= len(paths) - 1:
-        return paths, thumbs, render_panel(paths, thumbs, sel), sel
-    paths[sel], paths[sel+1] = paths[sel+1], paths[sel]
-    thumbs[sel], thumbs[sel+1] = thumbs[sel+1], thumbs[sel]
-    new_sel = sel + 1
-    return paths, thumbs, render_panel(paths, thumbs, new_sel), new_sel
+    return reorder_clip(paths, thumbs, sel, sel + 1)
+
+def move_to_first(paths, thumbs, sel):
+    return reorder_clip(paths, thumbs, sel, 0)
+
+def move_to_last(paths, thumbs, sel):
+    if not paths:
+        return reorder_panel_outputs([], [], 0)
+    return reorder_clip(paths, thumbs, sel, len(paths) - 1)
+
+def move_to_position(paths, thumbs, sel, pos):
+    if not paths or pos is None:
+        return reorder_panel_outputs(paths, thumbs, sel)
+    return reorder_clip(paths, thumbs, sel, int(pos) - 1)
 
 def remove_clip(paths, thumbs, sel):
     sel = int(sel)
     if not paths or sel < 0 or sel >= len(paths):
-        return paths, thumbs, render_panel(paths, thumbs, sel), sel
-    paths  = [p for i, p in enumerate(paths)  if i != sel]
+        return reorder_panel_outputs(paths, thumbs, sel)
+    paths = [p for i, p in enumerate(paths) if i != sel]
     thumbs = [t for i, t in enumerate(thumbs) if i != sel]
     new_sel = max(0, min(sel, len(paths) - 1))
-    return paths, thumbs, render_panel(paths, thumbs, new_sel), new_sel
+    return reorder_panel_outputs(paths, thumbs, new_sel)
 
 # ── Gradio UI ─────────────────────────────────────────────────────────────────
 
-CSS = """
-.clip-strip { overflow-x: auto; }
-#sel-num input[type=number] { text-align: center; font-weight: bold; }
-.clip-card:hover { transform: translateY(-2px); }
-"""
-
-# Global Javascript listener that catches clicks on our HTML cards and updates the hidden bridge textbox
-JS_CLICK_HANDLER = """
-function() {
-    document.addEventListener('click', (e) => {
-        let card = e.target.closest('.clip-card');
-        if (!card) return;
-        
-        let idx = card.getAttribute('data-idx');
-        
-        // Find our hidden Gradio Textbox (Gradio renders textboxes as textarea or input)
-        let bridge = document.querySelector('#click_bridge textarea') || document.querySelector('#click_bridge input');
-        
-        if (bridge) {
-            bridge.value = idx;
-            // Dispatch a change event so Gradio detects the new value
-            bridge.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-    });
-}
-"""
-
-with gr.Blocks(title="RIFE + Boomerang + Smart Stitch", css=CSS) as demo:
+with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
     gr.Markdown("# 🎞️ RIFE: Interpolate & Boomerang + Smart Stitch")
 
     with gr.Tabs():
@@ -559,23 +529,33 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch", css=CSS) as demo:
 
             paths_state  = gr.State([])
             thumbs_state = gr.State([])
+            sel_state    = gr.State(0)
 
-            clip_panel = gr.HTML(value=render_panel([], [], 0), elem_id="clip_panel")
-            
-            # Hidden bridge for click detection
-            click_bridge = gr.Textbox(visible=False, elem_id="click_bridge")
+            clip_gallery = gr.Gallery(
+                label="Clip order (left → right) — click a thumbnail to select",
+                columns=6,
+                height=160,
+                object_fit="cover",
+                allow_preview=False,
+            )
+            sel_label = gr.Markdown(selection_label([], 0))
 
             # ── Reorder controls ──────────────────────────────────────────────
             with gr.Row():
-                sel_num = gr.Number(
-                    label="Selected clip # (1 = first)",
-                    value=1, minimum=1, precision=0,
-                    elem_id="sel-num", scale=1
+                up_btn    = gr.Button("↑ Up", size="sm", scale=1)
+                down_btn  = gr.Button("↓ Down", size="sm", scale=1)
+                first_btn = gr.Button("⏮ First", size="sm", scale=1)
+                last_btn  = gr.Button("⏭ Last", size="sm", scale=1)
+                rm_btn    = gr.Button("✕ Remove", variant="stop", size="sm", scale=1)
+                clr_btn   = gr.Button("Clear All", variant="stop", size="sm", scale=1)
+
+            with gr.Row():
+                move_to = gr.Dropdown(
+                    label="Move selected to position",
+                    choices=[],
+                    scale=2,
                 )
-                up_btn   = gr.Button("↑ Move Up",   size="sm", scale=1)
-                down_btn = gr.Button("↓ Move Down", size="sm", scale=1)
-                rm_btn   = gr.Button("✕ Remove",    variant="stop", size="sm", scale=1)
-                clr_btn  = gr.Button("Clear All",   variant="stop", size="sm", scale=1)
+                move_btn = gr.Button("Move →", size="sm", scale=1)
 
             with gr.Row():
                 res_sel    = gr.Dropdown(
@@ -626,56 +606,60 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch", css=CSS) as demo:
             )
             
 
-    # ── helpers: sel_num is 1-based in UI, 0-based in Python ─────────────────
-    def _sel0(sel_num):
-        return max(0, int(sel_num) - 1)
-    def _wrap_up(p, t, s):
-        p, t, panel, new_s = move_up(p, t, _sel0(s))
-        return p, t, panel, new_s + 1   # back to 1-based
+    _reorder_outs = [
+        paths_state, thumbs_state, clip_gallery, sel_state, sel_label, move_to,
+    ]
 
-    def _wrap_down(p, t, s):
-        p, t, panel, new_s = move_down(p, t, _sel0(s))
-        return p, t, panel, new_s + 1
+    stitch_inputs.change(
+        fn=handle_upload, inputs=stitch_inputs, outputs=_reorder_outs,
+    )
 
-    def _wrap_rm(p, t, s):
-        p, t, panel, new_s = remove_clip(p, t, _sel0(s))
-        return p, t, panel, new_s + 1
+    clip_gallery.select(
+        fn=on_gallery_select,
+        inputs=[paths_state, thumbs_state, sel_state],
+        outputs=[sel_state, sel_label, move_to],
+    )
 
-    def _wrap_refresh(p, t, s):
-        return render_panel(p, t, _sel0(s))
+    up_btn.click(
+        fn=move_up,
+        inputs=[paths_state, thumbs_state, sel_state],
+        outputs=_reorder_outs,
+    )
 
-    # This handles the JS click passing an index back
-    def _update_from_click(idx_str):
-        if not idx_str or not idx_str.strip().isdigit():
-            return 1
-        return int(idx_str) + 1  # JS passes 0-based, we convert to 1-based for the UI Number box
+    down_btn.click(
+        fn=move_down,
+        inputs=[paths_state, thumbs_state, sel_state],
+        outputs=_reorder_outs,
+    )
 
-    # ── event wiring ─────────────────────────────────────────────────────────
-    _panel_outs = [paths_state, thumbs_state, clip_panel, sel_num]
+    first_btn.click(
+        fn=move_to_first,
+        inputs=[paths_state, thumbs_state, sel_state],
+        outputs=_reorder_outs,
+    )
 
-    stitch_inputs.change(fn=handle_upload, inputs=stitch_inputs, outputs=_panel_outs)
+    last_btn.click(
+        fn=move_to_last,
+        inputs=[paths_state, thumbs_state, sel_state],
+        outputs=_reorder_outs,
+    )
 
-    # When the hidden bridge is updated by Javascript, update the visible Number selector
-    click_bridge.change(fn=_update_from_click, inputs=click_bridge, outputs=sel_num)
+    move_btn.click(
+        fn=move_to_position,
+        inputs=[paths_state, thumbs_state, sel_state, move_to],
+        outputs=_reorder_outs,
+    )
 
-    sel_num.change(fn=_wrap_refresh,
-                   inputs=[paths_state, thumbs_state, sel_num],
-                   outputs=clip_panel)
+    rm_btn.click(
+        fn=remove_clip,
+        inputs=[paths_state, thumbs_state, sel_state],
+        outputs=_reorder_outs,
+    )
 
-    up_btn.click(fn=_wrap_up,
-                 inputs=[paths_state, thumbs_state, sel_num],
-                 outputs=_panel_outs)
-
-    down_btn.click(fn=_wrap_down,
-                   inputs=[paths_state, thumbs_state, sel_num],
-                   outputs=_panel_outs)
-
-    rm_btn.click(fn=_wrap_rm,
-                 inputs=[paths_state, thumbs_state, sel_num],
-                 outputs=_panel_outs)
-
-    clr_btn.click(fn=lambda: ([], [], render_panel([],[],0), 1),
-                  outputs=_panel_outs)
+    clr_btn.click(
+        fn=lambda: reorder_panel_outputs([], [], 0),
+        outputs=_reorder_outs,
+    )
 
     stitch_btn.click(
         fn=stitch_videos,
@@ -739,9 +723,6 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch", css=CSS) as demo:
         outputs=morph_out,
         api_name="morph",
     )
-
-    # Load the Javascript into the demo
-    demo.load(js=JS_CLICK_HANDLER)
 
 if __name__ == "__main__":
     demo.launch()
