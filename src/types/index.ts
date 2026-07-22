@@ -200,6 +200,12 @@ export interface ExportSettings {
   outputResolution: string;
   /** Common output-size preset selected in the export UI. */
   resolutionPreset?: ResolutionPreset;
+  /**
+   * Video codec for the WebCodecs GPU export path. HEVC/AV1 are probed via
+   * VideoEncoder.isConfigSupported and fall back to hardware H.264 when
+   * unavailable. FFmpeg exports ignore this and always use libx264.
+   */
+  videoCodec?: 'h264' | 'hevc' | 'av1';
 }
 
 export type ResolutionPreset = 'original' | '720p' | '1080p' | '1440p' | '4k' | 'custom';
@@ -218,6 +224,7 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   filename: 'stacked',
   outputResolution: RESOLUTION_PRESETS['720p'],
   resolutionPreset: '720p',
+  videoCodec: 'h264',
 };
 
 /** Preset definitions for common export scenarios. */

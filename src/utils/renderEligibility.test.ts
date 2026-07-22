@@ -71,6 +71,19 @@ describe('renderEligibility', () => {
     ).toBe(true);
   });
 
+  it('routes solid text overlays to the GPU timeline path when WebGPU is available', () => {
+    const ov = {
+      id: 't1', text: 'Hi', fontsize: 24, fontcolor: 'white', x: 0, y: 0,
+      scrolling: false, scrollSpeed: 20, box: false, boxColor: 'black@0.5',
+    };
+    // Without WebGPU the overlay still needs the FFmpeg drawtext path.
+    expect(canUseGpuVideoEncoder([makeClip()], [], [ov as any])).toBe(false);
+    // With WebGPU, solid overlays are rasterized on the timeline compositor.
+    expect(
+      canUseGpuVideoEncoder([makeClip()], [], [ov as any], { webGpuAvailable: true }),
+    ).toBe(true);
+  });
+
   it('requires WebGPU for shader-filled text overlays', () => {
     const ov = {
       id: 't1', text: 'Hi', fontsize: 24, fontcolor: 'white', x: 0, y: 0,
