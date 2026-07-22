@@ -19,13 +19,22 @@ export async function decodeAudioBuffer(
  * @param numSamples Number of peak buckets to return (default 120).
  * @returns          Float32Array of values in [0, 1].
  */
+export interface ExtractWaveformPeaksOptions {
+  signal?: AbortSignal;
+}
+
 export async function extractWaveformPeaks(
   objectUrl: string,
   numSamples = 120,
+  options: ExtractWaveformPeaksOptions = {},
 ): Promise<Float32Array> {
+  const { signal } = options;
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
   const audioCtx = new AudioContext();
   try {
     const audioBuffer = await decodeAudioBuffer(objectUrl, audioCtx);
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
     // Mix all channels down to a mono peak array
     const numChannels = audioBuffer.numberOfChannels;

@@ -129,14 +129,21 @@ export function createClipId(): string {
 const THUMB_W = 96;
 const THUMB_H = 54;
 
+export interface ExtractThumbnailsOptions {
+  signal?: AbortSignal;
+}
+
 export async function extractThumbnails(
   objectUrl: string,
   duration: number,
   trimStart: number,
   trimEnd: number,
   count: number,
+  options: ExtractThumbnailsOptions = {},
 ): Promise<string[]> {
+  const { signal } = options;
   if (count <= 0) return [];
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
   const canvas = document.createElement("canvas");
   canvas.width = THUMB_W;
@@ -168,8 +175,9 @@ export async function extractThumbnails(
 
   const thumbnails: string[] = [];
   try {
-    await waitForVideoReady(video);
+    await waitForVideoReady(video, signal);
     for (const t of times) {
+      if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
       const ready = await seekToFrame(video, t);
       if (!ready) continue;
       try {
@@ -191,14 +199,19 @@ export async function extractThumbnails(
 }
 
 /** Resolve once the video has enough data to seek/draw, or reject on error. */
-function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
+function waitForVideoReady(video: HTMLVideoElement, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'));
+      return;
+    }
     if (video.readyState >= 2 /* HAVE_CURRENT_DATA */) {
       resolve();
       return;
     }
     const cleanup = () => {
       clearTimeout(timeoutId);
+      signal?.removeEventListener('abort', onAbort);
       video.removeEventListener("loadeddata", onReady);
       video.removeEventListener("error", onError);
     };
@@ -210,10 +223,15 @@ function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
       cleanup();
       reject(new Error("Could not load video for thumbnails"));
     };
+    const onAbort = () => {
+      cleanup();
+      reject(new DOMException('Aborted', 'AbortError'));
+    };
     const timeoutId = setTimeout(() => {
       if (video.readyState >= 2) onReady();
       else onError();
     }, MEDIA_LOAD_TIMEOUT_MS);
+    signal?.addEventListener('abort', onAbort, { once: true });
     video.addEventListener("loadeddata", onReady, { once: true });
     video.addEventListener("error", onError, { once: true });
   });
