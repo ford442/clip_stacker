@@ -2,9 +2,13 @@
  * WebCodecs-based encoder for GPU-accelerated video export.
  *
  * Architecture:
- *  - Video: HTMLVideoElement → requestVideoFrameCallback → WebGPU or Canvas compositor
- *    → VideoEncoder (hardware H.264) → mp4-muxer (video-only)
- *  - Audio: muxed separately via FFmpeg (muxVideoWithAudio) for reliability
+ *  - Video: VideoDecoder (WebCodecs demux/decode, see webcodecs-decoder.ts)
+ *    → WebGPU or Canvas compositor → VideoEncoder (hardware H.264/HEVC/AV1)
+ *    → mp4-muxer (video-only)
+ *  - Decode fallback: HTMLVideoElement → requestVideoFrameCallback capture when
+ *    a clip cannot be demuxed/decoded with WebCodecs
+ *  - Audio: muxed separately via FFmpeg (muxVideoWithAudio) — FFmpeg WASM is
+ *    intentionally scoped to audio extract/mux and explicit "Force FFmpeg" only
  *
  * When transitions are active and WebGPU is available, the timeline compositor
  * renders identical WGSL transition frames as preview (WYSIWYG export).
@@ -23,6 +27,7 @@ import { DEFAULT_COLOR_GRADE, type ColorGradeSettings } from './lut';
 import { buildPreviewCompositionPlan } from './previewComposition';
 import { drawTextOverlays, renderTextOverlaysAsync } from './canvas-renderer';
 import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompositor';
+import { ClipFrameDecoder } from './webcodecs-decoder';
 import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
 import { getTimelineClips } from './timelineClips';
 
@@ -42,6 +47,72 @@ interface ResolvedCompositor {
 function mapWebCodecsProgress(elapsedDuration: number, totalDuration: number): number | undefined {
   if (totalDuration <= 0) return undefined;
   return WEBCODECS_PROGRESS_START + (elapsedDuration / totalDuration) * WEBCODECS_PROGRESS_RANGE;
+}
+
+// ---------------------------------------------------------------------------
+// Encoder codec selection
+// ---------------------------------------------------------------------------
+
+export type ExportVideoCodec = NonNullable<ExportSettings['videoCodec']>;
+
+export interface ResolvedEncoderCodec {
+  /** WebCodecs codec string passed to VideoEncoder.configure. */
+  codec: string;
+  /** mp4-muxer video track codec id. */
+  muxerCodec: 'avc' | 'hevc' | 'av1';
+}
+
+/** H.264 baseline codec string with a level adequate for the target resolution. */
+export function h264CodecString(width: number, height: number): string {
+  const macroblocks = Math.ceil(width / 16) * Math.ceil(height / 16);
+  if (macroblocks > 8192) return 'avc1.420033'; // level 5.1 — 4K
+  if (macroblocks > 3600) return 'avc1.420028'; // level 4.0 — 1080p
+  return 'avc1.42001e'; // level 3.0 — ≤720p
+}
+
+/** Ordered candidate list for the requested codec; H.264 is always the last resort. */
+export function codecCandidates(
+  preference: ExportVideoCodec | undefined,
+  width: number,
+  height: number,
+): ResolvedEncoderCodec[] {
+  const h264: ResolvedEncoderCodec = { codec: h264CodecString(width, height), muxerCodec: 'avc' };
+  const hevc: ResolvedEncoderCodec = { codec: 'hvc1.1.6.L123.B0', muxerCodec: 'hevc' };
+  const av1: ResolvedEncoderCodec = { codec: 'av01.0.08M.08', muxerCodec: 'av1' };
+  switch (preference) {
+    case 'hevc':
+      return [hevc, h264];
+    case 'av1':
+      return [av1, h264];
+    default:
+      return [h264];
+  }
+}
+
+/**
+ * Probe VideoEncoder.isConfigSupported for the requested codec, falling back
+ * to hardware H.264 when HEVC/AV1 encoding is not available in this browser.
+ */
+export async function resolveEncoderCodec(
+  preference: ExportVideoCodec | undefined,
+  width: number,
+  height: number,
+): Promise<ResolvedEncoderCodec> {
+  const candidates = codecCandidates(preference, width, height);
+  for (const candidate of candidates) {
+    try {
+      const support = await VideoEncoder.isConfigSupported({
+        codec: candidate.codec,
+        width,
+        height,
+        hardwareAcceleration: 'prefer-hardware',
+      });
+      if (support.supported === true) return candidate;
+    } catch {
+      // Unparseable codec string on this browser — try the next candidate.
+    }
+  }
+  return candidates[candidates.length - 1];
 }
 
 declare global {
@@ -154,9 +225,10 @@ export async function encodeVideoWithWebCodecs(
       : `Canvas compositor active (${width}x${height})`,
   );
 
+  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
-    video: { codec: 'avc', width, height },
+    video: { codec: encoderCodec.muxerCodec, width, height },
     fastStart: 'in-memory',
   });
 
@@ -167,7 +239,7 @@ export async function encodeVideoWithWebCodecs(
   });
 
   videoEncoder.configure({
-    codec: 'avc1.42001e',
+    codec: encoderCodec.codec,
     width,
     height,
     bitrate: settings.videoBitrate,
@@ -263,9 +335,10 @@ async function encodeTimelineComposite(
 
   const engine = await TimelinePreviewEngine.create(videoCanvas, clips);
 
+  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
   const muxer = new Muxer({
     target: new ArrayBufferTarget(),
-    video: { codec: 'avc', width, height },
+    video: { codec: encoderCodec.muxerCodec, width, height },
     fastStart: 'in-memory',
   });
 
@@ -276,7 +349,7 @@ async function encodeTimelineComposite(
   });
 
   videoEncoder.configure({
-    codec: 'avc1.42001e',
+    codec: encoderCodec.codec,
     width,
     height,
     bitrate: settings.videoBitrate,
@@ -340,94 +413,6 @@ async function encodeTimelineComposite(
   }
 }
 
-/** @deprecated Use encodeTimelineComposite */
-async function encodeTimelineWithTransitions(
-  clips: Clip[],
-  transitions: ClipTransition[],
-  settings: ExportSettings,
-  width: number,
-  height: number,
-  onStatus: StatusCallback,
-  onProgress?: ProgressCallback,
-): Promise<Blob> {
-  onStatus(`WebGPU timeline export (${width}x${height})...`);
-  onProgress?.({ stage: 'GPU transition encode', progress: 0, indeterminate: false });
-
-  const timelineClips = getTimelineClips(clips, []);
-  const totalDuration = computeTotalDuration(timelineClips, transitions);
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-
-  const engine = await TimelinePreviewEngine.create(canvas, clips);
-
-  const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
-    video: { codec: 'avc', width, height },
-    fastStart: 'in-memory',
-  });
-
-  let videoError: Error | null = null;
-  const videoEncoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-    error: (e) => { videoError = e; },
-  });
-
-  videoEncoder.configure({
-    codec: 'avc1.42001e',
-    width,
-    height,
-    bitrate: settings.videoBitrate,
-    framerate: TARGET_FPS,
-    hardwareAcceleration: 'prefer-hardware',
-  });
-
-  const frameDurationUs = Math.round(1_000_000 / TARGET_FPS);
-  const step = 1 / TARGET_FPS;
-  let frameIndex = 0;
-
-  try {
-    for (let globalTime = 0; globalTime < totalDuration; globalTime += step) {
-      onStatus(`GPU transition encode: ${globalTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s`);
-      onProgress?.({
-        stage: 'GPU transition encode',
-        progress: mapWebCodecsProgress(globalTime, totalDuration),
-        indeterminate: totalDuration <= 0,
-      });
-
-      const plan = buildPreviewCompositionPlan(
-        clips,
-        [],
-        transitions,
-        [],
-        settings,
-        globalTime,
-        height,
-        width,
-      );
-      await engine.renderPlan(plan);
-
-      const frame = new VideoFrame(canvas, {
-        timestamp: frameIndex * frameDurationUs,
-        duration: frameDurationUs,
-      });
-      videoEncoder.encode(frame, { keyFrame: frameIndex % 60 === 0 });
-      frame.close();
-      frameIndex++;
-      if (videoError) throw videoError;
-    }
-
-    onStatus('Flushing GPU encoder...');
-    await videoEncoder.flush();
-    if (videoError) throw videoError;
-    muxer.finalize();
-    const { buffer } = muxer.target as ArrayBufferTarget;
-    return new Blob([buffer], { type: 'video/mp4' });
-  } finally {
-    engine.destroy();
-  }
-}
-
 async function encodeVideoFrames(
   encoder: VideoEncoder,
   compositor: ResolvedCompositor,
@@ -450,6 +435,26 @@ async function encodeVideoFrames(
     encoder.encode(frame, { keyFrame: true });
     frame.close();
     return startTimeUs + Math.round(clipDuration * 1_000_000);
+  }
+
+  // Preferred hot path: WebCodecs VideoDecoder demux/decode — exact frame
+  // delivery with no <video> seek in the loop. Falls back to element capture
+  // for containers/codecs the decoder path cannot handle.
+  try {
+    return await encodeVideoFramesFromDecoder(
+      encoder,
+      compositor,
+      clip,
+      startTimeUs,
+      targetWidth,
+      targetHeight,
+      colorGrade,
+      trimStart,
+      trimEnd,
+      clipDuration,
+    );
+  } catch {
+    // Fall through to the HTMLVideoElement capture path below.
   }
 
   const video = document.createElement('video');
@@ -545,6 +550,116 @@ async function encodeVideoFrames(
   }
 
   return startTimeUs + Math.round(clipDuration * 1_000_000);
+}
+
+/** Encoded chunks allowed in flight before pausing frame submission. */
+const MAX_ENCODE_QUEUE_DEPTH = 16;
+
+function waitForEncoderDequeue(encoder: VideoEncoder): Promise<void> {
+  return new Promise((resolve) => {
+    const target = encoder as unknown as EventTarget;
+    if (typeof target.addEventListener === 'function') {
+      target.addEventListener('dequeue', () => resolve(), { once: true });
+    } else {
+      setTimeout(resolve, 0);
+    }
+  });
+}
+
+/**
+ * Decoder-driven frame delivery: VideoDecoder → ring buffer → compositor →
+ * VideoEncoder, no HTMLVideoElement in the loop. Runs at decode speed rather
+ * than playback speed.
+ */
+async function encodeVideoFramesFromDecoder(
+  encoder: VideoEncoder,
+  compositor: ResolvedCompositor,
+  clip: Clip,
+  startTimeUs: number,
+  targetWidth: number,
+  targetHeight: number,
+  colorGrade: ColorGradeSettings,
+  trimStart: number,
+  trimEnd: number,
+  clipDuration: number,
+): Promise<number> {
+  const decoder = await ClipFrameDecoder.open(clip.file, { trimStart, trimEnd });
+  let frameCount = 0;
+
+  try {
+    for await (const frame of decoder.frames()) {
+      const elapsed = Math.max(0, frame.timestamp / 1_000_000 - trimStart);
+      try {
+        drawCompositedVideoFrame(
+          compositor,
+          frame,
+          elapsed,
+          clipDuration,
+          clip,
+          targetWidth,
+          targetHeight,
+          colorGrade,
+        );
+      } finally {
+        frame.close();
+      }
+
+      const encodedFrame = new VideoFrame(compositor.canvas, {
+        timestamp: startTimeUs + Math.round(elapsed * 1_000_000),
+        duration: Math.round(1_000_000 / TARGET_FPS),
+      });
+      encoder.encode(encodedFrame, { keyFrame: frameCount % 60 === 0 });
+      encodedFrame.close();
+      frameCount++;
+
+      if (encoder.encodeQueueSize > MAX_ENCODE_QUEUE_DEPTH) {
+        await waitForEncoderDequeue(encoder);
+      }
+    }
+  } finally {
+    decoder.close();
+  }
+
+  if (frameCount === 0) {
+    throw new Error('VideoDecoder path produced no frames');
+  }
+  return startTimeUs + Math.round(clipDuration * 1_000_000);
+}
+
+/** Composite a decoded VideoFrame (decoder path) with letterbox + fades + grade. */
+function drawCompositedVideoFrame(
+  compositor: ResolvedCompositor,
+  frame: VideoFrame,
+  elapsed: number,
+  duration: number,
+  clip: Clip,
+  targetWidth: number,
+  targetHeight: number,
+  colorGrade: ColorGradeSettings,
+): void {
+  if (compositor.kind === 'webgpu' && compositor.gpuCompositor) {
+    compositor.gpuCompositor.renderFrame(
+      frame,
+      elapsed,
+      duration,
+      clip.videoFadeIn,
+      clip.videoFadeOut,
+    );
+    compositor.gpuCompositor.applyColorGrade(colorGrade);
+    return;
+  }
+
+  const ctx = compositor.ctx!;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, targetWidth, targetHeight);
+  const destRect = calculateLetterboxRect(
+    frame.displayWidth || targetWidth,
+    frame.displayHeight || targetHeight,
+    targetWidth,
+    targetHeight,
+  );
+  ctx.drawImage(frame, destRect.x, destRect.y, destRect.width, destRect.height);
+  applyFadeOverlay(ctx, compositor.canvas, elapsed, duration, clip.videoFadeIn, clip.videoFadeOut);
 }
 
 function drawBlackFrame(compositor: ResolvedCompositor, width: number, height: number): void {

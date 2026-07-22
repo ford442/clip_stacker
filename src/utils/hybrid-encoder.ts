@@ -3,9 +3,11 @@
  *
  *   1. Canvas renderer (audio-reactive) - browser compositing + MediaRecorder +
  *      FFmpeg audio mux; unlocks audio-reactive effects and advanced compositing.
- *   2. WebCodecs + WebGPU/Canvas compositor - hardware H.264 video encode with
- *      FFmpeg audio mux; much faster than FFmpeg WASM for fixed-resolution stacks.
- *   3. FFmpeg.wasm - CPU fallback; required for transitions, PiP, text overlays.
+ *   2. WebCodecs + WebGPU/Canvas compositor - VideoDecoder frame delivery,
+ *      hardware H.264/HEVC/AV1 encode, FFmpeg audio mux; near-realtime and
+ *      WYSIWYG with the WebGPU preview (transitions, PiP, text overlays, LUT).
+ *   3. FFmpeg.wasm - CPU fallback when WebCodecs/WebGPU are unavailable, plus
+ *      audio extract/mux and the explicit "Force FFmpeg" override.
  *
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */

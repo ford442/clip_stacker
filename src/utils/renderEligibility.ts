@@ -31,9 +31,9 @@ export function shouldUseTimelineGpuExport(
   if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) return true;
   if (projectHasKeyframeAnimation(clips, textOverlays)) return true;
   if (clips.some((clip) => clip.stillImage)) return true;
-  if (textOverlays.length > 0 && isColorGradeActive(colorGrade)) return true;
-  // Shader-filled text requires the GPU path for the WGSL fill pass.
-  if (textOverlays.some((o) => o.fill === 'shader')) return true;
+  // Text overlays (solid or shader) are rasterized on top of the timeline
+  // compositor output — same code path as preview, so export stays WYSIWYG.
+  if (textOverlays.length > 0) return true;
   return false;
 }
 
@@ -56,12 +56,6 @@ export function canUseGpuVideoEncoder(
   if (isColorGradeActive(options.colorGrade)) {
     return options.webGpuAvailable === true;
   }
-  const hasShaderText = textOverlays.some((o) => o.fill === 'shader');
-  if (hasShaderText) {
-    // Shader text requires GPU export + WebGPU compositor.
-    return options.webGpuAvailable === true;
-  }
-  if (textOverlays.length > 0) return false; // solid text overlays currently force FFmpeg path
   if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) return false;
   if (clips.some((clip) => clip.rifeProcessed)) return false;
   return true;
