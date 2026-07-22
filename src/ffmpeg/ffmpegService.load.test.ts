@@ -215,6 +215,70 @@ describe("FFmpeg loader", () => {
     expect((err as Error).message).not.toContain("undefined");
   });
 
+  describe("multi-threaded / single-threaded variant selection", () => {
+    function mockIsolatedContext(isolated: boolean) {
+      const orig = Object.getOwnPropertyDescriptor(globalThis, 'crossOriginIsolated');
+      Object.defineProperty(globalThis, 'crossOriginIsolated', {
+        configurable: true,
+        get: () => isolated,
+      });
+      return () => {
+        if (orig) {
+          Object.defineProperty(globalThis, 'crossOriginIsolated', orig);
+        } else {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          delete (globalThis as any).crossOriginIsolated;
+        }
+      };
+    }
+
+    it("loads single-threaded when not cross-origin isolated", async () => {
+      const restore = mockIsolatedContext(false);
+      try {
+        await ensureFfmpeg(vi.fn(), vi.fn());
+        // st path: local core assets are tried first
+        expect(mocked.toBlobURL).toHaveBeenCalledWith(
+          expect.stringContaining("ffmpeg-core.js"),
+          "text/javascript",
+        );
+        // no mt CDN attempted
+        expect(mocked.toBlobURL).not.toHaveBeenCalledWith(
+          expect.stringContaining("core-mt"),
+          expect.any(String),
+        );
+      } finally {
+        restore();
+      }
+    });
+
+    it("falls back to single-threaded when multi-threaded load fails", async () => {
+      vi.useFakeTimers();
+      const restore = mockIsolatedContext(true);
+      try {
+        // Reject any mt CDN URL immediately; st URLs succeed normally.
+        mocked.toBlobURL.mockImplementation(async (url: string) => {
+          if (url.includes("core-mt")) throw new Error("mt CDN unavailable");
+          return `blob:${url}`;
+        });
+
+        const onStatus = vi.fn();
+        const promise = ensureFfmpeg(onStatus, vi.fn());
+        // Advance past all mt retry backoffs (3 retries × 2 CDNs × backoff ≈ 36s+).
+        await vi.advanceTimersByTimeAsync(200_000);
+
+        const result = await promise;
+        expect(result).toBeInstanceOf(DirectFfmpegRuntime);
+        // Status message must mention single-threaded fallback.
+        expect(onStatus).toHaveBeenCalledWith(
+          expect.stringContaining("single-threaded"),
+        );
+      } finally {
+        restore();
+        vi.useRealTimers();
+      }
+    });
+  });
+
   it("clears failed load state so a second manual attempt can succeed", async () => {
     vi.useFakeTimers();
 

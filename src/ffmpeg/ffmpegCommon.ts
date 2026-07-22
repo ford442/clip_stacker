@@ -91,7 +91,14 @@ export const FFMPEG_CORE_CDNS = [
   'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm',
 ];
 
-export function getFfmpegCoreSources(): string[] {
+/** CDN sources for the multi-threaded FFmpeg core (requires SharedArrayBuffer). */
+export const FFMPEG_CORE_MT_CDNS = [
+  'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm',
+  'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm',
+];
+
+export function getFfmpegCoreSources(variant: 'mt' | 'st' = 'st'): string[] {
+  if (variant === 'mt') return FFMPEG_CORE_MT_CDNS;
   return [getLocalFfmpegCoreBaseURL(), ...FFMPEG_CORE_CDNS];
 }
 
@@ -103,11 +110,18 @@ export function buildFfmpegLoadErrorMessage(
     attempts > 1
       ? `FFmpeg failed to load after ${attempts} attempts. `
       : 'FFmpeg failed to initialize. ';
+  const g = globalThis as { crossOriginIsolated?: boolean };
+  const isolationNote =
+    typeof SharedArrayBuffer === 'undefined' || !g.crossOriginIsolated
+      ? ' This page is not cross-origin isolated — ensure your server sends ' +
+        'Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp headers.'
+      : '';
   return (
     prefix +
     'The browser could not download or start the FFmpeg WebAssembly core. ' +
-    'Check your network connection, try "Retry FFmpeg load", or refresh the page. ' +
-    `Details: ${message}`
+    'Check your network connection, try "Retry FFmpeg load", or refresh the page.' +
+    isolationNote +
+    ` Details: ${message}`
   );
 }
 
@@ -137,22 +151,30 @@ export function getFfmpegEnvironmentDiagnostics(): string[] {
     SharedArrayBuffer?: typeof SharedArrayBuffer;
   };
 
+  const isolated = globalScope.crossOriginIsolated === true;
+  const hasSAB = typeof globalScope.SharedArrayBuffer !== 'undefined';
+  const variant = isolated && hasSAB ? 'mt' : 'st';
+
   lines.push(
     `location=${typeof window !== 'undefined' ? window.location.href : 'n/a'}`,
   );
   lines.push(
     `protocol=${typeof window !== 'undefined' ? window.location.protocol : 'n/a'}`,
   );
-  lines.push(`crossOriginIsolated=${globalScope.crossOriginIsolated === true}`);
+  lines.push(`crossOriginIsolated=${isolated}`);
   lines.push(`Worker=${typeof Worker !== 'undefined'}`);
   lines.push(`WebAssembly=${typeof WebAssembly !== 'undefined'}`);
-  lines.push(
-    `SharedArrayBuffer=${typeof globalScope.SharedArrayBuffer !== 'undefined'}`,
-  );
+  lines.push(`SharedArrayBuffer=${hasSAB}`);
   lines.push(
     `hardwareConcurrency=${typeof navigator !== 'undefined' ? (navigator.hardwareConcurrency ?? 'unknown') : 'n/a'}`,
   );
-  lines.push(`ffmpegCoreSources=${getFfmpegCoreSources().join(',')}`);
+  lines.push(`ffmpegVariant=${variant}`);
+  lines.push(`ffmpegCoreSources=${getFfmpegCoreSources(variant).join(',')}`);
+  if (!isolated) {
+    lines.push(
+      'remediation=Add Cross-Origin-Opener-Policy: same-origin and Cross-Origin-Embedder-Policy: require-corp headers for multi-threaded FFmpeg',
+    );
+  }
   lines.push('ffmpegWorkerURL=dedicated clip_stacker ffmpeg.worker.ts');
 
   return lines;
@@ -221,6 +243,64 @@ export async function toBlobURLWithRetry(
   }
   throw new Error(
     'toBlobURLWithRetry: Unexpected - loop should always return or throw',
+  );
+}
+
+/**
+ * Download all three mt core assets (js + wasm + worker.js) from a single CDN
+ * source so they are version-consistent. Tries each CDN in order; the first
+ * that delivers all three files wins.
+ */
+export async function loadMtCoreSources(
+  onStatus: StatusCallback,
+  onProgress: ProgressCallback | undefined,
+  recordLog: (message: string) => void,
+): Promise<{ coreURL: string; wasmURL: string; workerURL: string }> {
+  let lastError: Error | null = null;
+  for (const [index, baseURL] of FFMPEG_CORE_MT_CDNS.entries()) {
+    const cdnLabel = getCdnLabel(baseURL);
+    try {
+      const coreURL = await toBlobURLWithRetry(
+        `${baseURL}/ffmpeg-core.js`,
+        'text/javascript',
+        onStatus,
+        onProgress,
+        `FFmpeg core-mt.js from ${cdnLabel}`,
+        recordLog,
+      );
+      const wasmURL = await toBlobURLWithRetry(
+        `${baseURL}/ffmpeg-core.wasm`,
+        'application/wasm',
+        onStatus,
+        onProgress,
+        `FFmpeg core-mt.wasm from ${cdnLabel}`,
+        recordLog,
+      );
+      const workerURL = await toBlobURLWithRetry(
+        `${baseURL}/ffmpeg-core.worker.js`,
+        'text/javascript',
+        onStatus,
+        onProgress,
+        `FFmpeg core-mt worker.js from ${cdnLabel}`,
+        recordLog,
+      );
+      return { coreURL, wasmURL, workerURL };
+    } catch (err) {
+      lastError = err as Error;
+      recordLog(
+        `[FFmpeg load] mt CDN ${baseURL} failed: ${lastError.message}`,
+      );
+      if (index < FFMPEG_CORE_MT_CDNS.length - 1) {
+        emitLoadStatus(
+          onStatus,
+          onProgress,
+          `${cdnLabel} unavailable for mt core. Trying the next CDN...`,
+        );
+      }
+    }
+  }
+  throw new Error(
+    `Failed to download multi-threaded FFmpeg core from all CDNs. Last error: ${lastError?.message ?? 'unknown'}`,
   );
 }
 

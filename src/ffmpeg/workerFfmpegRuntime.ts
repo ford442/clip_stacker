@@ -79,8 +79,8 @@ export class WorkerFfmpegRuntime implements IFfmpegRuntime {
     });
   }
 
-  async load(coreURL: string, wasmURL: string): Promise<void> {
-    await this.rpc({ type: 'load', coreURL, wasmURL });
+  async load(coreURL: string, wasmURL: string, workerURL?: string): Promise<void> {
+    await this.rpc({ type: 'load', coreURL, wasmURL, workerURL });
   }
 
   async exec(args: string[]): Promise<number> {

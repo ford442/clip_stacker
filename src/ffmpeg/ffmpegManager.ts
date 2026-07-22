@@ -8,17 +8,16 @@ import {
   emitProgress,
   extractErrorMessage,
   FFMPEG_CORE_CDNS,
-  FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
   FFMPEG_LOAD_TIMEOUT_MS,
-  getCdnLabel,
-  getFfmpegCoreSources,
   getFfmpegEnvironmentDiagnostics,
+  loadMtCoreSources,
   type FfmpegLogProgressContext,
   type ProgressCallback,
   type StatusCallback,
   toBlobURLWithFallback,
   withTimeout,
 } from './ffmpegCommon';
+import { resolveFfmpegCoreVariant } from '../utils/feature-detector';
 import { WorkerFfmpegRuntime } from './workerFfmpegRuntime';
 
 export const MAX_LOG_BUFFER = 300;
@@ -204,6 +203,7 @@ export class FfmpegManager {
   }
 
   private async loadRuntime(
+    variant: 'mt' | 'st',
     onStatus: StatusCallback,
     onProgress?: ProgressCallback,
   ): Promise<IFfmpegRuntime> {
@@ -218,23 +218,36 @@ export class FfmpegManager {
     this.recordLog(
       `[FFmpeg load] Environment: ${getFfmpegEnvironmentDiagnostics().join('; ')}`,
     );
+    this.recordLog(`[FFmpeg load] Attempting ${variant} core variant`);
 
-    const coreURL = await toBlobURLWithFallback(
-      'ffmpeg-core.js',
-      'text/javascript',
-      onStatus,
-      onProgress,
-      'FFmpeg core.js',
-      (message) => this.recordLog(message),
-    );
-    const wasmURL = await toBlobURLWithFallback(
-      'ffmpeg-core.wasm',
-      'application/wasm',
-      onStatus,
-      onProgress,
-      'FFmpeg core.wasm',
-      (message) => this.recordLog(message),
-    );
+    let coreURL: string;
+    let wasmURL: string;
+    let workerURL: string | undefined;
+
+    if (variant === 'mt') {
+      ({ coreURL, wasmURL, workerURL } = await loadMtCoreSources(
+        onStatus,
+        onProgress,
+        (message) => this.recordLog(message),
+      ));
+    } else {
+      coreURL = await toBlobURLWithFallback(
+        'ffmpeg-core.js',
+        'text/javascript',
+        onStatus,
+        onProgress,
+        'FFmpeg core.js',
+        (message) => this.recordLog(message),
+      );
+      wasmURL = await toBlobURLWithFallback(
+        'ffmpeg-core.wasm',
+        'application/wasm',
+        onStatus,
+        onProgress,
+        'FFmpeg core.wasm',
+        (message) => this.recordLog(message),
+      );
+    }
 
     let runtime: IFfmpegRuntime;
     if (this.useWorker) {
@@ -246,7 +259,7 @@ export class FfmpegManager {
         '[FFmpeg load] Starting dedicated FFmpeg worker load',
       );
       await withTimeout(
-        this.workerRuntime.load(coreURL, wasmURL),
+        this.workerRuntime.load(coreURL, wasmURL, workerURL),
         FFMPEG_LOAD_TIMEOUT_MS,
         'ffmpeg.load()',
       );
@@ -274,7 +287,7 @@ export class FfmpegManager {
       try {
         const direct = runtime as DirectFfmpegRuntime;
         await withTimeout(
-          direct.load(coreURL, wasmURL, { signal: abortController?.signal }),
+          direct.load(coreURL, wasmURL, { signal: abortController?.signal, workerURL }),
           FFMPEG_LOAD_TIMEOUT_MS,
           'ffmpeg.load()',
           () => abortController?.abort(),
@@ -284,7 +297,7 @@ export class FfmpegManager {
       }
     }
 
-    this.recordLog('[FFmpeg load] ffmpeg.load() completed successfully.');
+    this.recordLog(`[FFmpeg load] ffmpeg.load() completed successfully (${variant}).`);
     this.clearTrackedLoadingRuntime(runtime, false);
     return runtime;
   }
@@ -307,15 +320,42 @@ export class FfmpegManager {
     this.loadFailed = false;
     const gen = this.loadGeneration;
     const maxRetries = 3;
+    const preferredVariant = resolveFfmpegCoreVariant();
 
     const attemptWithRetry = async (): Promise<IFfmpegRuntime> => {
+      // Try multi-threaded first (single attempt — mt failure is usually
+      // structural, not transient; fall through immediately to st on failure).
+      if (preferredVariant === 'mt') {
+        if (gen !== this.loadGeneration) {
+          throw new Error('FFmpeg load cancelled by reset');
+        }
+        try {
+          const runtime = await this.loadRuntime('mt', onStatus, onProgress);
+          return runtime;
+        } catch (err) {
+          const message = extractErrorMessage(err);
+          this.recordLog(
+            `[FFmpeg load] Multi-threaded load failed, falling back to single-threaded: ${message}`,
+          );
+          emitLoadStatus(
+            onStatus,
+            onProgress,
+            'Multi-threaded FFmpeg unavailable — loading single-threaded fallback...',
+          );
+          if (this.loadingRuntime) {
+            this.clearTrackedLoadingRuntime(this.loadingRuntime, true);
+          }
+        }
+      }
+
+      // Single-threaded with up to maxRetries attempts.
       let lastError: Error | null = null;
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
         if (gen !== this.loadGeneration) {
           throw new Error('FFmpeg load cancelled by reset');
         }
         try {
-          const runtime = await this.loadRuntime(onStatus, onProgress);
+          const runtime = await this.loadRuntime('st', onStatus, onProgress);
           if (attempt > 1) {
             this.recordLog(
               `[FFmpeg load] Succeeded on attempt ${attempt}/${maxRetries}`,

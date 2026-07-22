@@ -4,6 +4,8 @@ export type WorkerRpcRequest =
       type: 'load';
       coreURL: string;
       wasmURL: string;
+      /** Present when loading the multi-threaded core variant. */
+      workerURL?: string;
     }
   | {
       id: number;

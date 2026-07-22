@@ -81,7 +81,8 @@ export class PreviewEngine {
     this.transitionPipelineCache = transitionPipelineCache;
     this.lutPass = lutPass;
     this.format = format;
-    this.canvas = document.createElement('canvas');
+    // Placeholder; overwritten by the factory before the instance is returned.
+    this.canvas = { width: 0, height: 0 } as unknown as OffscreenCanvas;
   }
 
   /**
@@ -98,9 +99,9 @@ export class PreviewEngine {
   }
 
   private format: GPUTextureFormat;
-  private canvas: HTMLCanvasElement;
+  private canvas: HTMLCanvasElement | OffscreenCanvas;
 
-  static async create(canvas: HTMLCanvasElement): Promise<PreviewEngine> {
+  static async create(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<PreviewEngine> {
     const adapter = await navigator.gpu.requestAdapter({
       powerPreference: "high-performance",
     });

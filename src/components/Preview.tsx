@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { playbackStore, setPlayheadTime } from "../store/playbackStore";
+import { usePlayheadTime } from "../hooks/usePlayheadTime";
 import type {
   Clip,
   ClipGroup,
@@ -21,6 +23,7 @@ import {
   shouldUseTimelinePreview,
   TimelinePreviewEngine,
 } from "../webgpu/timelinePreview";
+import { PreviewWorkerAdapter } from "../webgpu/previewWorkerRuntime";
 import {
   renderTextOverlayCanvas,
   renderTextOverlaysAsync,
@@ -49,8 +52,6 @@ interface Props {
   colorGrade?: ColorGradeSettings;
   outputUrl: string | null;
   exportFilename?: string;
-  playheadTime?: number | null;
-  onPlayheadChange?: (time: number) => void;
 }
 
 /**
@@ -68,8 +69,6 @@ export function Preview({
   colorGrade,
   outputUrl,
   exportFilename,
-  playheadTime,
-  onPlayheadChange,
 }: Props) {
   if (outputUrl) {
     const downloadFilename = exportFilename
@@ -107,8 +106,6 @@ export function Preview({
           textOverlays={textOverlays}
           exportSettings={exportSettings}
           colorGrade={colorGrade}
-          playheadTime={playheadTime}
-          onPlayheadChange={onPlayheadChange}
         />
       </section>
     );
@@ -129,9 +126,7 @@ export function Preview({
         <h2>Preview</h2>
         <WebGPUVideoPreview
           clip={clip}
-          playheadTime={playheadTime}
           colorGrade={colorGrade}
-          onPlayheadChange={onPlayheadChange}
         />
       </section>
     );
@@ -140,12 +135,7 @@ export function Preview({
   return (
     <section className="panel">
       <h2>Preview</h2>
-      <AudioClipPreview clip={clip} onPlayheadChange={onPlayheadChange} />
-      {typeof playheadTime === "number" && (
-        <p className="preview-playhead-label">
-          Playhead: {playheadTime.toFixed(2)}s
-        </p>
-      )}
+      <AudioClipPreview clip={clip} />
     </section>
   );
 }
@@ -161,8 +151,6 @@ interface TimelinePreviewProps {
   textOverlays: TextOverlay[];
   exportSettings?: ExportSettings;
   colorGrade?: ColorGradeSettings;
-  playheadTime?: number | null;
-  onPlayheadChange?: (time: number) => void;
 }
 
 function TimelineCompositorPreview({
@@ -172,9 +160,8 @@ function TimelineCompositorPreview({
   textOverlays,
   exportSettings,
   colorGrade,
-  playheadTime,
-  onPlayheadChange,
 }: TimelinePreviewProps) {
+  const playheadTime = usePlayheadTime();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -184,7 +171,7 @@ function TimelineCompositorPreview({
   );
   const rafRef = useRef<number>(0);
   const playingRef = useRef(false);
-  const globalTimeRef = useRef(playheadTime ?? 0);
+  const globalTimeRef = useRef(playbackStore.getState().playheadTime ?? 0);
   const renderTokenRef = useRef(0);
   const renderFailuresRef = useRef(0);
   const backendRef = useRef<PreviewBackend>("unavailable");
@@ -304,7 +291,12 @@ function TimelineCompositorPreview({
 
       try {
         if (chosen === "webgpu") {
-          engine = await TimelinePreviewEngine.create(canvas, timelineClips);
+          // Attempt off-thread worker path first; fall back to main-thread if
+          // OffscreenCanvas or WebGPU is unavailable in the worker context.
+          engine = await PreviewWorkerAdapter.create(canvas, timelineClips);
+          if (!engine) {
+            engine = await TimelinePreviewEngine.create(canvas, timelineClips);
+          }
         } else if (chosen === "canvas2d") {
           engine = TimelineCanvas2DRenderer.create(canvas, timelineClips);
         }
@@ -329,7 +321,7 @@ function TimelineCompositorPreview({
         setDegradationMessage('Shader text requires WebGPU — using solid fallback for preview/export.');
       }
       renderFailuresRef.current = 0;
-      const time = playheadTime ?? globalTimeRef.current;
+      const time = playbackStore.getState().playheadTime ?? globalTimeRef.current;
       globalTimeRef.current = time;
       await renderAt(time);
     }
@@ -387,7 +379,7 @@ function TimelineCompositorPreview({
       last = now;
       const next = Math.min(totalDuration, globalTimeRef.current + dt);
       globalTimeRef.current = next;
-      onPlayheadChange?.(next);
+      setPlayheadTime(next);
       requestRender(next);
       if (next >= totalDuration - 1e-3) {
         setIsPlaying(false);
@@ -398,7 +390,7 @@ function TimelineCompositorPreview({
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, previewActive, totalDuration, onPlayheadChange, requestRender]);
+  }, [isPlaying, previewActive, totalDuration, requestRender]);
 
   const togglePlayback = () => {
     if (isPlaying) {
@@ -407,7 +399,7 @@ function TimelineCompositorPreview({
     }
     if (globalTimeRef.current >= totalDuration - 1e-3) {
       globalTimeRef.current = 0;
-      onPlayheadChange?.(0);
+      setPlayheadTime(0);
     }
     setIsPlaying(true);
   };
@@ -463,7 +455,7 @@ function TimelineCompositorPreview({
               onChange={(e) => {
                 const next = Number(e.target.value);
                 globalTimeRef.current = next;
-                onPlayheadChange?.(next);
+                setPlayheadTime(next);
                 requestRender(next);
               }}
             />
@@ -495,9 +487,7 @@ function TimelineCompositorPreview({
 
 interface VideoPreviewProps {
   clip: Clip;
-  playheadTime?: number | null;
   colorGrade?: ColorGradeSettings;
-  onPlayheadChange?: (time: number) => void;
 }
 
 /** Hidden but still decodable — `display:none` stops frame delivery in Chromium. */
@@ -511,10 +501,9 @@ const HIDDEN_VIDEO_STYLE: CSSProperties = {
 
 function WebGPUVideoPreview({
   clip,
-  playheadTime,
   colorGrade,
-  onPlayheadChange,
 }: VideoPreviewProps) {
+  const playheadTime = usePlayheadTime();
   const viewportRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -683,16 +672,16 @@ function WebGPUVideoPreview({
 
   useEffect(() => {
     const video = videoRef.current;
-    if (!video || !onPlayheadChange) return;
+    if (!video) return;
 
-    const reportTime = () => onPlayheadChange(video.currentTime);
+    const reportTime = () => setPlayheadTime(video.currentTime);
     video.addEventListener("timeupdate", reportTime);
     video.addEventListener("seeked", reportTime);
     return () => {
       video.removeEventListener("timeupdate", reportTime);
       video.removeEventListener("seeked", reportTime);
     };
-  }, [clip.id, onPlayheadChange]);
+  }, [clip.id]);
 
   const viewportStyle = previewSize
     ? { width: previewSize.cssWidth, height: previewSize.cssHeight }
@@ -762,29 +751,23 @@ function WebGPUVideoPreview({
   );
 }
 
-function AudioClipPreview({
-  clip,
-  onPlayheadChange,
-}: {
-  clip: Clip;
-  onPlayheadChange?: (time: number) => void;
-}) {
+function AudioClipPreview({ clip }: { clip: Clip }) {
   const audioRef = useRef<HTMLAudioElement>(null);
 
   useMediaVolume(audioRef, clip.volume, clip.id);
 
   useEffect(() => {
     const audio = audioRef.current;
-    if (!audio || !onPlayheadChange) return;
+    if (!audio) return;
 
-    const reportTime = () => onPlayheadChange(audio.currentTime);
+    const reportTime = () => setPlayheadTime(audio.currentTime);
     audio.addEventListener("timeupdate", reportTime);
     audio.addEventListener("seeked", reportTime);
     return () => {
       audio.removeEventListener("timeupdate", reportTime);
       audio.removeEventListener("seeked", reportTime);
     };
-  }, [clip.id, onPlayheadChange]);
+  }, [clip.id]);
 
   return (
     <audio

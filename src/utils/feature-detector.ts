@@ -7,10 +7,27 @@ export interface BrowserCapabilities {
   hardwareH264: boolean;
   /** MediaRecorder can produce MP4 container output. */
   mediaRecorderMp4: boolean;
-  /** SharedArrayBuffer available (required for FFmpeg.wasm). */
+  /** SharedArrayBuffer available (required for FFmpeg.wasm multi-threaded). */
   sharedArrayBuffer: boolean;
+  /** Page is cross-origin isolated (COOP + COEP headers active). */
+  crossOriginIsolated: boolean;
   /** requestVideoFrameCallback available on HTMLVideoElement. */
   videoFrameCallback: boolean;
+}
+
+/** Which FFmpeg WASM core variant can be loaded in this context. */
+export type FfmpegCoreVariant = 'mt' | 'st';
+
+/**
+ * Resolve which FFmpeg core variant to attempt first.
+ * Multi-threaded requires SharedArrayBuffer AND cross-origin isolation.
+ */
+export function resolveFfmpegCoreVariant(): FfmpegCoreVariant {
+  const g = globalThis as { crossOriginIsolated?: boolean };
+  if (typeof SharedArrayBuffer === 'undefined' || !g.crossOriginIsolated) {
+    return 'st';
+  }
+  return 'mt';
 }
 
 let _cached: BrowserCapabilities | null = null;
@@ -19,6 +36,8 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
   if (_cached) return _cached;
 
   const sharedArrayBuffer = typeof SharedArrayBuffer !== "undefined";
+  const crossOriginIsolated =
+    !!(globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated;
 
   const webcodecs =
     typeof VideoEncoder !== "undefined" &&
@@ -66,6 +85,7 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
     hardwareH264,
     mediaRecorderMp4,
     sharedArrayBuffer,
+    crossOriginIsolated,
     videoFrameCallback,
   };
   return _cached;
@@ -131,5 +151,7 @@ export function formatCapabilities(caps: BrowserCapabilities): string {
   lines.push(`WebGPU: ${caps.webgpu ? "✓" : "✗"}`);
   lines.push(`MediaRecorder MP4: ${caps.mediaRecorderMp4 ? "✓" : "✗"}`);
   lines.push(`SharedArrayBuffer: ${caps.sharedArrayBuffer ? "✓" : "✗"}`);
+  lines.push(`CrossOriginIsolated: ${caps.crossOriginIsolated ? "✓" : "✗"}`);
+  lines.push(`FFmpeg: ${caps.sharedArrayBuffer && caps.crossOriginIsolated ? "multi-threaded" : "single-threaded"}`);
   return lines.join(" · ");
 }

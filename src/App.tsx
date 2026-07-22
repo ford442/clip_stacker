@@ -11,7 +11,6 @@ import type {
 import { DEFAULT_EXPORT_SETTINGS } from "./types";
 import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from "./utils/media";
 import { createKenBurnsKeyframes } from "./utils/animatedLayout";
-import { resolveClipLocalTimeAtGlobal } from "./utils/previewComposition";
 import { computeTotalDuration } from "./utils/transitions";
 import {
   sanitizeClipAdjustments,
@@ -83,6 +82,7 @@ import {
   writeStorageAuthToken,
 } from "./utils/storageAuth";
 import { generateDebugReport } from "./utils/debugReport";
+import { playbackStore, setPlayheadTime } from "./store";
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(", ");
@@ -128,7 +128,6 @@ export function App() {
   } = useEditHistory();
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [showMemoryWarning, setShowMemoryWarning] = useState(false);
-  const [previewPlayheadTime, setPreviewPlayheadTime] = useState<number | null>(null);
   const pendingRenderRef = useRef<(() => Promise<void>) | null>(null);
 
   const {
@@ -245,10 +244,10 @@ export function App() {
 
   useEffect(() => {
     if (!selectedClip) {
-      setPreviewPlayheadTime(null);
+      setPlayheadTime(null);
       return;
     }
-    setPreviewPlayheadTime(selectedClip.trimStart);
+    setPlayheadTime(selectedClip.trimStart);
   }, [selectedClip?.id, selectedClip?.trimStart]);
 
   // ---------------------------------------------------------------------------
@@ -343,7 +342,7 @@ export function App() {
     const copy = duplicateClip(source);
     insertClipAfter(index, copy);
     setSelectedClipId(copy.id);
-    setPreviewPlayheadTime(copy.trimStart);
+    setPlayheadTime(copy.trimStart);
     setOutputUrl(null);
     setStatus(`Duplicated "${source.title}".`);
   }, [
@@ -361,7 +360,8 @@ export function App() {
       setStatus("Select a clip to split.");
       return;
     }
-    if (previewPlayheadTime === null) {
+    const currentPlayheadTime = playbackStore.getState().playheadTime;
+    if (currentPlayheadTime === null) {
       setStatus("Move the preview playhead before splitting.");
       return;
     }
@@ -370,7 +370,7 @@ export function App() {
     if (index < 0) return;
 
     const source = clips[index];
-    const split = splitClipAt(source, previewPlayheadTime);
+    const split = splitClipAt(source, currentPlayheadTime);
     if (!split) {
       setStatus(
         "Cannot split here — place the playhead at least 0.1s inside the trimmed region.",
@@ -390,15 +390,14 @@ export function App() {
       setClipGroups((prev) => removeClipFromGroups(prev, source));
     }
     setSelectedClipId(right.id);
-    setPreviewPlayheadTime(right.trimStart);
+    setPlayheadTime(right.trimStart);
     setOutputUrl(null);
     setStatus(
-      `Split "${source.title}" at ${previewPlayheadTime.toFixed(2)}s.`,
+      `Split "${source.title}" at ${currentPlayheadTime.toFixed(2)}s.`,
     );
   }, [
     clips,
     selectedClipId,
-    previewPlayheadTime,
     pushHistory,
     setClipGroups,
     setSelectedClipId,
@@ -1277,25 +1276,6 @@ export function App() {
     [clips, clipGroups],
   );
 
-  const selectedClipLocalTime = useMemo(() => {
-    if (!selectedClipId) return 0;
-    if (previewPlayheadTime === null) return 0;
-    const resolved = resolveClipLocalTimeAtGlobal(
-      clips,
-      clipGroups,
-      transitions,
-      selectedClipId,
-      previewPlayheadTime,
-    );
-    return resolved?.localTime ?? 0;
-  }, [
-    clips,
-    clipGroups,
-    transitions,
-    selectedClipId,
-    previewPlayheadTime,
-  ]);
-
   const previewTotalDuration = useMemo(
     () => computeTotalDuration(timelineClips, transitions),
     [timelineClips, transitions],
@@ -1466,13 +1446,13 @@ export function App() {
           colorGrade={colorGrade}
           outputUrl={outputUrl}
           exportFilename={exportSettings.filename}
-          playheadTime={previewPlayheadTime}
-          onPlayheadChange={setPreviewPlayheadTime}
         />
         <Inspector
           clip={selectedClip}
+          clips={clips}
+          clipGroups={clipGroups}
+          transitions={transitions}
           exportSettings={exportSettings}
-          clipLocalTime={selectedClipLocalTime}
           colorGrade={colorGrade}
           onColorGradeChange={setColorGrade}
           onChange={handleInspectorChange}
@@ -1500,7 +1480,6 @@ export function App() {
 
       <TextOverlayPanel
         overlays={textOverlays}
-        previewGlobalTime={previewPlayheadTime ?? 0}
         totalDuration={previewTotalDuration}
         onAdd={handleAddTextOverlay}
         onUpdate={handleUpdateTextOverlay}

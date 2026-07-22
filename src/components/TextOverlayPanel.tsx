@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { usePlayheadTime } from "../hooks/usePlayheadTime";
 import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from "../types";
 import { isValidFfmpegColor } from "../utils/color";
 import {
@@ -14,7 +15,6 @@ import { KeyframeMiniEditor } from "./KeyframeMiniEditor";
 
 interface Props {
   overlays: TextOverlay[];
-  previewGlobalTime?: number;
   totalDuration?: number;
   onAdd: () => string;
   onUpdate: (overlay: TextOverlay) => void;
@@ -23,12 +23,12 @@ interface Props {
 
 export function TextOverlayPanel({
   overlays,
-  previewGlobalTime = 0,
   totalDuration = 60,
   onAdd,
   onUpdate,
   onDelete,
 }: Props) {
+  const previewGlobalTime = usePlayheadTime() ?? 0;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeKeyframeProp, setActiveKeyframeProp] =
     useState<TextAnimatableProp>("x");

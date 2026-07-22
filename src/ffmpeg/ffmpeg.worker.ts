@@ -45,6 +45,7 @@ self.onmessage = async (event: MessageEvent<WorkerRpcRequest>) => {
         await instance.load({
           coreURL: request.coreURL,
           wasmURL: request.wasmURL,
+          ...(request.workerURL ? { workerURL: request.workerURL } : {}),
         });
         ffmpeg = instance;
         respond(id, { ok: true });

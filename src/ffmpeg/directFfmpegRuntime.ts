@@ -9,12 +9,19 @@ export class DirectFfmpegRuntime implements IFfmpegRuntime {
     return this.ffmpeg;
   }
 
-  load(
+  async load(
     coreURL: string,
     wasmURL: string,
-    options?: { signal?: AbortSignal },
+    options?: { signal?: AbortSignal; workerURL?: string },
   ): Promise<void> {
-    return this.ffmpeg.load({ coreURL, wasmURL }, options);
+    await this.ffmpeg.load(
+      {
+        coreURL,
+        wasmURL,
+        ...(options?.workerURL ? { workerURL: options.workerURL } : {}),
+      },
+      options?.signal ? { signal: options.signal } : undefined,
+    );
   }
 
   exec(args: string[]): Promise<number> {

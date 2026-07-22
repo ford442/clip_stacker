@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
-import type { Clip, ClipAnimatableProp, ClipKeyframes, ExportSettings } from '../types';
+import type { Clip, ClipAnimatableProp, ClipKeyframes, ClipGroup, ClipTransition, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
+import { resolveClipLocalTimeAtGlobal } from '../utils/previewComposition';
+import { usePlayheadTime } from '../hooks/usePlayheadTime';
 import { sanitizeFilename } from '../utils/filename';
 import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
 import { getClipDuration, isOverlayOffCanvas } from '../utils/project';
@@ -33,8 +35,10 @@ interface ClipValues {
 
 interface Props {
   clip: Clip | null;
+  clips: Clip[];
+  clipGroups: ClipGroup[];
+  transitions: ClipTransition[];
   exportSettings: ExportSettings;
-  clipLocalTime?: number;
   onChange: (values: ClipValues) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onApplyKenBurns?: () => void;
@@ -141,8 +145,10 @@ function findMatchingPreset(settings: ExportSettings): string {
 
 export function Inspector({
   clip,
+  clips,
+  clipGroups,
+  transitions,
   exportSettings,
-  clipLocalTime = 0,
   onChange,
   onKeyframesChange,
   onApplyKenBurns,
@@ -153,6 +159,12 @@ export function Inspector({
   onRife,
   rifeProcessing,
 }: Props) {
+  const playheadTime = usePlayheadTime();
+  const clipLocalTime = useMemo(() => {
+    if (!clip || playheadTime === null) return 0;
+    const resolved = resolveClipLocalTimeAtGlobal(clips, clipGroups, transitions, clip.id, playheadTime);
+    return resolved?.localTime ?? 0;
+  }, [clip, clips, clipGroups, transitions, playheadTime]);
   const [tab, setTab] = useState<Tab>('clip');
   const [rifeMultiplier, setRifeMultiplier] = useState<2 | 4>(2);
   const [activeKeyframeProp, setActiveKeyframeProp] = useState<ClipAnimatableProp>('x');
