@@ -214,6 +214,25 @@ RIFE processing uses the public HuggingFace Space `1inkusFace/RIFE`. If RIFE fai
 To use this with [ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager):
 
 1. Deploy `contabo_storage_manager` with the `/webhook/clip-stacker` endpoint implemented
-2. In the app, enter the full URL to your deployment's `/webhook/clip-stacker` path
-3. (Optional) Provide a Bearer token if your deployment requires authentication
-4. Use "Save remote" and "Load remote" buttons to persist projects
+2. Include the chunked-upload router from `contabo_storage_manager/python/chunked_media_upload.py` (see that folder's README) and reload nginx from `contabo_storage_manager/config/storage.noahcohn.com.conf`
+3. In the app, enter the full URL to your deployment's `/webhook/clip-stacker` path
+4. (Optional) Provide a Bearer token if your deployment requires authentication
+5. Use "Save remote" and "Load remote" buttons to persist projects
+
+#### Chunked / resumable media uploads
+
+Remote save uploads each clip's source file to `{endpoint}/media`. Behavior:
+
+| File size | Path | Notes |
+|-----------|------|-------|
+| ≤ 10 MiB | Single `multipart/form-data` POST | Low-latency fast path |
+| > 10 MiB | Session-based chunked upload | 5 MiB chunks by default |
+
+Chunked protocol (relative to the media endpoint):
+
+- `POST /upload/init` → `{ uploadId, chunkSize }`
+- `PUT /upload/{uploadId}/{chunkIndex}` with `Content-Range` → `{ received }`
+- `POST /upload/{uploadId}/complete` → `{ url }` (same response shape as the single-request path)
+- `GET /upload/{uploadId}/status` → `{ receivedChunks }` for resume
+
+In-flight `uploadId` + completed chunk indexes are stored in `localStorage` (key `clip_stacker_upload_sessions_v1`) so closing the tab or sleeping the laptop mid-upload resumes from the last confirmed chunk on the next save of the same file. Individual chunks retry up to 3 times before the clip-level retry UI appears. Abandoned server-side staging dirs are garbage-collected after 24 hours. Server max file size defaults to **10 GiB**.

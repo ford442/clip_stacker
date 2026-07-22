@@ -21,8 +21,16 @@ import {
 import { isKnownTextShader } from '../webgpu/text/registry';
 import type { ColorGradeSettings } from './lut';
 import { DEFAULT_COLOR_GRADE, isColorGradeActive } from './lut';
+import {
+  CHUNK_THRESHOLD_BYTES,
+  uploadMediaChunked,
+  type ChunkedUploadProgress,
+} from './storageUpload';
 
 const FADE_SAFETY_MARGIN = 0.01;
+
+/** Re-export chunk threshold so callers/tests can assert the fast-path cutoff. */
+export { CHUNK_THRESHOLD_BYTES };
 
 /** Maximum number of upload attempts per clip before aborting the save. */
 export const MAX_UPLOAD_RETRY_ATTEMPTS = 5;
@@ -206,6 +214,9 @@ export interface RemoteUploadProgressEvent {
   progress: number;
   status: 'uploading' | 'uploaded' | 'failed' | 'skipped';
   message?: string;
+  /** Present when the active upload is using the chunked path. */
+  chunkIndex?: number;
+  chunkTotal?: number;
 }
 
 export interface RemoteUploadErrorEvent extends RemoteUploadProgressEvent {
@@ -486,7 +497,7 @@ async function uploadClipMediaWithRetry(
         uploadName,
         clip.file,
         clip.file.type || 'application/octet-stream',
-        (progress) =>
+        (progress, detail) =>
           options.onRemoteUploadProgress?.({
             clipId: clip.id,
             fileName: clip.file.name,
@@ -494,6 +505,12 @@ async function uploadClipMediaWithRetry(
             total,
             progress,
             status: 'uploading',
+            ...(detail?.chunkTotal
+              ? {
+                  chunkIndex: detail.chunkIndex,
+                  chunkTotal: detail.chunkTotal,
+                }
+              : {}),
           }),
       );
       options.onRemoteUploadProgress?.({
@@ -980,14 +997,41 @@ export class ContaboStorageManagerClient {
    * Upload a binary media blob (e.g. a WAV file) to the remote media endpoint.
    * The media endpoint is derived by appending `/media` to the base endpoint.
    * Expects the server to respond with `{ "url": "<public-url>" }`.
+   *
+   * Files larger than {@link CHUNK_THRESHOLD_BYTES} use a chunked, resumable
+   * session (`storageUpload.ts`). Smaller files keep the legacy single-request
+   * multipart POST for lower latency.
    */
   async uploadMedia(
     name: string,
     blob: Blob,
     mimeType = 'audio/wav',
-    onProgress?: (progress: number) => void,
+    onProgress?: (progress: number, detail?: ChunkedUploadProgress) => void,
   ): Promise<string> {
     const authHeader = this.getAuthHeader();
+
+    if (blob.size > CHUNK_THRESHOLD_BYTES) {
+      return uploadMediaChunked({
+        mediaEndpoint: this.mediaEndpoint,
+        authHeader,
+        name,
+        blob,
+        mimeType,
+        onProgress: (detail) => onProgress?.(detail.progress, detail),
+      });
+    }
+
+    return this.uploadMediaSingleRequest(name, blob, mimeType, onProgress, authHeader);
+  }
+
+  /** Legacy single-request multipart upload (files ≤ {@link CHUNK_THRESHOLD_BYTES}). */
+  private async uploadMediaSingleRequest(
+    name: string,
+    blob: Blob,
+    mimeType: string,
+    onProgress: ((progress: number, detail?: ChunkedUploadProgress) => void) | undefined,
+    authHeader: string | null,
+  ): Promise<string> {
     const headers: Record<string, string> = {};
     if (authHeader) headers.authorization = authHeader;
 

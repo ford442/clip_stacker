@@ -97,6 +97,8 @@ type RemoteUploadItem = {
   progress: number;
   status: "pending" | "uploading" | "uploaded" | "failed" | "skipped";
   error?: string;
+  chunkIndex?: number;
+  chunkTotal?: number;
 };
 
 type PendingRemoteUploadError = {
