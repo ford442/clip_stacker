@@ -1,4 +1,17 @@
 /**
+ * Decode the audio track of an audio or video file into an AudioBuffer.
+ * Works for both audio and video containers via `decodeAudioData`.
+ */
+export async function decodeAudioBuffer(
+  objectUrl: string,
+  audioCtx: BaseAudioContext,
+): Promise<AudioBuffer> {
+  const response = await fetch(objectUrl);
+  const arrayBuffer = await response.arrayBuffer();
+  return audioCtx.decodeAudioData(arrayBuffer);
+}
+
+/**
  * Extract normalized peak samples from the audio track of an audio or video file.
  * Uses the Web Audio API to decode the audio data client-side.
  *
@@ -10,13 +23,9 @@ export async function extractWaveformPeaks(
   objectUrl: string,
   numSamples = 120,
 ): Promise<Float32Array> {
-  const response = await fetch(objectUrl);
-  const arrayBuffer = await response.arrayBuffer();
-
-  // AudioContext.decodeAudioData works for both audio and video containers
   const audioCtx = new AudioContext();
   try {
-    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const audioBuffer = await decodeAudioBuffer(objectUrl, audioCtx);
 
     // Mix all channels down to a mono peak array
     const numChannels = audioBuffer.numberOfChannels;

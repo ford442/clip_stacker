@@ -12,6 +12,7 @@ import type { ColorGradeSettings } from "../utils/lut";
 import { sanitizeFilename } from "../utils/filename";
 import { computeTotalDuration } from "../utils/transitions";
 import { useMediaVolume } from "../hooks/useMediaVolume";
+import { useTimelineAudioPlayback } from "../hooks/useTimelineAudioPlayback";
 import {
   DEFAULT_PREVIEW_CONSTRAINTS,
   PREVIEW_SIZE_THRESHOLD_PX,
@@ -162,6 +163,11 @@ function TimelineCompositorPreview({
   colorGrade,
 }: TimelinePreviewProps) {
   const playheadTime = usePlayheadTime();
+  const audioPlayback = useTimelineAudioPlayback(
+    timelineClips,
+    clipGroups,
+    transitions,
+  );
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -177,6 +183,7 @@ function TimelineCompositorPreview({
   const backendRef = useRef<PreviewBackend>("unavailable");
   const [backend, setBackend] = useState<PreviewBackend>("unavailable");
   const [isPlaying, setIsPlaying] = useState(false);
+  const [audioClockActive, setAudioClockActive] = useState(false);
   const [degradationMessage, setDegradationMessage] = useState<string | null>(
     null,
   );
@@ -372,16 +379,26 @@ function TimelineCompositorPreview({
     playingRef.current = isPlaying;
     if (!isPlaying || !previewActive) return;
 
-    let last = performance.now();
+    let lastWall = performance.now();
+
     const tick = (now: number) => {
       if (!playingRef.current) return;
-      const dt = (now - last) / 1000;
-      last = now;
-      const next = Math.min(totalDuration, globalTimeRef.current + dt);
+
+      let next: number;
+      if (audioClockActive) {
+        next = Math.min(totalDuration, audioPlayback.getCurrentTime());
+      } else {
+        const dt = (now - lastWall) / 1000;
+        lastWall = now;
+        next = Math.min(totalDuration, globalTimeRef.current + dt);
+      }
+
       globalTimeRef.current = next;
       setPlayheadTime(next);
       requestRender(next);
       if (next >= totalDuration - 1e-3) {
+        audioPlayback.pause();
+        setAudioClockActive(false);
         setIsPlaying(false);
         return;
       }
@@ -390,17 +407,34 @@ function TimelineCompositorPreview({
 
     rafRef.current = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafRef.current);
-  }, [isPlaying, previewActive, totalDuration, requestRender]);
+  }, [
+    isPlaying,
+    previewActive,
+    totalDuration,
+    requestRender,
+    audioPlayback,
+    audioClockActive,
+  ]);
 
-  const togglePlayback = () => {
+  const togglePlayback = async () => {
     if (isPlaying) {
+      const pausedAt = audioPlayback.pause();
+      globalTimeRef.current = pausedAt;
+      setPlayheadTime(pausedAt);
+      setAudioClockActive(false);
       setIsPlaying(false);
       return;
     }
-    if (globalTimeRef.current >= totalDuration - 1e-3) {
+    let startAt = globalTimeRef.current;
+    if (startAt >= totalDuration - 1e-3) {
+      startAt = 0;
       globalTimeRef.current = 0;
       setPlayheadTime(0);
     }
+    // Resume AudioContext from this user gesture; fall back to wall-clock
+    // visual playback (muted) when Web Audio is unavailable.
+    const started = await audioPlayback.play(startAt);
+    setAudioClockActive(started);
     setIsPlaying(true);
   };
 
@@ -457,6 +491,7 @@ function TimelineCompositorPreview({
                 globalTimeRef.current = next;
                 setPlayheadTime(next);
                 requestRender(next);
+                void audioPlayback.seek(next);
               }}
             />
           </label>
