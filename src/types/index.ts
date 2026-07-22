@@ -86,6 +86,13 @@ export interface Clip {
   keyframes?: ClipKeyframes;
   /** True when the source is a still image (Ken Burns / UV keyframes). */
   stillImage?: boolean;
+  /**
+   * Detected beat onset times in seconds (source media timeline).
+   * Populated by WASM offline audio analysis; optional / read-only.
+   */
+  beatTimestamps?: number[];
+  /** Rough BPM estimate from beatTimestamps (when available). */
+  bpmEstimate?: number;
 }
 
 export interface SerializedClip {
@@ -134,6 +141,10 @@ export interface SerializedClip {
   volume?: number;
   keyframes?: ClipKeyframes;
   stillImage?: boolean;
+  /** Beat onset times in seconds (source media), from audio analysis. */
+  beatTimestamps?: number[];
+  /** Rough BPM estimate from beatTimestamps. */
+  bpmEstimate?: number;
 }
 
 export type TransitionType = 'none' | (string & {});

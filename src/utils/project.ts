@@ -159,6 +159,10 @@ export function serializeProject(
         : {}),
       ...(clip.keyframes ? { keyframes: clip.keyframes } : {}),
       ...(clip.stillImage ? { stillImage: true } : {}),
+      ...(clip.beatTimestamps && clip.beatTimestamps.length > 0
+        ? { beatTimestamps: clip.beatTimestamps.slice() }
+        : {}),
+      ...(clip.bpmEstimate != null ? { bpmEstimate: clip.bpmEstimate } : {}),
     })),
     transitions: transitions.map((t): SerializedTransition => ({
       afterClipIndex: t.afterClipIndex,
@@ -762,6 +766,14 @@ export async function applyProjectData(
     if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
     if (savedClip.keyframes) liveClip.keyframes = savedClip.keyframes;
     if (savedClip.stillImage) liveClip.stillImage = savedClip.stillImage;
+    if (Array.isArray(savedClip.beatTimestamps) && savedClip.beatTimestamps.length > 0) {
+      liveClip.beatTimestamps = savedClip.beatTimestamps
+        .map((t) => Number(t))
+        .filter((t) => Number.isFinite(t) && t >= 0);
+    }
+    if (savedClip.bpmEstimate != null && Number.isFinite(Number(savedClip.bpmEstimate))) {
+      liveClip.bpmEstimate = Number(savedClip.bpmEstimate);
+    }
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
   }

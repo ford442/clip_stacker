@@ -30,6 +30,26 @@ import {
   uvRectToSourcePixels,
 } from "../webgpu/exportCompositor";
 
+/**
+ * Bass energy 0..1 from AnalyserNode byte frequency data (legacy path).
+ * Prefer {@link bassLevelFromWasmBands} when WASM analysis is available.
+ */
+export function bassLevelFromAnalyserBytes(freqData: Uint8Array): number {
+  if (freqData.length === 0) return 0;
+  const bassEnd = Math.max(1, Math.floor(freqData.length / 4));
+  let sum = 0;
+  for (let i = 0; i < bassEnd; i++) sum += freqData[i]!;
+  return sum / bassEnd / 255;
+}
+
+/** Bass energy from WASM 8-band output (bands 0–1) or pre-aggregated bass. */
+export function bassLevelFromWasmBands(bands: ArrayLike<number>, bass?: number): number {
+  if (typeof bass === 'number' && Number.isFinite(bass)) return Math.max(0, Math.min(1, bass));
+  if (bands.length === 0) return 0;
+  const b0 = bands[0] ?? 0;
+  const b1 = bands[1] ?? b0;
+  return Math.max(0, Math.min(1, (b0 + b1) / 2));
+}
 const TARGET_WIDTH = 1280;
 const TARGET_HEIGHT = 720;
 const TARGET_FPS = 30;
@@ -79,6 +99,12 @@ export class CanvasRenderer {
   /** Set to true to abort the render at the next clip boundary. */
   private abortRequested = false;
 
+  /**
+   * Optional bass level from WASM analysis (0..1). When set, takes priority
+   * over AnalyserNode byte data for the glow overlay (export parity with WebGPU).
+   */
+  private wasmBassLevel: number | null = null;
+
   constructor(canvas: HTMLCanvasElement, options: RendererOptions = {}) {
     const ctx = canvas.getContext("2d");
     if (!ctx)
@@ -93,6 +119,18 @@ export class CanvasRenderer {
     };
     this.canvas.width = this.options.width;
     this.canvas.height = this.options.height;
+  }
+
+  /**
+   * Feed bass energy from the shared WASM analyzer (same source as WebGPU uniforms).
+   * Pass null to fall back to AnalyserNode.
+   */
+  setWasmBassLevel(level: number | null): void {
+    if (level == null || !Number.isFinite(level)) {
+      this.wasmBassLevel = null;
+      return;
+    }
+    this.wasmBassLevel = Math.max(0, Math.min(1, level));
   }
 
   /** Request an early abort of an in-progress `renderClips` call. */
@@ -491,17 +529,13 @@ export class CanvasRenderer {
 
   /**
    * Draw a subtle audio-reactive overlay driven by bass frequency energy.
-   * A warm radial glow pulses in sync with the low-frequency content of the
-   * currently playing clip's audio.
+   * Prefers WASM bass when set via setWasmBassLevel(); otherwise uses AnalyserNode bins.
    */
   private drawAudioReactiveOverlay(freqData: Uint8Array<ArrayBuffer>): void {
-    if (freqData.length === 0) return;
-
-    // Average the low-frequency (bass) bins — roughly 0–500 Hz.
-    const bassEnd = Math.max(1, Math.floor(freqData.length / 4));
-    let sum = 0;
-    for (let i = 0; i < bassEnd; i++) sum += freqData[i];
-    const bassLevel = sum / bassEnd / 255; // normalised 0..1
+    const bassLevel =
+      this.wasmBassLevel != null
+        ? this.wasmBassLevel
+        : bassLevelFromAnalyserBytes(freqData);
 
     if (bassLevel < 0.05) return; // below threshold — skip
 

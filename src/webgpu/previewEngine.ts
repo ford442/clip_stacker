@@ -9,6 +9,11 @@ import type { TransitionRenderParams } from "./transitions/types";
 import { LutPass } from "./lutPass";
 import type { ColorGradeSettings } from "../utils/lut";
 import { isColorGradeActive, resolveLutData } from "../utils/lut";
+import {
+  AUDIO_UNIFORM_OFFSET,
+  ZERO_AUDIO_REACTIVE,
+  type AudioReactiveState,
+} from "../wasm/audioReactiveUniforms";
 
 /**
  * WebGPU-based clip preview engine.
@@ -25,7 +30,8 @@ import { isColorGradeActive, resolveLutData } from "../utils/lut";
  *   engine.destroy();
  */
 
-const UNIFORM_FLOATS = 16; // must match WGSL struct (padded to 64 bytes)
+/** Must match WGSL Uniforms (20 floats = 80 bytes, 16-byte aligned). */
+const UNIFORM_FLOATS = 20;
 
 export interface NormalizedDestRect {
   x: number;
@@ -60,6 +66,7 @@ export class PreviewEngine {
   private transitionPipelineCache: TransitionPipelineCache;
   private lutPass: LutPass;
   private destroyed = false;
+  private audioReactive: AudioReactiveState = { ...ZERO_AUDIO_REACTIVE };
 
   private constructor(
     device: GPUDevice,
@@ -226,6 +233,19 @@ export class PreviewEngine {
     });
   }
 
+  /**
+   * Update audio-reactive uniforms (bass / mid / treble / beat) from WASM analysis.
+   * Pass zeros or call with no args to disable the shader modulation.
+   */
+  setAudioReactive(state: AudioReactiveState = ZERO_AUDIO_REACTIVE): void {
+    this.audioReactive = {
+      bass: state.bass,
+      mid: state.mid,
+      treble: state.treble,
+      beat: state.beat,
+    };
+  }
+
   /** Render one composited layer (multi-pass timeline preview). */
   renderLayer(videoFrame: VideoFrame, params: LayerRenderParams): void {
     if (this.destroyed) return;
@@ -244,6 +264,10 @@ export class PreviewEngine {
     this.uniformData[10] = dest.y;
     this.uniformData[11] = dest.w;
     this.uniformData[12] = dest.h;
+    this.uniformData[AUDIO_UNIFORM_OFFSET.bass] = this.audioReactive.bass;
+    this.uniformData[AUDIO_UNIFORM_OFFSET.mid] = this.audioReactive.mid;
+    this.uniformData[AUDIO_UNIFORM_OFFSET.treble] = this.audioReactive.treble;
+    this.uniformData[AUDIO_UNIFORM_OFFSET.beat] = this.audioReactive.beat;
     this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
     const externalTexture = this.device.importExternalTexture({

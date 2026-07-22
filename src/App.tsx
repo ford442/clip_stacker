@@ -75,6 +75,7 @@ import { useProjectSaveLoad } from "./hooks/useProjectSaveLoad";
 import { useRenderState } from "./hooks/useRenderState";
 import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
+import { useClipBeatAnalysis } from "./hooks/useClipBeatAnalysis";
 import { getTimelineClips } from "./utils/timelineClips";
 import { resolveTargetResolution } from "./utils/resolution";
 import {
@@ -128,6 +129,7 @@ export function App() {
     canRedo,
     resetHistory,
   } = useEditHistory();
+  useClipBeatAnalysis(clips, setClips);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [showMemoryWarning, setShowMemoryWarning] = useState(false);
   const pendingRenderRef = useRef<(() => Promise<void>) | null>(null);

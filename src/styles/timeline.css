@@ -98,6 +98,17 @@
   padding-bottom: 2px;
 }
 
+.ruler-beat-marker {
+  position: absolute;
+  bottom: 0;
+  width: 2px;
+  height: 10px;
+  transform: translateX(-50%);
+  background: rgba(38, 198, 218, 0.85);
+  pointer-events: none;
+  border-radius: 1px 1px 0 0;
+}
+
 /* ── Track & clips ──────────────────────────────────────── */
 .timeline-track {
   position: relative;
