@@ -1,7 +1,6 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Clip, ClipTransition } from '../types';
-import { extractThumbnails } from '../utils/media';
-import { extractWaveformPeaks } from '../utils/waveform';
 import {
   buildRulerTicks,
   clampPixelsPerSecond,
@@ -9,13 +8,23 @@ import {
   DEFAULT_PIXELS_PER_SECOND,
   formatTimelineTime,
   MAX_PIXELS_PER_SECOND,
+  MIN_CLIP_PIXEL_WIDTH,
   MIN_PIXELS_PER_SECOND,
   rulerTickInterval,
   timelineContentWidth,
 } from '../utils/timelineLayout';
+import {
+  cancelTimelineMediaForClip,
+  getCachedThumbnails,
+  getCachedWaveform,
+  orphanTransitionIndices,
+  requestTimelineThumbnails,
+  requestTimelineWaveform,
+} from '../utils/timelineMediaCache';
 import { computeTotalDuration } from '../utils/transitions';
-import { WaveformCanvas } from './WaveformCanvas';
+import type { VirtualClipLayout } from './timelineClipTypes';
 import { TransitionEditor } from './TransitionEditor';
+import { VirtualClipBlock } from './VirtualClipBlock';
 
 interface Props {
   clips: Clip[];
@@ -31,7 +40,7 @@ interface Props {
 }
 
 function effectiveDur(clip: Clip): number {
-  const end = isNaN(clip.trimEnd) ? clip.duration : clip.trimEnd;
+  const end = Number.isNaN(clip.trimEnd) ? clip.duration : clip.trimEnd;
   return Math.max(0.1, end - clip.trimStart);
 }
 
@@ -42,13 +51,7 @@ const TRANSITION_COLORS: Record<string, string> = {
   morph: '#26c6da',
 };
 
-interface ClipLayout {
-  clip: Clip;
-  index: number;
-  duration: number;
-  width: number;
-  start: number;
-}
+const VIRTUAL_OVERSCAN = 3;
 
 // ─── Time Ruler ─────────────────────────────────────────────────────────────
 
@@ -95,10 +98,6 @@ export function Timeline({
 }: Props) {
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
-  const generatingThumbs = useRef<Set<string>>(new Set());
-  const completedThumbs = useRef<Set<string>>(new Set());
-  const generatingWaves = useRef<Set<string>>(new Set());
-  const completedWaves = useRef<Set<string>>(new Set());
   const [editingTransition, setEditingTransition] = useState<ClipTransition | null>(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -110,7 +109,7 @@ export function Timeline({
   const lastTouchPos = useRef<{ x: number; y: number } | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
 
-  const clipLayouts = useMemo<ClipLayout[]>(() => {
+  const clipLayouts = useMemo<VirtualClipLayout[]>(() => {
     let cursor = 0;
     return clips.map((clip, index) => {
       const duration = effectiveDur(clip);
@@ -121,6 +120,76 @@ export function Timeline({
     });
   }, [clips, pixelsPerSecond]);
 
+  const virtualizer = useVirtualizer({
+    horizontal: true,
+    count: clipLayouts.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => clipLayouts[index]?.width ?? MIN_CLIP_PIXEL_WIDTH,
+    overscan: VIRTUAL_OVERSCAN,
+    getItemKey: (index) => clipLayouts[index]?.clip.id ?? index,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
+
+  const visibleIndexSet = useMemo(() => {
+    const indices = new Set(virtualItems.map((item) => item.index));
+    if (dragIndex !== null) indices.add(dragIndex);
+    return indices;
+  }, [virtualItems, dragIndex]);
+
+  const onThumbsLoaded = useCallback((clipId: string, thumbs: string[]) => {
+    setThumbMap((prev) => (prev[clipId] ? prev : { ...prev, [clipId]: thumbs }));
+  }, []);
+
+  const onWavesLoaded = useCallback((clipId: string, peaks: Float32Array) => {
+    setWaveMap((prev) => (prev[clipId] ? prev : { ...prev, [clipId]: peaks }));
+  }, []);
+
+  useEffect(() => {
+    const visibleClipIds = new Set<string>();
+
+    for (const index of visibleIndexSet) {
+      const layout = clipLayouts[index];
+      if (!layout) continue;
+      const { clip } = layout;
+      visibleClipIds.add(clip.id);
+
+      if (clip.kind === 'video') {
+        const cached = getCachedThumbnails(clip.id);
+        if (cached) {
+          setThumbMap((prev) => (prev[clip.id] ? prev : { ...prev, [clip.id]: cached }));
+        } else {
+          requestTimelineThumbnails(clip, onThumbsLoaded);
+        }
+      } else if (clip.kind === 'audio') {
+        const cached = getCachedWaveform(clip.id);
+        if (cached) {
+          setWaveMap((prev) => (prev[clip.id] ? prev : { ...prev, [clip.id]: cached }));
+        } else {
+          requestTimelineWaveform(clip, onWavesLoaded);
+        }
+      }
+    }
+
+    for (const clip of clips) {
+      if (!visibleClipIds.has(clip.id)) {
+        cancelTimelineMediaForClip(clip.id);
+      }
+    }
+  }, [visibleIndexSet, clipLayouts, clips, onThumbsLoaded, onWavesLoaded]);
+
+  useEffect(() => {
+    const selectedIndex = selectedClipId
+      ? clips.findIndex((clip) => clip.id === selectedClipId)
+      : -1;
+    if (selectedIndex < 0) return;
+    virtualizer.scrollToIndex(selectedIndex, { align: 'auto', behavior: 'smooth' });
+  }, [selectedClipId, clips, virtualizer]);
+
+  useEffect(() => {
+    virtualizer.measure();
+  }, [clipLayouts, virtualizer]);
+
   const totalDuration = useMemo(
     () => clips.reduce((sum, clip) => sum + effectiveDur(clip), 0),
     [clips],
@@ -130,6 +199,10 @@ export function Timeline({
     [clips, transitions],
   );
   const contentWidth = timelineContentWidth(totalDuration, pixelsPerSecond);
+  const transMap = useMemo(
+    () => new Map(transitions.map((t) => [t.afterClipIndex, t])),
+    [transitions],
+  );
 
   const calcInsertIndex = (clientX: number): number => {
     const track = trackRef.current;
@@ -236,47 +309,52 @@ export function Timeline({
     setDropTargetIndex(null);
   };
 
-  const transMap = new Map(transitions.map((t) => [t.afterClipIndex, t]));
+  const orphanTransitions = useMemo(
+    () => orphanTransitionIndices(
+      visibleIndexSet,
+      clipLayouts.length,
+      (index) => transMap.has(index),
+    ),
+    [visibleIndexSet, clipLayouts.length, transMap],
+  );
 
-  // Thumbnail generation for video clips
-  useEffect(() => {
-    for (const clip of clips) {
-      if (clip.kind !== 'video') continue;
-      if (completedThumbs.current.has(clip.id)) continue;
-      if (generatingThumbs.current.has(clip.id)) continue;
-      generatingThumbs.current.add(clip.id);
-      const dur = effectiveDur(clip);
-      const count = Math.max(2, Math.min(8, Math.ceil(dur / 3)));
-      extractThumbnails(clip.objectUrl, clip.duration, clip.trimStart, clip.trimEnd, count).then(
-        (thumbs) => {
-          generatingThumbs.current.delete(clip.id);
-          completedThumbs.current.add(clip.id);
-          setThumbMap((prev) => ({ ...prev, [clip.id]: thumbs }));
-        },
-      );
-    }
-  }, [clips]);
+  const pinnedDragIndex =
+    dragIndex !== null && !visibleIndexSet.has(dragIndex) ? dragIndex : null;
 
-  // Waveform generation for audio clips
-  useEffect(() => {
-    for (const clip of clips) {
-      if (clip.kind !== 'audio') continue;
-      if (completedWaves.current.has(clip.id)) continue;
-      if (generatingWaves.current.has(clip.id)) continue;
-      generatingWaves.current.add(clip.id);
-      extractWaveformPeaks(clip.objectUrl, 120).then(
-        (peaks) => {
-          generatingWaves.current.delete(clip.id);
-          completedWaves.current.add(clip.id);
-          setWaveMap((prev) => ({ ...prev, [clip.id]: peaks }));
-        },
-        () => {
-          generatingWaves.current.delete(clip.id);
-          completedWaves.current.add(clip.id);
-        },
-      );
-    }
-  }, [clips]);
+  const renderClipBlock = (layout: VirtualClipLayout, translateX: number) => {
+    const { clip, index } = layout;
+    const transition = index > 0 ? transMap.get(index) : undefined;
+    const showTransition = Boolean(transition);
+
+    return (
+      <VirtualClipBlock
+        key={clip.id}
+        layout={layout}
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          width: layout.width,
+          transform: `translateX(${translateX}px)`,
+        }}
+        selectedClipId={selectedClipId}
+        dragIndex={dragIndex}
+        thumbs={thumbMap[clip.id]}
+        waves={waveMap[clip.id]}
+        transition={transition}
+        showTransition={showTransition}
+        clipCount={clips.length}
+        onSelect={onSelect}
+        onMoveUp={onMoveUp}
+        onMoveDown={onMoveDown}
+        onDelete={onDelete}
+        onEditTransition={setEditingTransition}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+        onTouchStart={handleTouchStart}
+      />
+    );
+  };
 
   if (clips.length === 0) {
     return (
@@ -366,137 +444,82 @@ export function Timeline({
             }
           }}
         >
-          {clipLayouts.map(({ clip, index, duration, width, start }) => {
-            const thumbs = thumbMap[clip.id];
-            const waves = waveMap[clip.id];
-            const isLoadingThumbs = clip.kind === 'video' && thumbs === undefined;
-            const isLoadingWave = clip.kind === 'audio' && waves === undefined;
-            const transition = index > 0 ? transMap.get(index) : undefined;
+          {virtualItems.map((virtualItem) => {
+            const layout = clipLayouts[virtualItem.index];
+            if (!layout) return null;
 
             const showIndicatorBefore =
-              dropTargetIndex === index &&
-              dragIndex !== null &&
-              dragIndex !== index &&
-              dragIndex !== index - 1;
+              dropTargetIndex === layout.index
+              && dragIndex !== null
+              && dragIndex !== layout.index
+              && dragIndex !== layout.index - 1;
 
             return (
-              <Fragment key={clip.id}>
+              <Fragment key={layout.clip.id}>
                 {showIndicatorBefore && (
                   <div
                     className="timeline-drop-indicator"
-                    style={{ left: start }}
+                    style={{ left: layout.start }}
                     aria-hidden="true"
                   />
                 )}
-
-                {transition && (
-                  <button
-                    type="button"
-                    className={`transition-zone transition-zone--overlay${transition.type !== 'none' ? ' active' : ''}`}
-                    style={{
-                      left: start - 12,
-                      '--tz-color': TRANSITION_COLORS[transition.type],
-                    } as React.CSSProperties}
-                    onClick={() => setEditingTransition(transition)}
-                    title={`Transition: ${transition.type}${transition.type !== 'none' ? ` (${transition.duration}s)` : ''}`}
-                    aria-label={`Edit transition between clips ${index} and ${index + 1}`}
-                  >
-                    <span className="tz-icon">⬡</span>
-                    {transition.type !== 'none' && (
-                      <span className="tz-label">{transition.duration}s</span>
-                    )}
-                  </button>
-                )}
-
-                <div
-                  className={`timeline-clip-wrapper${dragIndex === index ? ' is-dragging' : ''}`}
-                  style={{ width }}
-                  data-clip-index={index}
-                  draggable
-                  onDragStart={(e) => handleDragStart(e, index)}
-                  onDragEnd={handleDragEnd}
-                  onTouchStart={() => handleTouchStart(index)}
-                >
-                  <div
-                    className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
-                      clip.id === selectedClipId ? ' selected' : ''
-                    }`}
-                    onClick={() => onSelect(clip.id)}
-                    title={clip.title}
-                  >
-                    {clip.kind === 'video' ? (
-                      <div className={`timeline-thumbs${isLoadingThumbs ? ' is-loading' : ''}`}>
-                        {thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null}
-                      </div>
-                    ) : (
-                      <div className={`timeline-waveform${isLoadingWave ? ' is-loading' : ''}`}>
-                        {waves ? (
-                          <WaveformCanvas peaks={waves} height={54} />
-                        ) : (
-                          <span className="waveform-loading-icon">♫</span>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="timeline-clip-footer">
-                      <span
-                        className="timeline-drag-handle"
-                        role="img"
-                        aria-label="Drag handle — drag to reorder clip"
-                        title="Drag to reorder"
-                      >
-                        ⠿
-                      </span>
-
-                      <span className="timeline-clip-label">
-                        {index + 1}. {clip.title}
-                      </span>
-
-                      <span className="timeline-clip-dur">{duration.toFixed(1)}s</span>
-
-                      <span className="timeline-clip-btns">
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); onMoveUp(index); }}
-                          disabled={index === 0}
-                          aria-label="Move clip left"
-                        >
-                          ←
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => { e.stopPropagation(); onMoveDown(index); }}
-                          disabled={index === clips.length - 1}
-                          aria-label="Move clip right"
-                        >
-                          →
-                        </button>
-                        <button
-                          type="button"
-                          className="project-delete-btn"
-                          onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
-                          title="Delete clip"
-                          aria-label="Delete clip"
-                        >
-                          ×
-                        </button>
-                      </span>
-                    </div>
-                  </div>
-                </div>
+                {renderClipBlock(layout, virtualItem.start)}
               </Fragment>
             );
           })}
 
-          {dropTargetIndex === clips.length &&
-            dragIndex !== null &&
-            dragIndex !== clips.length - 1 && (
+          {pinnedDragIndex !== null && clipLayouts[pinnedDragIndex] && (
+            renderClipBlock(clipLayouts[pinnedDragIndex], clipLayouts[pinnedDragIndex].start)
+          )}
+
+          {orphanTransitions.map((index) => {
+            const transition = transMap.get(index);
+            const layout = clipLayouts[index];
+            if (!transition || !layout) return null;
+            return (
+              <button
+                key={`orphan-transition-${index}`}
+                type="button"
+                className={`transition-zone transition-zone--overlay${transition.type !== 'none' ? ' active' : ''}`}
+                style={{
+                  left: layout.start - 12,
+                  '--tz-color': TRANSITION_COLORS[transition.type],
+                } as React.CSSProperties}
+                onClick={() => setEditingTransition(transition)}
+                title={`Transition: ${transition.type}${transition.type !== 'none' ? ` (${transition.duration}s)` : ''}`}
+                aria-label={`Edit transition between clips ${index} and ${index + 1}`}
+              >
+                <span className="tz-icon">⬡</span>
+                {transition.type !== 'none' && (
+                  <span className="tz-label">{transition.duration}s</span>
+                )}
+              </button>
+            );
+          })}
+
+          {dropTargetIndex !== null
+            && dragIndex !== null
+            && dropTargetIndex < clips.length
+            && dragIndex !== dropTargetIndex
+            && dragIndex !== dropTargetIndex - 1
+            && !virtualItems.some((item) => item.index === dropTargetIndex) && (
+              <div
+                className="timeline-drop-indicator"
+                style={{ left: clipLayouts[dropTargetIndex]?.start ?? 0 }}
+                aria-hidden="true"
+              />
+            )}
+
+          {dropTargetIndex === clips.length
+            && dragIndex !== null
+            && dragIndex !== clips.length - 1 && (
               <div
                 className="timeline-drop-indicator"
                 style={{ left: contentWidth }}
                 aria-hidden="true"
               />
             )}
+
         </div>
       </div>
 
