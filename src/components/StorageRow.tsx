@@ -29,6 +29,8 @@ interface Props {
     progress: number;
     status: "pending" | "uploading" | "uploaded" | "failed" | "skipped";
     error?: string;
+    chunkIndex?: number;
+    chunkTotal?: number;
   }[];
   pendingRemoteUploadError: {
     fileName: string;
@@ -198,6 +200,11 @@ export function StorageRow({
           <ul>
             {remoteUploadItems.map((item) => {
               const percent = Math.round(item.progress * 100);
+              const chunkLabel =
+                typeof item.chunkIndex === "number" &&
+                typeof item.chunkTotal === "number"
+                  ? ` · chunk ${item.chunkIndex + 1}/${item.chunkTotal}`
+                  : "";
               return (
                 <li key={item.clipId} className={`upload-state-${item.status}`}>
                   <span className="upload-item-name">
@@ -205,7 +212,7 @@ export function StorageRow({
                   </span>
                   <span className="upload-item-status">
                     {item.status === "uploading"
-                      ? `Uploading (${percent}%)`
+                      ? `Uploading (${percent}%${chunkLabel})`
                       : item.status === "uploaded"
                         ? "Uploaded (100%)"
                         : item.status === "failed"

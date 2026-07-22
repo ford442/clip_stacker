@@ -238,8 +238,13 @@ export function useProjectSaveLoad({
                 return next;
               });
               if (event.status === "uploading") {
+                const chunkHint =
+                  typeof event.chunkIndex === "number" &&
+                  typeof event.chunkTotal === "number"
+                    ? ` · chunk ${event.chunkIndex + 1}/${event.chunkTotal}`
+                    : "";
                 setStatus(
-                  `Uploading clip ${event.index}/${event.total}: ${event.fileName} (${Math.round(event.progress * 100)}%)`,
+                  `Uploading clip ${event.index}/${event.total}: ${event.fileName} (${Math.round(event.progress * 100)}%${chunkHint})`,
                 );
               }
             },

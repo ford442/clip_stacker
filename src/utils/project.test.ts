@@ -14,8 +14,10 @@ import {
   applyProjectData,
   MAX_UPLOAD_RETRY_ATTEMPTS,
   MAX_EMBED_FILE_BYTES,
+  CHUNK_THRESHOLD_BYTES,
   ContaboStorageManagerClient,
 } from "./project";
+import * as storageUpload from "./storageUpload";
 
 // Helper to create a minimal test clip
 function createTestClip(
@@ -998,6 +1000,68 @@ describe("utils/project", () => {
       const client = new ContaboStorageManagerClient("https://example.com/api");
 
       await expect(client.listMedia()).rejects.toThrow(/500/);
+    });
+  });
+
+  // =========================================================================
+  // ContaboStorageManagerClient.uploadMedia — chunked vs single-request
+  // =========================================================================
+  describe("ContaboStorageManagerClient.uploadMedia routing", () => {
+    afterEach(() => {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+    });
+
+    it("uses the single-request path for files at or below the chunk threshold", async () => {
+      const chunkedSpy = vi
+        .spyOn(storageUpload, "uploadMediaChunked")
+        .mockResolvedValue("https://example.com/chunked.mp4");
+
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ url: "https://example.com/small.mp4" }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      // Force the non-XHR branch used in happy-dom when we stub carefully:
+      // ContaboStorageManagerClient checks typeof XMLHttpRequest.
+      const originalXhr = globalThis.XMLHttpRequest;
+      // @ts-expect-error -- delete to exercise fetch fallback
+      delete globalThis.XMLHttpRequest;
+
+      const client = new ContaboStorageManagerClient("https://example.com/api", "tok");
+      const blob = new Blob([new Uint8Array(1024)]);
+      const url = await client.uploadMedia("small.bin", blob, "application/octet-stream");
+
+      expect(url).toBe("https://example.com/small.mp4");
+      expect(chunkedSpy).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://example.com/api/media",
+        expect.objectContaining({ method: "POST" }),
+      );
+
+      globalThis.XMLHttpRequest = originalXhr;
+    });
+
+    it("uses the chunked path for files above the chunk threshold", async () => {
+      const chunkedSpy = vi
+        .spyOn(storageUpload, "uploadMediaChunked")
+        .mockResolvedValue("https://example.com/large.mp4");
+
+      const client = new ContaboStorageManagerClient("https://example.com/api", "tok");
+      const blob = new Blob([new Uint8Array(1)]);
+      Object.defineProperty(blob, "size", {
+        value: CHUNK_THRESHOLD_BYTES + 1,
+        configurable: true,
+      });
+      const url = await client.uploadMedia("large.bin", blob, "application/octet-stream");
+
+      expect(url).toBe("https://example.com/large.mp4");
+      expect(chunkedSpy).toHaveBeenCalledTimes(1);
+      expect(chunkedSpy.mock.calls[0][0]).toMatchObject({
+        mediaEndpoint: "https://example.com/api/media",
+        name: "large.bin",
+        authHeader: "Bearer tok",
+      });
     });
   });
 });
