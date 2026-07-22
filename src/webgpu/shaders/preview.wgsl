@@ -16,10 +16,21 @@ struct Uniforms {
   destY: f32,
   destW: f32,
   destH: f32,
+  // Audio-reactive (from WASM FFT analysis); zeros when disabled
+  bass: f32,
+  mid: f32,
+  treble: f32,
+  beat: f32,
   _pad0: f32,
   _pad1: f32,
   _pad2: f32,
 };
+
+fn applyAudioReactive(color: vec3<f32>, bass: f32, beat: f32) -> vec3<f32> {
+  let pulse = clamp(bass * 0.15 + beat * 0.1, 0.0, 0.25);
+  let warm = vec3<f32>(1.0, 0.85, 0.65);
+  return mix(color, color * warm, pulse);
+}
 
 struct VertexOutput {
   @builtin(position) pos: vec4<f32>,
@@ -75,5 +86,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   }
   fadeAlpha = clamp(fadeAlpha, 0.0, 1.0) * clamp(u.opacity, 0.0, 1.0);
 
-  return vec4<f32>(color.rgb * fadeAlpha, color.a * fadeAlpha);
+  let rgb = applyAudioReactive(color.rgb, u.bass, u.beat);
+  return vec4<f32>(rgb * fadeAlpha, color.a * fadeAlpha);
 }

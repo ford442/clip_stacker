@@ -13,6 +13,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
+- `npm run build:audio-analysis`: rebuild the audio FFT WASM module (`public/wasm/`) via Emscripten.
 
 ## Coding Style & Naming Conventions
 
@@ -66,3 +67,29 @@ Current small set (license notes):
 - DejaVu Serif / Sans Mono — Bitstream Vera fonts (public domain-like) + DejaVu additions (free)
 
 Never embed user-supplied custom fonts (out of scope).
+
+## Audio analysis WASM (FFT / beats)
+
+Real-time and offline audio features use a small Emscripten module (kissfft, BSD-3-Clause) that produces frequency-band energy and beat onset envelopes for WebGPU uniforms and timeline markers.
+
+### Layout
+
+- `native/audio_analysis/` — C++ source + vendored kissfft; rebuild with `npm run build:audio-analysis` (requires `emcc`)
+- `public/wasm/audio_analysis.{js,wasm}` — committed build artifacts (~14 KB gzipped WASM)
+- `src/wasm/audioAnalysis.ts` — lazy loader + typed analyzer bindings (graceful disable on load failure)
+- `src/wasm/offlineAnalysis.ts` — full-buffer / clip-load analysis → `beatTimestamps` / `bpmEstimate` on `Clip`
+- `src/wasm/audioAnalysisWorker.ts` + `audioAnalysisClient.ts` — Worker offload (keep main-thread long tasks < 16 ms)
+- `src/wasm/audioReactiveUniforms.ts` — shared `AudioReactive` uniform shape + WGSL snippet docs
+- `src/webgpu/previewEngine.ts` — `setAudioReactive({ bass, mid, treble, beat })` writes uniform slots 13–16
+- `src/webgpu/shaders/preview.wgsl` — `Uniforms.bass|mid|treble|beat` + optional warm lift
+- `src/utils/beatMarkers.ts` + Timeline ruler — read-only beat overlay when metadata is present
+- `src/utils/canvas-renderer.ts` — `setWasmBassLevel()` for export parity with the same analysis source
+
+### Adding analysis-driven shader uniforms
+
+1. Produce energies via `createAudioAnalyzer` / worker `analyzeFrame` (or offline hop results).
+2. Call `previewEngine.setAudioReactive({ bass, mid, treble, beat })` each preview frame (or clear with defaults).
+3. In WGSL, read `u.bass` / `u.mid` / `u.treble` / `u.beat` (already on the preview uniform struct). For new transition shaders, either mirror those fields or include the snippet from `AUDIO_REACTIVE_WGSL_SNIPPET`.
+4. Keep zeros when WASM is unavailable — shaders must remain no-ops (no crash / no visual glitch).
+
+Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approved FFT) inside `native/audio_analysis/`.

@@ -13,6 +13,7 @@ import {
   rulerTickInterval,
   timelineContentWidth,
 } from '../utils/timelineLayout';
+import { buildBeatMarkerLayouts } from '../utils/beatMarkers';
 import {
   cancelTimelineMediaForClip,
   getCachedThumbnails,
@@ -58,9 +59,10 @@ const VIRTUAL_OVERSCAN = 3;
 interface RulerProps {
   totalDuration: number;
   pixelsPerSecond: number;
+  beatMarkers?: { clipId: string; sourceTime: number; leftPx: number }[];
 }
 
-function TimelineRuler({ totalDuration, pixelsPerSecond }: RulerProps) {
+function TimelineRuler({ totalDuration, pixelsPerSecond, beatMarkers = [] }: RulerProps) {
   if (totalDuration <= 0) return null;
 
   const contentWidth = timelineContentWidth(totalDuration, pixelsPerSecond);
@@ -77,6 +79,14 @@ function TimelineRuler({ totalDuration, pixelsPerSecond }: RulerProps) {
         >
           <span className="ruler-tick-label">{formatTimelineTime(tick)}</span>
         </span>
+      ))}
+      {beatMarkers.map((m) => (
+        <span
+          key={`${m.clipId}-${m.sourceTime}`}
+          className="ruler-beat-marker"
+          style={{ left: m.leftPx }}
+          title={`Beat @ ${m.sourceTime.toFixed(2)}s`}
+        />
       ))}
     </div>
   );
@@ -119,6 +129,8 @@ export function Timeline({
       return layout;
     });
   }, [clips, pixelsPerSecond]);
+
+  const beatMarkers = useMemo(() => buildBeatMarkerLayouts(clipLayouts), [clipLayouts]);
 
   const virtualizer = useVirtualizer({
     horizontal: true,
@@ -428,7 +440,11 @@ export function Timeline({
       <p className="timeline-hint muted">Drag clips to reorder. Shift + scroll wheel zooms the timeline.</p>
 
       <div className="timeline-scroll-container" ref={scrollRef}>
-        <TimelineRuler totalDuration={totalDuration} pixelsPerSecond={pixelsPerSecond} />
+        <TimelineRuler
+          totalDuration={totalDuration}
+          pixelsPerSecond={pixelsPerSecond}
+          beatMarkers={beatMarkers}
+        />
 
         <div
           className="timeline-track"

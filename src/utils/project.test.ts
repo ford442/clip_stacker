@@ -256,6 +256,15 @@ describe("utils/project", () => {
       expect(project.clips[0].keyframes?.opacity).toHaveLength(1);
     });
 
+    it('should serialize beatTimestamps and bpmEstimate', () => {
+      const clip = createTestClip('clip1', 5);
+      clip.beatTimestamps = [0.5, 1.0, 1.5];
+      clip.bpmEstimate = 120;
+      const project = serializeProject([clip], [], [], []);
+      expect(project.clips[0].beatTimestamps).toEqual([0.5, 1.0, 1.5]);
+      expect(project.clips[0].bpmEstimate).toBe(120);
+    });
+
     it('should serialize color grade settings', () => {
       const project = serializeProject([], [], [], [], {
         lutId: 'film',
