@@ -1,21 +1,8 @@
-import {
-  useCallback,
-  useRef,
-  useState,
-  type Dispatch,
-  type SetStateAction,
-} from 'react';
+import { useStore } from 'zustand';
+import type { Dispatch, SetStateAction } from 'react';
 import type { Clip, ClipGroup, ClipTransition, TextOverlay } from '../types';
-import {
-  cloneSnapshot,
-  mergeClipUrls,
-  revokeOrphanedUrls,
-  syncClipGroups,
-  trimHistoryStack,
-  type EditSnapshot,
-} from '../utils/editHistory';
-
-const DEFAULT_DEBOUNCE_MS = 400;
+import type { EditSnapshot } from '../utils/editHistory';
+import { editorStore } from '../store/editorStore';
 
 export interface UseEditHistoryResult {
   clips: Clip[];
@@ -43,144 +30,36 @@ export interface UseEditHistoryResult {
   resetHistory: (snapshot: EditSnapshot) => void;
 }
 
+/**
+ * React binding over {@link editorStore}. The editing state and undo/redo logic
+ * now live in a Zustand store (#144); this hook keeps the previous prop-drilling
+ * API for the App shell. Components that only render a slice should prefer the
+ * granular selectors (`useEditorClips`, `useSelectedClipId`, …) to avoid
+ * re-rendering on unrelated edits.
+ */
 export function useEditHistory(): UseEditHistoryResult {
-  const [clips, setClipsState] = useState<Clip[]>([]);
-  const [clipGroups, setClipGroupsState] = useState<ClipGroup[]>([]);
-  const [transitions, setTransitionsState] = useState<ClipTransition[]>([]);
-  const [textOverlays, setTextOverlaysState] = useState<TextOverlay[]>([]);
-  const [selectedClipId, setSelectedClipIdState] = useState<string | null>(null);
-  const [stackSizes, setStackSizes] = useState({ undo: 0, redo: 0 });
+  const clips = useStore(editorStore, (s) => s.clips);
+  const clipGroups = useStore(editorStore, (s) => s.clipGroups);
+  const transitions = useStore(editorStore, (s) => s.transitions);
+  const textOverlays = useStore(editorStore, (s) => s.textOverlays);
+  const selectedClipId = useStore(editorStore, (s) => s.selectedClipId);
+  const canUndo = useStore(editorStore, (s) => s.undoDepth > 0);
+  const canRedo = useStore(editorStore, (s) => s.redoDepth > 0);
 
-  const undoStackRef = useRef<EditSnapshot[]>([]);
-  const redoStackRef = useRef<EditSnapshot[]>([]);
-  const isRestoringRef = useRef(false);
-  const debounceSessionsRef = useRef<Map<string, boolean>>(new Map());
-  const debounceTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-
-  const syncStackSizes = useCallback(() => {
-    setStackSizes({
-      undo: undoStackRef.current.length,
-      redo: redoStackRef.current.length,
-    });
-  }, []);
-
-  const getSnapshot = useCallback(
-    (): EditSnapshot => ({
-      clips,
-      clipGroups,
-      transitions,
-      textOverlays,
-      selectedClipId,
-    }),
-    [clips, clipGroups, transitions, textOverlays, selectedClipId],
-  );
-
-  const applySnapshot = useCallback(
-    (snapshot: EditSnapshot) => {
-      isRestoringRef.current = true;
-      try {
-        const previousClips = clips;
-        const mergedClips = mergeClipUrls(snapshot.clips, previousClips);
-        revokeOrphanedUrls(previousClips, mergedClips);
-        const syncedGroups = syncClipGroups(snapshot.clipGroups, mergedClips);
-
-        setClipsState(mergedClips);
-        setClipGroupsState(syncedGroups);
-        setTransitionsState(snapshot.transitions.map((transition) => ({ ...transition })));
-        setTextOverlaysState(snapshot.textOverlays.map((overlay) => ({ ...overlay })));
-        setSelectedClipIdState(snapshot.selectedClipId);
-      } finally {
-        isRestoringRef.current = false;
-      }
-    },
-    [clips],
-  );
-
-  const pushHistory = useCallback(() => {
-    if (isRestoringRef.current) return;
-
-    const snapshot = cloneSnapshot(getSnapshot());
-    undoStackRef.current.push(snapshot);
-    trimHistoryStack(undoStackRef.current);
-    redoStackRef.current = [];
-    syncStackSizes();
-  }, [getSnapshot, syncStackSizes]);
-
-  const pushHistoryDebounced = useCallback(
-    (group: string, debounceMs = DEFAULT_DEBOUNCE_MS) => {
-      if (isRestoringRef.current) return;
-
-      const sessions = debounceSessionsRef.current;
-      if (!sessions.get(group)) {
-        pushHistory();
-        sessions.set(group, true);
-      }
-
-      const timers = debounceTimersRef.current;
-      const existingTimer = timers.get(group);
-      if (existingTimer) clearTimeout(existingTimer);
-
-      timers.set(
-        group,
-        setTimeout(() => {
-          sessions.set(group, false);
-          timers.delete(group);
-        }, debounceMs),
-      );
-    },
-    [pushHistory],
-  );
-
-  const undo = useCallback(() => {
-    if (undoStackRef.current.length === 0) return;
-
-    const current = cloneSnapshot(getSnapshot());
-    redoStackRef.current.push(current);
-    trimHistoryStack(redoStackRef.current);
-
-    const previous = undoStackRef.current.pop()!;
-    applySnapshot(previous);
-    syncStackSizes();
-  }, [applySnapshot, getSnapshot, syncStackSizes]);
-
-  const redo = useCallback(() => {
-    if (redoStackRef.current.length === 0) return;
-
-    const current = cloneSnapshot(getSnapshot());
-    undoStackRef.current.push(current);
-    trimHistoryStack(undoStackRef.current);
-
-    const next = redoStackRef.current.pop()!;
-    applySnapshot(next);
-    syncStackSizes();
-  }, [applySnapshot, getSnapshot, syncStackSizes]);
-
-  const resetHistory = useCallback(
-    (snapshot: EditSnapshot) => {
-      undoStackRef.current = [];
-      redoStackRef.current = [];
-      debounceSessionsRef.current.clear();
-      for (const timer of debounceTimersRef.current.values()) {
-        clearTimeout(timer);
-      }
-      debounceTimersRef.current.clear();
-
-      isRestoringRef.current = true;
-      try {
-        const mergedClips = mergeClipUrls(snapshot.clips, clips);
-        revokeOrphanedUrls(clips, mergedClips);
-        setClipsState(mergedClips);
-        setClipGroupsState(syncClipGroups(snapshot.clipGroups, mergedClips));
-        setTransitionsState(snapshot.transitions.map((transition) => ({ ...transition })));
-        setTextOverlaysState(snapshot.textOverlays.map((overlay) => ({ ...overlay })));
-        setSelectedClipIdState(snapshot.selectedClipId);
-      } finally {
-        isRestoringRef.current = false;
-      }
-      syncStackSizes();
-    },
-    [clips, syncStackSizes],
-  );
+  // Actions are created once when the store is instantiated, so they are stable
+  // across renders and safe to read directly from the store's snapshot.
+  const {
+    setClips,
+    setClipGroups,
+    setTransitions,
+    setTextOverlays,
+    setSelectedClipId,
+    pushHistory,
+    pushHistoryDebounced,
+    undo,
+    redo,
+    resetHistory,
+  } = editorStore.getState();
 
   return {
     clips,
@@ -188,17 +67,17 @@ export function useEditHistory(): UseEditHistoryResult {
     transitions,
     textOverlays,
     selectedClipId,
-    setClips: setClipsState,
-    setClipGroups: setClipGroupsState,
-    setTransitions: setTransitionsState,
-    setTextOverlays: setTextOverlaysState,
-    setSelectedClipId: setSelectedClipIdState,
+    setClips,
+    setClipGroups,
+    setTransitions,
+    setTextOverlays,
+    setSelectedClipId,
     pushHistory,
     pushHistoryDebounced,
     undo,
     redo,
-    canUndo: stackSizes.undo > 0,
-    canRedo: stackSizes.redo > 0,
+    canUndo,
+    canRedo,
     resetHistory,
   };
 }
