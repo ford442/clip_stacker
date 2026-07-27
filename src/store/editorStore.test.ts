@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Clip } from '../types';
 import {
   editorStore,
+  editorActions,
   __resetEditorStoreForTests,
   DEFAULT_DEBOUNCE_MS,
 } from './editorStore';
@@ -138,5 +139,63 @@ describe('editorStore', () => {
     expect(editorStore.getState().selectedClipId).toBe('z');
     expect(editorStore.getState().undoDepth).toBe(0);
     expect(editorStore.getState().redoDepth).toBe(0);
+  });
+
+  describe('single-clip lookup equality stability', () => {
+    it('preserves the untouched clip reference when another clip is edited', () => {
+      const { setClips } = editorStore.getState();
+      const a = makeClip('a');
+      const b = makeClip('b');
+      setClips([a, b]);
+
+      const lookupA = () => editorStore.getState().clips.find((c) => c.id === 'a');
+      const before = lookupA();
+
+      // Editing clip 'b' via the codebase's standard immutable `.map` pattern
+      // must not replace clip 'a's object reference.
+      setClips((prev) =>
+        prev.map((clip) => (clip.id === 'b' ? { ...clip, title: 'renamed' } : clip)),
+      );
+
+      expect(lookupA()).toBe(before);
+    });
+
+    it('returns a new reference only for the edited clip', () => {
+      const { setClips } = editorStore.getState();
+      setClips([makeClip('a')]);
+      const before = editorStore.getState().clips.find((c) => c.id === 'a');
+
+      setClips((prev) =>
+        prev.map((clip) => (clip.id === 'a' ? { ...clip, title: 'renamed' } : clip)),
+      );
+
+      const after = editorStore.getState().clips.find((c) => c.id === 'a');
+      expect(after).not.toBe(before);
+      expect(after?.title).toBe('renamed');
+    });
+
+    it('returns null/undefined for a missing id without throwing', () => {
+      editorStore.getState().setClips([makeClip('a')]);
+      expect(editorStore.getState().clips.find((c) => c.id === 'missing')).toBeUndefined();
+    });
+  });
+
+  describe('editorActions', () => {
+    it('exposes the same stable action references as getState()', () => {
+      expect(editorActions.setClips).toBe(editorStore.getState().setClips);
+      expect(editorActions.pushHistory).toBe(editorStore.getState().pushHistory);
+      expect(editorActions.undo).toBe(editorStore.getState().undo);
+    });
+
+    it('action references stay identical across state updates', () => {
+      const before = editorActions.setClips;
+      editorActions.setClips([makeClip('a')]);
+      expect(editorStore.getState().setClips).toBe(before);
+    });
+
+    it('mutates the store like the getState()-destructured actions do', () => {
+      editorActions.setClips([makeClip('a')]);
+      expect(editorStore.getState().clips.map((c) => c.id)).toEqual(['a']);
+    });
   });
 });

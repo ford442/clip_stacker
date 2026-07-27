@@ -196,6 +196,34 @@ export const useEditorTransitions = () => useStore(editorStore, (s) => s.transit
 export const useEditorTextOverlays = () => useStore(editorStore, (s) => s.textOverlays);
 export const useSelectedClipId = () => useStore(editorStore, (s) => s.selectedClipId);
 
+/**
+ * Look up a single clip by id. Equality-stable across unrelated edits: the
+ * store's `setClips` updaters replace only the touched element (`.map`), so
+ * every other clip keeps its previous object reference and this selector's
+ * result only changes when the looked-up clip itself changes.
+ */
+export const useEditorClip = (id: string | null) =>
+  useStore(editorStore, (s) => (id ? (s.clips.find((c) => c.id === id) ?? null) : null));
+
+/**
+ * Stable action references. These functions are created once when the store
+ * is instantiated and never replaced by `set`, so they can be imported and
+ * called directly without a hook (no subscription needed).
+ */
+export const editorActions: Pick<
+  EditorState,
+  | 'setClips'
+  | 'setClipGroups'
+  | 'setTransitions'
+  | 'setTextOverlays'
+  | 'setSelectedClipId'
+  | 'pushHistory'
+  | 'pushHistoryDebounced'
+  | 'undo'
+  | 'redo'
+  | 'resetHistory'
+> = editorStore.getState();
+
 /** Test-only reset so specs start from a clean store and empty history. */
 export function __resetEditorStoreForTests(): void {
   undoStack.length = 0;

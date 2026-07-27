@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
+import { memo, useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
 import type { Clip, ClipAnimatableProp, ClipKeyframes, ClipGroup, ClipTransition, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { resolveClipLocalTimeAtGlobal } from '../utils/previewComposition';
@@ -143,7 +143,7 @@ function findMatchingPreset(settings: ExportSettings): string {
   )?.name || 'custom';
 }
 
-export function Inspector({
+function InspectorImpl({
   clip,
   clips,
   clipGroups,
@@ -971,5 +971,12 @@ export function Inspector({
     </section>
   );
 }
+
+/**
+ * Memoized so unrelated App re-renders (e.g. a timeline reorder) don't
+ * re-render the inspector — only its own props (selected clip, settings, …)
+ * changing does.
+ */
+export const Inspector = memo(InspectorImpl);
 
 export type { ClipValues };

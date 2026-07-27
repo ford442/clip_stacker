@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
 import { playbackStore, setPlayheadTime } from "../store/playbackStore";
 import { usePlayheadTime } from "../hooks/usePlayheadTime";
 import type {
@@ -60,7 +60,7 @@ interface Props {
  * mode composites multiple layers (hard cuts, dissolves, PiP) from the global
  * playhead position.
  */
-export function Preview({
+function PreviewImpl({
   clip,
   timelineClips = [],
   clipGroups = [],
@@ -140,6 +140,9 @@ export function Preview({
     </section>
   );
 }
+
+/** Memoized so unrelated App re-renders (e.g. a text overlay edit) don't re-render the preview. */
+export const Preview = memo(PreviewImpl);
 
 // ---------------------------------------------------------------------------
 // Timeline WebGPU preview
