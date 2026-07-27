@@ -8,8 +8,11 @@ import type {
 import { getClipDuration } from "../utils/project";
 import { resolveTargetResolution } from "../utils/resolution";
 import { audioVolumeFilterSegment, clipHasVolumeAdjustment } from "../utils/audioVolume";
+import { assertValidBundledFontBytes } from "../utils/fontBytes";
 import {
   buildDrawtextFilter,
+  getFontPublicUrl,
+  getBundledFont,
   resolveFontFileForOverlay,
 } from "../utils/textOverlay";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
@@ -67,16 +70,16 @@ export const PASS1_PROGRESS_END = 0.85;
  * FFmpeg WASM has no system fonts, so we fetch this at render time and write
  * it to the virtual filesystem as 'roboto.ttf'.
  */
-export const FONT_CDN_URL = "/fonts/Roboto-Regular.ttf";
+export const FONT_CDN_URL = getFontPublicUrl(getBundledFont("roboto"));
 export const FONT_VIRTUAL_NAME = "roboto.ttf";
 
 /** Map from virtual filename to its public URL for all bundled fonts. */
-const FONT_URL_BY_VIRTUAL: Record<string, string> = {
-  "roboto.ttf": "/fonts/Roboto-Regular.ttf",
-  "robotoBold.ttf": "/fonts/Roboto-Bold.ttf",
-  "serif.ttf": "/fonts/DejaVuSerif.ttf",
-  "mono.ttf": "/fonts/DejaVuSansMono.ttf",
-};
+const FONT_URL_BY_VIRTUAL: Record<string, string> = Object.fromEntries(
+  ["roboto", "robotoBold", "serif", "mono"].map((id) => {
+    const font = getBundledFont(id);
+    return [font.virtualName, getFontPublicUrl(font)] as const;
+  }),
+);
 
 function manager(): FfmpegManager {
   return getFfmpegManager();
@@ -333,6 +336,7 @@ export async function ensureFont(
   onStatus("Loading font for text overlays...");
   try {
     const fontData = await fetchFile(url);
+    assertValidBundledFontBytes(fontData, url);
     await safeWriteFile(ffmpeg, virtualName, fontData, "ensureFont write");
     mgr.markFontLoaded(virtualName);
   } catch (err) {
