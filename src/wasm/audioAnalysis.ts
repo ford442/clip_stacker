@@ -59,17 +59,28 @@ let loadFailedReason: string | null = null;
 /** Repo-relative public assets (Node / Vitest). */
 const NODE_WASM_BASE = new URL('../../public/wasm/', import.meta.url);
 
+/** Public URL for the `public/wasm/` directory (works on main thread and in workers). */
+export function getWasmPublicBaseUrl(): string {
+  if (typeof document !== 'undefined') {
+    return new URL('wasm/', document.baseURI).href;
+  }
+  // Bundled workers live under `assets/`; WASM is copied to `dist/wasm/`.
+  if (typeof self !== 'undefined' && typeof import.meta.url === 'string') {
+    return new URL('../wasm/', import.meta.url).href;
+  }
+  if (typeof window !== 'undefined') {
+    return new URL('wasm/', window.location.href).href;
+  }
+  return NODE_WASM_BASE.href;
+}
+
 function resolveAssetUrl(fileName: string, baseUrl?: string): string {
-  if (baseUrl) {
-    const root = baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`;
-    return new URL(fileName, root).href;
-  }
-  // Browser: Vite serves `public/wasm` at `<base>wasm/` (same pattern as ffmpeg-core).
-  if (typeof window !== 'undefined' && typeof document !== 'undefined') {
-    const base = document.baseURI || window.location.href;
-    return new URL(`wasm/${fileName}`, base).href;
-  }
-  return new URL(fileName, NODE_WASM_BASE).href;
+  const root = baseUrl
+    ? baseUrl.endsWith('/')
+      ? baseUrl
+      : `${baseUrl}/`
+    : getWasmPublicBaseUrl();
+  return new URL(fileName, root).href;
 }
 
 /**

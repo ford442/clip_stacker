@@ -53,7 +53,7 @@ export class LutPass {
         {
           binding: 3,
           visibility: GPUShaderStage.FRAGMENT,
-          texture: { sampleType: 'float' },
+          texture: { sampleType: 'float', viewDimension: '3d' },
         },
         {
           binding: 4,
