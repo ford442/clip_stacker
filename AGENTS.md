@@ -6,8 +6,9 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 
 ## Build, Test, and Development Commands
 
-- `npm install`: install dependencies for local development.
+- `npm install` (or `npm ci` for a clean/CI install): install dependencies for local development.
 - `npm run dev`: start the Vite dev server with the headers needed for FFmpeg WASM.
+- `npm run typecheck`: run `tsc --noEmit`, matching CI behavior. Run this after any TypeScript change.
 - `npm test -- --run`: run the Vitest suite once, matching CI behavior.
 - `npm run test:coverage`: run tests with coverage reporting.
 - `npm run build`: produce the production build in `dist/`.
@@ -21,7 +22,7 @@ Use TypeScript with strict checking. Follow the existing style: two-space indent
 
 ## Testing Guidelines
 
-Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `project.test.ts` or `ffmpegService.load.test.ts`. Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Before submitting, run `npm test -- --run` and `npm run build`.
+Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `project.test.ts` or `ffmpegService.load.test.ts`. Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Before submitting, run `npm run typecheck`, `npm test -- --run`, and `npm run build`.
 
 ## Commit & Pull Request Guidelines
 
@@ -37,7 +38,7 @@ Single-service product: a React + TypeScript Vite frontend (no backend to run; `
 
 Non-obvious caveats:
 
-- Dependencies are installed with `npm install`, not `npm ci`: the committed `package-lock.json` historically drifted from `package.json` (missing optional `@esbuild/*` platform packages), which makes `npm ci` abort.
+- `npm ci` works against the committed `package-lock.json`. If you add/remove/upgrade a dependency, run `npm install` and commit the updated `package-lock.json` in the same change so `npm ci` stays in sync — it previously drifted (missing optional `@esbuild/*` platform packages) and broke CI.
 - `npm run dev` does not render in a CSP-enforcing browser as-is. `index.html` ships a static `Content-Security-Policy` meta tag with `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-inline'`), which blocks Vite's injected inline React-refresh/HMR preamble script and leaves a blank page with `@vitejs/plugin-react can't detect preamble` console errors. To run/verify the app in the browser, use the production build instead: `npm run build` then `npm run preview` (serves on `http://localhost:4173/`, no inline scripts, CSP-clean). Do not relax the CSP just to make dev mode load unless that is the actual task.
 - FFmpeg WASM needs cross-origin isolation; both the dev and preview servers already set the required COOP/COEP headers, so use those servers rather than a generic static server.
 

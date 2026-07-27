@@ -30,7 +30,8 @@ import {
   getFfmpegEnvironmentDiagnostics,
   getLocalFfmpegCoreBaseURL,
   parseFfmpegTimeSeconds,
-  toBlobURLWithFallback,
+  toBlobURLWithRetry as toBlobURLWithRetryBase,
+  toBlobURLWithFallback as toBlobURLWithFallbackBase,
   withTimeout,
   type FfmpegLogProgressContext,
   type ProgressCallback,
@@ -151,8 +152,6 @@ export {
   FFMPEG_CORE_CDNS,
   FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
   FFMPEG_LOAD_TIMEOUT_MS,
-  toBlobURLWithRetry as toBlobURLWithRetryBase,
-  toBlobURLWithFallback as toBlobURLWithFallbackBase,
 } from "./ffmpegCommon";
 
 export async function toBlobURLWithRetry(

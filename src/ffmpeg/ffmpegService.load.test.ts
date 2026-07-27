@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { FFmpeg } from "@ffmpeg/ffmpeg";
 
 type MockFfmpegInstance = {
   on: ReturnType<typeof vi.fn>;
@@ -76,7 +77,7 @@ describe("FFmpeg loader", () => {
       new FfmpegManager({
         useWorker: false,
         createDirectRuntime: () =>
-          new DirectFfmpegRuntime(new mocked.FFmpeg()),
+          new DirectFfmpegRuntime(new mocked.FFmpeg() as unknown as FFmpeg),
       }),
     );
   });

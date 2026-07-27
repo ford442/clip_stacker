@@ -65,7 +65,7 @@ export async function encodeClipsWithCanvas(
   onStatus('Canvas render started (real-time playback)...');
   onProgress?.({ stage: 'Canvas render (real-time playback)', progress: CANVAS_RENDER_START, indeterminate: false });
 
-  const reportCaptureFailure = (err: unknown): never => {
+  function reportCaptureFailure(err: unknown): never {
     const message =
       err instanceof Error ? err.message : String(err ?? 'Canvas capture failed');
     onStatus(`Canvas capture failed: ${message}`);
@@ -75,7 +75,7 @@ export async function encodeClipsWithCanvas(
       indeterminate: true,
     });
     throw err instanceof Error ? err : new Error(message);
-  };
+  }
 
   try {
     await Promise.race([

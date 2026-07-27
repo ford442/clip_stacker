@@ -1,4 +1,3 @@
-import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import type {
   Clip,
@@ -26,8 +25,6 @@ import {
   getCdnLabel,
   getLocalFfmpegCoreBaseURL,
   getFfmpegCoreSources,
-  terminateFfmpegInstance,
-  clearTrackedLoadingInstance,
   buildFfmpegLoadErrorMessage,
   parseFfmpegTimeSeconds,
   safeExec,
@@ -41,7 +38,6 @@ import {
   toBlobURLWithRetry,
   toBlobURLWithFallback,
   withTimeout,
-  _doLoadFfmpeg,
   ensureFfmpeg,
   ensureFont,
   ensureFontsForOverlays,
@@ -59,23 +55,15 @@ import {
   PASS1_PROGRESS_END,
   FONT_CDN_URL,
   FONT_VIRTUAL_NAME,
-  ffmpegInstance,
-  fontLoaded,
-  ffmpegLoadingInstance,
-  ffmpegLoadingPromise,
-  ffmpegLoadFailed,
-  loadGeneration,
   StatusCallback,
   RenderProgressUpdate,
   ProgressCallback,
   FfmpegLogProgressContext,
-  activeFfmpegLogProgress,
   MAX_LOG_BUFFER,
-  ffmpegLogBuffer,
-  lastFfmpegErrorLog,
   FFMPEG_CORE_CDNS,
   FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
   FFMPEG_LOAD_TIMEOUT_MS,
+  type IFfmpegRuntime,
 } from "./core";
 
 export function buildPipFilterComplex(
@@ -254,7 +242,7 @@ export function buildPipFilterComplex(
 
 /** Render all clips using a filter_complex that composites PiP/overlay layers. */
 export async function mergeClipsWithCompositing(
-  ffmpeg: FFmpeg,
+  ffmpeg: IFfmpegRuntime,
   clips: Clip[],
   settings: ExportSettings,
   onStatus: StatusCallback,

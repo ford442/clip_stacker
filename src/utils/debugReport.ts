@@ -96,7 +96,7 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   lines.push('## Export Settings');
   lines.push(`- Resolution: ${ctx.exportSettings.outputResolution}`);
   lines.push(`- Preset: ${ctx.exportSettings.resolutionPreset}`);
-  lines.push(`- Quality: ${ctx.exportSettings.quality}`);
+  lines.push(`- Quality (CRF): ${ctx.exportSettings.crf}`);
   lines.push(`- Encoder path used: ${ctx.encoderPath || 'n/a'}`);
   lines.push('');
 
@@ -127,7 +127,7 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   if (ctx.textOverlays.length > 0) {
     lines.push(`## Text Overlays (${ctx.textOverlays.length})`);
     ctx.textOverlays.forEach((o, i) => {
-      lines.push(`- ${i + 1}. "${o.text}" @ ${o.startTime}s for ${o.duration}s`);
+      lines.push(`- ${i + 1}. "${o.text}" at (${o.x}, ${o.y})`);
     });
     lines.push('');
   }
