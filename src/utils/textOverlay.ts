@@ -10,6 +10,7 @@
 
 import type { TextOverlay } from '../types';
 import { isValidFfmpegColor } from './color';
+import { resolvePublicAssetUrl } from './publicAssetUrl';
 
 /** Virtual font filename written to the FFmpeg VFS before rendering. */
 export const DRAWTEXT_FONT_FILE = 'roboto.ttf';
@@ -92,7 +93,7 @@ export function getBundledFont(id: string | undefined | null): BundledFont {
 
 /** Return the public URL for a bundled font's TTF file. */
 export function getFontPublicUrl(font: BundledFont): string {
-  return `/fonts/${font.fileName}`;
+  return resolvePublicAssetUrl(`fonts/${font.fileName}`);
 }
 
 /** Return the virtual filename to use with FFmpeg drawtext:fontfile=. */
