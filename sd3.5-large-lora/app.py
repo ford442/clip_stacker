@@ -52,6 +52,7 @@ import random
 import datetime
 import threading
 import io
+import json
 
 # --- New GCS Imports ---
 from google.oauth2 import service_account
@@ -116,7 +117,10 @@ GCS_SA_KEY = os.getenv("GCS_SA_KEY") # The full JSON key content as a string
 gcs_client = None
 if GCS_SA_KEY and GCS_BUCKET_NAME:
     try:
-        credentials_info = eval(GCS_SA_KEY) # Using eval is safe here if you trust the secret source
+        # Service-account keys are JSON. json.loads both parses them correctly
+        # (eval chokes on the literal `null`/`true` a real key can contain) and
+        # avoids executing whatever the secret happens to hold.
+        credentials_info = json.loads(GCS_SA_KEY)
         credentials = service_account.Credentials.from_service_account_info(credentials_info)
         gcs_client = storage.Client(credentials=credentials)
         print("✅ GCS Client initialized successfully.")

@@ -5,12 +5,17 @@ gradio[oauth]
 #--extra-index-url https://download.pytorch.org/whl/cu129
 numpy
 #opencv-python
-torch==2.8.0 
-torchvision
-torchaudio
+# Pin the whole torch stack together. torchvision/torchaudio must come from the
+# same CUDA build as torch: an unpinned torchaudio resolves to a cu13 wheel whose
+# _torchaudio.so links libcudart.so.13, which is absent next to a cu12 torch.
+# transformers imports torchaudio eagerly from loss/loss_rnnt.py whenever the
+# package is importable, so the broken .so surfaces as an ImportError inside
+# `from diffusers import StableDiffusion3Pipeline` and the Space never boots.
+# torchaudio is unused here (text-to-image only) — left out entirely.
+torch==2.8.0
+torchvision==0.23.0
 
 tokenizers
-pipeline
 safetensors
 hf-transfer
 huggingface_hub>=0.20.0
