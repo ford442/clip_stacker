@@ -782,7 +782,7 @@ export function Inspector({
                     (item) => item.prop === activeKeyframeProp,
                   ) ?? PIP_KEYFRAME_PROPS[0];
                 const defaultValue =
-                  'defaultValue' in meta && typeof meta.defaultValue === 'function'
+                  typeof meta.defaultValue === 'function'
                     ? meta.defaultValue(clip)
                     : meta.defaultValue;
                 return (

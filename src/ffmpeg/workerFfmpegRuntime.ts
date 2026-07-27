@@ -1,5 +1,6 @@
 import type { IFfmpegRuntime } from './ffmpegRuntime';
 import type {
+  DistributiveOmit,
   WorkerOutboundMessage,
   WorkerRpcRequest,
 } from './ffmpegWorkerProtocol';
@@ -36,7 +37,7 @@ export class WorkerFfmpegRuntime implements IFfmpegRuntime {
 
     worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
       const data = event.data;
-      if ('type' in data && data.type === 'log') {
+      if ('type' in data) {
         WorkerFfmpegRuntime.logListeners.forEach((listener) =>
           listener(data.message),
         );
@@ -66,7 +67,7 @@ export class WorkerFfmpegRuntime implements IFfmpegRuntime {
   }
 
   private rpc(
-    request: Omit<WorkerRpcRequest, 'id'>,
+    request: DistributiveOmit<WorkerRpcRequest, 'id'>,
     transfer: Transferable[] = [],
   ): Promise<unknown> {
     const id = ++WorkerFfmpegRuntime.nextId;
@@ -87,17 +88,19 @@ export class WorkerFfmpegRuntime implements IFfmpegRuntime {
     return (await this.rpc({ type: 'exec', args })) as number;
   }
 
-  async writeFile(name: string, data: Uint8Array | string): Promise<void> {
+  async writeFile(name: string, data: Uint8Array | string): Promise<boolean> {
     if (typeof data === 'string') {
       await this.rpc({ type: 'writeFile', name, data });
-      return;
+      return true;
     }
     const copy = data.slice();
     await this.rpc({ type: 'writeFile', name, data: copy }, [copy.buffer]);
+    return true;
   }
 
-  async readFile(name: string): Promise<Uint8Array> {
+  async readFile(name: string): Promise<Uint8Array | string> {
     const result = await this.rpc({ type: 'readFile', name });
+    if (typeof result === 'string') return result;
     if (result instanceof Uint8Array) return result;
     if (result instanceof ArrayBuffer) return new Uint8Array(result);
     throw new Error(`Unexpected readFile result for ${name}`);

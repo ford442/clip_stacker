@@ -189,7 +189,7 @@ describe('uploadMediaChunked', () => {
       }
 
       return { ok: false, status: 500, json: async () => ({}) };
-    }) as unknown as typeof fetch;
+    });
 
     return { fetchImpl, sessions };
   }
@@ -205,7 +205,7 @@ describe('uploadMediaChunked', () => {
       name: 'clip.bin',
       blob,
       storage,
-      fetchImpl,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
       xhrImpl: null,
       onProgress: (p) => progress.push(p.progress),
     });
@@ -233,7 +233,7 @@ describe('uploadMediaChunked', () => {
       name: 'clip.bin',
       blob,
       storage,
-      fetchImpl,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
       xhrImpl: null,
     });
 
@@ -275,7 +275,7 @@ describe('uploadMediaChunked', () => {
       name: 'clip.bin',
       blob,
       storage,
-      fetchImpl,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
       xhrImpl: null,
     });
 
@@ -306,7 +306,7 @@ describe('uploadMediaChunked', () => {
         name: 'clip.bin',
         blob,
         storage,
-        fetchImpl,
+        fetchImpl: fetchImpl as unknown as typeof fetch,
         xhrImpl: null,
       }),
     ).rejects.toThrow(/Chunk 1\/1 failed/);

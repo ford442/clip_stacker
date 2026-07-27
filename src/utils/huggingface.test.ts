@@ -106,7 +106,7 @@ describe("stitchClipsOnGpu", () => {
   });
 
   it("surfaces an error event from the result stream", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1"))
@@ -132,7 +132,7 @@ describe("stitchClipsOnGpu", () => {
   });
 
   it("emits uploading → processing → downloading progress events", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1")) return sseResponse(COMPLETE_SSE);
@@ -150,7 +150,7 @@ describe("stitchClipsOnGpu", () => {
   });
 
   it("fails clearly when the space returns an empty file reference", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1"))
@@ -165,7 +165,7 @@ describe("stitchClipsOnGpu", () => {
   });
 
   it("rejects non-video download payloads with a preview", async () => {
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1")) return sseResponse(COMPLETE_SSE);
@@ -189,7 +189,7 @@ describe("stitchClipsOnGpu", () => {
     const stitched = makeMp4Blob("video-data");
     const sse =
       'event: complete\ndata: [{"video":{"path":"/tmp/out.mp4","url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/out.mp4"},"subtitles":null}]\n\n';
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1")) return sseResponse(sse);
@@ -208,7 +208,7 @@ describe("stitchClipsOnGpu", () => {
     const stitched = makeMp4Blob("path-string");
     const sse =
       'event: complete\ndata: ["/tmp/out.mp4"]\n\n';
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1")) return sseResponse(sse);
@@ -226,7 +226,7 @@ describe("stitchClipsOnGpu", () => {
   it("retries transient download failures before succeeding", async () => {
     const stitched = makeMp4Blob("retry-download");
     let downloadAttempts = 0;
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1")) return sseResponse(COMPLETE_SSE);
@@ -252,7 +252,7 @@ describe("stitchClipsOnGpu", () => {
       'event: progress\ndata: {"progress":0.25,"desc":"Normalizing clip 1/2"}\n\n' +
       'event: heartbeat\ndata: {"msg":"heartbeat"}\n\n' +
       COMPLETE_SSE;
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/clip_0.mp4"]);
       if (url.endsWith("/call/stitch")) return jsonResponse({ event_id: "ev1" });
       if (url.includes("/call/stitch/ev1")) return sseResponse(sse);
@@ -278,7 +278,7 @@ describe("processClipWithRIFE", () => {
     const processed = makeMp4Blob("rife");
     const sse =
       'event: complete\ndata: [{"url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/r.mp4"}]\n\n';
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/in.mp4"]);
       if (url.endsWith("/call/interpolate_video"))
         return jsonResponse({ event_id: "ev1" });
@@ -315,7 +315,7 @@ describe("generateMorphTransition", () => {
     const processed = makeMp4Blob("morph");
     const sse =
       'event: complete\ndata: [{"url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/m.mp4"}]\n\n';
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith("/upload")) return jsonResponse(["/tmp/pair.mp4"]);
       if (url.endsWith("/call/morph")) return jsonResponse({ event_id: "ev2" });
       if (url.includes("/call/morph/ev2")) return sseResponse(sse);

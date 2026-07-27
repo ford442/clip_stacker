@@ -1,3 +1,8 @@
+/** Omit that distributes over each member of a union, preserving discriminants. */
+export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
+  ? Omit<T, K>
+  : never;
+
 export type WorkerRpcRequest =
   | {
       id: number;

@@ -227,7 +227,7 @@ export function uploadLutTexture(
 
   device.queue.writeTexture(
     { texture },
-    rgba,
+    rgba as BufferSource,
     { bytesPerRow: lut.size * 4, rowsPerImage: lut.size },
     [lut.size, lut.size, lut.size],
   );

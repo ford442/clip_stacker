@@ -75,8 +75,8 @@ describe('text mask', () => {
       boxColor: 'black@0.5',
       keyframes: {
         x: [
-          { time: 0, value: 10 },
-          { time: 2, value: 200 },
+          { t: 0, value: 10 },
+          { t: 2, value: 200 },
         ],
       },
     };

@@ -120,7 +120,7 @@ export function renderTransitionPass(
     params,
     transitionId,
   );
-  device.queue.writeBuffer(uniformBuffer, 0, uniformData);
+  device.queue.writeBuffer(uniformBuffer, 0, uniformData as BufferSource);
 
   const fromTexture = device.importExternalTexture({ source: fromFrame });
   const toTexture = device.importExternalTexture({ source: toFrame });

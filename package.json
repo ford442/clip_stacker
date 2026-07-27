@@ -11,7 +11,8 @@
     "build:audio-analysis": "bash scripts/build-audio-analysis.sh",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:coverage": "vitest --coverage"
+    "test:coverage": "vitest --coverage",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "video",
@@ -29,7 +30,6 @@
     "mp4box": "^2.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "ts-morph": "^28.0.0",
     "zustand": "^5.0.14"
   },
   "devDependencies": {

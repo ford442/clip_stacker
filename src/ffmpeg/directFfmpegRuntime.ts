@@ -28,12 +28,12 @@ export class DirectFfmpegRuntime implements IFfmpegRuntime {
     return this.ffmpeg.exec(args);
   }
 
-  writeFile(name: string, data: Uint8Array | string): Promise<void> {
+  writeFile(name: string, data: Uint8Array | string): Promise<boolean> {
     return this.ffmpeg.writeFile(name, data as Uint8Array);
   }
 
-  async readFile(name: string): Promise<Uint8Array> {
-    return (await this.ffmpeg.readFile(name)) as Uint8Array;
+  readFile(name: string): Promise<Uint8Array | string> {
+    return this.ffmpeg.readFile(name);
   }
 
   deleteFile(name: string): Promise<boolean> {

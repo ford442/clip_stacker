@@ -4,6 +4,7 @@
  */
 import { FFmpeg } from '@ffmpeg/ffmpeg';
 import type {
+  DistributiveOmit,
   WorkerLogMessage,
   WorkerOutboundMessage,
   WorkerRpcRequest,
@@ -12,8 +13,11 @@ import type {
 
 let ffmpeg: FFmpeg | null = null;
 
-function respond(id: number, response: Omit<WorkerRpcResponse, 'id'>): void {
-  const message: WorkerOutboundMessage = { id, ...response };
+function respond(
+  id: number,
+  response: DistributiveOmit<WorkerRpcResponse, 'id'>,
+): void {
+  const message: WorkerOutboundMessage = { id, ...response } as WorkerOutboundMessage;
   self.postMessage(message);
 }
 

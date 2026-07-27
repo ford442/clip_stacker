@@ -4,6 +4,8 @@ import {
   buildClipTimelineSegments,
   buildPreviewCompositionPlan,
   filterBaseLayerTransitions,
+  type PreviewClipLayer,
+  type PreviewTextLayer,
 } from './previewComposition';
 import { getTimelineClips } from './timelineClips';
 
@@ -29,8 +31,13 @@ function makeClip(
   };
 }
 
-function clipLayers(plan: ReturnType<typeof buildPreviewCompositionPlan>) {
-  return plan.layers.filter((layer) => layer.kind === 'base' || layer.kind === 'pip');
+function clipLayers(
+  plan: ReturnType<typeof buildPreviewCompositionPlan>,
+): PreviewClipLayer[] {
+  return plan.layers.filter(
+    (layer): layer is PreviewClipLayer =>
+      layer.kind === 'base' || layer.kind === 'pip',
+  );
 }
 
 describe('previewComposition', () => {
@@ -194,7 +201,7 @@ describe('previewComposition', () => {
       expect(plan.layers).toHaveLength(2);
       expect(plan.layers[0].kind).toBe('base');
       expect(plan.layers[1].kind).toBe('text');
-      expect(plan.layers[1].x).toBe(40);
+      expect((plan.layers[1] as PreviewTextLayer).x).toBe(40);
     });
 
     it('resolves A/B groups through getTimelineClips before planning', () => {

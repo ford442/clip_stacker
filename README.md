@@ -60,6 +60,15 @@ Output goes to `dist/`. Preview the production build with:
 npm run preview
 ```
 
+## Type Checking & Tests
+
+```bash
+npm run typecheck   # tsc --noEmit, matches the CI gate
+npm test -- --run   # Vitest suite
+```
+
+CI (`.github/workflows/test.yml`) runs `npm ci`, `npm run typecheck`, `npm test -- --run`, and `npm run build` on every push/PR.
+
 ## Deploy
 
 ```bash
