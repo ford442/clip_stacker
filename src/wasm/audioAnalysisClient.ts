@@ -2,7 +2,7 @@
  * Main-thread proxy around the audio analysis worker.
  */
 
-import type { AudioBandEnergies } from './audioAnalysis';
+import { getWasmPublicBaseUrl, type AudioBandEnergies } from './audioAnalysis';
 import type { OfflineAnalysisResult } from './offlineAnalysis';
 import type {
   AnalysisWorkerRequest,
@@ -73,7 +73,8 @@ export class AudioAnalysisWorkerClient {
   async init(sampleRate: number, fftSize = 2048, baseUrl?: string): Promise<boolean> {
     if (!this.start()) return false;
     const id = this.nextId++;
-    const resp = await this.post({ type: 'init', id, sampleRate, fftSize, baseUrl });
+    const wasmBase = baseUrl ?? getWasmPublicBaseUrl();
+    const resp = await this.post({ type: 'init', id, sampleRate, fftSize, baseUrl: wasmBase });
     if (resp.type === 'unavailable') {
       this.failedReason = resp.reason;
       return false;
@@ -98,8 +99,9 @@ export class AudioAnalysisWorkerClient {
     }
     const id = this.nextId++;
     const copy = pcm.slice();
+    const wasmBase = baseUrl ?? getWasmPublicBaseUrl();
     const resp = await this.post(
-      { type: 'analyzeOffline', id, pcm: copy, sampleRate, fftSize, baseUrl },
+      { type: 'analyzeOffline', id, pcm: copy, sampleRate, fftSize, baseUrl: wasmBase },
       [copy.buffer],
     );
     if (resp.type === 'offlineResult') return resp.result;
