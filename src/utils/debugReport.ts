@@ -13,6 +13,7 @@ import {
   getLastFfmpegLogs,
   getFfmpegEnvironmentDiagnostics,
 } from '../ffmpeg/ffmpegService';
+import { getGpuErrorLog } from '../webgpu/gpuDevice';
 
 export interface DebugReportContext {
   status: string;
@@ -190,6 +191,19 @@ export function generateDebugReport(ctx: DebugReportContext): string {
 
   lines.push('## FFmpeg Environment Diagnostics');
   getFfmpegEnvironmentDiagnostics().forEach((d) => lines.push(`- ${d}`));
+  lines.push('');
+
+  const gpuErrors = getGpuErrorLog();
+  lines.push(`## WebGPU Errors (last ${gpuErrors.length})`);
+  if (gpuErrors.length === 0) {
+    lines.push('(none captured)');
+  } else {
+    lines.push('```');
+    gpuErrors.forEach((e) => {
+      lines.push(`[${new Date(e.timestamp).toISOString()}] ${e.type}: ${e.message}`);
+    });
+    lines.push('```');
+  }
 
   return lines.join('\n');
 }
