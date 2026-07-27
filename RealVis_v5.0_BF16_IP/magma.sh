@@ -1,0 +1,1 @@
+sudo dpkg -i ./magma_2.8.0-2_all.deb
