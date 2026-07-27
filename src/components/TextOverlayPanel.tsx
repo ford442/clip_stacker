@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import { usePlayheadTime } from "../hooks/usePlayheadTime";
 import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from "../types";
 import { isValidFfmpegColor } from "../utils/color";
@@ -21,7 +21,7 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-export function TextOverlayPanel({
+function TextOverlayPanelImpl({
   overlays,
   totalDuration = 60,
   onAdd,
@@ -451,3 +451,6 @@ export function TextOverlayPanel({
     </section>
   );
 }
+
+/** Memoized so unrelated App re-renders (e.g. a clip edit) don't re-render the overlay list. */
+export const TextOverlayPanel = memo(TextOverlayPanelImpl);

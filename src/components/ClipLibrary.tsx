@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import type { Clip, ClipGroup } from '../types';
 import { getClipDuration } from '../utils/project';
 
@@ -10,7 +11,7 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
-export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onToggleVariant, onDelete }: Props) {
+function ClipLibraryImpl({ clips, selectedClipId, clipGroups, onSelect, onToggleVariant, onDelete }: Props) {
   // Build a map from clip id → its group (if any)
   const groupByClipId = new Map<string, ClipGroup>();
   for (const group of clipGroups) {
@@ -156,3 +157,6 @@ export function ClipLibrary({ clips, selectedClipId, clipGroups, onSelect, onTog
     </section>
   );
 }
+
+/** Memoized so unrelated App re-renders don't re-render the whole clip list. */
+export const ClipLibrary = memo(ClipLibraryImpl);

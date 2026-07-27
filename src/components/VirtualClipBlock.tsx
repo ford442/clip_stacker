@@ -1,4 +1,4 @@
-import type { CSSProperties, DragEvent } from 'react';
+import { memo, type CSSProperties, type DragEvent } from 'react';
 import type { ClipTransition } from '../types';
 import { WaveformCanvas } from './WaveformCanvas';
 import type { VirtualClipLayout } from './timelineClipTypes';
@@ -13,8 +13,16 @@ const TRANSITION_COLORS: Record<string, string> = {
 interface Props {
   layout: VirtualClipLayout;
   style: CSSProperties;
-  selectedClipId: string | null;
-  dragIndex: number | null;
+  /**
+   * Whether this row's clip is the current selection. Passed as a boolean
+   * (not the raw `selectedClipId` string) so that changing the selection only
+   * changes this prop for the two affected rows — every other row's props
+   * stay referentially/structurally identical and `memo` skips re-rendering
+   * them.
+   */
+  isSelected: boolean;
+  /** Whether this row's clip is the one currently being dragged (see `isSelected`). */
+  isDragging: boolean;
   thumbs?: string[];
   waves?: Float32Array;
   transition?: ClipTransition;
@@ -30,11 +38,11 @@ interface Props {
   onTouchStart: (index: number) => void;
 }
 
-export function VirtualClipBlock({
+function VirtualClipBlockImpl({
   layout,
   style,
-  selectedClipId,
-  dragIndex,
+  isSelected,
+  isDragging,
   thumbs,
   waves,
   transition,
@@ -75,7 +83,7 @@ export function VirtualClipBlock({
       )}
 
       <div
-        className={`timeline-clip-wrapper${dragIndex === index ? ' is-dragging' : ''}`}
+        className={`timeline-clip-wrapper${isDragging ? ' is-dragging' : ''}`}
         style={style}
         data-clip-index={index}
         draggable
@@ -85,7 +93,7 @@ export function VirtualClipBlock({
       >
         <div
           className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
-            clip.id === selectedClipId ? ' selected' : ''
+            isSelected ? ' selected' : ''
           }`}
           onClick={() => onSelect(clip.id)}
           title={clip.title}
@@ -153,3 +161,10 @@ export function VirtualClipBlock({
     </>
   );
 }
+
+/**
+ * Memoized so that selecting a different clip (or editing one clip's data)
+ * only re-renders the affected row(s), not every row in the timeline —
+ * critical once timelines have hundreds of clips (#150).
+ */
+export const VirtualClipBlock = memo(VirtualClipBlockImpl);

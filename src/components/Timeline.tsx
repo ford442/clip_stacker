@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Clip, ClipTransition } from '../types';
 import {
@@ -94,7 +94,7 @@ function TimelineRuler({ totalDuration, pixelsPerSecond, beatMarkers = [] }: Rul
 
 // ─── Main Timeline ───────────────────────────────────────────────────────────
 
-export function Timeline({
+function TimelineImpl({
   clips,
   selectedClipId,
   transitions,
@@ -266,11 +266,14 @@ export function Timeline({
   }, []);
 
   // ── HTML5 Drag handlers (desktop) ────────────────────────────────────────
-  const handleDragStart = (e: React.DragEvent, index: number) => {
+  // useCallback here keeps these stable across renders so the memoized
+  // VirtualClipBlock rows (which receive them as props) don't all re-render
+  // just because Timeline re-rendered for an unrelated reason.
+  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
     setDragIndex(index);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', String(index));
-  };
+  }, []);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -287,17 +290,17 @@ export function Timeline({
     setDropTargetIndex(null);
   };
 
-  const handleDragEnd = () => {
+  const handleDragEnd = useCallback(() => {
     setDragIndex(null);
     setDropTargetIndex(null);
-  };
+  }, []);
 
   // ── Touch handlers (mobile) ──────────────────────────────────────────────
-  const handleTouchStart = (index: number) => {
+  const handleTouchStart = useCallback((index: number) => {
     touchDragRef.current = index;
     lastTouchPos.current = null;
     setDragIndex(index);
-  };
+  }, []);
 
   const handleTouchMoveOnTrack = (e: React.TouchEvent) => {
     if (touchDragRef.current === null) return;
@@ -349,8 +352,8 @@ export function Timeline({
           width: layout.width,
           transform: `translateX(${translateX}px)`,
         }}
-        selectedClipId={selectedClipId}
-        dragIndex={dragIndex}
+        isSelected={clip.id === selectedClipId}
+        isDragging={dragIndex === index}
         thumbs={thumbMap[clip.id]}
         waves={waveMap[clip.id]}
         transition={transition}
@@ -557,3 +560,10 @@ export function Timeline({
     </section>
   );
 }
+
+/**
+ * Memoized so an unrelated App re-render (e.g. editing a text overlay) does
+ * not re-render the whole timeline — only actual changes to its own props
+ * (clips, selection, transitions, …) do.
+ */
+export const Timeline = memo(TimelineImpl);
