@@ -6,6 +6,7 @@
  */
 
 import { PreviewEngine } from './previewEngine';
+import { acquireGpuContext } from './gpuDevice';
 import type { TransitionRenderParams } from './transitions/types';
 
 export interface LetterboxUv {
@@ -139,8 +140,11 @@ export class ExportCompositor {
 export async function isWebGpuExportAvailable(): Promise<boolean> {
   if (!('gpu' in navigator)) return false;
   try {
-    const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
-    return !!adapter;
+    // Goes through the shared context so this probe reuses (or seeds) the
+    // one device the rest of the app uses, instead of requesting its own
+    // adapter that would otherwise sit unused.
+    const ctx = await acquireGpuContext();
+    return !!ctx.adapter;
   } catch {
     return false;
   }

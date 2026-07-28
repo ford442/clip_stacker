@@ -1,4 +1,5 @@
 import previewShader from "./shaders/preview.wgsl?raw";
+import { acquireGpuContext } from "./gpuDevice";
 import {
   createTransitionPipelineCache,
   renderTransitionPass,
@@ -109,16 +110,11 @@ export class PreviewEngine {
   private canvas: HTMLCanvasElement | OffscreenCanvas;
 
   static async create(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<PreviewEngine> {
-    const adapter = await navigator.gpu.requestAdapter({
-      powerPreference: "high-performance",
-    });
-    if (!adapter) throw new Error("No WebGPU adapter available");
-    const device = await adapter.requestDevice();
+    const { device, format } = await acquireGpuContext();
 
     const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
     if (!context) throw new Error("Could not get WebGPU context from canvas");
 
-    const format = navigator.gpu.getPreferredCanvasFormat();
     context.configure({ device, format, alphaMode: "premultiplied" });
 
     const shaderModule = device.createShaderModule({ code: previewShader });
@@ -362,12 +358,16 @@ export class PreviewEngine {
     );
   }
 
+  /**
+   * Releases this engine's own buffers/textures. Does NOT destroy the
+   * (shared) `GPUDevice` — that is owned by `gpuDevice.ts` and used by other
+   * subsystems (text fill, other preview instances).
+   */
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     this.uniformBuffer.destroy();
     this.transitionUniformBuffer.destroy();
     this.lutPass.destroy();
-    this.device.destroy();
   }
 }

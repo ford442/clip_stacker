@@ -20,6 +20,7 @@ import {
   usePreviewSize,
 } from "../hooks/usePreviewSize";
 import { PreviewEngine } from "../webgpu/previewEngine";
+import { onGpuDeviceLost } from "../webgpu/gpuDevice";
 import {
   shouldUseTimelinePreview,
   TimelinePreviewEngine,
@@ -349,6 +350,21 @@ function TimelineCompositorPreview({
       setBackend("unavailable");
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Same reasoning as the single-clip preview: a lost device leaves this
+  // engine's draw calls silently no-op-ing rather than throwing, so the
+  // existing renderFailuresRef-based fallback may never trip. Drop to
+  // "unavailable" immediately so the UI degrades instead of freezing.
+  useEffect(() => {
+    return onGpuDeviceLost(() => {
+      cancelAnimationFrame(rafRef.current);
+      schedulerRef.current?.cancel();
+      engineRef.current?.destroy();
+      engineRef.current = null;
+      backendRef.current = "unavailable";
+      setBackend("unavailable");
+    });
   }, []);
 
   useEffect(() => {
@@ -688,6 +704,23 @@ function WebGPUVideoPreview({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [clip.id, clip.objectUrl, webGpuAvailable, colorGrade]);
+
+  // An unexpected device loss (GPU process crash, driver reset) leaves any
+  // live `PreviewEngine` holding a dead device — its draw calls silently
+  // no-op rather than throwing, so without this the preview would freeze on
+  // the last frame with no visible error. Tear it down immediately and fall
+  // back to Canvas2D instead of waiting on the existing 30-consecutive-
+  // frame-failure detector (which a lost device may never trip). The shared
+  // registry recreates a fresh device automatically, so the next preview
+  // session (new clip, remount) picks it up transparently.
+  useEffect(() => {
+    return onGpuDeviceLost(() => {
+      engineRef.current?.destroy();
+      engineRef.current = null;
+      setGpuActive(false);
+      setGpuFallback(true);
+    });
+  }, []);
 
   useEffect(() => {
     const video = videoRef.current;

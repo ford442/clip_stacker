@@ -11,6 +11,7 @@
  */
 
 import textFillShader from '../shaders/textFill.wgsl?raw';
+import { acquireGpuContext } from '../gpuDevice';
 import { getTextShader, resolveShaderParams } from './registry';
 
 export interface TextFillOptions {
@@ -48,9 +49,7 @@ export class TextFillRenderer {
   }
 
   static async create(): Promise<TextFillRenderer> {
-    const adapter = await navigator.gpu?.requestAdapter();
-    if (!adapter) throw new Error('WebGPU adapter unavailable for text fills');
-    const device = await adapter.requestDevice();
+    const { device } = await acquireGpuContext();
 
     const shaderModule = device.createShaderModule({ code: textFillShader });
 
@@ -263,12 +262,12 @@ export class TextFillRenderer {
     return this.outputCanvas;
   }
 
+  /** Releases this renderer's own textures/buffers. The shared `GPUDevice` is untouched. */
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     try { this.targetTexture?.destroy(); } catch {}
     try { this.uniformBuffer?.destroy(); } catch {}
-    try { this.device?.destroy(); } catch {}
   }
 }
 

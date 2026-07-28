@@ -1,3 +1,5 @@
+import { acquireGpuContext } from '../webgpu/gpuDevice';
+
 export interface BrowserCapabilities {
   /** WebCodecs API (VideoEncoder / VideoDecoder / VideoFrame) available. */
   webcodecs: boolean;
@@ -47,10 +49,11 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
   let webgpu = false;
   if ("gpu" in navigator) {
     try {
-      const adapter = await navigator.gpu.requestAdapter();
-      const device = await adapter?.requestDevice();
-      webgpu = !!device;
-      device?.destroy();
+      // Acquire the shared context (rather than a throwaway adapter/device)
+      // so this probe doesn't leave an orphan device behind and doesn't race
+      // whichever subsystem initializes WebGPU for real right after.
+      const ctx = await acquireGpuContext();
+      webgpu = !!ctx.device;
     } catch {
       // navigator.gpu exists but adapter/device creation failed
     }

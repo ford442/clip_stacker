@@ -7,6 +7,7 @@ import {
   resetFfmpegManagerForTesting,
   FfmpegManager,
 } from '../ffmpeg/ffmpegManager';
+import { clearGpuErrorLog, __resetGpuContextForTests } from '../webgpu/gpuDevice';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
@@ -33,6 +34,8 @@ describe('generateDebugReport', () => {
     mgr.recordLog('[info] test log line');
     mgr.setLastCommand(['-i', 'input.mp4', '-filter_complex', '[0:v]null[v]', '-map', '[v]', 'out.mp4']);
     setFfmpegManagerForTesting(mgr);
+    __resetGpuContextForTests();
+    clearGpuErrorLog();
   });
 
   it('includes environment, clips, and FFmpeg command sections', () => {
@@ -77,6 +80,8 @@ describe('generateDebugReport', () => {
     expect(report).toContain('test error');
     expect(report).toContain('## FFmpeg Logs');
     expect(report).toContain('[info] test log line');
+    expect(report).toContain('## WebGPU Errors (last 0)');
+    expect(report).toContain('(none captured)');
 
     vi.unstubAllGlobals();
   });
