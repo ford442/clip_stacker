@@ -293,9 +293,21 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
         />
       )}
       {renderPlan && !isRendering && (
-        <p className="render-plan-info">
-          Render plan: {renderPlan.description} ({renderPlan.reason})
-        </p>
+        <>
+          <p className="render-plan-info">
+            Render plan: {renderPlan.description} ({renderPlan.reason})
+          </p>
+          {renderPlan.shaderTextFallbackApplied && renderPlan.shaderTextOverlays && (
+            <p className="render-plan-warning" role="alert">
+              ⚠ Shader-filled text overlay{renderPlan.shaderTextOverlays.length > 1 ? 's' : ''}{' '}
+              {renderPlan.shaderTextOverlays.map((o) => `"${o.text}"`).join(', ')} rendered as
+              solid color — FFmpeg export doesn't support shader fills. Switch Fill to Solid on{' '}
+              {renderPlan.shaderTextOverlays.length > 1 ? 'these overlays' : 'this overlay'}, or
+              use the GPU render path (avoid Force FFmpeg / Canvas renderer) to preserve the
+              shader look.
+            </p>
+          )}
+        </>
       )}
       <p aria-live="polite" style={{ minHeight: '1.4rem', color: 'var(--muted)', margin: '0.5rem 0 0' }}>
         {status}

@@ -76,6 +76,21 @@ export function calculateRenderPlan(
   textOverlays: TextOverlay[] = [],
   settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
 ): RenderPlan {
+  const plan = computeRenderPlanPath(clips, transitions, textOverlays, settings);
+  const shaderOverlays = textOverlays.filter((o) => o.fill === "shader");
+  if (shaderOverlays.length === 0) return plan;
+  return {
+    ...plan,
+    shaderTextOverlays: shaderOverlays.map((o) => ({ id: o.id, text: o.text })),
+  };
+}
+
+function computeRenderPlanPath(
+  clips: Clip[],
+  transitions: ClipTransition[] = [],
+  textOverlays: TextOverlay[] = [],
+  settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
+): RenderPlan {
   // Check for PiP clips
   const hasPipClips = clips.some((c) => (c.layerIndex ?? 0) > 0);
   if (hasPipClips) {

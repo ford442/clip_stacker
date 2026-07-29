@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { Clip } from "../types";
+import type { Clip, TextOverlay } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { calculateRenderPlan } from "./ffmpegService";
 
@@ -17,6 +17,22 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
     videoFadeOut: 0,
     audioFadeIn: 0,
     audioFadeOut: 0,
+    ...overrides,
+  };
+}
+
+function makeOverlay(overrides: Partial<TextOverlay> = {}): TextOverlay {
+  return {
+    id: "overlay-1",
+    text: "Hello",
+    fontsize: 32,
+    fontcolor: "white",
+    x: 0,
+    y: 0,
+    scrolling: false,
+    scrollSpeed: 0,
+    box: false,
+    boxColor: "black@0.5",
     ...overrides,
   };
 }
@@ -61,5 +77,25 @@ describe("calculateRenderPlan", () => {
     expect(plan.path).toBe('effects-reencoding');
     expect(plan.willReencode).toBe(true);
     expect(plan.reason).toContain('different native resolutions');
+  });
+
+  it('lists shader-filled text overlays on the render plan', () => {
+    const clip = makeClip();
+    const shaderOverlay = makeOverlay({ id: 'shader-1', text: 'Plasma title', fill: 'shader', shaderId: 'plasma' });
+    const solidOverlay = makeOverlay({ id: 'solid-1', text: 'Caption' });
+
+    const plan = calculateRenderPlan([clip], [], [shaderOverlay, solidOverlay], DEFAULT_EXPORT_SETTINGS);
+
+    expect(plan.shaderTextOverlays).toEqual([{ id: 'shader-1', text: 'Plasma title' }]);
+    expect(plan.shaderTextFallbackApplied).toBeUndefined();
+  });
+
+  it('omits shaderTextOverlays when no overlay uses a shader fill', () => {
+    const clip = makeClip();
+    const solidOverlay = makeOverlay();
+
+    const plan = calculateRenderPlan([clip], [], [solidOverlay], DEFAULT_EXPORT_SETTINGS);
+
+    expect(plan.shaderTextOverlays).toBeUndefined();
   });
 });

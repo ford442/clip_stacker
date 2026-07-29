@@ -278,7 +278,9 @@ function TextOverlayPanelImpl({
                           );
                         })()}
                         <p className="inspector-hint" style={{ marginTop: '0.2rem' }}>
-                          Shader text uses WebGPU (preview + GPU export). FFmpeg path will use solid fallback.
+                          Shader text uses WebGPU (preview + GPU export). Rendering via FFmpeg (re-encode,
+                          Force FFmpeg, or Canvas renderer) falls back to solid color instead — switch
+                          Fill to Solid above if you need a guaranteed look on every export path.
                         </p>
                       </div>
                     )}
