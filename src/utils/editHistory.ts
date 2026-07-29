@@ -1,4 +1,5 @@
-import type { Clip, ClipGroup, ClipTransition, TextOverlay } from '../types';
+import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../types';
+import { cloneTracks } from './trackModel';
 
 /** Maximum undo snapshots kept in memory. */
 export const MAX_EDIT_HISTORY = 50;
@@ -6,6 +7,7 @@ export const MAX_EDIT_HISTORY = 50;
 /** Serializable editing state captured for undo/redo. */
 export interface EditSnapshot {
   clips: Clip[];
+  tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
@@ -20,6 +22,7 @@ export function cloneClip(clip: Clip): Clip {
 export function cloneSnapshot(snapshot: EditSnapshot): EditSnapshot {
   return {
     clips: snapshot.clips.map(cloneClip),
+    tracks: cloneTracks(snapshot.tracks),
     clipGroups: snapshot.clipGroups.map((group) => ({
       ...group,
       variants: {

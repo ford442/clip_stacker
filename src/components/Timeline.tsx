@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ClipTransition } from '../types';
-import { useEditorTimelineClips, useEditorTransitions, useSelectedClipId } from '../store';
+import { useEditorClips, useEditorClipGroups, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedClipId } from '../store';
 import {
   buildRulerTicks,
   clampPixelsPerSecond,
@@ -24,6 +24,12 @@ import {
   requestTimelineWaveform,
 } from '../utils/timelineMediaCache';
 import { computeTotalDuration } from '../utils/transitions';
+import {
+  buildTrackClipLayouts,
+  computeTracksDuration,
+  DEFAULT_TRACK_HEIGHT,
+  MAIN_VIDEO_TRACK_ID,
+} from '../utils/trackModel';
 import type { VirtualClipLayout } from './timelineClipTypes';
 import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
@@ -32,6 +38,7 @@ interface Props {
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
+  onMoveToTrack: (clipId: string, targetTrackId: string, startTime: number) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
   onDelete: (id: string) => void;
   morphProcessingIndex?: number | null;
@@ -114,11 +121,15 @@ function TimelineImpl({
   onMoveUp,
   onMoveDown,
   onReorder,
+  onMoveToTrack,
   onTransitionUpdate,
   onDelete,
   morphProcessingIndex = null,
 }: Props) {
   const clips = useEditorTimelineClips();
+  const allClips = useEditorClips();
+  const clipGroups = useEditorClipGroups();
+  const tracks = useEditorTracks();
   const transitions = useEditorTransitions();
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
@@ -129,20 +140,27 @@ function TimelineImpl({
   // ── Drag-and-drop state ──────────────────────────────────────────────────
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
+  const [dragClipId, setDragClipId] = useState<string | null>(null);
+  const [dropTargetTrackId, setDropTargetTrackId] = useState<string | null>(null);
   const touchDragRef = useRef<number | null>(null);
   const lastTouchPos = useRef<{ x: number; y: number } | null>(null);
   const trackRef = useRef<HTMLDivElement>(null);
 
+  const trackLayouts = useMemo(
+    () => buildTrackClipLayouts(tracks, allClips, clipGroups, pixelsPerSecond),
+    [tracks, allClips, clipGroups, pixelsPerSecond],
+  );
+
   const clipLayouts = useMemo<VirtualClipLayout[]>(() => {
-    let cursor = 0;
-    return clips.map((clip, index) => {
-      const duration = effectiveDur(clip);
-      const width = clipPixelWidth(duration, pixelsPerSecond);
-      const layout = { clip, index, duration, width, start: cursor };
-      cursor += width;
-      return layout;
-    });
-  }, [clips, pixelsPerSecond]);
+    const mainLayouts = trackLayouts.get(MAIN_VIDEO_TRACK_ID) ?? [];
+    return mainLayouts.map((layout, index) => ({
+      clip: layout.clip,
+      index,
+      duration: layout.duration,
+      width: layout.width,
+      start: layout.left,
+    }));
+  }, [trackLayouts]);
 
   const beatMarkers = useMemo(() => buildBeatMarkerLayouts(clipLayouts), [clipLayouts]);
 
@@ -209,8 +227,8 @@ function TimelineImpl({
   }, [clipLayouts, virtualizer]);
 
   const totalDuration = useMemo(
-    () => clips.reduce((sum, clip) => sum + effectiveDur(clip), 0),
-    [clips],
+    () => computeTracksDuration(tracks, allClips, transitions, clipGroups),
+    [tracks, allClips, transitions, clipGroups],
   );
   const outputDuration = useMemo(
     () => computeTotalDuration(clips, transitions),
@@ -235,6 +253,28 @@ function TimelineImpl({
       if (x < midpoint) return layout.index;
     }
     return clipLayouts.length;
+  };
+
+  const calcDropOnTrack = (clientX: number, clientY: number): { trackId: string; startTime: number } | null => {
+    const rows = scrollRef.current?.querySelectorAll<HTMLElement>('.timeline-track-row');
+    if (!rows?.length) return null;
+
+    let targetTrackId: string | null = null;
+    for (const row of Array.from(rows)) {
+      const rect = row.getBoundingClientRect();
+      if (clientY >= rect.top && clientY <= rect.bottom) {
+        targetTrackId = row.dataset.trackId ?? null;
+        break;
+      }
+    }
+    if (!targetTrackId) return null;
+
+    const row = scrollRef.current?.querySelector<HTMLElement>(`[data-track-id="${targetTrackId}"]`);
+    if (!row) return null;
+    const rect = row.getBoundingClientRect();
+    const x = clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0);
+    const startTime = Math.max(0, x / pixelsPerSecond);
+    return { trackId: targetTrackId, startTime };
   };
 
   const adjustZoom = (factor: number) => {
@@ -277,28 +317,45 @@ function TimelineImpl({
   // just because Timeline re-rendered for an unrelated reason.
   const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
     setDragIndex(index);
+    const layout = clipLayouts[index];
+    if (layout) setDragClipId(layout.clip.id);
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', String(index));
-  }, []);
+  }, [clipLayouts]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
+    const drop = calcDropOnTrack(e.clientX, e.clientY);
+    if (drop) {
+      setDropTargetTrackId(drop.trackId);
+    }
     setDropTargetIndex(calcInsertIndex(e.clientX));
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     const from = dragIndex ?? Number(e.dataTransfer.getData('text/plain'));
+    const drop = calcDropOnTrack(e.clientX, e.clientY);
     const insertBefore = calcInsertIndex(e.clientX);
-    onReorder(from, insertBefore);
+
+    if (drop && dragClipId && drop.trackId !== MAIN_VIDEO_TRACK_ID) {
+      onMoveToTrack(dragClipId, drop.trackId, drop.startTime);
+    } else if (from !== insertBefore && from !== insertBefore - 1) {
+      onReorder(from, insertBefore);
+    }
+
     setDragIndex(null);
+    setDragClipId(null);
     setDropTargetIndex(null);
+    setDropTargetTrackId(null);
   };
 
   const handleDragEnd = useCallback(() => {
     setDragIndex(null);
+    setDragClipId(null);
     setDropTargetIndex(null);
+    setDropTargetTrackId(null);
   }, []);
 
   // ── Touch handlers (mobile) ──────────────────────────────────────────────
@@ -375,7 +432,7 @@ function TimelineImpl({
     );
   };
 
-  if (clips.length === 0) {
+  if (tracks.every((t) => t.items.length === 0) && clips.length === 0) {
     return (
       <section className="panel timeline-panel">
         <h2>Timeline</h2>
@@ -445,9 +502,14 @@ function TimelineImpl({
           </button>
         </div>
       </div>
-      <p className="timeline-hint muted">Drag clips to reorder. Shift + scroll wheel zooms the timeline.</p>
+      <p className="timeline-hint muted">Drag clips between tracks or reorder on Video 1. Shift + scroll wheel zooms.</p>
 
-      <div className="timeline-scroll-container" ref={scrollRef}>
+      <div
+        className="timeline-scroll-container"
+        ref={scrollRef}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
         <TimelineRuler
           totalDuration={totalDuration}
           pixelsPerSecond={pixelsPerSecond}
@@ -487,7 +549,7 @@ function TimelineImpl({
                     aria-hidden="true"
                   />
                 )}
-                {renderClipBlock(layout, virtualItem.start)}
+                {renderClipBlock(layout, layout.start)}
               </Fragment>
             );
           })}
@@ -545,6 +607,58 @@ function TimelineImpl({
             )}
 
         </div>
+
+        {tracks.filter((t) => t.id !== MAIN_VIDEO_TRACK_ID).map((track) => {
+          const rowLayouts = trackLayouts.get(track.id) ?? [];
+          const rowHeight = track.height ?? DEFAULT_TRACK_HEIGHT;
+          return (
+            <div
+              key={track.id}
+              className={`timeline-track-row${dropTargetTrackId === track.id ? ' timeline-track-row--drop-target' : ''}`}
+              data-track-id={track.id}
+            >
+              <div className="timeline-track-label" title={track.label}>
+                {track.label ?? track.kind}
+              </div>
+              <div className="timeline-track timeline-track--overlay" style={{ width: contentWidth, height: rowHeight }}>
+                {rowLayouts.map((layout) => (
+                  <VirtualClipBlock
+                    key={layout.clip.id}
+                    layout={{
+                      clip: layout.clip,
+                      index: layout.itemIndex,
+                      duration: layout.duration,
+                      width: layout.width,
+                      start: layout.left,
+                    }}
+                    style={{
+                      position: 'absolute',
+                      top: 0,
+                      left: 0,
+                      width: layout.width,
+                      transform: `translateX(${layout.left}px)`,
+                    }}
+                    isDragging={dragClipId === layout.clip.id}
+                    thumbs={thumbMap[layout.clip.id]}
+                    waves={waveMap[layout.clip.id]}
+                    clipCount={rowLayouts.length}
+                    showTransition={false}
+                    onMoveUp={onMoveUp}
+                    onMoveDown={onMoveDown}
+                    onDelete={onDelete}
+                    onEditTransition={() => {}}
+                    onDragStart={(e, clipIndex) => {
+                      setDragClipId(layout.clip.id);
+                      handleDragStart(e, clipIndex);
+                    }}
+                    onDragEnd={handleDragEnd}
+                    onTouchStart={() => setDragClipId(layout.clip.id)}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {editingTransition && (

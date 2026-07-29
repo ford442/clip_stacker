@@ -1,8 +1,9 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import type { Clip, ClipGroup, ClipTransition, TextOverlay } from '../types';
-import { getTimelineClips } from '../utils/timelineClips';
+import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../types';
+import { getEffectiveTimelineClips } from '../utils/timelineClips';
+import { createDefaultTracks } from '../utils/trackModel';
 import {
   cloneSnapshot,
   mergeClipUrls,
@@ -11,6 +12,7 @@ import {
   trimHistoryStack,
   type EditSnapshot,
 } from '../utils/editHistory';
+import { cloneTracks } from '../utils/trackModel';
 
 /**
  * Durable editing state (#144).
@@ -39,6 +41,7 @@ function resolveUpdater<T>(action: StateUpdater<T>, prev: T): T {
 
 export interface EditorState {
   clips: Clip[];
+  tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
@@ -48,6 +51,7 @@ export interface EditorState {
   redoDepth: number;
 
   setClips: (action: StateUpdater<Clip[]>) => void;
+  setTracks: (action: StateUpdater<Track[]>) => void;
   setClipGroups: (action: StateUpdater<ClipGroup[]>) => void;
   setTransitions: (action: StateUpdater<ClipTransition[]>) => void;
   setTextOverlays: (action: StateUpdater<TextOverlay[]>) => void;
@@ -82,6 +86,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     const state = get();
     return {
       clips: state.clips,
+      tracks: state.tracks,
       clipGroups: state.clipGroups,
       transitions: state.transitions,
       textOverlays: state.textOverlays,
@@ -101,6 +106,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       revokeOrphanedUrls(previousClips, mergedClips);
       set({
         clips: mergedClips,
+        tracks: cloneTracks(snapshot.tracks),
         clipGroups: syncClipGroups(snapshot.clipGroups, mergedClips),
         transitions: snapshot.transitions.map((transition) => ({ ...transition })),
         textOverlays: snapshot.textOverlays.map((overlay) => ({ ...overlay })),
@@ -121,6 +127,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
 
   return {
     clips: [],
+    tracks: createDefaultTracks(),
     clipGroups: [],
     transitions: [],
     textOverlays: [],
@@ -129,6 +136,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     redoDepth: 0,
 
     setClips: (action) => set((s) => ({ clips: resolveUpdater(action, s.clips) })),
+    setTracks: (action) => set((s) => ({ tracks: resolveUpdater(action, s.tracks) })),
     setClipGroups: (action) =>
       set((s) => ({ clipGroups: resolveUpdater(action, s.clipGroups) })),
     setTransitions: (action) =>
@@ -194,6 +202,8 @@ export const editorStore = createStore<EditorState>()((set, get) => {
 
 export const useEditorClips = () =>
   useStore(editorStore, useShallow((s) => s.clips));
+export const useEditorTracks = () =>
+  useStore(editorStore, useShallow((s) => s.tracks));
 export const useEditorClipGroups = () =>
   useStore(editorStore, useShallow((s) => s.clipGroups));
 export const useEditorTransitions = () =>
@@ -202,11 +212,11 @@ export const useEditorTextOverlays = () =>
   useStore(editorStore, useShallow((s) => s.textOverlays));
 export const useSelectedClipId = () => useStore(editorStore, (s) => s.selectedClipId);
 
-/** Clips on the timeline (active A/B variant per group). Shallow-stable when unchanged. */
+/** Clips on the timeline (active A/B variant per group, track-aware order). */
 export const useEditorTimelineClips = () =>
   useStore(
     editorStore,
-    useShallow((s) => getTimelineClips(s.clips, s.clipGroups)),
+    useShallow((s) => getEffectiveTimelineClips(s.tracks, s.clips, s.clipGroups)),
   );
 
 /** Per-row selection subscription — only re-renders when this clip's selected state toggles. */
@@ -230,6 +240,7 @@ export const useEditorClip = (id: string | null) =>
 export const editorActions: Pick<
   EditorState,
   | 'setClips'
+  | 'setTracks'
   | 'setClipGroups'
   | 'setTransitions'
   | 'setTextOverlays'
@@ -251,6 +262,7 @@ export function __resetEditorStoreForTests(): void {
   isRestoring = false;
   editorStore.setState({
     clips: [],
+    tracks: createDefaultTracks(),
     clipGroups: [],
     transitions: [],
     textOverlays: [],

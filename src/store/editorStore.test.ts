@@ -6,6 +6,7 @@ import {
   __resetEditorStoreForTests,
   DEFAULT_DEBOUNCE_MS,
 } from './editorStore';
+import { createDefaultTracks } from '../utils/trackModel';
 
 function makeClip(id: string, objectUrl = `blob:${id}`): Clip {
   const file = new File(['x'], `${id}.mp4`, { type: 'video/mp4' });
@@ -129,6 +130,7 @@ describe('editorStore', () => {
 
     resetHistory({
       clips: [makeClip('z')],
+      tracks: createDefaultTracks(),
       clipGroups: [],
       transitions: [],
       textOverlays: [],

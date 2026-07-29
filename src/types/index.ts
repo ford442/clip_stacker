@@ -341,7 +341,44 @@ export interface SerializedClipGroup {
   activeVariant: 'A' | 'B';
 }
 
+/** Current on-disk project schema. Absent / 0 = legacy flat clip list. */
+export const PROJECT_SCHEMA_VERSION = 1;
+
+export type TrackKind = 'video' | 'audio' | 'text';
+
+/** A clip placement on a timeline track. */
+export interface TrackItem {
+  clipId: string;
+  /** Output-timeline position in seconds. */
+  startTime: number;
+}
+
+export interface Track {
+  id: string;
+  kind: TrackKind;
+  label?: string;
+  items: TrackItem[];
+  muted?: boolean;
+  locked?: boolean;
+  /** Row height in pixels for the timeline UI. */
+  height?: number;
+}
+
+export interface SerializedTrack {
+  id: string;
+  kind: TrackKind;
+  label?: string;
+  items: TrackItem[];
+  muted?: boolean;
+  locked?: boolean;
+  height?: number;
+}
+
 export interface Project {
+  /** Project schema version. Omitted = legacy (pre-track) format. */
+  schemaVersion?: number;
+  /** Timeline tracks (schema v1+). */
+  tracks?: SerializedTrack[];
   clips: SerializedClip[];
   clipGroups?: SerializedClipGroup[];
   transitions?: SerializedTransition[];

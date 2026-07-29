@@ -62,7 +62,7 @@ describe('autoSave', () => {
 
   it('falls back to metadata-only when forceMetadataOnly is set', async () => {
     const clips = [makeClip('meta', 64)];
-    const project = await buildAutoSaveProject(clips, [], [], [], {
+    const project = await buildAutoSaveProject(clips, [], [], [], [], {
       forceMetadataOnly: true,
     });
 

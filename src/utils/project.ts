@@ -8,7 +8,10 @@ import type {
   TextOverlay,
   ClipTransition,
   SerializedClipGroup,
+  Track,
+  SerializedTrack,
 } from '../types';
+import { PROJECT_SCHEMA_VERSION } from '../types';
 import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
 import { clampClipVolume } from './audioVolume';
 import { sanitizeFfmpegColor } from './color';
@@ -26,6 +29,7 @@ import {
   uploadMediaChunked,
   type ChunkedUploadProgress,
 } from './storageUpload';
+import { resolveProjectTracks, syncTracksWithClips } from './trackModel';
 
 const FADE_SAFETY_MARGIN = 0.01;
 
@@ -112,8 +116,24 @@ export function serializeProject(
   textOverlays: TextOverlay[] = [],
   clipGroups: ClipGroup[] = [],
   colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  tracks: Track[] = [],
 ): Project {
+  const serializedTracks: SerializedTrack[] = tracks.map((track) => ({
+    id: track.id,
+    kind: track.kind,
+    ...(track.label ? { label: track.label } : {}),
+    items: track.items.map((item) => ({
+      clipId: item.clipId,
+      startTime: item.startTime,
+    })),
+    ...(track.muted ? { muted: true } : {}),
+    ...(track.locked ? { locked: true } : {}),
+    ...(track.height != null ? { height: track.height } : {}),
+  }));
+
   return {
+    schemaVersion: PROJECT_SCHEMA_VERSION,
+    ...(serializedTracks.length > 0 ? { tracks: serializedTracks } : {}),
     clips: clips.map((clip): SerializedClip => ({
       id: clip.id,
       title: clip.title,
@@ -231,6 +251,7 @@ export interface RemoteUploadErrorEvent extends RemoteUploadProgressEvent {
 
 export interface AppliedProjectData {
   clips: Clip[];
+  tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
@@ -579,6 +600,7 @@ export async function serializeProjectWithMedia(
   textOverlays: TextOverlay[] = [],
   clipGroups: ClipGroup[] = [],
   options: SerializeProjectOptions = {},
+  tracks: Track[] = [],
 ): Promise<Project> {
   const mediaMode = options.mediaMode ?? 'metadata';
   const project = serializeProject(
@@ -587,6 +609,7 @@ export async function serializeProjectWithMedia(
     textOverlays,
     clipGroups,
     options.colorGrade ?? DEFAULT_COLOR_GRADE,
+    tracks,
   );
   if (mediaMode === 'metadata') return project;
 
@@ -894,8 +917,31 @@ export async function applyProjectData(
       }
     : DEFAULT_COLOR_GRADE;
 
+  const savedTracks = Array.isArray(project.tracks)
+    ? project.tracks.map(
+        (t): Track => ({
+          id: String(t.id),
+          kind: t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video',
+          ...(t.label ? { label: String(t.label) } : {}),
+          items: Array.isArray(t.items)
+            ? t.items.map((item) => ({
+                clipId: String(item.clipId),
+                startTime: Number(item.startTime) || 0,
+              }))
+            : [],
+          ...(t.muted ? { muted: true } : {}),
+          ...(t.locked ? { locked: true } : {}),
+          ...(t.height != null ? { height: Number(t.height) } : {}),
+        }),
+      )
+    : undefined;
+
+  let tracks = resolveProjectTracks(savedTracks, mapped, transitions, clipGroups);
+  tracks = syncTracksWithClips(tracks, mapped, clipGroups);
+
   return {
     clips: mapped,
+    tracks,
     clipGroups,
     transitions,
     textOverlays,

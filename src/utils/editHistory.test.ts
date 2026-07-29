@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import type { Clip, ClipGroup } from '../types';
+import { createDefaultTracks } from './trackModel';
 import {
   cloneSnapshot,
   mergeClipUrls,
@@ -36,6 +37,7 @@ describe('editHistory', () => {
     const clip = makeClip('a');
     const snapshot = cloneSnapshot({
       clips: [clip],
+      tracks: createDefaultTracks(),
       clipGroups: [],
       transitions: [],
       textOverlays: [],

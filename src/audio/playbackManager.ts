@@ -1,4 +1,4 @@
-import type { Clip, ClipGroup, ClipTransition } from '../types';
+import type { Clip, ClipGroup, ClipTransition, Track } from '../types';
 import { ClipAudioCache } from './clipAudioCache';
 import {
   buildAudioSchedule,
@@ -149,8 +149,9 @@ export class AudioPlaybackManager {
     clips: Clip[],
     groups: ClipGroup[],
     transitions: ClipTransition[],
+    tracks: Track[] = [],
   ): Promise<void> {
-    this.schedule = buildAudioSchedule(clips, groups, transitions);
+    this.schedule = buildAudioSchedule(clips, groups, transitions, tracks);
     const keepIds = new Set(this.schedule.map((e) => e.clipId));
     this.cache.prune(keepIds);
 

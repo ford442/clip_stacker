@@ -3,6 +3,7 @@ export {
   editorStore,
   editorActions,
   useEditorClips,
+  useEditorTracks,
   useEditorClip,
   useEditorClipGroups,
   useEditorTimelineClips,
