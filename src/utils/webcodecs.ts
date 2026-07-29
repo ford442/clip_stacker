@@ -29,6 +29,7 @@ import { buildPreviewCompositionPlan } from './previewComposition';
 import { drawTextOverlays, renderTextOverlaysAsync } from './canvas-renderer';
 import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { ClipFrameDecoder } from './webcodecs-decoder';
+import { TimelineDecoderFrameProvider } from './decoderFrameProvider';
 import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
 import { getTimelineClips } from './timelineClips';
 import {
@@ -403,6 +404,11 @@ async function encodeTimelineComposite(
   if (!exportCtx) throw new Error('Could not create export canvas');
 
   const engine = await TimelinePreviewEngine.create(videoCanvas, clips);
+  // Decoder cursors deliver frames by walking each layer's source time
+  // forward — export never scrubs — so this replaces the <video> element
+  // seek in the hot path. Layers whose codec/container it can't handle fall
+  // back to the seek path automatically (see TimelineDecoderFrameProvider).
+  const frameProvider = new TimelineDecoderFrameProvider();
 
   const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
   const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
@@ -445,7 +451,7 @@ async function encodeTimelineComposite(
         height,
         width,
       );
-      await engine.renderPlan(plan, { colorGrade });
+      await engine.renderPlan(plan, { colorGrade, frameProvider });
 
       exportCtx.drawImage(videoCanvas, 0, 0);
       if (textOverlays.length > 0) {
@@ -485,6 +491,7 @@ async function encodeTimelineComposite(
     const { buffer } = muxer.target as ArrayBufferTarget;
     return new Blob([buffer], { type: 'video/mp4' });
   } finally {
+    frameProvider.destroy();
     engine.destroy();
   }
 }
