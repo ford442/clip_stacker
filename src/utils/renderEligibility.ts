@@ -1,6 +1,6 @@
 import type { Clip, ClipTransition, TextOverlay } from '../types';
 import { clipHasVolumeAdjustment } from './audioVolume';
-import { projectHasKeyframeAnimation } from './animatedLayout';
+import { clipHasKeyframes } from './animatedLayout';
 import { isColorGradeActive, type ColorGradeSettings } from './lut';
 
 /** Mirrors ffmpegService clipNeedsEffects — shared for encoder path selection. */
@@ -20,20 +20,45 @@ export function hasActiveTransitions(transitions: ClipTransition[]): boolean {
   return transitions.some((transition) => transition.type !== 'none' && transition.duration > 0);
 }
 
-/** Timeline compositor export (preview parity) for transitions, PiP, or keyframes. */
+export function hasShaderTextOverlays(textOverlays: TextOverlay[]): boolean {
+  return textOverlays.some((overlay) => overlay.fill === 'shader');
+}
+
+/**
+ * Transitions, PiP, clip keyframes, and still images need multi-source frame
+ * delivery (timeline compositor). Text overlay keyframes are resolved in the
+ * overlay post-pass via `buildPreviewCompositionPlan`.
+ */
+export function needsMultiLayerComposition(
+  clips: Clip[],
+  transitions: ClipTransition[],
+): boolean {
+  if (hasActiveTransitions(transitions)) return true;
+  if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) return true;
+  if (clips.some(clipHasKeyframes)) return true;
+  if (clips.some((clip) => clip.stillImage)) return true;
+  return false;
+}
+
+/** Solid text overlays are rasterized in a post-pass over decoder output. */
+export function needsOverlayPass(
+  textOverlays: TextOverlay[],
+  _colorGrade?: ColorGradeSettings,
+): boolean {
+  if (textOverlays.length === 0) return false;
+  return !hasShaderTextOverlays(textOverlays);
+}
+
+/** Timeline compositor export (preview parity) for multi-layer or shader text. */
 export function shouldUseTimelineGpuExport(
   clips: Clip[],
   transitions: ClipTransition[],
   textOverlays: TextOverlay[],
-  colorGrade?: ColorGradeSettings,
+  _colorGrade?: ColorGradeSettings,
 ): boolean {
-  if (hasActiveTransitions(transitions)) return true;
-  if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) return true;
-  if (projectHasKeyframeAnimation(clips, textOverlays)) return true;
-  if (clips.some((clip) => clip.stillImage)) return true;
-  // Text overlays (solid or shader) are rasterized on top of the timeline
-  // compositor output — same code path as preview, so export stays WYSIWYG.
-  if (textOverlays.length > 0) return true;
+  if (needsMultiLayerComposition(clips, transitions)) return true;
+  // Shader fills use WebGPU readback on the timeline compositor path.
+  if (hasShaderTextOverlays(textOverlays)) return true;
   return false;
 }
 
@@ -56,7 +81,6 @@ export function canUseGpuVideoEncoder(
   if (isColorGradeActive(options.colorGrade)) {
     return options.webGpuAvailable === true;
   }
-  if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) return false;
   if (clips.some((clip) => clip.rifeProcessed)) return false;
   return true;
 }
