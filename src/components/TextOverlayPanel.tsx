@@ -21,6 +21,17 @@ interface Props {
   onDelete: (id: string) => void;
 }
 
+function formatOverlayListMeta(overlay: TextOverlay): string {
+  const mode = overlay.scrolling ? "↔ ticker" : "📍 static";
+  const size = `${overlay.fontsize}px`;
+  if (overlay.fill === "shader") {
+    const shaderLabel =
+      getTextShader(overlay.shaderId)?.label ?? overlay.shaderId ?? "Shader";
+    return `${mode} · 🎨 ${shaderLabel} · ${size}`;
+  }
+  return `${mode} · ${size}`;
+}
+
 function TextOverlayPanelImpl({
   totalDuration = 60,
   onAdd,
@@ -93,9 +104,15 @@ function TextOverlayPanelImpl({
                 <span className="tol-item-text" title={overlay.text}>
                   {overlay.text || <em>(empty)</em>}
                 </span>
-                <span className="tol-item-meta">
-                  {overlay.scrolling ? "↔ ticker" : "📍 static"} ·{" "}
-                  {overlay.fontsize}px
+                <span
+                  className={`tol-item-meta${overlay.fill === "shader" ? " tol-item-meta--shader" : ""}`}
+                  title={
+                    overlay.fill === "shader"
+                      ? `WebGPU shader fill (${getTextShader(overlay.shaderId)?.label ?? overlay.shaderId ?? "unknown"})`
+                      : undefined
+                  }
+                >
+                  {formatOverlayListMeta(overlay)}
                 </span>
                 <button
                   type="button"

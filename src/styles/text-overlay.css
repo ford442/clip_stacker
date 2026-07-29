@@ -71,6 +71,10 @@
   white-space: nowrap;
 }
 
+.tol-item-meta--shader {
+  color: var(--gold-bright, #e8c547);
+}
+
 .tol-edit-btn {
   flex-shrink: 0;
   font-size: 0.75rem;
