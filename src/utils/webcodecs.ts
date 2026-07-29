@@ -36,6 +36,14 @@ import {
   addAacChunksToMuxer,
   encodeTimelineAudio,
 } from './webcodecs-audio';
+import {
+  computeTimelineExportFrameCount,
+  globalTimeForTimelineFrame,
+  shouldEmitTimelineStatusUpdate,
+  shouldWaitForEncoderBackpressure,
+  timelineFrameTimestampUs,
+  timelineStatusThrottleFrames,
+} from './webcodecs-timeline';
 
 const TARGET_FPS = 30;
 const WEBCODECS_PROGRESS_START = 0.05;
@@ -393,15 +401,24 @@ async function encodeTimelineComposite(
 
   const timelineClips = getTimelineClips(clips, clipGroups);
   const totalDuration = computeTotalDuration(timelineClips, transitions);
+  const totalFrames = computeTimelineExportFrameCount(totalDuration, TARGET_FPS);
+  const hasTextOverlays = textOverlays.length > 0;
+  const statusThrottleFrames = timelineStatusThrottleFrames(TARGET_FPS);
+  const frameDurationUs = Math.round(1_000_000 / TARGET_FPS);
+
   const videoCanvas = document.createElement('canvas');
   videoCanvas.width = width;
   videoCanvas.height = height;
 
-  const exportCanvas = document.createElement('canvas');
-  exportCanvas.width = width;
-  exportCanvas.height = height;
-  const exportCtx = exportCanvas.getContext('2d');
-  if (!exportCtx) throw new Error('Could not create export canvas');
+  let exportCanvas: HTMLCanvasElement | null = null;
+  let exportCtx: CanvasRenderingContext2D | null = null;
+  if (hasTextOverlays) {
+    exportCanvas = document.createElement('canvas');
+    exportCanvas.width = width;
+    exportCanvas.height = height;
+    exportCtx = exportCanvas.getContext('2d');
+    if (!exportCtx) throw new Error('Could not create export canvas');
+  }
 
   const engine = await TimelinePreviewEngine.create(videoCanvas, clips);
   // Decoder cursors deliver frames by walking each layer's source time
@@ -428,48 +445,76 @@ async function encodeTimelineComposite(
     hardwareAcceleration: 'prefer-hardware',
   });
 
-  const frameDurationUs = Math.round(1_000_000 / TARGET_FPS);
-  const step = 1 / TARGET_FPS;
-  let frameIndex = 0;
+  const renderTimelineFrame = async (frameIndex: number) => {
+    const globalTime = globalTimeForTimelineFrame(frameIndex, TARGET_FPS);
+    const plan = buildPreviewCompositionPlan(
+      clips,
+      clipGroups,
+      transitions,
+      textOverlays,
+      settings,
+      globalTime,
+      height,
+      width,
+    );
+    await engine.renderPlan(plan, { colorGrade, frameProvider });
+    return plan;
+  };
+
+  let lastStatusFrame = -statusThrottleFrames;
+  let pendingRender: Promise<Awaited<ReturnType<typeof renderTimelineFrame>>> | null =
+    totalFrames > 0 ? renderTimelineFrame(0) : null;
 
   try {
-    for (let globalTime = 0; globalTime < totalDuration; globalTime += step) {
-      onStatus(`GPU timeline encode: ${globalTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s`);
+    for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
+      const globalTime = globalTimeForTimelineFrame(frameIndex, TARGET_FPS);
+
+      if (
+        shouldEmitTimelineStatusUpdate(
+          frameIndex,
+          lastStatusFrame,
+          statusThrottleFrames,
+          totalFrames,
+        )
+      ) {
+        onStatus(`GPU timeline encode: ${globalTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s`);
+        lastStatusFrame = frameIndex;
+      }
       onProgress?.({
         stage: 'GPU timeline encode',
         progress: mapWebCodecsProgress(globalTime, totalDuration),
         indeterminate: totalDuration <= 0,
       });
 
-      const plan = buildPreviewCompositionPlan(
-        clips,
-        clipGroups,
-        transitions,
-        textOverlays,
-        settings,
-        globalTime,
-        height,
-        width,
-      );
-      await engine.renderPlan(plan, { colorGrade, frameProvider });
-
-      exportCtx.drawImage(videoCanvas, 0, 0);
-      if (textOverlays.length > 0) {
-        const hasShader = textOverlays.some((o) => o.fill === 'shader');
-        if (hasShader) {
-          await renderTextOverlaysAsync(exportCtx.canvas, plan);
-        } else {
-          drawTextOverlays(exportCtx, plan);
-        }
+      const plan = await pendingRender!;
+      if (frameIndex + 1 < totalFrames) {
+        pendingRender = renderTimelineFrame(frameIndex + 1);
       }
 
-      const frame = new VideoFrame(exportCanvas, {
-        timestamp: frameIndex * frameDurationUs,
+      let frameSource: CanvasImageSource;
+      if (hasTextOverlays) {
+        exportCtx!.drawImage(videoCanvas, 0, 0);
+        const hasShader = textOverlays.some((o) => o.fill === 'shader');
+        if (hasShader) {
+          await renderTextOverlaysAsync(exportCtx!.canvas, plan);
+        } else {
+          drawTextOverlays(exportCtx!, plan);
+        }
+        frameSource = exportCanvas!;
+      } else {
+        frameSource = videoCanvas;
+      }
+
+      const frame = new VideoFrame(frameSource, {
+        timestamp: timelineFrameTimestampUs(frameIndex, TARGET_FPS),
         duration: frameDurationUs,
       });
       videoEncoder.encode(frame, { keyFrame: frameIndex % 60 === 0 });
       frame.close();
-      frameIndex++;
+
+      if (shouldWaitForEncoderBackpressure(videoEncoder.encodeQueueSize)) {
+        await waitForEncoderDequeue(videoEncoder);
+      }
       if (videoError) throw videoError;
     }
 
@@ -693,9 +738,6 @@ async function encodeVideoFrames(
   return startTimeUs + Math.round(clipDuration * 1_000_000);
 }
 
-/** Encoded chunks allowed in flight before pausing frame submission. */
-const MAX_ENCODE_QUEUE_DEPTH = 16;
-
 function waitForEncoderDequeue(encoder: VideoEncoder): Promise<void> {
   return new Promise((resolve) => {
     const target = encoder as unknown as EventTarget;
@@ -760,7 +802,7 @@ async function encodeVideoFramesFromDecoder(
       encodedFrame.close();
       frameCount++;
 
-      if (encoder.encodeQueueSize > MAX_ENCODE_QUEUE_DEPTH) {
+      if (shouldWaitForEncoderBackpressure(encoder.encodeQueueSize)) {
         await waitForEncoderDequeue(encoder);
       }
     }
