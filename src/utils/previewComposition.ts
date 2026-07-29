@@ -88,6 +88,24 @@ export interface PreviewTextLayer {
 export type PreviewCompositionLayer = PreviewClipLayer | PreviewTextLayer;
 
 /** Optional controls passed into timeline preview renders. */
+/**
+ * Supplies decoded video frames for timeline layers without an `<video>`
+ * element seek. Export uses this (see `TimelineDecoderFrameProvider` in
+ * `decoderFrameProvider.ts`) because it always walks each layer's source time
+ * monotonically forward, so a sequential `VideoDecoder` cursor can deliver
+ * frames far faster than seeking. Live preview leaves this unset and keeps
+ * the existing `ClipMediaPool` seek path, since scrubbing is genuinely random
+ * access.
+ */
+export interface LayerFrameProvider {
+  /**
+   * Return a frame for this layer's clip at `layer.sourceTime`, or null to
+   * fall back to the `<video>` / `ClipMediaPool` seek path for this layer
+   * only (e.g. a codec/container the provider can't decode).
+   */
+  getFrame(layer: PreviewClipLayer, clip: Clip): Promise<VideoFrame | null>;
+}
+
 export interface TimelineRenderOptions {
   /** Return true when this render is stale and must not touch the canvas. */
   isCancelled?: () => boolean;
@@ -97,6 +115,8 @@ export interface TimelineRenderOptions {
   maxWidth?: number;
   /** Final-stage 3D LUT color grade (WebGPU path only). */
   colorGrade?: import('./lut').ColorGradeSettings;
+  /** Decoder-cursor frame source for export; omitted for live preview. */
+  frameProvider?: LayerFrameProvider;
 }
 
 export interface PreviewCompositionPlan {

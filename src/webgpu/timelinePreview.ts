@@ -94,6 +94,36 @@ async function prepareClipFrame(
   return captureVideoFrame(video);
 }
 
+interface ResolvedLayerFrame {
+  frame: VideoFrame;
+  /** Real `<video>` element (seek path) or a dimensions-only stand-in (decoder path). */
+  video: HTMLVideoElement;
+}
+
+/**
+ * Get a frame for `layer`/`clip`, preferring the injected decoder-cursor
+ * `frameProvider` (export) and falling back to the `<video>` seek path
+ * (always used by live preview, and by export for layers the provider can't
+ * decode). Returns null when neither source can produce a frame.
+ */
+async function resolveLayerFrame(
+  layer: PreviewClipLayer,
+  clip: Clip,
+  mediaPool: ClipMediaPool,
+  options?: TimelineRenderOptions,
+): Promise<ResolvedLayerFrame | null> {
+  if (options?.frameProvider) {
+    const frame = await options.frameProvider.getFrame(layer, clip);
+    if (frame) {
+      const video = { videoWidth: frame.displayWidth, videoHeight: frame.displayHeight } as HTMLVideoElement;
+      return { frame, video };
+    }
+  }
+  const frame = await prepareClipFrame(layer, clip, mediaPool, options);
+  if (!frame) return null;
+  return { frame, video: mediaPool.getVideo(clip) };
+}
+
 function letterboxForLayer(
   layer: PreviewClipLayer,
   video: HTMLVideoElement,
@@ -195,15 +225,13 @@ export class TimelinePreviewEngine implements TimelineCompositor {
           outgoingClip?.kind === 'video' &&
           incomingClip?.kind === 'video'
         ) {
-          const outgoingVideo = this.mediaPool.getVideo(outgoingClip);
-          const incomingVideo = this.mediaPool.getVideo(incomingClip);
-          const fromFrame = await prepareClipFrame(
+          const fromResolved = await resolveLayerFrame(
             layer,
             outgoingClip,
             this.mediaPool,
             options,
           );
-          const toFrame = await prepareClipFrame(
+          const toResolved = await resolveLayerFrame(
             nextLayer,
             incomingClip,
             this.mediaPool,
@@ -212,23 +240,23 @@ export class TimelinePreviewEngine implements TimelineCompositor {
           drawnClipIds.add(layer.clipId);
           drawnClipIds.add(nextLayer.clipId);
 
-          if (fromFrame && toFrame) {
+          if (fromResolved && toResolved) {
             if (options?.isCancelled?.()) {
-              fromFrame.close();
-              toFrame.close();
+              fromResolved.frame.close();
+              toResolved.frame.close();
               return;
             }
 
             const fromLetterbox = letterboxForLayer(
               layer,
-              outgoingVideo,
-              fromFrame,
+              fromResolved.video,
+              fromResolved.frame,
               plan,
             );
             const toLetterbox = letterboxForLayer(
               nextLayer,
-              incomingVideo,
-              toFrame,
+              toResolved.video,
+              toResolved.frame,
               plan,
             );
 
@@ -250,20 +278,20 @@ export class TimelinePreviewEngine implements TimelineCompositor {
             };
 
             this.engine.renderTransition(
-              fromFrame,
-              toFrame,
+              fromResolved.frame,
+              toResolved.frame,
               layer.crossfade.type,
               transitionParams,
             );
-            fromFrame.close();
-            toFrame.close();
+            fromResolved.frame.close();
+            toResolved.frame.close();
             isFirstLayer = false;
             index += 1;
             continue;
           }
 
-          fromFrame?.close();
-          toFrame?.close();
+          fromResolved?.frame.close();
+          toResolved?.frame.close();
         }
       }
 
@@ -325,14 +353,16 @@ export class TimelinePreviewEngine implements TimelineCompositor {
         videoWidth = img.naturalWidth || videoWidth;
         videoHeight = img.naturalHeight || videoHeight;
       } else {
-        const video = this.mediaPool.getVideo(clip);
-        const seekStart = performance.now();
-        await seekVideoTo(video, layer.sourceTime);
-        if (options?.isCancelled?.()) return;
-        previewMetrics.recordSeek(performance.now() - seekStart);
-        frame = await captureVideoFrame(video);
-        videoWidth = video.videoWidth || videoWidth;
-        videoHeight = video.videoHeight || videoHeight;
+        const resolved = await resolveLayerFrame(layer, clip, this.mediaPool, options);
+        if (options?.isCancelled?.()) {
+          resolved?.frame.close();
+          return;
+        }
+        if (resolved) {
+          frame = resolved.frame;
+          videoWidth = resolved.video.videoWidth || videoWidth;
+          videoHeight = resolved.video.videoHeight || videoHeight;
+        }
       }
 
       if (!frame) continue;

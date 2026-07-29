@@ -31,10 +31,26 @@ fallback and explicit override only.
    be demuxed or its codec cannot be decoded, the export loop transparently
    falls back to the legacy `HTMLVideoElement` + `requestVideoFrameCallback`
    capture for that clip.
-2. **Composite** — `src/webgpu/exportCompositor.ts` (single-clip letterbox +
-   fades + LUT) or `src/webgpu/timelinePreview.ts` (transitions, PiP layers,
-   keyframes, text overlays) render with the same WGSL shaders as the live
-   preview, so the export is WYSIWYG.
+2. **Composite** — both compositors get decoder-driven frame delivery on
+   export, not just the single-clip path:
+   - `src/webgpu/exportCompositor.ts` (single-clip letterbox + fades + LUT)
+     always used the `VideoDecoder` path above via `encodeVideoFramesFromDecoder`
+     (`src/utils/webcodecs.ts`).
+   - `src/webgpu/timelinePreview.ts` (transitions, PiP layers, keyframes,
+     text overlays) is shared with the live preview, where scrubbing is
+     genuine random access and a `<video>` element seek
+     (`src/utils/clipMediaPool.ts`) is the right tool. Export instead injects
+     a `LayerFrameProvider` (`TimelineDecoderFrameProvider`, in
+     `src/utils/decoderFrameProvider.ts`) via `TimelineRenderOptions.frameProvider`
+     — see `src/utils/decoderCursor.ts` — because export walks every layer's
+     source time strictly forward and a sequential decoder is far cheaper
+     than a seek per frame. Each timeline occurrence of a video layer (a base
+     cut, a PiP layer, or one side of a crossfade) gets its own forward-only
+     decoder cursor, bounded the same way `ClipMediaPool` bounds `<video>`
+     elements; a layer whose codec/container the provider can't handle falls
+     back to the `<video>` seek path for just that layer. Both compositors
+     render with the same WGSL shaders as the live preview, so export stays
+     WYSIWYG regardless of frame source.
 3. **Encode (video)** — hardware `VideoEncoder` via `resolveEncoderCodec()`
    (`src/utils/webcodecs.ts`). `ExportSettings.videoCodec` selects
    `h264` (default) / `hevc` / `av1`; HEVC and AV1 are probed with
