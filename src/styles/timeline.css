@@ -33,6 +33,11 @@
   background: rgba(8, 10, 18, 0.5);
 }
 
+.timeline-hint--pip {
+  color: #26c6da;
+  opacity: 0.85;
+}
+
 .timeline-header-row {
   display: flex;
   align-items: baseline;
@@ -211,6 +216,16 @@
   background: rgba(6, 8, 18, 0.9);
 }
 
+/* Picture-in-Picture overlay clips get a teal accent so they read as
+   distinct from base-layer (sequential) clips at a glance. */
+.timeline-clip--pip {
+  border-color: rgba(38, 198, 218, 0.45);
+}
+
+.timeline-clip--pip.selected {
+  border-color: var(--gold);
+}
+
 .timeline-thumbs {
   height: 54px;
   display: flex;
@@ -315,6 +330,19 @@
   height: 24px;
   flex-shrink: 0;
   border-top: 1px solid rgba(201, 162, 39, 0.08);
+}
+
+.timeline-clip-badge {
+  flex-shrink: 0;
+  font-size: 0.58rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: #26c6da;
+  border: 1px solid rgba(38, 198, 218, 0.5);
+  border-radius: 4px;
+  padding: 0 4px;
+  line-height: 1.4;
+  white-space: nowrap;
 }
 
 .timeline-clip-label {

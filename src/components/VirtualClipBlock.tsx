@@ -51,6 +51,8 @@ function VirtualClipBlockImpl({
   const isSelected = useIsClipSelected(clip.id);
   const isLoadingThumbs = clip.kind === 'video' && thumbs === undefined;
   const isLoadingWave = clip.kind === 'audio' && waves === undefined;
+  const layerIndex = clip.layerIndex ?? 0;
+  const isOverlay = layerIndex > 0;
 
   return (
     <>
@@ -85,9 +87,13 @@ function VirtualClipBlockImpl({
         <div
           className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
             isSelected ? ' selected' : ''
-          }`}
+          }${isOverlay ? ' timeline-clip--pip' : ''}`}
           onClick={() => editorActions.setSelectedClipId(clip.id)}
-          title={clip.title}
+          title={
+            isOverlay
+              ? `${clip.title}\nPicture-in-Picture overlay (layer ${layerIndex}) — plays from the start of the output, not at its position on this row.`
+              : clip.title
+          }
         >
           {clip.kind === 'video' ? (
             <div className={`timeline-thumbs${isLoadingThumbs ? ' is-loading' : ''}`}>
@@ -112,6 +118,15 @@ function VirtualClipBlockImpl({
             >
               ⠿
             </span>
+
+            {isOverlay && (
+              <span
+                className="timeline-clip-badge"
+                title={`Picture-in-Picture overlay, layer ${layerIndex}. Overlay clips always play from the start of the output, independent of where they sit on this track.`}
+              >
+                PiP · L{layerIndex}
+              </span>
+            )}
 
             <span className="timeline-clip-label">
               {index + 1}. {clip.title}

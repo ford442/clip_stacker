@@ -234,6 +234,10 @@ function TimelineImpl({
     () => computeTotalDuration(clips, transitions),
     [clips, transitions],
   );
+  const hasOverlayClips = useMemo(
+    () => allClips.some((clip) => (clip.layerIndex ?? 0) > 0),
+    [allClips],
+  );
   const contentWidth = timelineContentWidth(totalDuration, pixelsPerSecond);
   const transMap = useMemo(
     () => new Map(transitions.map((t) => [t.afterClipIndex, t])),
@@ -503,6 +507,13 @@ function TimelineImpl({
         </div>
       </div>
       <p className="timeline-hint muted">Drag clips between tracks or reorder on Video 1. Shift + scroll wheel zooms.</p>
+      {hasOverlayClips && (
+        <p className="timeline-hint timeline-hint--pip muted">
+          🖼 Clips marked <strong>PiP</strong> are Picture-in-Picture overlays — they composite on
+          top of the base video starting at the beginning of the output, regardless of where they
+          sit on their track.
+        </p>
+      )}
 
       <div
         className="timeline-scroll-container"
@@ -617,7 +628,14 @@ function TimelineImpl({
               className={`timeline-track-row${dropTargetTrackId === track.id ? ' timeline-track-row--drop-target' : ''}`}
               data-track-id={track.id}
             >
-              <div className="timeline-track-label" title={track.label}>
+              <div
+                className="timeline-track-label"
+                title={
+                  track.kind === 'video'
+                    ? `${track.label ?? track.kind} — Picture-in-Picture overlay track. Clips here composite on top of Video 1 starting at output time 0, independent of their position on this row.`
+                    : track.label
+                }
+              >
                 {track.label ?? track.kind}
               </div>
               <div className="timeline-track timeline-track--overlay" style={{ width: contentWidth, height: rowHeight }}>
