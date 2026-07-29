@@ -8,11 +8,48 @@
  *
  * The WGSL and uniforms are designed so that the same shader code path is used
  * for both live preview and GPU export frames.
+ *
+ * The result stays on the GPU end-to-end: the output canvas holds a `webgpu`
+ * context and the render pass draws directly into its current texture, so
+ * there is no `copyTextureToBuffer` / `mapAsync` readback and no per-pixel JS
+ * color conversion. Callers still get back a drawable `HTMLCanvasElement`
+ * (`ctx.drawImage(canvas, ...)` works against a WebGPU-backed canvas).
  */
 
 import textFillShader from '../shaders/textFill.wgsl?raw';
 import { acquireGpuContext } from '../gpuDevice';
 import { getTextShader, resolveShaderParams } from './registry';
+
+export interface UniformSlots {
+  p0: number;
+  p1: number;
+  p2: number;
+  mode: number;
+}
+
+/**
+ * Resolve a shader's named params into uniform slots p0..p2 (+ mode) using
+ * its declarative `paramSlots`/`mode` from the registry. Pure and
+ * GPU-independent so it's unit-testable, and the only place that needs to
+ * change when a shader's param set changes — never `render()` itself.
+ */
+export function mapParamsToUniformSlots(
+  shaderId: string | undefined | null,
+  params?: Record<string, number>,
+): UniformSlots {
+  const shaderDef = getTextShader(shaderId);
+  const resolved = resolveShaderParams(shaderId, params);
+  const slots: UniformSlots = { p0: 0, p1: 0, p2: 0, mode: shaderDef?.mode ?? 0 };
+  if (!shaderDef) return slots;
+  for (const [key, slot] of Object.entries(shaderDef.paramSlots)) {
+    const value = resolved[key];
+    if (value === undefined) continue;
+    if (slot === 0) slots.p0 = value;
+    else if (slot === 1) slots.p1 = value;
+    else slots.p2 = value;
+  }
+  return slots;
+}
 
 export interface TextFillOptions {
   time: number;
@@ -21,16 +58,34 @@ export interface TextFillOptions {
   /** Target size; if omitted, derived from mask. */
   width?: number;
   height?: number;
+  /**
+   * Stable identity for the glyph raster (text, font, size, resolved
+   * position, scroll offset — whatever determines `mask`'s pixels). When two
+   * consecutive calls pass the same key, the mask texture and bind group are
+   * reused instead of re-uploaded — a static caption's mask never changes,
+   * only `time` does. Omit to always re-upload (safe default).
+   */
+  maskCacheKey?: string;
 }
 
 export class TextFillRenderer {
-  private device: GPUDevice;
-  private pipeline: GPURenderPipeline;
-  private sampler: GPUSampler;
-  private uniformBuffer: GPUBuffer;
-  private uniformData = new Float32Array(8);
-  private outputCanvas: HTMLCanvasElement;
-  private outputCtx: CanvasRenderingContext2D | null = null;
+  private readonly device: GPUDevice;
+  private readonly pipeline: GPURenderPipeline;
+  private readonly sampler: GPUSampler;
+  private readonly uniformBuffer: GPUBuffer;
+  private readonly uniformData = new Float32Array(8);
+  private readonly format: GPUTextureFormat;
+  private readonly outputCanvas: HTMLCanvasElement;
+  private context: GPUCanvasContext | null = null;
+  private canvasWidth = 0;
+  private canvasHeight = 0;
+
+  private maskTex: GPUTexture | null = null;
+  private bindGroup: GPUBindGroup | null = null;
+  private maskWidth = 0;
+  private maskHeight = 0;
+  private cachedMaskKey: string | null = null;
+
   private destroyed = false;
 
   private constructor(
@@ -38,18 +93,20 @@ export class TextFillRenderer {
     pipeline: GPURenderPipeline,
     sampler: GPUSampler,
     uniformBuffer: GPUBuffer,
+    format: GPUTextureFormat,
     outputCanvas: HTMLCanvasElement,
   ) {
     this.device = device;
     this.pipeline = pipeline;
     this.sampler = sampler;
     this.uniformBuffer = uniformBuffer;
+    this.format = format;
     this.outputCanvas = outputCanvas;
-    this.outputCtx = outputCanvas.getContext('2d');
   }
 
   static async create(): Promise<TextFillRenderer> {
     const { device } = await acquireGpuContext();
+    const format = navigator.gpu.getPreferredCanvasFormat();
 
     const shaderModule = device.createShaderModule({ code: textFillShader });
 
@@ -77,63 +134,93 @@ export class TextFillRenderer {
       fragment: {
         module: shaderModule,
         entryPoint: 'fs_main',
-        targets: [{ format: 'bgra8unorm' }],
+        targets: [{ format }],
       },
       primitive: { topology: 'triangle-list' },
     });
 
     const canvas = document.createElement('canvas');
-    // size set per render
-    return new TextFillRenderer(device, pipeline, sampler, uniformBuffer, canvas);
+    return new TextFillRenderer(device, pipeline, sampler, uniformBuffer, format, canvas);
   }
 
-  private ensureSize(width: number, height: number): GPUTexture {
-    if (this.outputCanvas.width !== width || this.outputCanvas.height !== height) {
-      this.outputCanvas.width = Math.max(1, width);
-      this.outputCanvas.height = Math.max(1, height);
+  /** (Re)configure the output canvas's `webgpu` context for the requested size. */
+  private ensureCanvasContext(width: number, height: number): GPUCanvasContext {
+    const w = Math.max(1, width);
+    const h = Math.max(1, height);
+    if (this.context && this.canvasWidth === w && this.canvasHeight === h) {
+      return this.context;
     }
-    // Create a texture to render into, then copy to canvas via copyExternalImage or readback.
-    // Simpler: render directly to a texture, then copy to the 2D canvas using copyExternalImageToTexture? For broad support we read via a staging or draw via bitmap.
-    // Practical path: render to a texture, then use a temporary 2D canvas and putImageData after reading, or use device to draw.
-    // Easiest portable: render to a texture, then create ImageBitmap from a 2D canvas that we draw the texture into? We use a different approach:
-    // Render using a GPUCanvasContext on our outputCanvas (if possible) or use copyTextureToBuffer + putImageData.
-    // For simplicity and compatibility, render into an offscreen texture and blit using Canvas 2D after converting via drawImage on a temp video? No.
-    // Better: attach a GPUCanvasContext to the outputCanvas for 'webgpu' and render directly to it.
-    // But some browsers may not allow switching. We create a separate texture target and use copyExternalImageToTexture from texture? Actually simplest reliable:
-    // Create a texture, render to it, then use copyTextureToBuffer and putImageData.
-    // To keep code short, we render to the canvas via its WebGPU context if available, else fallback path.
-    // Here we use context configuration for 'bgra8unorm' on the canvas.
-    return this.ensureTargetTexture(width, height);
+    this.canvasWidth = w;
+    this.canvasHeight = h;
+    this.outputCanvas.width = w;
+    this.outputCanvas.height = h;
+    const context = this.outputCanvas.getContext('webgpu') as GPUCanvasContext | null;
+    if (!context) throw new Error('Could not acquire a WebGPU canvas context');
+    context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
+    this.context = context;
+    return context;
   }
 
-  private targetTexture: GPUTexture | null = null;
-  private targetView: GPUTextureView | null = null;
-  private targetWidth = 0;
-  private targetHeight = 0;
+  /** Upload `mask` as the bound texture, unless `cacheKey` matches the already-bound one. */
+  private ensureMaskBinding(
+    mask: HTMLCanvasElement | OffscreenCanvas,
+    width: number,
+    height: number,
+    cacheKey: string | undefined,
+  ): GPUBindGroup {
+    const reusable =
+      cacheKey !== undefined &&
+      cacheKey === this.cachedMaskKey &&
+      this.maskTex !== null &&
+      this.bindGroup !== null &&
+      this.maskWidth === width &&
+      this.maskHeight === height;
+    if (reusable) return this.bindGroup!;
 
-  private ensureTargetTexture(width: number, height: number): GPUTexture {
-    if (
-      !this.targetTexture ||
-      this.targetWidth !== width ||
-      this.targetHeight !== height
-    ) {
-      this.targetTexture?.destroy();
-      this.targetWidth = Math.max(1, width);
-      this.targetHeight = Math.max(1, height);
-      this.targetTexture = this.device.createTexture({
-        size: { width: this.targetWidth, height: this.targetHeight, depthOrArrayLayers: 1 },
-        format: 'bgra8unorm',
-        usage:
-          GPUTextureUsage.RENDER_ATTACHMENT |
-          GPUTextureUsage.COPY_SRC |
-          GPUTextureUsage.TEXTURE_BINDING,
-      });
-      this.targetView = this.targetTexture.createView();
-      // Also size the 2D canvas for final readback blitting
-      this.outputCanvas.width = this.targetWidth;
-      this.outputCanvas.height = this.targetHeight;
-    }
-    return this.targetTexture;
+    this.maskTex?.destroy();
+    this.maskWidth = width;
+    this.maskHeight = height;
+    this.maskTex = this.device.createTexture({
+      size: { width, height, depthOrArrayLayers: 1 },
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.device.queue.copyExternalImageToTexture(
+      { source: mask as unknown as GPUCopyExternalImageSource },
+      { texture: this.maskTex },
+      { width, height },
+    );
+
+    this.bindGroup = this.device.createBindGroup({
+      layout: this.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.sampler },
+        { binding: 1, resource: this.maskTex.createView() },
+        { binding: 2, resource: { buffer: this.uniformBuffer } },
+      ],
+    });
+    this.cachedMaskKey = cacheKey ?? null;
+    return this.bindGroup;
+  }
+
+  /** Write time + the shader's declared params into uniform slots p0..p2; p3 always carries `mode`. */
+  private writeUniforms(width: number, height: number, opts: TextFillOptions): void {
+    const slots = mapParamsToUniformSlots(opts.shaderId, opts.params);
+
+    this.uniformData[0] = opts.time ?? 0;
+    this.uniformData[1] = width;
+    this.uniformData[2] = height;
+    this.uniformData[4] = slots.p0;
+    this.uniformData[5] = slots.p1;
+    this.uniformData[6] = slots.p2;
+    this.uniformData[7] = slots.mode;
+    this.device.queue.writeBuffer(
+      this.uniformBuffer,
+      0,
+      this.uniformData.buffer,
+      this.uniformData.byteOffset,
+      8 * 4,
+    );
   }
 
   /**
@@ -147,65 +234,20 @@ export class TextFillRenderer {
   ): Promise<HTMLCanvasElement> {
     if (this.destroyed) throw new Error('TextFillRenderer destroyed');
 
-    const mw = mask.width || (mask as HTMLCanvasElement).width || 1;
-    const mh = mask.height || (mask as HTMLCanvasElement).height || 1;
+    const mw = mask.width || 1;
+    const mh = mask.height || 1;
     const tw = opts.width ?? mw;
     const th = opts.height ?? mh;
 
-    const target = this.ensureTargetTexture(tw, th);
-
-    // Upload mask as texture
-    const maskTex = this.device.createTexture({
-      size: { width: mw, height: mh, depthOrArrayLayers: 1 },
-      format: 'rgba8unorm',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-
-    // Copy from 2D canvas to GPU texture
-    this.device.queue.copyExternalImageToTexture(
-      { source: mask as any },
-      { texture: maskTex },
-      { width: mw, height: mh },
-    );
-
-    // Uniforms
-    const shader = getTextShader(opts.shaderId);
-    const params = resolveShaderParams(opts.shaderId, opts.params);
-    // Map common param names to p0..p3; unknown keys ignored for v1
-    const p = [0, 0, 0, 0];
-    const keys = Object.keys(params);
-    // gradient: speed, angle; plasma: scale, speed
-    if (keys.includes('speed')) p[0] = params.speed ?? p[0];
-    if (keys.includes('angle')) p[1] = params.angle ?? p[1];
-    if (keys.includes('scale')) p[0] = params.scale ?? p[0];
-    if (keys.includes('speed') && opts.shaderId === 'plasma') p[1] = params.speed ?? p[1];
-    // mode via p3: 0 gradient, 1 plasma
-    p[3] = opts.shaderId === 'plasma' ? 1 : 0;
-
-    this.uniformData[0] = opts.time ?? 0;
-    this.uniformData[1] = tw;
-    this.uniformData[2] = th;
-    this.uniformData[4] = p[0];
-    this.uniformData[5] = p[1];
-    this.uniformData[6] = p[2];
-    this.uniformData[7] = p[3];
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData.buffer, this.uniformData.byteOffset, 8 * 4);
-
-    const maskView = maskTex.createView();
-    const bindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.sampler },
-        { binding: 1, resource: maskView },
-        { binding: 2, resource: { buffer: this.uniformBuffer } },
-      ],
-    });
+    const context = this.ensureCanvasContext(tw, th);
+    const bindGroup = this.ensureMaskBinding(mask, mw, mh, opts.maskCacheKey);
+    this.writeUniforms(tw, th, opts);
 
     const encoder = this.device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: target.createView(),
+          view: context.getCurrentTexture().createView(),
           clearValue: { r: 0, g: 0, b: 0, a: 0 },
           loadOp: 'clear',
           storeOp: 'store',
@@ -216,48 +258,7 @@ export class TextFillRenderer {
     pass.setBindGroup(0, bindGroup);
     pass.draw(6, 1, 0, 0);
     pass.end();
-
-    // Copy target to a readable buffer then to 2D canvas via ImageData
-    const bytesPerRow = Math.ceil((tw * 4) / 256) * 256;
-    const buffer = this.device.createBuffer({
-      size: bytesPerRow * th,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-    encoder.copyTextureToBuffer(
-      { texture: target },
-      { buffer, bytesPerRow, rowsPerImage: th },
-      { width: tw, height: th },
-    );
     this.device.queue.submit([encoder.finish()]);
-
-    await buffer.mapAsync(GPUMapMode.READ);
-    const data = new Uint8Array(buffer.getMappedRange());
-    // 'bgra8unorm' storage -> RGBA for ImageData (texture row 0 is top, matches canvas)
-    const rgba = new Uint8ClampedArray(tw * th * 4);
-    for (let y = 0; y < th; y++) {
-      for (let x = 0; x < tw; x++) {
-        const si = y * bytesPerRow + x * 4;
-        const di = (y * tw + x) * 4;
-        rgba[di + 0] = data[si + 2]; // R <- B from BGRA
-        rgba[di + 1] = data[si + 1]; // G
-        rgba[di + 2] = data[si + 0]; // B <- R from BGRA
-        rgba[di + 3] = data[si + 3]; // A
-      }
-    }
-    buffer.unmap();
-    maskTex.destroy();
-
-    // Write to our output canvas
-    const outW = tw;
-    const outH = th;
-    if (this.outputCanvas.width !== outW || this.outputCanvas.height !== outH) {
-      this.outputCanvas.width = outW;
-      this.outputCanvas.height = outH;
-    }
-    const octx = this.outputCanvas.getContext('2d', { willReadFrequently: true })!;
-    octx.clearRect(0, 0, outW, outH);
-    const img = new ImageData(rgba, outW, outH);
-    octx.putImageData(img, 0, 0);
 
     return this.outputCanvas;
   }
@@ -266,7 +267,7 @@ export class TextFillRenderer {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    try { this.targetTexture?.destroy(); } catch {}
+    try { this.maskTex?.destroy(); } catch {}
     try { this.uniformBuffer?.destroy(); } catch {}
   }
 }

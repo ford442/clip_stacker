@@ -14,6 +14,8 @@ export const TEXT_SHADERS: readonly TextShaderDef[] = [
       { key: 'speed', label: 'Speed', min: 0, max: 6, step: 0.1, default: 1.0 },
       { key: 'angle', label: 'Angle', min: -3.14, max: 3.14, step: 0.05, default: 0.6 },
     ],
+    paramSlots: { speed: 0, angle: 1 },
+    mode: 0,
   },
   {
     id: 'plasma',
@@ -23,6 +25,8 @@ export const TEXT_SHADERS: readonly TextShaderDef[] = [
       { key: 'scale', label: 'Scale', min: 1, max: 24, step: 0.5, default: 6.0 },
       { key: 'speed', label: 'Speed', min: 0, max: 6, step: 0.1, default: 1.2 },
     ],
+    paramSlots: { scale: 0, speed: 1 },
+    mode: 1,
   },
 ] as const;
 
