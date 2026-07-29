@@ -16,6 +16,13 @@
   font-style: italic;
 }
 
+.render-plan-warning {
+  color: var(--warning);
+  margin: 0.35rem 0 0;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
 .btn-primary {
   background: linear-gradient(135deg, #b8901f 0%, #c9a227 40%, #e8c84b 100%);
   border: 1px solid var(--gold);

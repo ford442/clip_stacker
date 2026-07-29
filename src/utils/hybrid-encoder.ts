@@ -133,9 +133,27 @@ export async function hybridMergeClips(
   }
   onProgress?.({ stage: 'FFmpeg path selected', progress: 0, indeterminate: false });
 
+  const shaderOverlays = textOverlays.filter((o) => o.fill === 'shader');
+  if (shaderOverlays.length > 0) {
+    const names = shaderOverlays.map((o) => `"${o.text}"`).join(', ');
+    onStatus(
+      `⚠ FFmpeg export doesn't support shader-filled text — ${names} will render as solid color. ` +
+        `Switch Fill to Solid on ${shaderOverlays.length > 1 ? 'these overlays' : 'this overlay'} to guarantee the look, ` +
+        `or use the GPU render path (avoid Force FFmpeg / Canvas renderer) to preserve the shader.`,
+    );
+  }
+
   try {
     const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress, forceReencode);
-    return { blob, path: 'ffmpeg', renderPlan: effectiveRenderPlan };
+    const ffmpegRenderPlan: RenderPlan =
+      shaderOverlays.length > 0
+        ? {
+            ...effectiveRenderPlan,
+            shaderTextOverlays: shaderOverlays.map((o) => ({ id: o.id, text: o.text })),
+            shaderTextFallbackApplied: true,
+          }
+        : effectiveRenderPlan;
+    return { blob, path: 'ffmpeg', renderPlan: ffmpegRenderPlan };
   } catch (err) {
     const prev: string[] = [];
     if (canvasFailure) prev.push(`Canvas: ${canvasFailure}`);

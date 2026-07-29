@@ -336,7 +336,10 @@ function TimelineCompositorPreview({
       backendRef.current = chosen;
       setBackend(chosen);
       if (textOverlays.some((o) => o.fill === 'shader') && chosen !== 'webgpu') {
-        setDegradationMessage('Shader text requires WebGPU — using solid fallback for preview/export.');
+        setDegradationMessage(
+          'Shader text requires WebGPU, which isn’t available here — showing a solid-color fallback. ' +
+            'Switch Fill to Solid on the overlay to match what FFmpeg export will produce, or preview on a WebGPU-capable browser/device to see the shader.',
+        );
       }
       renderFailuresRef.current = 0;
       const time = playbackStore.getState().playheadTime ?? globalTimeRef.current;

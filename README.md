@@ -166,6 +166,18 @@ Render and "Extract Audio" **never fail silently**. All FFmpeg `exec`/`writeFile
 
 See `docs/render-test-matrix.md` for manual test cases.
 
+### Shader-filled text overlays
+
+Text overlays can use a procedural shader fill (plasma, gradient, etc.) instead of a solid color. Which export path preserves this:
+
+| Backend | Shader fill preserved? |
+|---|---|
+| GPU timeline compositor (WebCodecs export, WebGPU preview) | ✅ Yes — same shader renderer as preview |
+| FFmpeg (`drawtext`, used for re-encodes, Force FFmpeg, or when the GPU path is unavailable) | ❌ No — falls back to solid `fontcolor` |
+| Canvas audio-reactive renderer | ❌ No — text overlays aren't composited on this path |
+
+If a render falls back to FFmpeg, the app warns in the status bar and on the render plan summary. Switch a shader overlay's Fill to Solid in the Text Overlay panel if you need the exact same look on every export path.
+
 ### Fonts for text overlays
 
 Text overlays support a small set of bundled, license-safe fonts. The same typeface is used for Canvas 2D preview and FFmpeg `drawtext` export so glyph metrics match.

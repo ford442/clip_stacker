@@ -408,4 +408,18 @@ export interface RenderPlan {
   willReencode: boolean;
   /** User-friendly description for UI display */
   description: string;
+  /**
+   * Text overlays using `fill: 'shader'` present in the project, if any.
+   * FFmpeg's `drawtext` filter only supports a solid `fontcolor`, so these
+   * overlays lose their shader look whenever the render falls back to
+   * FFmpeg (see `shaderTextFallbackApplied`).
+   */
+  shaderTextOverlays?: { id: string; text: string }[];
+  /**
+   * True only on the resolved render plan returned after encoding, when the
+   * chosen path actually fell back to solid-color text because it can't
+   * preserve shader fills (FFmpeg `drawtext`). Absent on the pre-render
+   * estimate and on GPU-compositor renders, which preserve shader fills.
+   */
+  shaderTextFallbackApplied?: boolean;
 }
