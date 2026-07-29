@@ -6,6 +6,7 @@ import type {
   Project,
   SerializedClip,
   TextOverlay,
+  Track,
 } from '../types';
 import { serializeProject } from './project';
 
@@ -85,6 +86,7 @@ export async function buildAutoSaveProject(
   transitions: ClipTransition[],
   textOverlays: TextOverlay[],
   clipGroups: ClipGroup[],
+  tracks: Track[] = [],
   options: {
     embedBudgetBytes?: number;
     maxClipBytes?: number;
@@ -95,7 +97,7 @@ export async function buildAutoSaveProject(
   const maxClipBytes = options.maxClipBytes ?? AUTO_SAVE_MAX_CLIP_BYTES;
   const forceMetadataOnly = options.forceMetadataOnly ?? false;
 
-  const project = serializeProject(clips, transitions, textOverlays, clipGroups);
+  const project = serializeProject(clips, transitions, textOverlays, clipGroups, undefined, tracks);
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));
   let embedBudgetRemaining = embedBudgetBytes;
   let usedEmbed = false;
@@ -239,8 +241,9 @@ export function hashAutoSaveState(
   clipGroups: ClipGroup[],
   selectedClipId: string | null,
   exportSettings: ExportSettings,
+  tracks: Track[] = [],
 ): string {
-  const project = serializeProject(clips, transitions, textOverlays, clipGroups);
+  const project = serializeProject(clips, transitions, textOverlays, clipGroups, undefined, tracks);
   return JSON.stringify({
     project,
     selectedClipId,

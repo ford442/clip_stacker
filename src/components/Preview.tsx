@@ -7,6 +7,7 @@ import type {
   ClipTransition,
   ExportSettings,
   TextOverlay,
+  Track,
 } from "../types";
 import type { ColorGradeSettings } from "../utils/lut";
 import { sanitizeFilename } from "../utils/filename";
@@ -47,6 +48,7 @@ import { createRenderScheduler } from "../utils/seekCoalescer";
 interface Props {
   clip: Clip | null;
   timelineClips?: Clip[];
+  tracks?: Track[];
   clipGroups?: ClipGroup[];
   transitions?: ClipTransition[];
   textOverlays?: TextOverlay[];
@@ -64,6 +66,7 @@ interface Props {
 function PreviewImpl({
   clip,
   timelineClips = [],
+  tracks = [],
   clipGroups = [],
   transitions = [],
   textOverlays = [],
@@ -103,6 +106,7 @@ function PreviewImpl({
         <h2>Preview</h2>
         <TimelineCompositorPreview
           timelineClips={timelineClips}
+          tracks={tracks}
           clipGroups={clipGroups}
           transitions={transitions}
           textOverlays={textOverlays}
@@ -151,6 +155,7 @@ export const Preview = memo(PreviewImpl);
 
 interface TimelinePreviewProps {
   timelineClips: Clip[];
+  tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
@@ -160,6 +165,7 @@ interface TimelinePreviewProps {
 
 function TimelineCompositorPreview({
   timelineClips,
+  tracks,
   clipGroups,
   transitions,
   textOverlays,
@@ -171,6 +177,7 @@ function TimelineCompositorPreview({
     timelineClips,
     clipGroups,
     transitions,
+    tracks,
   );
   const wrapperRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);

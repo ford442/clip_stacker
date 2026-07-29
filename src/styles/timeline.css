@@ -5,6 +5,34 @@
   /* full-width panel */
 }
 
+.timeline-track-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px solid var(--border);
+}
+
+.timeline-track-row--drop-target .timeline-track {
+  background: rgba(124, 77, 255, 0.08);
+}
+
+.timeline-track-label {
+  flex: 0 0 88px;
+  display: flex;
+  align-items: center;
+  padding: 0 0.5rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  border-right: 1px solid var(--border);
+  background: rgba(4, 6, 12, 0.85);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.timeline-track--overlay {
+  background: rgba(8, 10, 18, 0.5);
+}
+
 .timeline-header-row {
   display: flex;
   align-items: baseline;

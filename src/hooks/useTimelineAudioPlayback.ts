@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { Clip, ClipGroup, ClipTransition } from '../types';
+import type { Clip, ClipGroup, ClipTransition, Track } from '../types';
 import {
   disposeAudioPlaybackManager,
   getAudioPlaybackManager,
@@ -15,14 +15,15 @@ export function useTimelineAudioPlayback(
   clips: Clip[],
   groups: ClipGroup[],
   transitions: ClipTransition[],
+  tracks: Track[] = [],
 ): AudioPlaybackManager {
   const managerRef = useRef(getAudioPlaybackManager());
 
   useEffect(() => {
     const manager = getAudioPlaybackManager();
     managerRef.current = manager;
-    void manager.syncTimeline(clips, groups, transitions);
-  }, [clips, groups, transitions]);
+    void manager.syncTimeline(clips, groups, transitions, tracks);
+  }, [clips, groups, transitions, tracks]);
 
   useEffect(() => {
     return () => {

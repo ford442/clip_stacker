@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { Clip, ClipGroup, ClipTransition, TextOverlay } from "../types";
+import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
 import type { ColorGradeSettings } from "../utils/lut";
 import type { EditSnapshot } from "../utils/editHistory";
 import {
@@ -31,6 +31,7 @@ export type PendingRemoteUploadError = RemoteUploadErrorEvent & {
 
 export function useProjectSaveLoad({
   clips,
+  tracks,
   clipGroups,
   transitions,
   textOverlays,
@@ -45,6 +46,7 @@ export function useProjectSaveLoad({
   resetHistory,
 }: {
   clips: Clip[];
+  tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
@@ -97,6 +99,7 @@ export function useProjectSaveLoad({
         textOverlays,
         clipGroups,
         { mediaMode: "embed", onEmbedWarning: (message) => embedWarnings.push(message), colorGrade },
+        tracks,
       );
       const payload = JSON.stringify(project, null, 2);
       const blob = new Blob([payload], { type: "application/json" });
@@ -114,7 +117,7 @@ export function useProjectSaveLoad({
     } catch (error) {
       setStatus(`Could not export project: ${(error as Error).message}`);
     }
-  }, [clips, clipGroups, transitions, textOverlays, colorGrade, setStatus]);
+  }, [clips, tracks, clipGroups, transitions, textOverlays, colorGrade, setStatus]);
 
   const handleLoadProject = useCallback(
     async (file: File) => {
@@ -122,6 +125,7 @@ export function useProjectSaveLoad({
         const parsed = JSON.parse(await file.text());
         const {
           clips: updatedClips,
+          tracks: loadedTracks,
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
@@ -135,6 +139,7 @@ export function useProjectSaveLoad({
           updatedClips.length > 0 ? updatedClips[updatedClips.length - 1].id : null;
         resetHistory({
           clips: updatedClips,
+          tracks: loadedTracks,
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
@@ -258,8 +263,8 @@ export function useProjectSaveLoad({
             },
             colorGrade,
           },
+          tracks,
         );
-        setStatus("Saving project manifest to remote storage...");
         await client.save(projectName, project);
         setStatus(describeRemoteSaveSuccessMessage(projectName, summary));
       } catch (error) {
@@ -270,7 +275,7 @@ export function useProjectSaveLoad({
         setIsRemoteSaving(false);
       }
     },
-    [clips, clipGroups, transitions, textOverlays, colorGrade, setStatus],
+    [clips, tracks, clipGroups, transitions, textOverlays, colorGrade, setStatus],
   );
 
   const handleLoadRemote = useCallback(
@@ -281,6 +286,7 @@ export function useProjectSaveLoad({
         const client = new ContaboStorageManagerClient(endpoint, authToken);
         const {
           clips: updatedClips,
+          tracks: loadedTracks,
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
@@ -306,6 +312,7 @@ export function useProjectSaveLoad({
           updatedClips.length > 0 ? updatedClips[updatedClips.length - 1].id : null;
         resetHistory({
           clips: updatedClips,
+          tracks: loadedTracks,
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,

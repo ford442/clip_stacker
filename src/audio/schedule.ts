@@ -1,10 +1,11 @@
-import type { Clip, ClipGroup, ClipTransition } from '../types';
+import type { Clip, ClipGroup, ClipTransition, Track } from '../types';
 import {
   buildClipTimelineSegments,
   filterBaseLayerTransitions,
 } from '../utils/previewComposition';
 import { getClipDuration } from '../utils/project';
 import { getTimelineClips } from '../utils/timelineClips';
+import { audioTracks } from '../utils/trackModel';
 import { clampClipVolume } from '../utils/audioVolume';
 
 /** One clip's audio placement on the output timeline. */
@@ -54,6 +55,7 @@ export function buildAudioSchedule(
   clips: Clip[],
   groups: ClipGroup[],
   transitions: ClipTransition[],
+  tracks: Track[] = [],
 ): AudioScheduleEntry[] {
   const timelineClips = getTimelineClips(clips, groups);
   if (timelineClips.length === 0) return [];
@@ -85,6 +87,17 @@ export function buildAudioSchedule(
 
   for (const clip of pipClips) {
     entries.push(entryFromClip(clip, 0, getClipDuration(clip)));
+  }
+
+  // Concurrent audio-bed clips from dedicated audio tracks.
+  const timelineClipsById = new Map(getTimelineClips(clips, groups).map((c) => [c.id, c]));
+  for (const track of audioTracks(tracks)) {
+    if (track.muted) continue;
+    for (const item of track.items) {
+      const clip = timelineClipsById.get(item.clipId);
+      if (!clip || clip.kind !== 'audio') continue;
+      entries.push(entryFromClip(clip, item.startTime, getClipDuration(clip)));
+    }
   }
 
   return entries;

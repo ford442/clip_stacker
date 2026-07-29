@@ -36,6 +36,15 @@ import {
   removeClipFromGroups,
   splitClipAt,
 } from "./utils/clipOperations";
+import { snapSplitTimeToBeat } from "./utils/beatSnap";
+import {
+  appendClipToTracks,
+  moveClipBetweenTracks,
+  removeClipFromTracks,
+  replaceClipOnTrackAfterSplit,
+  reorderMainTrackClips,
+  syncTracksWithClips,
+} from "./utils/trackModel";
 import { hybridMergeClips } from "./utils/hybrid-encoder";
 import {
   extractAudioToWav,
@@ -76,7 +85,7 @@ import { useRenderState } from "./hooks/useRenderState";
 import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { useClipBeatAnalysis } from "./hooks/useClipBeatAnalysis";
-import { getTimelineClips } from "./utils/timelineClips";
+import { getEffectiveTimelineClips, getTimelineClips } from "./utils/timelineClips";
 import { resolveTargetResolution } from "./utils/resolution";
 import {
   readStorageAuthToken,
@@ -112,11 +121,13 @@ type PendingRemoteUploadError = {
 export function App() {
   const {
     clips,
+    tracks,
     clipGroups,
     transitions,
     textOverlays,
     selectedClipId,
     setClips,
+    setTracks,
     setClipGroups,
     setTransitions,
     setTextOverlays,
@@ -191,6 +202,7 @@ export function App() {
     resolveRemoteUploadError,
   } = useProjectSaveLoad({
     clips,
+    tracks,
     clipGroups,
     transitions,
     textOverlays,
@@ -212,6 +224,7 @@ export function App() {
     handleDiscardRecovery,
   } = useAutoSave({
     clips,
+    tracks,
     clipGroups,
     transitions,
     textOverlays,
@@ -316,7 +329,9 @@ export function App() {
       }
 
       // No match — just append
-      return [...prevClips, newClip];
+      const nextClips = [...prevClips, newClip];
+      setTracks((prevTracks) => appendClipToTracks(prevTracks, newClip, nextClips));
+      return nextClips;
     });
   }, []);
 
@@ -374,7 +389,8 @@ export function App() {
     if (index < 0) return;
 
     const source = clips[index];
-    const split = splitClipAt(source, currentPlayheadTime);
+    const snappedTime = snapSplitTimeToBeat(source, currentPlayheadTime);
+    const split = splitClipAt(source, snappedTime);
     if (!split) {
       setStatus(
         "Cannot split here — place the playhead at least 0.1s inside the trimmed region.",
@@ -389,6 +405,9 @@ export function App() {
       next.splice(index, 1, left, right);
       return next;
     });
+    setTracks((prev) =>
+      replaceClipOnTrackAfterSplit(prev, source.id, left.id, right.id, snappedTime),
+    );
     setTransitions((prev) => shiftTransitionsForInsert(prev, index + 1));
     if (source.groupId) {
       setClipGroups((prev) => removeClipFromGroups(prev, source));
@@ -397,7 +416,9 @@ export function App() {
     setPlayheadTime(right.trimStart);
     setOutputUrl(null);
     setStatus(
-      `Split "${source.title}" at ${currentPlayheadTime.toFixed(2)}s.`,
+      `Split "${source.title}" at ${snappedTime.toFixed(2)}s${
+        snappedTime !== currentPlayheadTime ? " (snapped to beat)" : ""
+      }.`,
     );
   }, [
     clips,
@@ -1108,15 +1129,35 @@ export function App() {
       // insertBefore === fromIndex + 1 means "insert after itself" — both are identity moves.
       if (insertBefore === fromIndex || insertBefore === fromIndex + 1) return;
       pushHistory();
+      setTracks((prev) => reorderMainTrackClips(prev, clips, transitions, fromIndex, insertBefore));
       setClips((prev) => {
-        const next = [...prev];
-        const [moved] = next.splice(fromIndex, 1);
-        const target =
-          insertBefore > fromIndex ? insertBefore - 1 : insertBefore;
-        next.splice(target, 0, moved);
+        const legacy = [...prev];
+        const timelineIds = getTimelineClips(prev, clipGroups).map((c) => c.id);
+        const fromId = timelineIds[fromIndex];
+        const fromPoolIndex = legacy.findIndex((c) => c.id === fromId);
+        if (fromPoolIndex < 0) return prev;
+        const next = [...legacy];
+        const [moved] = next.splice(fromPoolIndex, 1);
+        let target = insertBefore;
+        if (insertBefore < timelineIds.length) {
+          const targetId = timelineIds[insertBefore > fromIndex ? insertBefore - 1 : insertBefore];
+          const targetPoolIndex = next.findIndex((c) => c.id === targetId);
+          if (targetPoolIndex >= 0) {
+            next.splice(targetPoolIndex + (insertBefore > fromIndex ? 1 : 0), 0, moved);
+            return next;
+          }
+        }
+        next.push(moved);
         return next;
       });
-      // Transitions are positional (slot-based) so no index remapping is needed.
+    },
+    [pushHistory, clips, transitions, clipGroups],
+  );
+
+  const handleMoveToTrack = useCallback(
+    (clipId: string, targetTrackId: string, startTime: number) => {
+      pushHistory();
+      setTracks((prev) => moveClipBetweenTracks(prev, clipId, targetTrackId, startTime));
     },
     [pushHistory],
   );
@@ -1148,6 +1189,7 @@ export function App() {
 
       // Remove the clip from the clips array
       setClips((prev) => prev.filter((c) => c.id !== clipId));
+      setTracks((prev) => removeClipFromTracks(prev, clipId));
 
       // Handle A/B group cleanup
       if (clipToDelete.groupId) {
@@ -1278,8 +1320,8 @@ export function App() {
   // Helper functions for keyboard shortcuts
   // Memoize timeline clips computation to avoid unnecessary recalculation during re-renders
   const timelineClips = useMemo(
-    () => getTimelineClips(clips, clipGroups),
-    [clips, clipGroups],
+    () => getEffectiveTimelineClips(tracks, clips, clipGroups),
+    [tracks, clips, clipGroups],
   );
 
   const previewTotalDuration = useMemo(
@@ -1441,6 +1483,7 @@ export function App() {
         <Preview
           clip={selectedClip}
           timelineClips={timelineClips}
+          tracks={tracks}
           clipGroups={clipGroups}
           transitions={transitions}
           textOverlays={textOverlays}
@@ -1467,6 +1510,7 @@ export function App() {
         onMoveUp={handleMoveUp}
         onMoveDown={handleMoveDown}
         onReorder={handleReorder}
+        onMoveToTrack={handleMoveToTrack}
         onTransitionUpdate={handleTransitionUpdate}
         onDelete={handleDeleteClip}
         morphProcessingIndex={morphProcessingIndex}

@@ -1,4 +1,5 @@
-import type { Clip, ClipGroup } from '../types';
+import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../types';
+import { toLegacyTimelineView } from './trackModel';
 
 /**
  * Return the clips that are currently on the timeline — resolving A/B groups
@@ -15,4 +16,19 @@ export function getTimelineClips(clips: Clip[], groups: ClipGroup[]): Clip[] {
   }
 
   return clips.filter((clip) => !inactiveGroupClipIds.has(clip.id));
+}
+
+/**
+ * Effective timeline clip order for preview/export when track placements exist.
+ * Falls back to the flat clip list when tracks are empty.
+ */
+export function getEffectiveTimelineClips(
+  tracks: Track[],
+  clips: Clip[],
+  groups: ClipGroup[],
+): Clip[] {
+  if (tracks.length === 0) {
+    return getTimelineClips(clips, groups);
+  }
+  return toLegacyTimelineView(tracks, clips, groups);
 }

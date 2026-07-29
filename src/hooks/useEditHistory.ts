@@ -1,16 +1,18 @@
 import { useStore } from 'zustand';
 import type { Dispatch, SetStateAction } from 'react';
-import type { Clip, ClipGroup, ClipTransition, TextOverlay } from '../types';
+import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../types';
 import type { EditSnapshot } from '../utils/editHistory';
 import { editorStore } from '../store/editorStore';
 
 export interface UseEditHistoryResult {
   clips: Clip[];
+  tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   selectedClipId: string | null;
   setClips: Dispatch<SetStateAction<Clip[]>>;
+  setTracks: Dispatch<SetStateAction<Track[]>>;
   setClipGroups: Dispatch<SetStateAction<ClipGroup[]>>;
   setTransitions: Dispatch<SetStateAction<ClipTransition[]>>;
   setTextOverlays: Dispatch<SetStateAction<TextOverlay[]>>;
@@ -39,6 +41,7 @@ export interface UseEditHistoryResult {
  */
 export function useEditHistory(): UseEditHistoryResult {
   const clips = useStore(editorStore, (s) => s.clips);
+  const tracks = useStore(editorStore, (s) => s.tracks);
   const clipGroups = useStore(editorStore, (s) => s.clipGroups);
   const transitions = useStore(editorStore, (s) => s.transitions);
   const textOverlays = useStore(editorStore, (s) => s.textOverlays);
@@ -50,6 +53,7 @@ export function useEditHistory(): UseEditHistoryResult {
   // across renders and safe to read directly from the store's snapshot.
   const {
     setClips,
+    setTracks,
     setClipGroups,
     setTransitions,
     setTextOverlays,
@@ -63,11 +67,13 @@ export function useEditHistory(): UseEditHistoryResult {
 
   return {
     clips,
+    tracks,
     clipGroups,
     transitions,
     textOverlays,
     selectedClipId,
     setClips,
+    setTracks,
     setClipGroups,
     setTransitions,
     setTextOverlays,

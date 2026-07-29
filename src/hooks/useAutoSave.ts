@@ -5,6 +5,7 @@ import type {
   ClipTransition,
   ExportSettings,
   TextOverlay,
+  Track,
 } from '../types';
 import { applyProjectData } from '../utils/project';
 import type { EditSnapshot } from '../utils/editHistory';
@@ -24,6 +25,7 @@ import {
 
 export function useAutoSave({
   clips,
+  tracks,
   clipGroups,
   transitions,
   textOverlays,
@@ -35,6 +37,7 @@ export function useAutoSave({
   enabled = true,
 }: {
   clips: Clip[];
+  tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
@@ -63,6 +66,7 @@ export function useAutoSave({
       clipGroups,
       selectedClipId,
       exportSettings,
+      tracks,
     );
     if (stateHash === lastSavedHashRef.current) return;
 
@@ -83,6 +87,7 @@ export function useAutoSave({
         transitions,
         textOverlays,
         clipGroups,
+        tracks,
       );
       let session = buildAutoSaveSession(project, selectedClipId, exportSettings);
       let result = writeAutoSaveSession(session);
@@ -93,6 +98,7 @@ export function useAutoSave({
           transitions,
           textOverlays,
           clipGroups,
+          tracks,
           { forceMetadataOnly: true },
         );
         session = buildAutoSaveSession(project, selectedClipId, exportSettings);
@@ -111,6 +117,7 @@ export function useAutoSave({
     enabled,
     recoveryResolved,
     clips,
+    tracks,
     transitions,
     textOverlays,
     clipGroups,
@@ -152,6 +159,7 @@ export function useAutoSave({
     try {
       const {
         clips: restoredClips,
+        tracks: restoredTracks,
         clipGroups: restoredGroups,
         transitions: restoredTransitions,
         textOverlays: restoredOverlays,
@@ -171,6 +179,7 @@ export function useAutoSave({
 
       resetHistory({
         clips: restoredClips,
+        tracks: restoredTracks,
         clipGroups: restoredGroups,
         transitions: restoredTransitions,
         textOverlays: restoredOverlays,
