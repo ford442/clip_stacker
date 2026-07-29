@@ -869,12 +869,28 @@ export async function renderTextOverlaysAsync(
           plan.canvasWidth,
           plan.canvasHeight,
         );
+        // Identifies this overlay's glyph raster (position/opacity already
+        // resolved for this frame by the plan). Unchanged across frames for
+        // a static caption, so the renderer skips re-uploading the mask
+        // texture — only `time` (the shader animation phase) changes.
+        const maskCacheKey = [
+          overlay.id,
+          overlay.text,
+          overlay.font ?? '',
+          overlay.fontsize,
+          (layer as any).x,
+          (layer as any).y,
+          (layer as any).opacity ?? 1,
+          plan.canvasWidth,
+          plan.canvasHeight,
+        ].join(':');
         const filled = await renderer.render(mask, {
           time: plan.globalTime,
           shaderId: overlay.shaderId,
           params: overlay.shaderParams,
           width: plan.canvasWidth,
           height: plan.canvasHeight,
+          maskCacheKey,
         });
         // Draw the filled glyphs at full opacity for the layer (opacity baked in mask or fill)
         const prev = ctx.globalAlpha;
