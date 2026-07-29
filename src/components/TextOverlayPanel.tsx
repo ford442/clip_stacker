@@ -1,6 +1,7 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { usePlayheadTime } from "../hooks/usePlayheadTime";
 import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from "../types";
+import { useEditorTextOverlays } from "../store";
 import { isValidFfmpegColor } from "../utils/color";
 import {
   BUNDLED_FONTS,
@@ -14,7 +15,6 @@ import { textOverlayHasKeyframes } from "../utils/animatedLayout";
 import { KeyframeMiniEditor } from "./KeyframeMiniEditor";
 
 interface Props {
-  overlays: TextOverlay[];
   totalDuration?: number;
   onAdd: () => string;
   onUpdate: (overlay: TextOverlay) => void;
@@ -22,12 +22,12 @@ interface Props {
 }
 
 function TextOverlayPanelImpl({
-  overlays,
   totalDuration = 60,
   onAdd,
   onUpdate,
   onDelete,
 }: Props) {
+  const overlays = useEditorTextOverlays();
   const previewGlobalTime = usePlayheadTime() ?? 0;
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeKeyframeProp, setActiveKeyframeProp] =
@@ -452,5 +452,5 @@ function TextOverlayPanelImpl({
   );
 }
 
-/** Memoized so unrelated App re-renders (e.g. a clip edit) don't re-render the overlay list. */
+/** Subscribes to text overlays via the editor store (#144). */
 export const TextOverlayPanel = memo(TextOverlayPanelImpl);

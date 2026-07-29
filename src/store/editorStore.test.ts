@@ -180,6 +180,30 @@ describe('editorStore', () => {
     });
   });
 
+  describe('selection isolation', () => {
+    it('changing selectedClipId does not replace the clips array', () => {
+      const { setClips, setSelectedClipId } = editorStore.getState();
+      setClips([makeClip('a'), makeClip('b')]);
+      const clipsBefore = editorStore.getState().clips;
+      setSelectedClipId('b');
+      expect(editorStore.getState().clips).toBe(clipsBefore);
+    });
+
+    it('reports selection per clip id without touching clip data', () => {
+      const { setClips, setSelectedClipId } = editorStore.getState();
+      setClips([makeClip('a'), makeClip('b')]);
+      setSelectedClipId('a');
+      const isSelected = (clipId: string) =>
+        editorStore.getState().selectedClipId === clipId;
+      expect(isSelected('a')).toBe(true);
+      expect(isSelected('b')).toBe(false);
+
+      setSelectedClipId('b');
+      expect(isSelected('a')).toBe(false);
+      expect(isSelected('b')).toBe(true);
+    });
+  });
+
   describe('editorActions', () => {
     it('exposes the same stable action references as getState()', () => {
       expect(editorActions.setClips).toBe(editorStore.getState().setClips);

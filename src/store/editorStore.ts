@@ -1,6 +1,8 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import type { Clip, ClipGroup, ClipTransition, TextOverlay } from '../types';
+import { getTimelineClips } from '../utils/timelineClips';
 import {
   cloneSnapshot,
   mergeClipUrls,
@@ -190,11 +192,26 @@ export const editorStore = createStore<EditorState>()((set, get) => {
 // Components subscribe to only the slice they render, so unrelated edits do not
 // re-render them (the core #144 win). `useEditHistory` remains for the App shell.
 
-export const useEditorClips = () => useStore(editorStore, (s) => s.clips);
-export const useEditorClipGroups = () => useStore(editorStore, (s) => s.clipGroups);
-export const useEditorTransitions = () => useStore(editorStore, (s) => s.transitions);
-export const useEditorTextOverlays = () => useStore(editorStore, (s) => s.textOverlays);
+export const useEditorClips = () =>
+  useStore(editorStore, useShallow((s) => s.clips));
+export const useEditorClipGroups = () =>
+  useStore(editorStore, useShallow((s) => s.clipGroups));
+export const useEditorTransitions = () =>
+  useStore(editorStore, useShallow((s) => s.transitions));
+export const useEditorTextOverlays = () =>
+  useStore(editorStore, useShallow((s) => s.textOverlays));
 export const useSelectedClipId = () => useStore(editorStore, (s) => s.selectedClipId);
+
+/** Clips on the timeline (active A/B variant per group). Shallow-stable when unchanged. */
+export const useEditorTimelineClips = () =>
+  useStore(
+    editorStore,
+    useShallow((s) => getTimelineClips(s.clips, s.clipGroups)),
+  );
+
+/** Per-row selection subscription — only re-renders when this clip's selected state toggles. */
+export const useIsClipSelected = (clipId: string) =>
+  useStore(editorStore, (s) => s.selectedClipId === clipId);
 
 /**
  * Look up a single clip by id. Equality-stable across unrelated edits: the

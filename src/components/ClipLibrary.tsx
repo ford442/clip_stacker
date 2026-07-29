@@ -1,38 +1,36 @@
 import { memo } from 'react';
-import type { Clip, ClipGroup } from '../types';
+import type { ClipGroup } from '../types';
+import {
+  editorActions,
+  useEditorClip,
+  useEditorClipGroups,
+  useEditorClips,
+  useIsClipSelected,
+} from '../store';
 import { getClipDuration } from '../utils/project';
 
-interface Props {
-  clips: Clip[];
-  selectedClipId: string | null;
-  clipGroups: ClipGroup[];
-  onSelect: (id: string) => void;
+interface ClipLibraryActions {
   onToggleVariant: (groupId: string, variant: 'A' | 'B') => void;
   onDelete: (id: string) => void;
 }
 
-function ClipLibraryImpl({ clips, selectedClipId, clipGroups, onSelect, onToggleVariant, onDelete }: Props) {
-  // Build a map from clip id → its group (if any)
-  const groupByClipId = new Map<string, ClipGroup>();
-  for (const group of clipGroups) {
-    if (group.variants.A) groupByClipId.set(group.variants.A.id, group);
-    if (group.variants.B) groupByClipId.set(group.variants.B.id, group);
-  }
+interface ClipLibraryItemProps extends ClipLibraryActions {
+  clipId: string;
+}
 
-  // Clips that are NOT part of any A/B group
-  const ungroupedClips = clips.filter((c) => !c.groupId);
-  // Groups that have at least one variant
-  const activeGroups = clipGroups.filter((g) => g.variants.A || g.variants.B);
+function ClipLibraryItem({ clipId, onToggleVariant: _onToggleVariant, onDelete }: ClipLibraryItemProps) {
+  const clip = useEditorClip(clipId);
+  const isSelected = useIsClipSelected(clipId);
+  if (!clip) return null;
 
-  const renderSingleClip = (clip: Clip) => (
+  return (
     <li
-      key={clip.id}
-      className={`clip-item${clip.id === selectedClipId ? ' selected' : ''}`}
-      onClick={() => onSelect(clip.id)}
+      className={`clip-item${isSelected ? ' selected' : ''}`}
+      onClick={() => editorActions.setSelectedClipId(clip.id)}
       onKeyDown={(e) => {
         if (e.key === 'Enter' || e.key === ' ') {
           e.preventDefault();
-          onSelect(clip.id);
+          editorActions.setSelectedClipId(clip.id);
         }
       }}
       role="listitem"
@@ -63,86 +61,123 @@ function ClipLibraryImpl({ clips, selectedClipId, clipGroups, onSelect, onToggle
       </div>
     </li>
   );
+}
 
-  const renderGroup = (group: ClipGroup) => {
-    const { A, B } = group.variants;
-    const active = group.activeVariant;
-    const activeClip = group.variants[active];
+const MemoClipLibraryItem = memo(ClipLibraryItem);
 
-    return (
-      <li key={group.id} className="clip-group">
-        <div className="clip-group-header">
-          <span className="clip-group-label">Compare variants</span>
+interface VariantRowProps extends ClipLibraryActions {
+  group: ClipGroup;
+  slot: 'A' | 'B';
+}
+
+function VariantRow({ group, slot, onToggleVariant, onDelete }: VariantRowProps) {
+  const clipId = group.variants[slot]?.id;
+  const clip = useEditorClip(clipId ?? null);
+  const isSelected = useIsClipSelected(clipId ?? '');
+  if (!clip || !clipId) return null;
+
+  const isActive = group.activeVariant === slot;
+
+  return (
+    <div
+      className={`clip-item clip-variant${isSelected ? ' selected' : ''}${isActive ? ' variant-active' : ''}`}
+      onClick={() => editorActions.setSelectedClipId(clip.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          editorActions.setSelectedClipId(clip.id);
+        }
+      }}
+      role="listitem"
+      aria-label={`Variant ${slot}: ${clip.title}`}
+      tabIndex={0}
+    >
+      <div className="row">
+        <span className="variant-badge">{slot}</span>
+        <strong className="clip-title">{clip.title}</strong>
+        <button
+          type="button"
+          className={`variant-timeline-btn${isActive ? ' on-timeline' : ''}`}
+          onClick={(e) => { e.stopPropagation(); onToggleVariant(group.id, slot); }}
+          title={isActive ? 'Active variant on timeline' : 'Switch timeline to this variant'}
+          aria-label={`${isActive ? 'Active variant' : 'Use variant'} ${slot}: ${clip.title}`}
+        >
+          {isActive ? '● Active' : 'Use'}
+        </button>
+        <button
+          type="button"
+          className="project-delete-btn"
+          onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
+          title="Delete clip (Delete or Backspace key)"
+          aria-label={`Delete clip ${clip.title}`}
+        >
+          ×
+        </button>
+      </div>
+      <div className="muted">
+        {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
+        {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : 'end'}
+        {clip.rifeProcessed && (
+          <span className="rife-badge" title={`Processed with RIFE ${clip.rifeMode === 'boomerang' ? 'Boomerang' : `${clip.rifeMultiplier ?? 2}× interpolation`}`}>
+            {clip.rifeMode === 'boomerang' ? ' 🔁' : ` ✨${clip.rifeMultiplier ?? 2}×`}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const MemoVariantRow = memo(VariantRow);
+
+interface ClipGroupBlockProps extends ClipLibraryActions {
+  group: ClipGroup;
+}
+
+function ClipGroupBlock({ group, onToggleVariant, onDelete }: ClipGroupBlockProps) {
+  const { A, B } = group.variants;
+  const active = group.activeVariant;
+  const activeClipId = group.variants[active]?.id ?? null;
+  const activeClip = useEditorClip(activeClipId);
+
+  return (
+    <li key={group.id} className="clip-group">
+      <div className="clip-group-header">
+        <span className="clip-group-label">Compare variants</span>
+      </div>
+      {(['A', 'B'] as const).map((slot) => (
+        <MemoVariantRow
+          key={slot}
+          group={group}
+          slot={slot}
+          onToggleVariant={onToggleVariant}
+          onDelete={onDelete}
+        />
+      ))}
+      {A && !B && (
+        <div className="clip-item clip-variant variant-empty">
+          <span className="variant-badge">B</span>
+          <span className="muted"> Upload an edited version to compare</span>
         </div>
-        {(['A', 'B'] as const).map((slot) => {
-          const clip = group.variants[slot];
-          if (!clip) return null;
-          const isActive = active === slot;
-          const isSelected = clip.id === selectedClipId;
-          return (
-           <div
-             key={slot}
-             className={`clip-item clip-variant${isSelected ? ' selected' : ''}${isActive ? ' variant-active' : ''}`}
-             onClick={() => onSelect(clip.id)}
-             onKeyDown={(e) => {
-               if (e.key === 'Enter' || e.key === ' ') {
-                 e.preventDefault();
-                 onSelect(clip.id);
-               }
-             }}
-             role="listitem"
-             aria-label={`Variant ${slot}: ${clip.title}`}
-             tabIndex={0}
-           >
-             <div className="row">
-               <span className="variant-badge">{slot}</span>
-               <strong className="clip-title">{clip.title}</strong>
-               <button
-                 type="button"
-                 className={`variant-timeline-btn${isActive ? ' on-timeline' : ''}`}
-                 onClick={(e) => { e.stopPropagation(); onToggleVariant(group.id, slot); }}
-                 title={isActive ? 'Active variant on timeline' : 'Switch timeline to this variant'}
-                 aria-label={`${isActive ? 'Active variant' : 'Use variant'} ${slot}: ${clip.title}`}
-               >
-                 {isActive ? '● Active' : 'Use'}
-               </button>
-               <button
-                 type="button"
-                 className="project-delete-btn"
-                 onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
-                 title="Delete clip (Delete or Backspace key)"
-                 aria-label={`Delete clip ${clip.title}`}
-               >
-                 ×
-               </button>
-             </div>
-             <div className="muted">
-               {getClipDuration(clip).toFixed(1)}s · trim {clip.trimStart.toFixed(1)}s →{' '}
-               {Number.isFinite(clip.trimEnd) ? `${clip.trimEnd.toFixed(1)}s` : 'end'}
-               {clip.rifeProcessed && (
-                 <span className="rife-badge" title={`Processed with RIFE ${clip.rifeMode === 'boomerang' ? 'Boomerang' : `${clip.rifeMultiplier ?? 2}× interpolation`}`}>
-                   {clip.rifeMode === 'boomerang' ? ' 🔁' : ` ✨${clip.rifeMultiplier ?? 2}×`}
-                 </span>
-               )}
-             </div>
-           </div>
-          );
-        })}
-        {/* Show placeholder for missing B slot */}
-        {A && !B && (
-          <div className="clip-item clip-variant variant-empty">
-            <span className="variant-badge">B</span>
-            <span className="muted"> Upload an edited version to compare</span>
-          </div>
-        )}
-        {activeClip && (
-          <div className="clip-group-active-note muted">
-            On timeline: Variant {active} ({activeClip.title})
-          </div>
-        )}
-      </li>
-    );
-  };
+      )}
+      {activeClip && (
+        <div className="clip-group-active-note muted">
+          On timeline: Variant {active} ({activeClip.title})
+        </div>
+      )}
+    </li>
+  );
+}
+
+const MemoClipGroupBlock = memo(ClipGroupBlock);
+
+interface Props extends ClipLibraryActions {}
+
+function ClipLibraryImpl({ onToggleVariant, onDelete }: Props) {
+  const clips = useEditorClips();
+  const clipGroups = useEditorClipGroups();
+
+  const ungroupedClipIds = clips.filter((c) => !c.groupId).map((c) => c.id);
+  const activeGroups = clipGroups.filter((g) => g.variants.A || g.variants.B);
 
   return (
     <section className="panel library-panel">
@@ -151,12 +186,29 @@ function ClipLibraryImpl({ clips, selectedClipId, clipGroups, onSelect, onToggle
         <p className="muted">No clips yet. Add clips above.</p>
       )}
       <ul className="clip-list" role="list" aria-label="Clip library">
-        {activeGroups.map(renderGroup)}
-        {ungroupedClips.map(renderSingleClip)}
+        {activeGroups.map((group) => (
+          <MemoClipGroupBlock
+            key={group.id}
+            group={group}
+            onToggleVariant={onToggleVariant}
+            onDelete={onDelete}
+          />
+        ))}
+        {ungroupedClipIds.map((clipId) => (
+          <MemoClipLibraryItem
+            key={clipId}
+            clipId={clipId}
+            onToggleVariant={onToggleVariant}
+            onDelete={onDelete}
+          />
+        ))}
       </ul>
     </section>
   );
 }
 
-/** Memoized so unrelated App re-renders don't re-render the whole clip list. */
+/**
+ * Subscribes to the editor store per clip row so inspector edits and selection
+ * changes only re-render the affected library items, not the full list.
+ */
 export const ClipLibrary = memo(ClipLibraryImpl);

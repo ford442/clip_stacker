@@ -1433,10 +1433,6 @@ export function App() {
 
       <section className="layout-grid">
         <ClipLibrary
-          clips={clips}
-          selectedClipId={selectedClipId}
-          clipGroups={clipGroups}
-          onSelect={setSelectedClipId}
           onToggleVariant={handleToggleVariant}
           onDelete={handleDeleteClip}
         />
@@ -1452,10 +1448,6 @@ export function App() {
           exportFilename={exportSettings.filename}
         />
         <Inspector
-          clip={selectedClip}
-          clips={clips}
-          clipGroups={clipGroups}
-          transitions={transitions}
           exportSettings={exportSettings}
           colorGrade={colorGrade}
           onColorGradeChange={setColorGrade}
@@ -1470,10 +1462,6 @@ export function App() {
       </section>
 
       <Timeline
-        clips={timelineClips}
-        selectedClipId={selectedClipId}
-        transitions={transitions}
-        onSelect={setSelectedClipId}
         onMoveUp={handleMoveUp}
         onMoveDown={handleMoveDown}
         onReorder={handleReorder}
@@ -1483,7 +1471,6 @@ export function App() {
       />
 
       <TextOverlayPanel
-        overlays={textOverlays}
         totalDuration={previewTotalDuration}
         onAdd={handleAddTextOverlay}
         onUpdate={handleUpdateTextOverlay}

@@ -1,6 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { Clip, ClipTransition } from '../types';
+import type { ClipTransition } from '../types';
+import { useEditorTimelineClips, useEditorTransitions, useSelectedClipId } from '../store';
 import {
   buildRulerTicks,
   clampPixelsPerSecond,
@@ -28,10 +29,6 @@ import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
 
 interface Props {
-  clips: Clip[];
-  selectedClipId: string | null;
-  transitions: ClipTransition[];
-  onSelect: (id: string) => void;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
@@ -40,7 +37,7 @@ interface Props {
   morphProcessingIndex?: number | null;
 }
 
-function effectiveDur(clip: Clip): number {
+function effectiveDur(clip: { trimStart: number; trimEnd: number; duration: number }): number {
   const end = Number.isNaN(clip.trimEnd) ? clip.duration : clip.trimEnd;
   return Math.max(0.1, end - clip.trimStart);
 }
@@ -53,6 +50,25 @@ const TRANSITION_COLORS: Record<string, string> = {
 };
 
 const VIRTUAL_OVERSCAN = 3;
+
+/** Scrolls the virtualizer when selection changes without re-rendering the timeline track. */
+function TimelineSelectionScroll({
+  clips,
+  virtualizer,
+}: {
+  clips: ReturnType<typeof useEditorTimelineClips>;
+  virtualizer: ReturnType<typeof useVirtualizer<HTMLDivElement, Element>>;
+}) {
+  const selectedClipId = useSelectedClipId();
+  useEffect(() => {
+    const selectedIndex = selectedClipId
+      ? clips.findIndex((clip) => clip.id === selectedClipId)
+      : -1;
+    if (selectedIndex < 0) return;
+    virtualizer.scrollToIndex(selectedIndex, { align: 'auto', behavior: 'smooth' });
+  }, [selectedClipId, clips, virtualizer]);
+  return null;
+}
 
 // ─── Time Ruler ─────────────────────────────────────────────────────────────
 
@@ -95,10 +111,6 @@ function TimelineRuler({ totalDuration, pixelsPerSecond, beatMarkers = [] }: Rul
 // ─── Main Timeline ───────────────────────────────────────────────────────────
 
 function TimelineImpl({
-  clips,
-  selectedClipId,
-  transitions,
-  onSelect,
   onMoveUp,
   onMoveDown,
   onReorder,
@@ -106,6 +118,8 @@ function TimelineImpl({
   onDelete,
   morphProcessingIndex = null,
 }: Props) {
+  const clips = useEditorTimelineClips();
+  const transitions = useEditorTransitions();
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
   const [editingTransition, setEditingTransition] = useState<ClipTransition | null>(null);
@@ -189,14 +203,6 @@ function TimelineImpl({
       }
     }
   }, [visibleIndexSet, clipLayouts, clips, onThumbsLoaded, onWavesLoaded]);
-
-  useEffect(() => {
-    const selectedIndex = selectedClipId
-      ? clips.findIndex((clip) => clip.id === selectedClipId)
-      : -1;
-    if (selectedIndex < 0) return;
-    virtualizer.scrollToIndex(selectedIndex, { align: 'auto', behavior: 'smooth' });
-  }, [selectedClipId, clips, virtualizer]);
 
   useEffect(() => {
     virtualizer.measure();
@@ -352,14 +358,12 @@ function TimelineImpl({
           width: layout.width,
           transform: `translateX(${translateX}px)`,
         }}
-        isSelected={clip.id === selectedClipId}
         isDragging={dragIndex === index}
         thumbs={thumbMap[clip.id]}
         waves={waveMap[clip.id]}
         transition={transition}
         showTransition={showTransition}
         clipCount={clips.length}
-        onSelect={onSelect}
         onMoveUp={onMoveUp}
         onMoveDown={onMoveDown}
         onDelete={onDelete}
@@ -382,6 +386,7 @@ function TimelineImpl({
 
   return (
     <section className="panel timeline-panel">
+      <TimelineSelectionScroll clips={clips} virtualizer={virtualizer} />
       <div className="timeline-header-row">
         <h2>Timeline</h2>
         <span className="timeline-total-dur muted">
@@ -562,8 +567,8 @@ function TimelineImpl({
 }
 
 /**
- * Memoized so an unrelated App re-render (e.g. editing a text overlay) does
- * not re-render the whole timeline — only actual changes to its own props
- * (clips, selection, transitions, …) do.
+ * Subscribes to timeline clips and transitions via the editor store (#144).
+ * Selection is handled per-row in {@link VirtualClipBlock} so changing the
+ * selected clip does not re-render the whole timeline.
  */
 export const Timeline = memo(TimelineImpl);
