@@ -23,7 +23,7 @@ import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { getClipDuration } from './project';
 import { parseOutputResolution } from './resolution';
 import { computeTotalDuration } from './transitions';
-import { shouldUseTimelineGpuExport } from './renderEligibility';
+import { needsOverlayPass, shouldUseTimelineGpuExport } from './renderEligibility';
 import { DEFAULT_COLOR_GRADE, type ColorGradeSettings } from './lut';
 import { buildPreviewCompositionPlan } from './previewComposition';
 import { drawTextOverlays, renderTextOverlaysAsync } from './canvas-renderer';
@@ -295,6 +295,17 @@ export async function encodeVideoWithWebCodecs(
   let videoTimeUs = 0;
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
   let elapsedDuration = 0;
+  const overlayPass = needsOverlayPass(textOverlays, colorGrade)
+    ? new DecoderTextOverlayPass(
+        clips,
+        clipGroups,
+        transitions,
+        textOverlays,
+        settings,
+        width,
+        height,
+      )
+    : null;
 
   try {
     for (let i = 0; i < clips.length; i++) {
@@ -314,6 +325,8 @@ export async function encodeVideoWithWebCodecs(
         width,
         height,
         colorGrade,
+        elapsedDuration,
+        overlayPass,
       );
       if (videoError) throw videoError;
 
@@ -476,6 +489,51 @@ async function encodeTimelineComposite(
   }
 }
 
+/**
+ * Rasterize solid text overlays on top of a composited decoder frame using the
+ * same preview composition plan as the timeline export path.
+ */
+class DecoderTextOverlayPass {
+  private readonly exportCanvas: HTMLCanvasElement;
+  private readonly exportCtx: CanvasRenderingContext2D;
+
+  constructor(
+    private readonly clips: Clip[],
+    private readonly clipGroups: ClipGroup[],
+    private readonly transitions: ClipTransition[],
+    private readonly textOverlays: TextOverlay[],
+    private readonly settings: ExportSettings,
+    private readonly targetWidth: number,
+    private readonly targetHeight: number,
+  ) {
+    this.exportCanvas = document.createElement('canvas');
+    this.exportCanvas.width = targetWidth;
+    this.exportCanvas.height = targetHeight;
+    const ctx = this.exportCanvas.getContext('2d');
+    if (!ctx) throw new Error('Could not create text overlay export canvas');
+    this.exportCtx = ctx;
+  }
+
+  compositeFrame(
+    compositor: ResolvedCompositor,
+    globalTimeSec: number,
+  ): HTMLCanvasElement {
+    this.exportCtx.drawImage(compositor.canvas, 0, 0);
+    const plan = buildPreviewCompositionPlan(
+      this.clips,
+      this.clipGroups,
+      this.transitions,
+      this.textOverlays,
+      this.settings,
+      globalTimeSec,
+      this.targetHeight,
+      this.targetWidth,
+    );
+    drawTextOverlays(this.exportCtx, plan);
+    return this.exportCanvas;
+  }
+}
+
 async function encodeVideoFrames(
   encoder: VideoEncoder,
   compositor: ResolvedCompositor,
@@ -484,6 +542,8 @@ async function encodeVideoFrames(
   targetWidth: number,
   targetHeight: number,
   colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  clipGlobalStartSec = 0,
+  overlayPass: DecoderTextOverlayPass | null = null,
 ): Promise<number> {
   const trimStart = clip.trimStart;
   const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
@@ -491,7 +551,10 @@ async function encodeVideoFrames(
 
   if (clip.kind === 'audio') {
     drawBlackFrame(compositor, targetWidth, targetHeight);
-    const frame = new VideoFrame(compositor.canvas, {
+    const frameCanvas = overlayPass
+      ? overlayPass.compositeFrame(compositor, clipGlobalStartSec)
+      : compositor.canvas;
+    const frame = new VideoFrame(frameCanvas, {
       timestamp: startTimeUs,
       duration: Math.round(clipDuration * 1_000_000),
     });
@@ -515,6 +578,8 @@ async function encodeVideoFrames(
       trimStart,
       trimEnd,
       clipDuration,
+      clipGlobalStartSec,
+      overlayPass,
     );
   } catch {
     // Fall through to the HTMLVideoElement capture path below.
@@ -561,7 +626,10 @@ async function encodeVideoFrames(
             colorGrade,
           );
 
-          const frame = new VideoFrame(compositor.canvas, {
+          const frameCanvas = overlayPass
+            ? overlayPass.compositeFrame(compositor, clipGlobalStartSec + elapsed)
+            : compositor.canvas;
+          const frame = new VideoFrame(frameCanvas, {
             timestamp,
             duration: Math.round(1_000_000 / TARGET_FPS),
           });
@@ -597,7 +665,10 @@ async function encodeVideoFrames(
           colorGrade,
         );
 
-        const frame = new VideoFrame(compositor.canvas, {
+        const frameCanvas = overlayPass
+          ? overlayPass.compositeFrame(compositor, clipGlobalStartSec + elapsed)
+          : compositor.canvas;
+        const frame = new VideoFrame(frameCanvas, {
           timestamp,
           duration: Math.round(1_000_000 / TARGET_FPS),
         });
@@ -645,6 +716,8 @@ async function encodeVideoFramesFromDecoder(
   trimStart: number,
   trimEnd: number,
   clipDuration: number,
+  clipGlobalStartSec: number,
+  overlayPass: DecoderTextOverlayPass | null,
 ): Promise<number> {
   const decoder = await ClipFrameDecoder.open(clip.file, { trimStart, trimEnd });
   let frameCount = 0;
@@ -667,10 +740,15 @@ async function encodeVideoFramesFromDecoder(
         frame.close();
       }
 
-      const encodedFrame = new VideoFrame(compositor.canvas, {
-        timestamp: startTimeUs + Math.round(elapsed * 1_000_000),
-        duration: Math.round(1_000_000 / TARGET_FPS),
-      });
+      const encodedFrame = new VideoFrame(
+        overlayPass
+          ? overlayPass.compositeFrame(compositor, clipGlobalStartSec + elapsed)
+          : compositor.canvas,
+        {
+          timestamp: startTimeUs + Math.round(elapsed * 1_000_000),
+          duration: Math.round(1_000_000 / TARGET_FPS),
+        },
+      );
       encoder.encode(encodedFrame, { keyFrame: frameCount % 60 === 0 });
       encodedFrame.close();
       frameCount++;

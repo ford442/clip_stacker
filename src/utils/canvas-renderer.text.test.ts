@@ -101,6 +101,26 @@ describe('drawTextOverlays', () => {
     expect(laterText[0][4]).toBe(1280 + 20 - 2 * 1280 * 0.2); // 788
   });
 
+  it('animates keyframed x position via the composition plan', () => {
+    const calls = draw(
+      [
+        overlay({
+          keyframes: {
+            x: [
+              { t: 0, value: 100 },
+              { t: 2, value: 200 },
+            ],
+          },
+        }),
+      ],
+      1,
+    );
+    const text = calls.filter((c) => c[0] === 'fillText');
+    expect(text).toHaveLength(1);
+    // Linear midpoint at t=1 between 100 and 200.
+    expect(text[0][4]).toBe(150);
+  });
+
   it('draws a background box with its color alpha applied', () => {
     const calls = draw([overlay({ text: 'Box', box: true, boxColor: 'black@0.5' })], 1);
     const box = calls.find((c) => c[0] === 'fillRect');

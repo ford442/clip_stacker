@@ -293,10 +293,12 @@ describe('utils/hybrid-encoder', () => {
       expect(encodeVideoWithWebCodecs).not.toHaveBeenCalled();
     });
 
-    it('should skip WebCodecs if text overlays are present', async () => {
+    it('should use WebCodecs decoder path when solid text overlays are present', async () => {
       (isWebCodecsAvailable as any).mockResolvedValue(true);
-      const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
+      const videoBlob = new Blob(['gpu video']);
+      const finalBlob = new Blob(['muxed video']);
+      (encodeVideoWithWebCodecs as any).mockResolvedValue(videoBlob);
+      (muxVideoWithAudio as any).mockResolvedValue(finalBlob);
       (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
 
       const textOverlays: TextOverlay[] = [
@@ -325,8 +327,20 @@ describe('utils/hybrid-encoder', () => {
         false,
       );
 
-      expect(result.path).toBe('ffmpeg');
-      expect(encodeVideoWithWebCodecs).not.toHaveBeenCalled();
+      expect(result.path).toBe('webcodecs');
+      expect(encodeVideoWithWebCodecs).toHaveBeenCalledWith(
+        testClips,
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        'auto',
+        [],
+        textOverlays,
+        [],
+        expect.anything(),
+        false,
+      );
+      expect(mergeClips).not.toHaveBeenCalled();
     });
 
     it('should skip WebCodecs if PiP overlays are present', async () => {
