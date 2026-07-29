@@ -18,11 +18,15 @@ import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 import { encodeVideoWithWebCodecs, isWebCodecsAvailable } from './webcodecs';
+import {
+  assessWebCodecsAudioMix,
+  isAudioEncoderAvailable,
+} from './webcodecs-audio';
 import { canUseGpuVideoEncoder } from './renderEligibility';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 
-export type EncoderPath = 'webcodecs' | 'ffmpeg' | 'canvas';
+export type EncoderPath = 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
 
 export interface HybridEncodeResult {
   blob: Blob;
@@ -66,7 +70,7 @@ export async function hybridMergeClips(
     }
   }
 
-  // -- GPU WebCodecs path (video hardware encode + FFmpeg audio mux) --------
+  // -- GPU WebCodecs path (hardware video + WebCodecs AAC or FFmpeg audio mux) -
   const webGpuAvailable = await isWebGpuExportAvailable();
   const gpuEligible = canUseGpuVideoEncoder(clips, transitions, textOverlays, {
     forceFFmpeg,
@@ -80,10 +84,21 @@ export async function hybridMergeClips(
   if (gpuEligible && (needsVideoNormalize || effectiveRenderPlan.willReencode)) {
     const gpuAvailable = await isWebCodecsAvailable(width, height);
     if (gpuAvailable) {
+      const audioEncoderOk = await isAudioEncoderAvailable();
+      const audioMix = assessWebCodecsAudioMix(clips, clipGroups, transitions);
+      const useWebCodecsAudio = audioEncoderOk && audioMix.supported;
+
       try {
-        onStatus('GPU path selected (hardware H.264 + FFmpeg audio mux)...');
+        if (useWebCodecsAudio) {
+          onStatus('GPU path selected (hardware video + WebCodecs AAC, no FFmpeg)...');
+        } else if (audioEncoderOk && !audioMix.supported) {
+          onStatus(`WebCodecs audio unavailable (${audioMix.reason}); using FFmpeg audio mux...`);
+        } else {
+          onStatus('GPU path selected (hardware video + FFmpeg audio mux)...');
+        }
         onProgress?.({ stage: 'GPU encoder selected', progress: 0, indeterminate: false });
-        const videoBlob = await encodeVideoWithWebCodecs(
+
+        const blob = await encodeVideoWithWebCodecs(
           clips,
           settings,
           onStatus,
@@ -93,10 +108,16 @@ export async function hybridMergeClips(
           textOverlays,
           clipGroups,
           colorGrade,
+          useWebCodecsAudio,
         );
+
+        if (useWebCodecsAudio) {
+          return { blob, path: 'webcodecs-av', renderPlan: effectiveRenderPlan };
+        }
+
         onStatus('Muxing GPU video with source audio via FFmpeg...');
-        const blob = await muxVideoWithAudio(videoBlob, clips, settings, onStatus, onProgress);
-        return { blob, path: 'webcodecs', renderPlan: effectiveRenderPlan };
+        const muxed = await muxVideoWithAudio(blob, clips, settings, onStatus, onProgress);
+        return { blob: muxed, path: 'webcodecs', renderPlan: effectiveRenderPlan };
       } catch (err) {
         gpuFailure = (err as Error).message;
         onStatus(`GPU encode failed (${gpuFailure}). Falling back to FFmpeg...`);

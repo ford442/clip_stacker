@@ -7,8 +7,9 @@
  *    → mp4-muxer (video-only)
  *  - Decode fallback: HTMLVideoElement → requestVideoFrameCallback capture when
  *    a clip cannot be demuxed/decoded with WebCodecs
- *  - Audio: muxed separately via FFmpeg (muxVideoWithAudio) — FFmpeg WASM is
- *    intentionally scoped to audio extract/mux and explicit "Force FFmpeg" only
+ *  - Audio: mixed via `buildAudioSchedule` + `OfflineAudioContext`, encoded
+ *    with `AudioEncoder` (AAC-LC) into the same mp4-muxer session when
+ *    supported; otherwise muxed separately via FFmpeg (`muxVideoWithAudio`).
  *
  * When transitions are active and WebGPU is available, the timeline compositor
  * renders identical WGSL transition frames as preview (WYSIWYG export).
@@ -30,10 +31,55 @@ import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompo
 import { ClipFrameDecoder } from './webcodecs-decoder';
 import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
 import { getTimelineClips } from './timelineClips';
+import {
+  addAacChunksToMuxer,
+  encodeTimelineAudio,
+} from './webcodecs-audio';
 
 const TARGET_FPS = 30;
 const WEBCODECS_PROGRESS_START = 0.05;
 const WEBCODECS_PROGRESS_RANGE = 0.82;
+
+function createExportMuxer(
+  width: number,
+  height: number,
+  encoderCodec: ResolvedEncoderCodec,
+  includeAudio: boolean,
+): Muxer<ArrayBufferTarget> {
+  return new Muxer({
+    target: new ArrayBufferTarget(),
+    video: { codec: encoderCodec.muxerCodec, width, height },
+    ...(includeAudio
+      ? {
+          audio: {
+            codec: 'aac' as const,
+            sampleRate: 48_000,
+            numberOfChannels: 2,
+          },
+        }
+      : {}),
+    fastStart: 'in-memory',
+    firstTimestampBehavior: 'offset',
+  });
+}
+
+async function muxTimelineAudioIfRequested(
+  muxer: Muxer<ArrayBufferTarget>,
+  clips: Clip[],
+  clipGroups: ClipGroup[],
+  transitions: ClipTransition[],
+  includeAudio: boolean,
+  onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
+): Promise<void> {
+  if (!includeAudio) return;
+  onStatus('Mixing and encoding timeline audio (WebCodecs AAC)...');
+  onProgress?.({ stage: 'WebCodecs audio encode', progress: 0.93, indeterminate: false });
+  const encoded = await encodeTimelineAudio(clips, clipGroups, transitions);
+  if (encoded) {
+    addAacChunksToMuxer(muxer, encoded.chunks);
+  }
+}
 
 export type GpuCompositorKind = 'auto' | 'webgpu' | 'canvas';
 
@@ -176,8 +222,9 @@ async function resolveCompositor(
 }
 
 /**
- * Encode timeline video with hardware H.264. Audio is intentionally omitted;
- * callers should mux source audio with FFmpeg via muxVideoWithAudio().
+ * Encode timeline video with hardware H.264. When `includeWebCodecsAudio` is
+ * true, timeline audio is mixed and encoded with `AudioEncoder` into the same
+ * mp4-muxer session (no FFmpeg on the happy path).
  */
 export async function encodeVideoWithWebCodecs(
   clips: Clip[],
@@ -189,6 +236,7 @@ export async function encodeVideoWithWebCodecs(
   textOverlays: TextOverlay[] = [],
   clipGroups: ClipGroup[] = [],
   colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  includeWebCodecsAudio = false,
 ): Promise<Blob> {
   const { width, height } = parseOutputResolution(settings.outputResolution);
 
@@ -208,6 +256,7 @@ export async function encodeVideoWithWebCodecs(
       onStatus,
       onProgress,
       colorGrade,
+      includeWebCodecsAudio,
     );
   }
 
@@ -226,11 +275,7 @@ export async function encodeVideoWithWebCodecs(
   );
 
   const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
-  const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
-    video: { codec: encoderCodec.muxerCodec, width, height },
-    fastStart: 'in-memory',
-  });
+  const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
   const videoEncoder = new VideoEncoder({
@@ -285,6 +330,16 @@ export async function encodeVideoWithWebCodecs(
     await videoEncoder.flush();
     if (videoError) throw videoError;
 
+    await muxTimelineAudioIfRequested(
+      muxer,
+      clips,
+      clipGroups,
+      transitions,
+      includeWebCodecsAudio,
+      onStatus,
+      onProgress,
+    );
+
     muxer.finalize();
     onProgress?.({ stage: 'Finalizing GPU video', progress: 0.92, indeterminate: false });
 
@@ -317,6 +372,7 @@ async function encodeTimelineComposite(
   onStatus: StatusCallback,
   onProgress?: ProgressCallback,
   colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  includeWebCodecsAudio = false,
 ): Promise<Blob> {
   onStatus(`WebGPU timeline export (${width}x${height})...`);
   onProgress?.({ stage: 'GPU timeline encode', progress: 0, indeterminate: false });
@@ -336,11 +392,7 @@ async function encodeTimelineComposite(
   const engine = await TimelinePreviewEngine.create(videoCanvas, clips);
 
   const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
-  const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
-    video: { codec: encoderCodec.muxerCodec, width, height },
-    fastStart: 'in-memory',
-  });
+  const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
   const videoEncoder = new VideoEncoder({
@@ -405,6 +457,17 @@ async function encodeTimelineComposite(
     onStatus('Flushing GPU encoder...');
     await videoEncoder.flush();
     if (videoError) throw videoError;
+
+    await muxTimelineAudioIfRequested(
+      muxer,
+      clips,
+      clipGroups,
+      transitions,
+      includeWebCodecsAudio,
+      onStatus,
+      onProgress,
+    );
+
     muxer.finalize();
     const { buffer } = muxer.target as ArrayBufferTarget;
     return new Blob([buffer], { type: 'video/mp4' });
