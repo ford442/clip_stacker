@@ -16,6 +16,13 @@ import { getClipDuration, isOverlayOffCanvas } from '../utils/project';
 import { extractWaveformPeaks } from '../utils/waveform';
 import { clampClipVolume } from '../utils/audioVolume';
 import { clipHasKeyframes } from '../utils/animatedLayout';
+import {
+  buildPipRect,
+  clipAspectRatio,
+  nextOverlayLayerIndex,
+  parseCanvasSize,
+  type PipCorner,
+} from '../utils/pipPreset';
 import { WaveformCanvas } from './WaveformCanvas';
 import { FadeCanvasPreview } from './FadeCanvasPreview';
 import { KeyframeMiniEditor } from './KeyframeMiniEditor';
@@ -174,6 +181,7 @@ function InspectorImpl({
   const [activeKeyframeProp, setActiveKeyframeProp] = useState<ClipAnimatableProp>('x');
   const inspectorRef = useRef<HTMLDivElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [pipCorner, setPipCorner] = useState<PipCorner>('bottom-right');
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
   const generatingThumbs = useRef<Set<string>>(new Set());
@@ -313,6 +321,44 @@ function InspectorImpl({
       }),
     [values],
   );
+  const isOverlay = parseNumber(values.layerIndex, 0) > 0;
+
+  /**
+   * One-click Picture-in-Picture: promote the clip to the next free overlay layer and
+   * drop it into a corner of the canvas at a sensible default size.
+   */
+  const applyPipPreset = (corner: PipCorner) => {
+    if (!clip) return;
+    const canvas = parseCanvasSize(exportSettings.outputResolution);
+    const rect = buildPipRect(canvas, corner, clipAspectRatio(clip));
+    const layerIndex = isOverlay
+      ? parseNumber(values.layerIndex, 1)
+      : nextOverlayLayerIndex(clips, clip.id);
+    applyValues({
+      layerIndex: String(layerIndex),
+      x: String(rect.x),
+      y: String(rect.y),
+      width: String(rect.width),
+      height: String(rect.height),
+      opacity: parseNumber(values.opacity, 1) === 0 ? '1' : values.opacity,
+    });
+    setPipCorner(corner);
+    setAdvancedOpen(true);
+  };
+
+  /** Send the clip back to the base layer and clear the overlay rectangle. */
+  const useAsBaseLayer = () => {
+    applyValues({
+      layerIndex: '0',
+      x: '0',
+      y: '0',
+      width: '0',
+      height: '0',
+      opacity: '1',
+    });
+    setAdvancedOpen(false);
+  };
+
   const trimDuration = clip ? Math.max(MIN_CLIP_DURATION, clip.duration) : MIN_CLIP_DURATION;
   const trimStart = clip ? clamp(parseNumber(values.trimStart, 0), 0, Math.max(0, trimDuration - MIN_CLIP_DURATION)) : 0;
   const trimEnd = clip
@@ -648,6 +694,59 @@ function InspectorImpl({
           </>
         )}
         {clip.kind === 'video' && (
+          <div className="inspector-pip-actions">
+            <div className="inspector-pip-header">
+              <strong>Picture-in-Picture</strong>
+              <span className={isOverlay ? 'inspector-pip-badge is-overlay' : 'inspector-pip-badge'}>
+                {isOverlay ? `Overlay • layer ${parseNumber(values.layerIndex, 1)}` : 'Base layer'}
+              </span>
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => applyPipPreset(pipCorner)}
+                title="Composite this clip on top of the base video as a Picture-in-Picture overlay, sized and positioned in the chosen corner."
+              >
+                🖼 {isOverlay ? 'Reposition overlay' : 'Use as overlay (PiP)'}
+              </button>
+              <label
+                className="inspector-inline-label"
+                title="Corner of the canvas the overlay snaps to."
+              >
+                Corner
+                <select
+                  value={pipCorner}
+                  onChange={(e) => {
+                    const corner = e.target.value as PipCorner;
+                    setPipCorner(corner);
+                    if (isOverlay) applyPipPreset(corner);
+                  }}
+                >
+                  <option value="top-left">Top left</option>
+                  <option value="top-right">Top right</option>
+                  <option value="bottom-left">Bottom left</option>
+                  <option value="bottom-right">Bottom right</option>
+                </select>
+              </label>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={useAsBaseLayer}
+                disabled={!isOverlay}
+                title="Return this clip to the base layer so it plays full-frame in sequence."
+              >
+                ⤢ Use as base layer
+              </button>
+            </div>
+            <p className="inspector-hint">
+              {isOverlay
+                ? 'This clip is composited on top of the base video. Fine-tune the size, position and opacity below.'
+                : 'Overlay this clip as a small window on top of the base video. You can fine-tune the size, position and opacity afterwards.'}
+            </p>
+          </div>
+        )}
+        {clip.kind === 'video' && (
           <details
             className="inspector-disclosure"
             open={hasAdvancedLayout || advancedOpen}
@@ -656,10 +755,12 @@ function InspectorImpl({
               setAdvancedOpen(e.currentTarget.open);
             }}
           >
-            <summary>Advanced layout (PiP){hasAdvancedLayout ? ' • active' : ''}</summary>
+            <summary>
+              Picture-in-Picture layout (advanced){hasAdvancedLayout ? ' • active' : ''}
+            </summary>
             <div className="inspector-disclosure-content">
-              <label title="0 = base layer (sequential concatenation). 1 or higher = overlay on top of the base video.">
-                Layer index
+              <label title="0 = base layer (sequential concatenation). 1 or higher = Picture-in-Picture overlay on top of the base video.">
+                Layer index (0 = base, 1+ = overlay)
                 <input
                   type="number"
                   min="0"
@@ -712,7 +813,7 @@ function InspectorImpl({
                   render. Adjust the X/Y offsets so it overlaps the canvas.
                 </p>
               )}
-              {parseNumber(values.layerIndex, 0) > 0 && (
+              {isOverlay && (
                 <label title="Opacity of the overlay from 0.0 (transparent) to 1.0 (fully opaque).">
                   Opacity (0–1)
                   <input
