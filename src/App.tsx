@@ -623,9 +623,11 @@ export function App() {
       const pathLabel =
         result.path === "canvas"
           ? "🎨 Canvas (audio-reactive)"
-          : result.path === "webcodecs"
-            ? "⚡ GPU (WebCodecs)"
-            : "🖥 FFmpeg";
+          : result.path === "webcodecs-av"
+            ? "⚡ GPU (WebCodecs A/V)"
+            : result.path === "webcodecs"
+              ? "⚡ GPU (WebCodecs + FFmpeg audio)"
+              : "🖥 FFmpeg";
       setStatus(`Render complete via ${pathLabel}. Download your merged MP4.`);
       setProgressStage(`Render complete via ${pathLabel}`);
       setProgressValue(1);

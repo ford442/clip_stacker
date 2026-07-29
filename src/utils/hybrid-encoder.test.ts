@@ -10,6 +10,11 @@ vi.mock('./webcodecs', () => ({
   encodeClipsWithWebCodecs: vi.fn(),
 }));
 
+vi.mock('./webcodecs-audio', () => ({
+  isAudioEncoderAvailable: vi.fn(),
+  assessWebCodecsAudioMix: vi.fn(),
+}));
+
 vi.mock('./canvas-encoder', () => ({
   encodeClipsWithCanvas: vi.fn(),
 }));
@@ -21,6 +26,7 @@ vi.mock('../ffmpeg/ffmpegService', () => ({
 }));
 
 import { isWebCodecsAvailable, encodeVideoWithWebCodecs } from './webcodecs';
+import { isAudioEncoderAvailable, assessWebCodecsAudioMix } from './webcodecs-audio';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 
@@ -48,6 +54,8 @@ function createTestClip(id: string, duration: number, overrides: Partial<Clip> =
 describe('utils/hybrid-encoder', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (isAudioEncoderAvailable as any).mockResolvedValue(false);
+    (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
     // Mock MediaRecorder for canvas tests
     (global as any).MediaRecorder = vi.fn();
   });
@@ -157,9 +165,56 @@ describe('utils/hybrid-encoder', () => {
       );
 
       expect(result.path).toBe('webcodecs');
-      expect(encodeVideoWithWebCodecs).toHaveBeenCalled();
+      expect(encodeVideoWithWebCodecs).toHaveBeenCalledWith(
+        testClips,
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        'auto',
+        [],
+        [],
+        [],
+        expect.anything(),
+        false,
+      );
       expect(muxVideoWithAudio).toHaveBeenCalledWith(videoBlob, testClips, testSettings, mockStatusCallback, mockProgressCallback);
       expect(mergeClips).not.toHaveBeenCalled();
+    });
+
+    it('should use webcodecs-av path when AudioEncoder and audio mix are supported', async () => {
+      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      (isAudioEncoderAvailable as any).mockResolvedValue(true);
+      (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
+      const avBlob = new Blob(['av mp4']);
+      (encodeVideoWithWebCodecs as any).mockResolvedValue(avBlob);
+      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+
+      const result = await hybridMergeClips(
+        testClips,
+        [],
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        false,
+        [],
+        false,
+      );
+
+      expect(result.path).toBe('webcodecs-av');
+      expect(encodeVideoWithWebCodecs).toHaveBeenCalledWith(
+        testClips,
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        'auto',
+        [],
+        [],
+        [],
+        expect.anything(),
+        true,
+      );
+      expect(muxVideoWithAudio).not.toHaveBeenCalled();
+      expect(result.blob).toBe(avBlob);
     });
 
     it('should use FFmpeg lossless when clips already match export resolution', async () => {
