@@ -215,6 +215,49 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ============================================================
+   Inspector – Picture-in-Picture quick actions
+   ============================================================ */
+.inspector-pip-actions {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(6, 9, 15, 0.5);
+  padding: 0.65rem 0.75rem;
+}
+
+.inspector-pip-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.82rem;
+}
+
+.inspector-pip-badge {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+}
+
+.inspector-pip-badge.is-overlay {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
+.inspector-inline-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
 .inspector-disclosure {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
