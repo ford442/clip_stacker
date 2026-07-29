@@ -1,5 +1,6 @@
 import { memo, type CSSProperties, type DragEvent } from 'react';
 import type { ClipTransition } from '../types';
+import { editorActions, useIsClipSelected } from '../store';
 import { WaveformCanvas } from './WaveformCanvas';
 import type { VirtualClipLayout } from './timelineClipTypes';
 
@@ -13,22 +14,13 @@ const TRANSITION_COLORS: Record<string, string> = {
 interface Props {
   layout: VirtualClipLayout;
   style: CSSProperties;
-  /**
-   * Whether this row's clip is the current selection. Passed as a boolean
-   * (not the raw `selectedClipId` string) so that changing the selection only
-   * changes this prop for the two affected rows — every other row's props
-   * stay referentially/structurally identical and `memo` skips re-rendering
-   * them.
-   */
-  isSelected: boolean;
-  /** Whether this row's clip is the one currently being dragged (see `isSelected`). */
+  /** Whether this row's clip is the one currently being dragged (see `useIsClipSelected`). */
   isDragging: boolean;
   thumbs?: string[];
   waves?: Float32Array;
   transition?: ClipTransition;
   showTransition: boolean;
   clipCount: number;
-  onSelect: (id: string) => void;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onDelete: (id: string) => void;
@@ -41,14 +33,12 @@ interface Props {
 function VirtualClipBlockImpl({
   layout,
   style,
-  isSelected,
   isDragging,
   thumbs,
   waves,
   transition,
   showTransition,
   clipCount,
-  onSelect,
   onMoveUp,
   onMoveDown,
   onDelete,
@@ -58,6 +48,7 @@ function VirtualClipBlockImpl({
   onTouchStart,
 }: Props) {
   const { clip, index, duration } = layout;
+  const isSelected = useIsClipSelected(clip.id);
   const isLoadingThumbs = clip.kind === 'video' && thumbs === undefined;
   const isLoadingWave = clip.kind === 'audio' && waves === undefined;
 
@@ -95,7 +86,7 @@ function VirtualClipBlockImpl({
           className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
             isSelected ? ' selected' : ''
           }`}
-          onClick={() => onSelect(clip.id)}
+          onClick={() => editorActions.setSelectedClipId(clip.id)}
           title={clip.title}
         >
           {clip.kind === 'video' ? (
