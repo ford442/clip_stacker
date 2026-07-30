@@ -13,6 +13,11 @@ import {
 import { sanitizeFilename } from '../utils/filename';
 import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
 import { getClipDuration, isOverlayOffCanvas } from '../utils/project';
+import {
+  clipLayoutToDisplayPixels,
+  layoutNormToPixelValue,
+  layoutPixelToNormValue,
+} from '../utils/overlayCoords';
 import { extractWaveformPeaks } from '../utils/waveform';
 import { clampClipVolume } from '../utils/audioVolume';
 import { clipHasKeyframes } from '../utils/animatedLayout';
@@ -75,14 +80,14 @@ const PIP_KEYFRAME_PROPS: Array<{
     label: 'Width',
     step: 1,
     min: 0,
-    defaultValue: (c) => c.width ?? c.videoWidth ?? 0,
+    defaultValue: (c) => c.width ?? 0,
   },
   {
     prop: 'height',
     label: 'Height',
     step: 1,
     min: 0,
-    defaultValue: (c) => c.height ?? c.videoHeight ?? 0,
+    defaultValue: (c) => c.height ?? 0,
   },
   { prop: 'opacity', label: 'Opacity', step: 0.05, min: 0, max: 1, defaultValue: (c) => c.opacity ?? 1 },
 ];
@@ -205,8 +210,14 @@ function InspectorImpl({
     volume: '1',
   });
 
+  const layoutCanvas = useMemo(
+    () => parseCanvasSize(exportSettings.outputResolution),
+    [exportSettings.outputResolution],
+  );
+
   useEffect(() => {
     if (!clip) return;
+    const layout = clipLayoutToDisplayPixels(clip, layoutCanvas);
     setValues({
       title: clip.title,
       trimStart: String(clip.trimStart),
@@ -216,24 +227,24 @@ function InspectorImpl({
       audioFadeIn: String(clip.audioFadeIn),
       audioFadeOut: String(clip.audioFadeOut),
       layerIndex: String(clip.layerIndex ?? 0),
-      x: String(clip.x ?? 0),
-      y: String(clip.y ?? 0),
-      width: String(clip.width ?? 0),
-      height: String(clip.height ?? 0),
+      x: String(layout.x),
+      y: String(layout.y),
+      width: String(layout.width),
+      height: String(layout.height),
       opacity: String(clip.opacity ?? 1),
       volume: String(clip.volume ?? 1),
     });
     setAdvancedOpen(
       hasAdvancedLayoutValues({
         layerIndex: String(clip.layerIndex ?? 0),
-        x: String(clip.x ?? 0),
-        y: String(clip.y ?? 0),
-        width: String(clip.width ?? 0),
-        height: String(clip.height ?? 0),
+        x: String(layout.x),
+        y: String(layout.y),
+        width: String(layout.width),
+        height: String(layout.height),
         opacity: String(clip.opacity ?? 1),
       }),
     );
-  }, [clip]);
+  }, [clip, layoutCanvas]);
 
   useEffect(() => {
     if (!clip) return;
@@ -314,12 +325,14 @@ function InspectorImpl({
     () =>
       parseNumber(values.layerIndex, 0) > 0 &&
       isOverlayOffCanvas({
-        x: parseNumber(values.x, 0),
-        y: parseNumber(values.y, 0),
-        width: parseNumber(values.width, 0),
-        height: parseNumber(values.height, 0),
-      }),
-    [values],
+        x: layoutPixelToNormValue('x', parseNumber(values.x, 0), layoutCanvas),
+        y: layoutPixelToNormValue('y', parseNumber(values.y, 0), layoutCanvas),
+        width: layoutPixelToNormValue('width', parseNumber(values.width, 0), layoutCanvas),
+        height: layoutPixelToNormValue('height', parseNumber(values.height, 0), layoutCanvas),
+        videoWidth: clip?.videoWidth,
+        videoHeight: clip?.videoHeight,
+      }, layoutCanvas.width, layoutCanvas.height),
+    [values, layoutCanvas, clip?.videoWidth, clip?.videoHeight],
   );
   const isOverlay = parseNumber(values.layerIndex, 0) > 0;
 
@@ -331,15 +344,24 @@ function InspectorImpl({
     if (!clip) return;
     const canvas = parseCanvasSize(exportSettings.outputResolution);
     const rect = buildPipRect(canvas, corner, clipAspectRatio(clip));
+    const display = clipLayoutToDisplayPixels(
+      {
+        x: rect.x,
+        y: rect.y,
+        width: rect.width,
+        height: rect.height,
+      },
+      canvas,
+    );
     const layerIndex = isOverlay
       ? parseNumber(values.layerIndex, 1)
       : nextOverlayLayerIndex(clips, clip.id);
     applyValues({
       layerIndex: String(layerIndex),
-      x: String(rect.x),
-      y: String(rect.y),
-      width: String(rect.width),
-      height: String(rect.height),
+      x: String(display.x),
+      y: String(display.y),
+      width: String(display.width),
+      height: String(display.height),
       opacity: parseNumber(values.opacity, 1) === 0 ? '1' : values.opacity,
     });
     setPipCorner(corner);
@@ -886,23 +908,55 @@ function InspectorImpl({
                   [...PIP_KEYFRAME_PROPS, ...KEN_BURNS_PROPS].find(
                     (item) => item.prop === activeKeyframeProp,
                   ) ?? PIP_KEYFRAME_PROPS[0];
-                const defaultValue =
+                const isLayoutProp =
+                  activeKeyframeProp === 'x' ||
+                  activeKeyframeProp === 'y' ||
+                  activeKeyframeProp === 'width' ||
+                  activeKeyframeProp === 'height';
+                const baseDefault =
                   typeof meta.defaultValue === 'function'
                     ? meta.defaultValue(clip)
                     : meta.defaultValue;
+                const defaultValue = isLayoutProp
+                  ? layoutNormToPixelValue(
+                      activeKeyframeProp,
+                      baseDefault,
+                      layoutCanvas,
+                    )
+                  : baseDefault;
+                const displayKeyframes = isLayoutProp
+                  ? clip.keyframes?.[activeKeyframeProp]?.map((key) => ({
+                      ...key,
+                      value: layoutNormToPixelValue(
+                        activeKeyframeProp,
+                        key.value,
+                        layoutCanvas,
+                      ),
+                    }))
+                  : clip.keyframes?.[activeKeyframeProp];
                 return (
                   <KeyframeMiniEditor
                     label={meta.label}
                     duration={getClipDuration(clip)}
                     currentTime={clipLocalTime}
-                    keyframes={clip.keyframes?.[activeKeyframeProp]}
+                    keyframes={displayKeyframes}
                     defaultValue={defaultValue}
                     min={meta.min}
                     max={meta.max}
                     step={meta.step}
                     onChange={(track) => {
                       const next: ClipKeyframes = { ...(clip.keyframes ?? {}) };
-                      if (track?.length) next[activeKeyframeProp] = track;
+                      const storedTrack = isLayoutProp
+                        ? track?.map((key) => ({
+                            ...key,
+                            value: layoutPixelToNormValue(
+                              activeKeyframeProp,
+                              key.value,
+                              layoutCanvas,
+                            ),
+                          }))
+                        : track;
+                      if (storedTrack?.length) next[activeKeyframeProp] = storedTrack;
                       else delete next[activeKeyframeProp];
                       onKeyframesChange(
                         Object.keys(next).length > 0 ? next : undefined,

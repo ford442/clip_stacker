@@ -126,10 +126,10 @@ describe('previewComposition', () => {
         makeClip('base', 10),
         makeClip('pip', 4, {
           layerIndex: 1,
-          x: 12,
-          y: 24,
-          width: 320,
-          height: 180,
+          x: 12 / 1280,
+          y: 24 / 720,
+          width: 320 / 1280,
+          height: 180 / 720,
         }),
       ];
       const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 2);
@@ -181,8 +181,8 @@ describe('previewComposition', () => {
           text: 'Headline',
           fontsize: 40,
           fontcolor: 'white',
-          x: 40,
-          y: 600,
+          x: 40 / 1280,
+          y: 600 / 720,
           scrolling: false,
           scrollSpeed: 20,
           box: false,

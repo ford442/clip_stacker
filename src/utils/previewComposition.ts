@@ -754,6 +754,7 @@ function buildTextLayers(
       globalTime,
       totalDuration,
       geom.canvasWidth,
+      geom.canvasHeight,
       geom.scale,
     );
     return {

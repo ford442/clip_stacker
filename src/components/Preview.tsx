@@ -44,6 +44,7 @@ import { evaluatePreviewBudget } from "../utils/previewBudget";
 import { previewMetrics } from "../utils/previewMetrics";
 import { parseOutputResolution } from "../utils/resolution";
 import { createRenderScheduler } from "../utils/seekCoalescer";
+import { PreviewOverlayManipulator } from "./PreviewOverlayManipulator";
 
 interface Props {
   clip: Clip | null;
@@ -56,6 +57,17 @@ interface Props {
   colorGrade?: ColorGradeSettings;
   outputUrl: string | null;
   exportFilename?: string;
+  selectedClipId?: string | null;
+  selectedTextOverlayId?: string | null;
+  onSelectClip?: (clipId: string | null) => void;
+  onSelectTextOverlay?: (overlayId: string | null) => void;
+  onClipLayoutCommit?: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
+  onTextOverlayLayoutCommit?: (
+    overlayId: string,
+    overlay: TextOverlay,
+    editedKeyframe: boolean,
+  ) => void;
+  onPreviewDragStart?: () => void;
 }
 
 /**
@@ -74,6 +86,13 @@ function PreviewImpl({
   colorGrade,
   outputUrl,
   exportFilename,
+  selectedClipId,
+  selectedTextOverlayId,
+  onSelectClip,
+  onSelectTextOverlay,
+  onClipLayoutCommit,
+  onTextOverlayLayoutCommit,
+  onPreviewDragStart,
 }: Props) {
   if (outputUrl) {
     const downloadFilename = exportFilename
@@ -112,6 +131,13 @@ function PreviewImpl({
           textOverlays={textOverlays}
           exportSettings={exportSettings}
           colorGrade={colorGrade}
+          selectedClipId={selectedClipId}
+          selectedTextOverlayId={selectedTextOverlayId}
+          onSelectClip={onSelectClip}
+          onSelectTextOverlay={onSelectTextOverlay}
+          onClipLayoutCommit={onClipLayoutCommit}
+          onTextOverlayLayoutCommit={onTextOverlayLayoutCommit}
+          onPreviewDragStart={onPreviewDragStart}
         />
       </section>
     );
@@ -161,6 +187,17 @@ interface TimelinePreviewProps {
   textOverlays: TextOverlay[];
   exportSettings?: ExportSettings;
   colorGrade?: ColorGradeSettings;
+  selectedClipId?: string | null;
+  selectedTextOverlayId?: string | null;
+  onSelectClip?: (clipId: string | null) => void;
+  onSelectTextOverlay?: (overlayId: string | null) => void;
+  onClipLayoutCommit?: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
+  onTextOverlayLayoutCommit?: (
+    overlayId: string,
+    overlay: TextOverlay,
+    editedKeyframe: boolean,
+  ) => void;
+  onPreviewDragStart?: () => void;
 }
 
 function TimelineCompositorPreview({
@@ -171,6 +208,13 @@ function TimelineCompositorPreview({
   textOverlays,
   exportSettings,
   colorGrade,
+  selectedClipId = null,
+  selectedTextOverlayId = null,
+  onSelectClip,
+  onSelectTextOverlay,
+  onClipLayoutCommit,
+  onTextOverlayLayoutCommit,
+  onPreviewDragStart,
 }: TimelinePreviewProps) {
   const playheadTime = usePlayheadTime();
   const audioPlayback = useTimelineAudioPlayback(
@@ -490,6 +534,30 @@ function TimelineCompositorPreview({
           width={1280}
           height={720}
         />
+        {onClipLayoutCommit &&
+          onTextOverlayLayoutCommit &&
+          onPreviewDragStart &&
+          onSelectClip &&
+          onSelectTextOverlay &&
+          previewSize && (
+            <PreviewOverlayManipulator
+              timelineClips={timelineClips}
+              clipGroups={clipGroups}
+              transitions={transitions}
+              textOverlays={textOverlays}
+              exportSettings={exportSettings}
+              playheadTime={displayTime}
+              selectedClipId={selectedClipId ?? null}
+              selectedTextOverlayId={selectedTextOverlayId ?? null}
+              canvasWidth={previewSize.canvasWidth}
+              canvasHeight={previewSize.canvasHeight}
+              onSelectClip={onSelectClip}
+              onSelectTextOverlay={onSelectTextOverlay}
+              onClipLayoutCommit={onClipLayoutCommit}
+              onTextOverlayCommit={onTextOverlayLayoutCommit}
+              onDragStart={onPreviewDragStart}
+            />
+          )}
       </div>
       {!previewActive && (
         <div className="muted" style={{ fontSize: "0.82rem" }}>

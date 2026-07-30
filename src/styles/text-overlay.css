@@ -137,6 +137,17 @@
   gap: 0.5rem;
 }
 
+.tol-anchor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+
+.tol-anchor-btn {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.35rem;
+}
+
 .tol-color-row {
   display: flex;
   gap: 0.4rem;

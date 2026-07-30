@@ -80,6 +80,78 @@ audio {
   pointer-events: none;
 }
 
+.preview-overlay-manipulator {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  cursor: default;
+}
+
+.preview-overlay-outline {
+  position: absolute;
+  pointer-events: none;
+  box-sizing: border-box;
+  border: 2px solid transparent;
+  border-radius: 2px;
+}
+
+.preview-overlay-outline.is-hover {
+  border-color: color-mix(in srgb, var(--gold-bright) 55%, transparent);
+}
+
+.preview-overlay-outline.is-selected {
+  border-color: var(--gold-bright);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold-bright) 35%, transparent);
+}
+
+.preview-overlay-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: var(--gold-bright);
+  border: 1px solid #000;
+  border-radius: 1px;
+}
+
+.preview-overlay-handle.nw { left: -5px; top: -5px; }
+.preview-overlay-handle.ne { right: -5px; top: -5px; }
+.preview-overlay-handle.sw { left: -5px; bottom: -5px; }
+.preview-overlay-handle.se { right: -5px; bottom: -5px; }
+
+.preview-snap-guide {
+  position: absolute;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--gold-bright) 70%, transparent);
+}
+
+.preview-snap-guide.is-x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+
+.preview-snap-guide.is-y {
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
+.preview-overlay-hint {
+  position: absolute;
+  left: 0.5rem;
+  right: 0.5rem;
+  bottom: 0.35rem;
+  margin: 0;
+  padding: 0.25rem 0.45rem;
+  font-size: 0.72rem;
+  color: #fff;
+  background: rgb(0 0 0 / 0.62);
+  border-radius: var(--radius-sm);
+  pointer-events: none;
+}
+
 .preview-gpu-controls {
   display: flex;
   flex-wrap: wrap;

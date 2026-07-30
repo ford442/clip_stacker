@@ -1,6 +1,7 @@
 import type { Clip, TextOverlay } from '../types';
 import { sampleKeyframes } from './keyframes';
 import { clampOverlayPosition } from './project';
+import { resolveTextOverlayPixels } from './overlayCoords';
 import { resolveScrollingX } from './textOverlay';
 
 export interface AnimatedPipLayout {
@@ -23,16 +24,16 @@ function baseClipOpacity(clip: Clip): number {
   return clip.opacity ?? 1;
 }
 
-function baseClipWidth(clip: Clip, outputWidth: number): number {
+function baseClipWidthNorm(clip: Clip, outputWidth: number): number {
   if (clip.width && clip.width > 0) return clip.width;
-  if (clip.videoWidth && clip.videoWidth > 0) return clip.videoWidth;
-  return outputWidth;
+  if (clip.videoWidth && clip.videoWidth > 0) return clip.videoWidth / outputWidth;
+  return 1;
 }
 
-function baseClipHeight(clip: Clip, outputHeight: number): number {
+function baseClipHeightNorm(clip: Clip, outputHeight: number): number {
   if (clip.height && clip.height > 0) return clip.height;
-  if (clip.videoHeight && clip.videoHeight > 0) return clip.videoHeight;
-  return outputHeight;
+  if (clip.videoHeight && clip.videoHeight > 0) return clip.videoHeight / outputHeight;
+  return 1;
 }
 
 /**
@@ -46,17 +47,25 @@ export function resolveAnimatedClipLayout(
   scale: number,
 ): AnimatedPipLayout {
   const kf = clip.keyframes;
-  const width = sampleKeyframes(kf?.width, localTime, baseClipWidth(clip, outputWidth));
-  const height = sampleKeyframes(
+  const widthNorm = sampleKeyframes(
+    kf?.width,
+    localTime,
+    baseClipWidthNorm(clip, outputWidth),
+  );
+  const heightNorm = sampleKeyframes(
     kf?.height,
     localTime,
-    baseClipHeight(clip, outputHeight),
+    baseClipHeightNorm(clip, outputHeight),
   );
-  const sampledClip: Pick<Clip, 'x' | 'y' | 'width' | 'height'> = {
+  const width = widthNorm * outputWidth;
+  const height = heightNorm * outputHeight;
+  const sampledClip: Pick<Clip, 'x' | 'y' | 'width' | 'height' | 'videoWidth' | 'videoHeight'> = {
     x: sampleKeyframes(kf?.x, localTime, clip.x ?? 0),
     y: sampleKeyframes(kf?.y, localTime, clip.y ?? 0),
-    width,
-    height,
+    width: widthNorm,
+    height: heightNorm,
+    videoWidth: clip.videoWidth,
+    videoHeight: clip.videoHeight,
   };
   const { x, y } = clampOverlayPosition(sampledClip, outputWidth, outputHeight);
   const opacity = sampleKeyframes(kf?.opacity, localTime, baseClipOpacity(clip));
@@ -120,6 +129,7 @@ export function resolveAnimatedTextLayout(
   globalTime: number,
   totalDuration: number,
   canvasWidth: number,
+  canvasHeight: number,
   scale: number,
   textWidth = 0,
 ): AnimatedTextLayout {
@@ -127,16 +137,29 @@ export function resolveAnimatedTextLayout(
   const opacity = sampleKeyframes(kf?.opacity, globalTime, 1);
 
   if (overlay.scrolling) {
+    const { y } = resolveTextOverlayPixels(
+      { x: 0, y: sampleKeyframes(kf?.y, globalTime, overlay.y) },
+      { width: canvasWidth / scale, height: canvasHeight / scale },
+    );
     return {
       x: resolveScrollingX(overlay.scrollSpeed, globalTime, canvasWidth, textWidth),
-      y: sampleKeyframes(kf?.y, globalTime, overlay.y) * scale,
+      y: y * scale,
       opacity,
     };
   }
 
+  const outputCanvas = { width: canvasWidth / scale, height: canvasHeight / scale };
+  const sampled = resolveTextOverlayPixels(
+    {
+      x: sampleKeyframes(kf?.x, globalTime, overlay.x),
+      y: sampleKeyframes(kf?.y, globalTime, overlay.y),
+    },
+    outputCanvas,
+  );
+
   return {
-    x: sampleKeyframes(kf?.x, globalTime, overlay.x) * scale,
-    y: sampleKeyframes(kf?.y, globalTime, overlay.y) * scale,
+    x: sampled.x * scale,
+    y: sampled.y * scale,
     opacity,
   };
 }

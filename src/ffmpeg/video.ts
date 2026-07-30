@@ -8,6 +8,7 @@ import type {
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration, clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
+import { resolveClipLayoutPixels } from "../utils/overlayCoords";
 import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
 import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
 import {
@@ -91,8 +92,12 @@ export function buildPipFilterComplex(
         vf += `,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
       } else {
         // Scale overlay to requested dimensions (0 means keep original)
-        const w = clip.width ?? 0;
-        const h = clip.height ?? 0;
+        const layout = resolveClipLayoutPixels(clip, {
+          width: OUTPUT_WIDTH,
+          height: OUTPUT_HEIGHT,
+        });
+        const w = Math.round(layout.width);
+        const h = Math.round(layout.height);
         if (w > 0 && h > 0) {
           vf += `,scale=${w}:${h}`;
         } else if (w > 0) {

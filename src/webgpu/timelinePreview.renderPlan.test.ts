@@ -161,10 +161,10 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     const base = makeClip('base');
     const pip = makeClip('pip', {
       layerIndex: 1,
-      x: 128,
-      y: 72,
-      width: 320,
-      height: 180,
+      x: 128 / 1280,
+      y: 72 / 720,
+      width: 320 / 1280,
+      height: 180 / 720,
       opacity: 0.5,
     });
 
