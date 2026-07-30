@@ -20,6 +20,14 @@ export interface RifeResult {
   blob: Blob;
 }
 
+/** Progress event from a multi-clip run, tagged with which clip it is about. */
+export interface RifeBatchProgressEvent extends RifeProgressEvent {
+  /** 0-based index of the clip this event concerns. */
+  clipIndex: number;
+  /** Total clips in the batch. */
+  clipCount: number;
+}
+
 export interface MorphTransitionResult {
   blob: Blob;
   duration: number;
@@ -49,20 +57,99 @@ export async function processClipWithRIFE(
     message: "Connecting to RIFE space…",
   });
 
-  // Uses the raw Gradio HTTP API with credentials:"omit" rather than
-  // @gradio/client — see the note on stitchClipsOnGpu for why the bundled
-  // client cannot reach a public HF Space from a deployed browser origin.
+  onProgress?.({
+    stage: "uploading",
+    progress: 20,
+    message: "Uploading clip to RIFE…",
+  });
+  const path = await uploadClipForRife(videoBlob);
+  return interpolateUploadedClip(path, multiplier, mode, onProgress);
+}
+
+/**
+ * Interpolate several clips, overlapping each upload with the processing of
+ * the clip before it.
+ *
+ * The Space serializes GPU work anyway, so processing stays sequential — but
+ * uploading clip N+1 while clip N is on the GPU removes the upload from the
+ * critical path for every clip after the first. Results come back in input
+ * order.
+ *
+ * `processClipWithRIFE` remains the entry point for the single-clip case;
+ * with one blob this behaves identically.
+ *
+ * @param videoBlobs - Trimmed source clips, in output order.
+ * @param multiplier - Frame-rate multiplier (2 = 2×, 4 = 4×). Default 2.
+ * @param mode       - 'interpolation' (smooth motion) or 'boomerang' (loop).
+ * @param onProgress - Optional progress callback, tagged with the clip index.
+ */
+export async function processClipsWithRIFE(
+  videoBlobs: Blob[],
+  multiplier: 2 | 4 = 2,
+  mode: RifeMode = "interpolation",
+  onProgress?: (event: RifeBatchProgressEvent) => void,
+): Promise<RifeResult[]> {
+  if (videoBlobs.length === 0) return [];
+
+  const clipCount = videoBlobs.length;
+
+  // Kick every upload off up front, chained so they do not all contend for
+  // bandwidth at once but each one still starts before its turn on the GPU.
+  let uploadChain: Promise<unknown> = Promise.resolve();
+  const uploads = videoBlobs.map((blob) => {
+    const upload = uploadChain.then(() => uploadClipForRife(blob));
+    // Keep the chain going past a failure, and make sure a rejection that is
+    // not awaited until later does not surface as an unhandled rejection.
+    uploadChain = upload.catch(() => undefined);
+    return upload;
+  });
+
+  const results: RifeResult[] = [];
+  try {
+    for (let i = 0; i < clipCount; i++) {
+      const forClip = onProgress
+        ? (event: RifeProgressEvent) =>
+            onProgress({ ...event, clipIndex: i, clipCount })
+        : undefined;
+      const path = await uploads[i];
+      results.push(
+        await interpolateUploadedClip(path, multiplier, mode, forClip),
+      );
+    }
+  } finally {
+    // Drain the remaining uploads so an early failure does not leave pending
+    // rejections behind.
+    await Promise.allSettled(uploads);
+  }
+
+  return results;
+}
+
+/** Upload one clip and return the server-side path Gradio assigned it. */
+async function uploadClipForRife(videoBlob: Blob): Promise<string> {
+  try {
+    // Uses the raw Gradio HTTP API with credentials:"omit" rather than
+    // @gradio/client — see the note on stitchClipsOnGpu for why the bundled
+    // client cannot reach a public HF Space from a deployed browser origin.
+    const [path] = await uploadFilesToSpace([videoBlob]);
+    return path;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`RIFE processing failed: ${message}`);
+  }
+}
+
+/** Run interpolate_video on an already-uploaded clip and fetch the result. */
+async function interpolateUploadedClip(
+  path: string,
+  multiplier: 2 | 4,
+  mode: RifeMode,
+  onProgress?: (event: RifeProgressEvent) => void,
+): Promise<RifeResult> {
   const isBoomerang = mode === "boomerang";
 
   let output: unknown;
   try {
-    onProgress?.({
-      stage: "uploading",
-      progress: 20,
-      message: "Uploading clip to RIFE…",
-    });
-    const [path] = await uploadFilesToSpace([videoBlob]);
-
     onProgress?.({
       stage: "processing",
       progress: null,

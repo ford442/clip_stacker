@@ -6,7 +6,12 @@
  * origin). `fetch` is mocked to walk the upload → /call → SSE → download flow.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { processClipWithRIFE, stitchClipsOnGpu, generateMorphTransition } from "./huggingface";
+import {
+  processClipWithRIFE,
+  processClipsWithRIFE,
+  stitchClipsOnGpu,
+  generateMorphTransition,
+} from "./huggingface";
 
 function makeBlob(text = "clip"): Blob {
   return new Blob([text], { type: "video/mp4" });
@@ -332,5 +337,166 @@ describe("generateMorphTransition", () => {
     const body = JSON.parse((call![1] as RequestInit).body as string);
     expect(body.data[1]).toBe(15);
     expect(body.data[2]).toBe(30);
+  });
+});
+
+describe("processClipsWithRIFE", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * Mock the whole Space flow with configurable latency so the pipeline's
+   * ordering and overlap are observable. Records a timeline of events.
+   */
+  function mockSpace({
+    uploadMs = 10,
+    processMs = 30,
+  }: { uploadMs?: number; processMs?: number } = {}) {
+    const timeline: string[] = [];
+    let uploads = 0;
+    let calls = 0;
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+    const fetchMock = vi.fn(async (url: string) => {
+      const u = String(url);
+      if (u.endsWith("/upload")) {
+        const i = uploads++;
+        timeline.push(`upload:start:${i}`);
+        await sleep(uploadMs);
+        timeline.push(`upload:end:${i}`);
+        return jsonResponse([`/tmp/in_${i}.mp4`]);
+      }
+      if (u.endsWith("/call/interpolate_video")) {
+        const i = calls++;
+        timeline.push(`process:start:${i}`);
+        await sleep(processMs);
+        return jsonResponse({ event_id: `ev${i}` });
+      }
+      const match = u.match(/\/call\/interpolate_video\/ev(\d+)/);
+      if (match) {
+        timeline.push(`process:end:${match[1]}`);
+        return sseResponse(
+          `event: complete\ndata: [{"url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/out_${match[1]}.mp4"}]\n\n`,
+        );
+      }
+      return {
+        ok: true,
+        status: 200,
+        blob: async () => makeMp4Blob(u),
+      } as unknown as Response;
+    });
+    return { fetchMock, timeline };
+  }
+
+  it("returns an empty array without touching the network", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(processClipsWithRIFE([])).resolves.toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("returns one result per clip, in input order", async () => {
+    const { fetchMock } = mockSpace({ uploadMs: 1, processMs: 1 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const results = await processClipsWithRIFE([
+      makeBlob("a"),
+      makeBlob("b"),
+      makeBlob("c"),
+    ]);
+
+    expect(results).toHaveLength(3);
+    const texts = await Promise.all(results.map((r) => r.blob.text()));
+    expect(texts.map((t) => t.match(/out_(\d)/)?.[1])).toEqual(["0", "1", "2"]);
+  });
+
+  it("overlaps later uploads with earlier processing", async () => {
+    const { fetchMock, timeline } = mockSpace({ uploadMs: 10, processMs: 40 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processClipsWithRIFE([makeBlob("a"), makeBlob("b"), makeBlob("c")]);
+
+    // Clip 2's upload must finish before clip 1 comes off the GPU — that is
+    // the whole point: only the first upload is on the critical path.
+    const uploadEnd1 = timeline.indexOf("upload:end:1");
+    const processEnd0 = timeline.indexOf("process:end:0");
+    expect(uploadEnd1).toBeGreaterThanOrEqual(0);
+    expect(uploadEnd1).toBeLessThan(processEnd0);
+  });
+
+  it("keeps GPU processing sequential", async () => {
+    const { fetchMock, timeline } = mockSpace({ uploadMs: 1, processMs: 20 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await processClipsWithRIFE([makeBlob("a"), makeBlob("b"), makeBlob("c")]);
+
+    const order = timeline.filter((e) => e.startsWith("process:"));
+    expect(order).toEqual([
+      "process:start:0",
+      "process:end:0",
+      "process:start:1",
+      "process:end:1",
+      "process:start:2",
+      "process:end:2",
+    ]);
+  });
+
+  it("is faster than running the clips one at a time", async () => {
+    const clips = [makeBlob("a"), makeBlob("b"), makeBlob("c"), makeBlob("d")];
+
+    const { fetchMock: batchFetch } = mockSpace({ uploadMs: 15, processMs: 30 });
+    vi.stubGlobal("fetch", batchFetch);
+    const batchStart = Date.now();
+    await processClipsWithRIFE(clips);
+    const batchMs = Date.now() - batchStart;
+
+    const { fetchMock: serialFetch } = mockSpace({ uploadMs: 15, processMs: 30 });
+    vi.stubGlobal("fetch", serialFetch);
+    const serialStart = Date.now();
+    for (const clip of clips) {
+      await processClipWithRIFE(clip);
+    }
+    const serialMs = Date.now() - serialStart;
+
+    expect(batchMs).toBeLessThan(serialMs);
+  });
+
+  it("tags progress events with the clip index", async () => {
+    const { fetchMock } = mockSpace({ uploadMs: 1, processMs: 1 });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const seen: Array<{ clipIndex: number; clipCount: number }> = [];
+    await processClipsWithRIFE(
+      [makeBlob("a"), makeBlob("b")],
+      2,
+      "interpolation",
+      (e) => seen.push({ clipIndex: e.clipIndex, clipCount: e.clipCount }),
+    );
+
+    expect(seen.every((e) => e.clipCount === 2)).toBe(true);
+    expect(new Set(seen.map((e) => e.clipIndex))).toEqual(new Set([0, 1]));
+  });
+
+  it("propagates a failure and does not leave uploads unhandled", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/upload")) return jsonResponse(["/tmp/in.mp4"]);
+      if (String(url).endsWith("/call/interpolate_video"))
+        return jsonResponse(null, false, 500);
+      return { ok: true, status: 200 } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    try {
+      await expect(
+        processClipsWithRIFE([makeBlob("a"), makeBlob("b")]),
+      ).rejects.toThrow(/RIFE processing failed/);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+    }
   });
 });
