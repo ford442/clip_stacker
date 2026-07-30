@@ -10,6 +10,15 @@ from PIL import Image
 from .attention_processor import IPAttnProcessor2_0 as IPAttnProcessor, AttnProcessor2_0 as AttnProcessor, CNAttnProcessor2_0 as CNAttnProcessor
 from .resampler import Resampler
 
+from .combine import (
+    COMBINE_MODES,
+    MAX_IP_TOKENS,
+    group_concat_slots,
+    normalize_weights,
+    weighted_mean,
+)
+
+
 class ImageProjModel(torch.nn.Module):
     """Projection Model"""
     def __init__(self, cross_attention_dim=1024, clip_embeddings_dim=1024, clip_extra_context_tokens=4):
@@ -103,24 +112,60 @@ class IPAdapter:
         ip_layers.load_state_dict(state_dict["ip_adapter"])
         
     @torch.inference_mode()
-    def get_image_embeds(self, pil_image):
+    def get_clip_image_embeds(self, pil_image):
+        """Raw CLIP image embeddings, before the projection model.
+
+        Blending happens here rather than after `image_proj_model`, whose final
+        LayerNorm makes averaging shrink the signal instead of mixing it.
+        """
         if isinstance(pil_image, Image.Image):
             pil_image = [pil_image]
         clip_image = self.clip_image_processor(images=pil_image, return_tensors="pt").pixel_values
-        print('clip_image_processor shape:',clip_image.shape)
-        clip_image_embeds = self.image_encoder(clip_image.to(self.device, dtype=torch.bfloat16)).image_embeds
-        print('image_encoder shape:',clip_image_embeds.shape)
+        return self.image_encoder(clip_image.to(self.device, dtype=torch.bfloat16)).image_embeds
+
+    @torch.inference_mode()
+    def get_image_embeds(self, pil_image):
+        clip_image_embeds = self.get_clip_image_embeds(pil_image)
         image_prompt_embeds = self.image_proj_model(clip_image_embeds)
-        print('image_proj_model shape:',image_prompt_embeds.shape)
-        uncond_image_prompt_embeds = self.image_proj_model(torch.zeros_like(clip_image_embeds))
+        uncond_image_prompt_embeds = self.get_uncond_image_embeds(clip_image_embeds)
         return image_prompt_embeds, uncond_image_prompt_embeds
-    
+
+    @torch.inference_mode()
+    def get_uncond_image_embeds(self, clip_image_embeds):
+        """The unconditional token set for a given CLIP embedding shape.
+
+        This is `image_proj_model(zeros)`, so it depends only on the shape — it
+        is identical for every image and only needs computing once per batch.
+        It is deliberately never multiplied by a per-image weight: under CFG the
+        two branches have to keep matching magnitudes or `uncond + g*(cond -
+        uncond)` gets distorted in a way no user asked for.
+        """
+        return self.image_proj_model(torch.zeros_like(clip_image_embeds))
+
     def set_scale(self, scale):
         for attn_processor in self.pipe.unet.attn_processors.values():
             if isinstance(attn_processor, IPAttnProcessor):
                 attn_processor.scale = scale
-                
-  
+
+    def set_num_tokens(self, num_tokens):
+        """Tell every processor how many trailing tokens are image conditioning.
+
+        'concat' mode hands the UNet N image token sets instead of one, so the
+        split point in `IPAttnProcessor.__call__` has to move with it.
+        """
+        for attn_processor in self.pipe.unet.attn_processors.values():
+            if isinstance(attn_processor, IPAttnProcessor):
+                attn_processor.num_tokens = num_tokens
+        if hasattr(self.pipe, "controlnet"):
+            controlnets = (self.pipe.controlnet.nets
+                           if isinstance(self.pipe.controlnet, MultiControlNetModel)
+                           else [self.pipe.controlnet])
+            for controlnet in controlnets:
+                for attn_processor in controlnet.attn_processors.values():
+                    if isinstance(attn_processor, CNAttnProcessor):
+                        attn_processor.num_tokens = num_tokens
+
+
     def generate(
         self,
         pil_image,
@@ -216,16 +261,20 @@ class IPAdapterXL(IPAdapter):
         seed=-1,
         num_inference_steps=30,
         guidance_scale=7.5,
+        combine_mode="mean",
         **kwargs,
     ):
         #self.get_scale()
         self.set_scale(ip_scale)
-        
+
+        if combine_mode not in COMBINE_MODES:
+            raise ValueError(f"combine_mode must be one of {COMBINE_MODES}, got {combine_mode!r}")
+
         if isinstance(pil_image_1, Image.Image):
             num_prompts = 1
         else:
             num_prompts = len(pil_image_1)
-        
+
         if prompt is None:
             prompt = "best quality, high quality"
         if negative_prompt is None:
@@ -236,72 +285,112 @@ class IPAdapterXL(IPAdapter):
         if not isinstance(negative_prompt, List):
             negative_prompt = [negative_prompt] * num_prompts
             
-        image_prompt_embeds_list = []
-        uncond_image_prompt_embeds_list = []
-        print('Using primary image.')
+        slots = [
+            (pil_image_1, scale_1, 'primary'),
+            (pil_image_2, scale_2, 'secondary'),
+            (pil_image_3, scale_3, 'tertiary'),
+            (pil_image_4, scale_4, 'quaternary'),
+            (pil_image_5, scale_5, 'quinary'),
+        ]
 
-        image_prompt_embeds_1, uncond_image_prompt_embeds_1 = self.get_image_embeds(pil_image_1)
-        image_prompt_embeds_1 = image_prompt_embeds_1 * scale_1
-        image_prompt_embeds_list.append(image_prompt_embeds_1)
-        uncond_image_prompt_embeds_list.append(uncond_image_prompt_embeds_1)
-        
-        if pil_image_2 != None:
-            print('Using secondary image.')
-            image_prompt_embeds_2, uncond_image_prompt_embeds_2 = self.get_image_embeds(pil_image_2)
-            image_prompt_embeds_2 = image_prompt_embeds_2 * scale_2
-            image_prompt_embeds_list.append(image_prompt_embeds_2)
-            uncond_image_prompt_embeds_list.append(uncond_image_prompt_embeds_2)
-        if pil_image_3 != None:
-            print('Using tertiary image.')
-            image_prompt_embeds_3, uncond_image_prompt_embeds_3 = self.get_image_embeds(pil_image_3)
-            image_prompt_embeds_3 = image_prompt_embeds_3 * scale_3
-            image_prompt_embeds_list.append(image_prompt_embeds_3)
-            uncond_image_prompt_embeds_list.append(uncond_image_prompt_embeds_3)
-        if pil_image_4 != None:
-            print('Using quaternary image.')
-            image_prompt_embeds_4, uncond_image_prompt_embeds_4 = self.get_image_embeds(pil_image_4)
-            image_prompt_embeds_4 = image_prompt_embeds_4 * scale_4
-            image_prompt_embeds_list.append(image_prompt_embeds_4)
-            uncond_image_prompt_embeds_list.append(uncond_image_prompt_embeds_4)
-        if pil_image_5 != None:
-            print('Using quinary image.')
-            image_prompt_embeds_5, uncond_image_prompt_embeds_5 = self.get_image_embeds(pil_image_5)
-            image_prompt_embeds_5 = image_prompt_embeds_5 * scale_5
-            image_prompt_embeds_list.append(image_prompt_embeds_5)
-            uncond_image_prompt_embeds_list.append(uncond_image_prompt_embeds_5)
+        clip_embeds_list = []
+        weights = []
+        for pil_image, scale, label in slots:
+            if pil_image is None:
+                continue
+            print(f'Using {label} image.')
+            clip_embeds_list.append(self.get_clip_image_embeds(pil_image))
+            weights.append(scale)
 
-        image_prompt_embeds = torch.cat(image_prompt_embeds_list).mean(dim=0).unsqueeze(0)
-        print('catted embeds list with mean and unsqueeze shape: ',image_prompt_embeds.shape)
+        if not clip_embeds_list:
+            raise ValueError("generate() needs at least one image prompt")
+
+        # Weights average 1.0, so the balance between images is independent of
+        # total IP strength — that stays on set_scale(ip_scale) above, applied
+        # in the attention processor where the adapter expects it.
+        weights = normalize_weights(weights)
+
+        # One uncond token set for the whole batch: image_proj_model(zeros) does
+        # not depend on which images were supplied.
+        uncond_image_prompt_embeds = self.get_uncond_image_embeds(clip_embeds_list[0])
+
+        if combine_mode == "mean" or len(clip_embeds_list) == 1:
+            image_prompt_embeds = self.image_proj_model(weighted_mean(clip_embeds_list, weights))
+        else:
+            image_prompt_embeds, uncond_image_prompt_embeds = self._concat_image_embeds(
+                clip_embeds_list, weights, uncond_image_prompt_embeds)
+
+        print(f'combine_mode={combine_mode} image_prompt_embeds shape:', image_prompt_embeds.shape)
+
         bs_embed, seq_len, _ = image_prompt_embeds.shape
         image_prompt_embeds = image_prompt_embeds.repeat(1, num_samples, 1)
-        print('catted embeds repeat: ',image_prompt_embeds.shape)
         image_prompt_embeds = image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
-        print('viewed embeds: ',image_prompt_embeds.shape)
-        uncond_image_prompt_embeds = torch.cat(uncond_image_prompt_embeds_list).mean(dim=0).unsqueeze(0)  
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, num_samples, 1)
         uncond_image_prompt_embeds = uncond_image_prompt_embeds.view(bs_embed * num_samples, seq_len, -1)
 
-        with torch.inference_mode():
-            prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = self.pipe.encode_prompt(
-                prompt, num_images_per_prompt=num_samples, do_classifier_free_guidance=True, negative_prompt=negative_prompt)
-            prompt_embeds = prompt_embeds * text_scale
-            prompt_embeds = torch.cat([prompt_embeds, image_prompt_embeds], dim=1)
-            negative_prompt_embeds = torch.cat([negative_prompt_embeds, uncond_image_prompt_embeds], dim=1)
-            
-        generator = torch.Generator(self.device).manual_seed(seed) if seed is not None else None
+        # concat mode widened the image token block; every processor has to be
+        # told, and told back afterwards so the next mean-mode call still splits
+        # encoder_hidden_states at the right position.
+        active_num_tokens = image_prompt_embeds.shape[1]
+        if active_num_tokens != self.num_tokens:
+            self.set_num_tokens(active_num_tokens)
+        try:
+            with torch.inference_mode():
+                prompt_embeds, negative_prompt_embeds, pooled_prompt_embeds, negative_pooled_prompt_embeds = self.pipe.encode_prompt(
+                    prompt, num_images_per_prompt=num_samples, do_classifier_free_guidance=True, negative_prompt=negative_prompt)
+                prompt_embeds = prompt_embeds * text_scale
+                prompt_embeds = torch.cat([prompt_embeds, image_prompt_embeds], dim=1)
+                negative_prompt_embeds = torch.cat([negative_prompt_embeds, uncond_image_prompt_embeds], dim=1)
 
-        images = self.pipe(
-            prompt_embeds=prompt_embeds,
-            negative_prompt_embeds=negative_prompt_embeds,
-            pooled_prompt_embeds=pooled_prompt_embeds,
-            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
-            num_inference_steps=num_inference_steps,
-            guidance_scale=guidance_scale,
-            generator=generator,
-            **kwargs,
-        ).images
-        
+            generator = torch.Generator(self.device).manual_seed(seed) if seed is not None else None
+
+            images = self.pipe(
+                prompt_embeds=prompt_embeds,
+                negative_prompt_embeds=negative_prompt_embeds,
+                pooled_prompt_embeds=pooled_prompt_embeds,
+                negative_pooled_prompt_embeds=negative_pooled_prompt_embeds,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                generator=generator,
+                **kwargs,
+            ).images
+        finally:
+            if active_num_tokens != self.num_tokens:
+                self.set_num_tokens(self.num_tokens)
+
         return images
+
+    def _concat_image_embeds(self, clip_embeds_list, weights, uncond_image_prompt_embeds):
+        """Project each image separately and concatenate the token sets.
+
+        A mean answers "blend these moods"; concatenation lets cross-attention
+        pick per-image features spatially, which is what multi-subject
+        composition needs. Weights become per-token scaling here rather than
+        mixing coefficients.
+
+        Over the token budget, the highest-weighted images keep their own slots
+        and the remainder collapse into the last one — a partial mean instead of
+        an unbounded attention cost.
+        """
+        groups, group_weights = group_concat_slots(weights, self.num_tokens)
+        if len(groups) < len(clip_embeds_list):
+            print(f'concat: {len(clip_embeds_list)} images exceed the {MAX_IP_TOKENS}-token budget, '
+                  f'blending all but the top {len(groups) - 1} by weight into one slot.')
+
+        token_sets = []
+        for group, weight in zip(groups, group_weights):
+            members = [clip_embeds_list[i] for i in group]
+            if len(members) == 1:
+                clip_embeds = members[0]
+            else:
+                clip_embeds = weighted_mean(members, normalize_weights([weights[i] for i in group]))
+            token_sets.append(self.image_proj_model(clip_embeds) * weight)
+
+        image_prompt_embeds = torch.cat(token_sets, dim=1)
+        # Match the conditional's token count with unweighted copies so CFG sees
+        # two branches of the same shape and comparable magnitude.
+        uncond_image_prompt_embeds = uncond_image_prompt_embeds.repeat(1, len(token_sets), 1)
+        return image_prompt_embeds, uncond_image_prompt_embeds
     
     
 class IPAdapterPlus(IPAdapter):

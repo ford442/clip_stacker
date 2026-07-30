@@ -8,10 +8,14 @@
  *
  * ## Backends
  *
- * | Class                   | Backend                            | Status   |
- * |-------------------------|------------------------------------|----------|
- * | HuggingFaceRifeBackend  | `1inkusFace/RIFE` HuggingFace Space | Live     |
- * | SelfHostedRifeBackend   | Self-hosted / Contabo endpoint      | Planned  |
+ * | Class                   | Backend                             | Status                      |
+ * |-------------------------|-------------------------------------|-----------------------------|
+ * | HuggingFaceRifeBackend  | `1inkusFace/RIFE` HuggingFace Space | Live                        |
+ * | SelfHostedRifeBackend   | Self-hosted / Contabo endpoint      | Unshipped — never exercised |
+ *
+ * Note that nothing in the app currently uses this factory at all: `App.tsx`
+ * calls `processClipWithRIFE` from `./huggingface` directly. See the note on
+ * SelfHostedRifeBackend before wiring anything to it.
  *
  * ## Usage
  *
@@ -130,10 +134,21 @@ export class HuggingFaceRifeBackend implements VideoProcessingBackend {
 /**
  * RIFE backend for a self-hosted endpoint (e.g. on a Contabo GPU server).
  *
- * This is a placeholder for the future self-hosted pipeline. When implemented,
- * it will POST the video blob to `endpointUrl/predict` and expect the same
- * response shape as the HuggingFace Space API so the calling code needs no
- * changes.
+ * ## UNSHIPPED — not reachable in the running app
+ *
+ * The method bodies below are written out, which makes this read as live code.
+ * It is not. Nothing constructs it in production: `createVideoProcessingBackend`
+ * only returns it when handed a non-empty URL, and no caller ever passes one.
+ * (`App.tsx` bypasses this abstraction entirely and imports
+ * `processClipWithRIFE` directly.)
+ *
+ * It has also never run against a real server — its unit tests assert the
+ * request shape against a mocked `fetch`, which says nothing about whether a
+ * server implementing the contract below would actually work with it.
+ *
+ * Before relying on this: stand up an endpoint, wire a configuration path that
+ * supplies the URL, and test it end to end. Until then treat the contract as a
+ * proposal.
  *
  * Expected API contract (to be implemented on the server):
  *   POST <endpointUrl>/predict
