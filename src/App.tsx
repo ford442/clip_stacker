@@ -24,6 +24,12 @@ import {
   type MediaLibraryItem,
 } from "./utils/project";
 import { clampClipVolume } from "./utils/audioVolume";
+import {
+  clipDisplayPixelsToNormalized,
+  DEFAULT_TEXT_OVERLAY_X,
+  DEFAULT_TEXT_OVERLAY_Y,
+} from "./utils/overlayCoords";
+import { parseCanvasSize } from "./utils/pipPreset";
 import { findMatchingClipIndex } from "./utils/clipMatching";
 import { DEFAULT_SCROLL_SPEED } from "./utils/textOverlay";
 import { reindexTransitions, shiftTransitionsForInsert } from "./utils/transitions";
@@ -142,6 +148,7 @@ export function App() {
   } = useEditHistory();
   useClipBeatAnalysis(clips, setClips);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
+  const [selectedTextOverlayId, setSelectedTextOverlayId] = useState<string | null>(null);
   const [showMemoryWarning, setShowMemoryWarning] = useState(false);
   const pendingRenderRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -950,9 +957,19 @@ export function App() {
       if (selectedClipId) {
         pushHistoryDebounced(`inspector:${selectedClipId}`);
       }
+      const layoutCanvas = parseCanvasSize(exportSettings.outputResolution);
       setClips((prev) =>
         prev.map((clip) => {
           if (clip.id !== selectedClipId) return clip;
+          const layout = clipDisplayPixelsToNormalized(
+            {
+              x: Number(values.x || 0),
+              y: Number(values.y || 0),
+              width: Math.max(0, Number(values.width || 0)),
+              height: Math.max(0, Number(values.height || 0)),
+            },
+            layoutCanvas,
+          );
           const updated: Clip = {
             ...clip,
             title: values.title.trim() || clip.file.name,
@@ -963,10 +980,10 @@ export function App() {
             audioFadeIn: Number(values.audioFadeIn || 0),
             audioFadeOut: Number(values.audioFadeOut || 0),
             layerIndex: Math.max(0, Math.round(Number(values.layerIndex || 0))),
-            x: Number(values.x || 0),
-            y: Number(values.y || 0),
-            width: Math.max(0, Number(values.width || 0)),
-            height: Math.max(0, Number(values.height || 0)),
+            x: layout.x,
+            y: layout.y,
+            width: layout.width,
+            height: layout.height,
             opacity: Math.min(1, Math.max(0, Number(values.opacity ?? 1))),
             volume: clampClipVolume(Number(values.volume ?? 1)),
           };
@@ -975,7 +992,7 @@ export function App() {
         }),
       );
     },
-    [selectedClipId, pushHistoryDebounced],
+    [selectedClipId, pushHistoryDebounced, exportSettings.outputResolution],
   );
 
   const handleClipKeyframesChange = useCallback(
@@ -1294,8 +1311,8 @@ export function App() {
       text: "Add your text here",
       fontsize: 40,
       fontcolor: "#ffffff",
-      x: 50,
-      y: 650,
+      x: DEFAULT_TEXT_OVERLAY_X,
+      y: DEFAULT_TEXT_OVERLAY_Y,
       scrolling: false,
       scrollSpeed: DEFAULT_SCROLL_SPEED,
       box: true,
@@ -1315,7 +1332,28 @@ export function App() {
   const handleDeleteTextOverlay = useCallback((id: string) => {
     pushHistory();
     setTextOverlays((prev) => prev.filter((o) => o.id !== id));
+    setSelectedTextOverlayId((prev) => (prev === id ? null : prev));
   }, [pushHistory]);
+
+  const handlePreviewDragStart = useCallback(() => {
+    pushHistory();
+  }, [pushHistory]);
+
+  const handleClipLayoutCommit = useCallback(
+    (clipId: string, clip: Clip, _editedKeyframe: boolean) => {
+      setClips((prev) => prev.map((item) => (item.id === clipId ? clip : item)));
+    },
+    [setClips],
+  );
+
+  const handleTextOverlayLayoutCommit = useCallback(
+    (overlayId: string, overlay: TextOverlay, _editedKeyframe: boolean) => {
+      setTextOverlays((prev) =>
+        prev.map((item) => (item.id === overlayId ? overlay : item)),
+      );
+    },
+    [setTextOverlays],
+  );
 
   // Helper functions for keyboard shortcuts
   // Memoize timeline clips computation to avoid unnecessary recalculation during re-renders
@@ -1491,6 +1529,13 @@ export function App() {
           colorGrade={colorGrade}
           outputUrl={outputUrl}
           exportFilename={exportSettings.filename}
+          selectedClipId={selectedClipId}
+          selectedTextOverlayId={selectedTextOverlayId}
+          onSelectClip={setSelectedClipId}
+          onSelectTextOverlay={setSelectedTextOverlayId}
+          onClipLayoutCommit={handleClipLayoutCommit}
+          onTextOverlayLayoutCommit={handleTextOverlayLayoutCommit}
+          onPreviewDragStart={handlePreviewDragStart}
         />
         <Inspector
           exportSettings={exportSettings}
@@ -1518,6 +1563,9 @@ export function App() {
 
       <TextOverlayPanel
         totalDuration={previewTotalDuration}
+        exportSettings={exportSettings}
+        selectedOverlayId={selectedTextOverlayId}
+        onSelectOverlay={setSelectedTextOverlayId}
         onAdd={handleAddTextOverlay}
         onUpdate={handleUpdateTextOverlay}
         onDelete={handleDeleteTextOverlay}

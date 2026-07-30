@@ -16,6 +16,21 @@ import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from './media';
 import { clampClipVolume } from './audioVolume';
 import { sanitizeFfmpegColor } from './color';
 import {
+  clampPixelRectToCanvas,
+  DEFAULT_TEXT_OVERLAY_X,
+  DEFAULT_TEXT_OVERLAY_Y,
+  formatLayoutReferenceResolution,
+  isPixelRectOffCanvas,
+  migrateClipKeyframesToNormalized,
+  migratePixelClipLayout,
+  migratePixelTextOverlay,
+  migrateTextOverlayKeyframesToNormalized,
+  parseLayoutReferenceResolution,
+  resolveClipLayoutPixels,
+  resolveTextOverlayPixels,
+  type CanvasSize,
+} from './overlayCoords';
+import {
   clampScrollSpeed,
   DEFAULT_FONT_ID,
   DEFAULT_SCROLL_SPEED,
@@ -64,34 +79,28 @@ export const DEFAULT_CANVAS_HEIGHT = 720;
  * positioned fully off-screen.
  */
 export function clampOverlayPosition(
-  clip: Pick<Clip, 'x' | 'y' | 'width' | 'height'>,
+  clip: Pick<Clip, 'x' | 'y' | 'width' | 'height' | 'videoWidth' | 'videoHeight'>,
   canvasWidth: number = DEFAULT_CANVAS_WIDTH,
   canvasHeight: number = DEFAULT_CANVAS_HEIGHT,
 ): { x: number; y: number } {
-  const overlayW = clip.width && clip.width > 0 ? clip.width : canvasWidth;
-  const overlayH = clip.height && clip.height > 0 ? clip.height : canvasHeight;
-  const x = clip.x ?? 0;
-  const y = clip.y ?? 0;
-  return {
-    x: Math.min(Math.max(x, -(overlayW - 1)), canvasWidth - 1),
-    y: Math.min(Math.max(y, -(overlayH - 1)), canvasHeight - 1),
-  };
+  const canvas: CanvasSize = { width: canvasWidth, height: canvasHeight };
+  const rect = resolveClipLayoutPixels(clip, canvas);
+  const clamped = clampPixelRectToCanvas(rect, canvas);
+  return { x: clamped.x, y: clamped.y };
 }
 
 /**
- * Returns true if a PiP overlay's configured x/y position would place it
+ * Returns true if a PiP overlay's configured position would place it
  * entirely outside the canvas (i.e. fully invisible in the render).
  */
 export function isOverlayOffCanvas(
-  clip: Pick<Clip, 'x' | 'y' | 'width' | 'height'>,
+  clip: Pick<Clip, 'x' | 'y' | 'width' | 'height' | 'videoWidth' | 'videoHeight'>,
   canvasWidth: number = DEFAULT_CANVAS_WIDTH,
   canvasHeight: number = DEFAULT_CANVAS_HEIGHT,
 ): boolean {
-  const overlayW = clip.width && clip.width > 0 ? clip.width : canvasWidth;
-  const overlayH = clip.height && clip.height > 0 ? clip.height : canvasHeight;
-  const x = clip.x ?? 0;
-  const y = clip.y ?? 0;
-  return x + overlayW <= 0 || x >= canvasWidth || y + overlayH <= 0 || y >= canvasHeight;
+  const canvas: CanvasSize = { width: canvasWidth, height: canvasHeight };
+  const rect = resolveClipLayoutPixels(clip, canvas);
+  return isPixelRectOffCanvas(rect, canvas);
 }
 
 export function sanitizeClipAdjustments(clip: Clip): void {
@@ -117,6 +126,7 @@ export function serializeProject(
   clipGroups: ClipGroup[] = [],
   colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
   tracks: Track[] = [],
+  layoutReferenceResolution?: string,
 ): Project {
   const serializedTracks: SerializedTrack[] = tracks.map((track) => ({
     id: track.id,
@@ -133,6 +143,9 @@ export function serializeProject(
 
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
+    ...(layoutReferenceResolution
+      ? { layoutReferenceResolution }
+      : {}),
     ...(serializedTracks.length > 0 ? { tracks: serializedTracks } : {}),
     clips: clips.map((clip): SerializedClip => ({
       id: clip.id,
@@ -662,6 +675,11 @@ export async function applyProjectData(
     throw new Error('Project file is invalid.');
   }
 
+  const usesPixelLayout = (project.schemaVersion ?? 1) < PROJECT_SCHEMA_VERSION;
+  const layoutReference = parseLayoutReferenceResolution(
+    project.layoutReferenceResolution,
+  );
+
   const byName = new Map(clips.map((clip) => [clip.file.name, clip]));
   const mapped: Clip[] = [];
   let skippedCount = 0;
@@ -787,7 +805,18 @@ export async function applyProjectData(
     if (savedClip.height != null) liveClip.height = Number(savedClip.height);
     if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
     if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
-    if (savedClip.keyframes) liveClip.keyframes = savedClip.keyframes;
+    if (usesPixelLayout && (savedClip.layerIndex ?? 0) > 0) {
+      const migrated = migratePixelClipLayout(liveClip, layoutReference);
+      liveClip.x = migrated.x;
+      liveClip.y = migrated.y;
+      liveClip.width = migrated.width;
+      liveClip.height = migrated.height;
+    }
+    if (savedClip.keyframes) {
+      liveClip.keyframes = usesPixelLayout
+        ? migrateClipKeyframesToNormalized(savedClip.keyframes, layoutReference)
+        : savedClip.keyframes;
+    }
     if (savedClip.stillImage) liveClip.stillImage = savedClip.stillImage;
     if (Array.isArray(savedClip.beatTimestamps) && savedClip.beatTimestamps.length > 0) {
       liveClip.beatTimestamps = savedClip.beatTimestamps
@@ -888,8 +917,8 @@ export async function applyProjectData(
           text: String(o.text ?? ''),
           fontsize: Number(o.fontsize ?? 40),
           fontcolor,
-          x: Number(o.x ?? 50),
-          y: Number(o.y ?? 650),
+          x: Number(o.x ?? DEFAULT_TEXT_OVERLAY_X),
+          y: Number(o.y ?? DEFAULT_TEXT_OVERLAY_Y),
           scrolling: Boolean(o.scrolling),
           scrollSpeed: clampScrollSpeed(Number(o.scrollSpeed ?? DEFAULT_SCROLL_SPEED)),
           box: Boolean(o.box),
@@ -898,7 +927,19 @@ export async function applyProjectData(
           ...(fill ? { fill } : {}),
           ...(shaderId ? { shaderId } : {}),
           ...(shaderParams ? { shaderParams } : {}),
+          ...(o.keyframes
+            ? {
+                keyframes: usesPixelLayout
+                  ? migrateTextOverlayKeyframesToNormalized(o.keyframes, layoutReference)
+                  : o.keyframes,
+              }
+            : {}),
         };
+      })
+      .map((overlay) => {
+        if (!usesPixelLayout) return overlay;
+        const migrated = migratePixelTextOverlay(overlay, layoutReference);
+        return { ...overlay, ...migrated };
       })
     : [];
 

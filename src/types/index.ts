@@ -70,13 +70,13 @@ export interface Clip {
   // ---------------------------------------------------------------------------
   /** Stacking order: 0 = base layer (sequential), 1+ = overlay on top of base. */
   layerIndex?: number;
-  /** Overlay X position in pixels from the top-left of the output canvas. */
+  /** Overlay X position as a fraction of output width (0 = left edge). */
   x?: number;
-  /** Overlay Y position in pixels from the top-left of the output canvas. */
+  /** Overlay Y position as a fraction of output height (0 = top edge). */
   y?: number;
-  /** Overlay width in pixels; 0 means preserve the original clip width. */
+  /** Overlay width as a fraction of output width; 0 = preserve source width. */
   width?: number;
-  /** Overlay height in pixels; 0 means preserve the original clip height. */
+  /** Overlay height as a fraction of output height; 0 = preserve source height. */
   height?: number;
   /** Overlay opacity from 0.0 (transparent) to 1.0 (fully opaque). */
   opacity?: number;
@@ -301,9 +301,9 @@ export interface TextOverlay {
    * If omitted or unknown at load time, falls back to the default (Roboto Regular).
    */
   font?: string;
-  /** X position in pixels from left (ignored for scrolling text, which starts off-screen right) */
+  /** X position as a fraction of output width (ignored for scrolling text). */
   x: number;
-  /** Y position in pixels from top */
+  /** Y position as a fraction of output height. */
   y: number;
   /** When true the text scrolls right-to-left (news-ticker style) */
   scrolling: boolean;
@@ -342,7 +342,7 @@ export interface SerializedClipGroup {
 }
 
 /** Current on-disk project schema. Absent / 0 = legacy flat clip list. */
-export const PROJECT_SCHEMA_VERSION = 1;
+export const PROJECT_SCHEMA_VERSION = 2;
 
 export type TrackKind = 'video' | 'audio' | 'text';
 
@@ -383,6 +383,11 @@ export interface Project {
   clipGroups?: SerializedClipGroup[];
   transitions?: SerializedTransition[];
   textOverlays?: TextOverlay[];
+  /**
+   * Output resolution used when layout coordinates were saved as pixels (schema v1).
+   * Schema v2 stores normalized coordinates; this field documents the migration source.
+   */
+  layoutReferenceResolution?: string;
   /** Final-stage 3D LUT color grade applied on the WebGPU export path. */
   colorGrade?: import('../utils/lut').ColorGradeSettings;
   /**

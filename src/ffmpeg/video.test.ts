@@ -3,14 +3,17 @@ import type { Clip, ClipTransition, TextOverlay } from "../types";
 import { buildPipFilterComplex } from "./video";
 import { appendTextOverlayFilters } from "./core";
 
+const NW = 1280;
+const NH = 720;
+
 function createTestOverlay(id: string, overrides: Partial<TextOverlay> = {}): TextOverlay {
   return {
     id,
     text: "Hello",
     fontsize: 24,
     fontcolor: "white",
-    x: 10,
-    y: 10,
+    x: 10 / NW,
+    y: 10 / NH,
     scrolling: false,
     scrollSpeed: 0,
     box: false,
@@ -47,7 +50,7 @@ describe("buildPipFilterComplex", () => {
     const clips = [
       createTestClip("a", 5),
       createTestClip("b", 3),
-      createTestClip("pip", 4, { layerIndex: 1, x: 10, y: 20 }),
+      createTestClip("pip", 4, { layerIndex: 1, x: 10 / NW, y: 20 / NH }),
     ];
 
     const filterComplex = buildPipFilterComplex(clips);
@@ -62,7 +65,7 @@ describe("buildPipFilterComplex", () => {
     const clips = [
       createTestClip("a", 5),
       createTestClip("b", 3),
-      createTestClip("pip", 4, { layerIndex: 1, x: 10, y: 20 }),
+      createTestClip("pip", 4, { layerIndex: 1, x: 10 / NW, y: 20 / NH }),
     ];
     const transitions: ClipTransition[] = [
       { afterClipIndex: 1, type: "dissolve", duration: 0.5 },
@@ -107,7 +110,7 @@ describe("buildPipFilterComplex", () => {
   it("mutes overlay audio when volume is 0", () => {
     const clips = [
       createTestClip("a", 5),
-      createTestClip("pip", 4, { layerIndex: 1, x: 10, y: 20, volume: 0 }),
+      createTestClip("pip", 4, { layerIndex: 1, x: 10 / NW, y: 20 / NH, volume: 0 }),
     ];
 
     const filterComplex = buildPipFilterComplex(clips);
@@ -122,7 +125,7 @@ describe("buildPipFilterComplex", () => {
   it("applies a volume filter to overlay audio when volume differs from 1", () => {
     const clips = [
       createTestClip("a", 5),
-      createTestClip("pip", 4, { layerIndex: 1, x: 10, y: 20, volume: 0.5 }),
+      createTestClip("pip", 4, { layerIndex: 1, x: 10 / NW, y: 20 / NH, volume: 0.5 }),
     ];
 
     const filterComplex = buildPipFilterComplex(clips);

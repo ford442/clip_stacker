@@ -104,10 +104,10 @@ describe('compositeFrame', () => {
     const base = makeClip('base');
     const pip = makeClip('pip', {
       layerIndex: 1,
-      x: 128,
-      y: 72,
-      width: 320,
-      height: 180,
+      x: 128 / 1280,
+      y: 72 / 720,
+      width: 320 / 1280,
+      height: 180 / 720,
       opacity: 0.5,
     });
     const plan = buildPreviewCompositionPlan([base, pip], [], [], [], undefined, 1);
@@ -176,8 +176,8 @@ describe('compositeFrame', () => {
         text: 'Hello',
         fontsize: 48,
         fontcolor: '0xffffff',
-        x: 100,
-        y: 50,
+        x: 100 / 1280,
+        y: 50 / 720,
         scrolling: false,
         scrollSpeed: 0,
         box: false,

@@ -1,5 +1,11 @@
 import type { Clip } from '../types';
 import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './project';
+import {
+  clipLayoutPixelsToNormalized,
+  type CanvasSize,
+} from './overlayCoords';
+
+export type { CanvasSize };
 
 /** Corner the one-click Picture-in-Picture preset snaps the overlay to. */
 export type PipCorner = 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -15,11 +21,6 @@ export interface PipRect {
 const PIP_WIDTH_RATIO = 0.25;
 /** Inset from the canvas edges, as a fraction of the canvas width (32px on a 1280px canvas). */
 const PIP_MARGIN_RATIO = 0.025;
-
-export interface CanvasSize {
-  width: number;
-  height: number;
-}
 
 /**
  * Parse an ExportSettings.outputResolution string ("1280x720") into a canvas size.
@@ -67,17 +68,23 @@ export function buildPipRect(
   const top = margin;
   const right = Math.max(0, canvas.width - width - margin);
   const bottom = Math.max(0, canvas.height - height - margin);
+  let pixels: PipRect;
   switch (corner) {
     case 'top-left':
-      return { x: left, y: top, width, height };
+      pixels = { x: left, y: top, width, height };
+      break;
     case 'top-right':
-      return { x: right, y: top, width, height };
+      pixels = { x: right, y: top, width, height };
+      break;
     case 'bottom-left':
-      return { x: left, y: bottom, width, height };
+      pixels = { x: left, y: bottom, width, height };
+      break;
     case 'bottom-right':
     default:
-      return { x: right, y: bottom, width, height };
+      pixels = { x: right, y: bottom, width, height };
+      break;
   }
+  return clipLayoutPixelsToNormalized(pixels, canvas) as PipRect;
 }
 
 /** Aspect ratio of a clip's source video, or undefined when the dimensions are unknown. */

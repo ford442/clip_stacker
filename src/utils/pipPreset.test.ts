@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Clip } from '../types';
+import { clipLayoutToDisplayPixels } from './overlayCoords';
 import { buildPipRect, clipAspectRatio, nextOverlayLayerIndex, parseCanvasSize } from './pipPreset';
 
 function makeClip(id: string, layerIndex?: number): Clip {
@@ -37,8 +38,11 @@ describe('nextOverlayLayerIndex', () => {
 });
 
 describe('buildPipRect', () => {
+  const canvas720 = { width: 1280, height: 720 };
+
   it('produces a 320x180 bottom-right overlay on a 720p canvas', () => {
-    expect(buildPipRect({ width: 1280, height: 720 }, 'bottom-right')).toEqual({
+    const normalized = buildPipRect(canvas720, 'bottom-right');
+    expect(clipLayoutToDisplayPixels(normalized, canvas720)).toEqual({
       x: 928,
       y: 508,
       width: 320,
@@ -47,31 +51,37 @@ describe('buildPipRect', () => {
   });
 
   it('places top-left at the margin', () => {
-    expect(buildPipRect({ width: 1280, height: 720 }, 'top-left')).toMatchObject({ x: 32, y: 32 });
+    const display = clipLayoutToDisplayPixels(
+      buildPipRect(canvas720, 'top-left'),
+      canvas720,
+    );
+    expect(display).toMatchObject({ x: 32, y: 32 });
   });
 
   it('scales with the canvas', () => {
-    const rect = buildPipRect({ width: 1920, height: 1080 }, 'top-right');
-    expect(rect.width).toBe(480);
-    expect(rect.height).toBe(270);
-    expect(rect.x).toBe(1920 - 480 - 48);
-    expect(rect.y).toBe(48);
+    const canvas = { width: 1920, height: 1080 };
+    const display = clipLayoutToDisplayPixels(buildPipRect(canvas, 'top-right'), canvas);
+    expect(display.width).toBe(480);
+    expect(display.height).toBe(270);
+    expect(display.x).toBe(1920 - 480 - 48);
+    expect(display.y).toBe(48);
   });
 
   it('honours the clip aspect ratio', () => {
-    expect(buildPipRect({ width: 1280, height: 720 }, 'bottom-right', 1)).toMatchObject({
-      width: 320,
-      height: 320,
-    });
+    const display = clipLayoutToDisplayPixels(
+      buildPipRect(canvas720, 'bottom-right', 1),
+      canvas720,
+    );
+    expect(display).toMatchObject({ width: 320, height: 320 });
   });
 
   it('keeps the overlay on canvas', () => {
     for (const corner of ['top-left', 'top-right', 'bottom-left', 'bottom-right'] as const) {
-      const rect = buildPipRect({ width: 1280, height: 720 }, corner);
-      expect(rect.x).toBeGreaterThanOrEqual(0);
-      expect(rect.y).toBeGreaterThanOrEqual(0);
-      expect(rect.x + rect.width).toBeLessThanOrEqual(1280);
-      expect(rect.y + rect.height).toBeLessThanOrEqual(720);
+      const display = clipLayoutToDisplayPixels(buildPipRect(canvas720, corner), canvas720);
+      expect(display.x).toBeGreaterThanOrEqual(0);
+      expect(display.y).toBeGreaterThanOrEqual(0);
+      expect(display.x + display.width).toBeLessThanOrEqual(1280);
+      expect(display.y + display.height).toBeLessThanOrEqual(720);
     }
   });
 });

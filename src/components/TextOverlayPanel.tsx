@@ -1,8 +1,18 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { usePlayheadTime } from "../hooks/usePlayheadTime";
-import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from "../types";
+import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes, ExportSettings } from "../types";
 import { useEditorTextOverlays } from "../store";
 import { isValidFfmpegColor } from "../utils/color";
+import {
+  layoutNormToPixelValue,
+  layoutPixelToNormValue,
+  TEXT_ANCHOR_LABELS,
+  textAnchorToNormalized,
+  textOverlayDisplayPixelsToNormalized,
+  textOverlayToDisplayPixels,
+  type TextAnchor,
+} from "../utils/overlayCoords";
+import { parseCanvasSize } from "../utils/pipPreset";
 import {
   BUNDLED_FONTS,
   estimateScrollCrossingSeconds,
@@ -16,6 +26,9 @@ import { KeyframeMiniEditor } from "./KeyframeMiniEditor";
 
 interface Props {
   totalDuration?: number;
+  exportSettings: ExportSettings;
+  selectedOverlayId?: string | null;
+  onSelectOverlay?: (id: string | null) => void;
   onAdd: () => string;
   onUpdate: (overlay: TextOverlay) => void;
   onDelete: (id: string) => void;
@@ -34,12 +47,16 @@ function formatOverlayListMeta(overlay: TextOverlay): string {
 
 function TextOverlayPanelImpl({
   totalDuration = 60,
+  exportSettings,
+  selectedOverlayId,
+  onSelectOverlay,
   onAdd,
   onUpdate,
   onDelete,
 }: Props) {
   const overlays = useEditorTextOverlays();
   const previewGlobalTime = usePlayheadTime() ?? 0;
+  const layoutCanvas = parseCanvasSize(exportSettings.outputResolution);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [activeKeyframeProp, setActiveKeyframeProp] =
     useState<TextAnimatableProp>("x");
@@ -51,13 +68,45 @@ function TextOverlayPanelImpl({
     node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [editingId, overlays.length]);
 
+  useEffect(() => {
+    if (selectedOverlayId) setEditingId(selectedOverlayId);
+  }, [selectedOverlayId]);
+
   const handleToggleEdit = (id: string) => {
-    setEditingId((prev) => (prev === id ? null : id));
+    setEditingId((prev) => {
+      const next = prev === id ? null : id;
+      onSelectOverlay?.(next);
+      return next;
+    });
   };
 
   const handleAdd = () => {
     const id = onAdd();
     setEditingId(id);
+    onSelectOverlay?.(id);
+  };
+
+  const setPixelPosition = (
+    overlay: TextOverlay,
+    field: "x" | "y",
+    pixelValue: number,
+  ) => {
+    const current = textOverlayToDisplayPixels(overlay, layoutCanvas);
+    const nextPixels = {
+      x: field === "x" ? pixelValue : current.x,
+      y: field === "y" ? pixelValue : current.y,
+    };
+    const normalized = textOverlayDisplayPixelsToNormalized(nextPixels, layoutCanvas);
+    onUpdate({ ...overlay, ...normalized });
+  };
+
+  const applyAnchor = (overlay: TextOverlay, anchor: TextAnchor) => {
+    const size = {
+      width: (overlay.fontsize * overlay.text.length * 0.55) / layoutCanvas.width,
+      height: overlay.fontsize / layoutCanvas.height,
+    };
+    const position = textAnchorToNormalized(anchor, size.width, size.height);
+    onUpdate({ ...overlay, ...position });
   };
 
   const set = (
@@ -320,21 +369,21 @@ function TextOverlayPanelImpl({
                         <input
                           type="number"
                           step="1"
-                          value={overlay.x}
+                          value={textOverlayToDisplayPixels(overlay, layoutCanvas).x}
                           onChange={(e) =>
-                            set(overlay, "x", Number(e.target.value))
+                            setPixelPosition(overlay, "x", Number(e.target.value))
                           }
                         />
                       </label>
                     )}
-                    <label title="Y position in pixels from top (e.g. 670 for near-bottom in 720p)">
+                    <label title="Y position in pixels from top">
                       Y offset (px)
                       <input
                         type="number"
                         step="1"
-                        value={overlay.y}
+                        value={textOverlayToDisplayPixels(overlay, layoutCanvas).y}
                         onChange={(e) =>
-                          set(overlay, "y", Number(e.target.value))
+                          setPixelPosition(overlay, "y", Number(e.target.value))
                         }
                       />
                     </label>
@@ -357,6 +406,32 @@ function TextOverlayPanelImpl({
                       </label>
                     )}
                   </div>
+
+                  {!overlay.scrolling && (
+                    <>
+                      <div
+                        className="inspector-group-label"
+                        style={{ marginTop: "0.5rem" }}
+                      >
+                        Anchor preset
+                      </div>
+                      <div className="tol-anchor-grid">
+                        {(Object.keys(TEXT_ANCHOR_LABELS) as TextAnchor[]).map(
+                          (anchor) => (
+                            <button
+                              key={anchor}
+                              type="button"
+                              className="btn-secondary tol-anchor-btn"
+                              title={TEXT_ANCHOR_LABELS[anchor]}
+                              onClick={() => applyAnchor(overlay, anchor)}
+                            >
+                              {TEXT_ANCHOR_LABELS[anchor]}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    </>
+                  )}
 
                   <div
                     className="inspector-group-label"
@@ -430,12 +505,23 @@ function TextOverlayPanelImpl({
                         }
                         duration={Math.max(totalDuration, 0.1)}
                         currentTime={previewGlobalTime}
-                        keyframes={overlay.keyframes?.[activeKeyframeProp]}
+                        keyframes={
+                          activeKeyframeProp === "x" || activeKeyframeProp === "y"
+                            ? overlay.keyframes?.[activeKeyframeProp]?.map((key) => ({
+                                ...key,
+                                value: layoutNormToPixelValue(
+                                  activeKeyframeProp,
+                                  key.value,
+                                  layoutCanvas,
+                                ),
+                              }))
+                            : overlay.keyframes?.[activeKeyframeProp]
+                        }
                         defaultValue={
                           activeKeyframeProp === "x"
-                            ? overlay.x
+                            ? layoutNormToPixelValue("x", overlay.x, layoutCanvas)
                             : activeKeyframeProp === "y"
-                              ? overlay.y
+                              ? layoutNormToPixelValue("y", overlay.y, layoutCanvas)
                               : 1
                         }
                         min={activeKeyframeProp === "opacity" ? 0 : undefined}
@@ -445,7 +531,18 @@ function TextOverlayPanelImpl({
                           const next: TextOverlayKeyframes = {
                             ...(overlay.keyframes ?? {}),
                           };
-                          if (track?.length) next[activeKeyframeProp] = track;
+                          const storedTrack =
+                            activeKeyframeProp === "x" || activeKeyframeProp === "y"
+                              ? track?.map((key) => ({
+                                  ...key,
+                                  value: layoutPixelToNormValue(
+                                    activeKeyframeProp,
+                                    key.value,
+                                    layoutCanvas,
+                                  ),
+                                }))
+                              : track;
+                          if (storedTrack?.length) next[activeKeyframeProp] = storedTrack;
                           else delete next[activeKeyframeProp];
                           onUpdate({
                             ...overlay,
@@ -454,12 +551,18 @@ function TextOverlayPanelImpl({
                           });
                         }}
                       />
+                      {textOverlayHasKeyframes(overlay) && (
+                        <p className="inspector-hint">
+                          Dragging on the preview edits the keyframe at the current playhead when
+                          position is animated.
+                        </p>
+                      )}
                     </div>
                   </details>
 
                   <p className="inspector-hint" style={{ marginTop: "0.5rem" }}>
-                    Font is burned in at export time. For 1280×720 output,
-                    Y=670 places text near the bottom.
+                    Drag overlays directly on the preview, or enter pixel offsets above.
+                    Positions are stored relative to the export resolution.
                   </p>
                 </div>
               )}

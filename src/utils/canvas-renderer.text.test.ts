@@ -54,8 +54,8 @@ function overlay(over: Partial<TextOverlay> = {}): TextOverlay {
     text: 'Hi',
     fontsize: 48,
     fontcolor: 'white',
-    x: 100,
-    y: 50,
+    x: 100 / 1280,
+    y: 50 / 720,
     scrolling: false,
     scrollSpeed: 20,
     box: false,
@@ -80,7 +80,7 @@ function draw(overlays: TextOverlay[], globalTime: number) {
 
 describe('drawTextOverlays', () => {
   it('draws a static overlay at its configured position and color', () => {
-    const calls = draw([overlay({ fontcolor: '0xffcc00', x: 120, y: 60 })], 1);
+    const calls = draw([overlay({ fontcolor: '0xffcc00', x: 120 / 1280, y: 60 / 720 })], 1);
     const text = calls.filter((c) => c[0] === 'fillText');
     expect(text).toHaveLength(1);
     // 0xRRGGBB normalized to CSS hex, alpha 1, drawn at (120, 60).
@@ -107,8 +107,8 @@ describe('drawTextOverlays', () => {
         overlay({
           keyframes: {
             x: [
-              { t: 0, value: 100 },
-              { t: 2, value: 200 },
+              { t: 0, value: 100 / 1280 },
+              { t: 2, value: 200 / 1280 },
             ],
           },
         }),

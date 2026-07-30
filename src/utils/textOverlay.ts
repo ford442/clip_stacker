@@ -10,6 +10,11 @@
 
 import type { TextOverlay } from '../types';
 import { isValidFfmpegColor } from './color';
+import { resolveTextOverlayPixels } from './overlayCoords';
+import {
+  DEFAULT_CANVAS_HEIGHT,
+  DEFAULT_CANVAS_WIDTH,
+} from './project';
 import { resolvePublicAssetUrl } from './publicAssetUrl';
 
 /** Virtual font filename written to the FFmpeg VFS before rendering. */
@@ -177,6 +182,8 @@ export function resolveFontFileForOverlay(overlay: TextOverlay): string {
 export function buildDrawtextFilter(
   overlay: TextOverlay,
   fontFile?: string,
+  canvasWidth = DEFAULT_CANVAS_WIDTH,
+  canvasHeight = DEFAULT_CANVAS_HEIGHT,
 ): string {
   if (!isValidFfmpegColor(overlay.fontcolor)) {
     throw new Error(
@@ -191,9 +198,14 @@ export function buildDrawtextFilter(
     );
   }
 
+  const { x: pixelX, y: pixelY } = resolveTextOverlayPixels(overlay, {
+    width: canvasWidth,
+    height: canvasHeight,
+  });
+
   const x = overlay.scrolling
     ? buildScrollXExpression(overlay.scrollSpeed)
-    : String(overlay.x);
+    : String(Math.round(pixelX));
 
   const resolvedFontFile = fontFile ?? resolveFontFileForOverlay(overlay);
 
@@ -201,7 +213,7 @@ export function buildDrawtextFilter(
     `fontfile=${resolvedFontFile}`,
     `text='${escapeDrawtext(overlay.text)}'`,
     `x=${x}`,
-    `y=${overlay.y}`,
+    `y=${Math.round(pixelY)}`,
     `fontsize=${overlay.fontsize}`,
     `fontcolor=${overlay.fontcolor}`,
   ];

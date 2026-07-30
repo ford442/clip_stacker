@@ -24,13 +24,13 @@ describe('animatedLayout', () => {
       layerIndex: 1,
       x: 0,
       y: 0,
-      width: 200,
-      height: 100,
+      width: 200 / 1280,
+      height: 100 / 720,
       opacity: 1,
       keyframes: {
         x: [
           { t: 0, value: 0 },
-          { t: 2, value: 100 },
+          { t: 2, value: 100 / 1280 },
         ],
       },
     };
@@ -49,7 +49,7 @@ describe('animatedLayout', () => {
         fontsize: 24,
         fontcolor: '#fff',
         x: 0,
-        y: 100,
+        y: 100 / 720,
         scrolling: false,
         scrollSpeed: 20,
         box: false,
@@ -57,13 +57,14 @@ describe('animatedLayout', () => {
         keyframes: {
           x: [
             { t: 0, value: 0 },
-            { t: 10, value: 200 },
+            { t: 10, value: 200 / 1280 },
           ],
         },
       },
       5,
       10,
       1280,
+      720,
       1,
     );
     expect(layout.x).toBe(100);

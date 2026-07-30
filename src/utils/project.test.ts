@@ -223,20 +223,21 @@ describe("utils/project", () => {
       expect(project.clipGroups![0].activeVariant).toBe("A");
     });
 
-    it("should serialize PiP properties", () => {
+    it("should serialize PiP properties as normalized coordinates", () => {
       const clip = createTestClip("clip1", 5);
       clip.layerIndex = 1;
-      clip.x = 100;
-      clip.y = 200;
-      clip.width = 300;
-      clip.height = 400;
+      clip.x = 100 / 1280;
+      clip.y = 200 / 720;
+      clip.width = 300 / 1280;
+      clip.height = 400 / 720;
       clip.opacity = 0.8;
       const project = serializeProject([clip], [], [], []);
+      expect(project.schemaVersion).toBe(2);
       expect(project.clips[0].layerIndex).toBe(1);
-      expect(project.clips[0].x).toBe(100);
-      expect(project.clips[0].y).toBe(200);
-      expect(project.clips[0].width).toBe(300);
-      expect(project.clips[0].height).toBe(400);
+      expect(project.clips[0].x).toBeCloseTo(100 / 1280);
+      expect(project.clips[0].y).toBeCloseTo(200 / 720);
+      expect(project.clips[0].width).toBeCloseTo(300 / 1280);
+      expect(project.clips[0].height).toBeCloseTo(400 / 720);
       expect(project.clips[0].opacity).toBe(0.8);
     });
 
@@ -650,10 +651,49 @@ describe("utils/project", () => {
       expect(result.clips[0].audioFadeOut).toBe(0.15);
     });
 
-    it("should apply PiP properties when restoring", async () => {
+    it("should apply PiP properties when restoring normalized layout", async () => {
       const sourceClips = [createTestClip("source", 10)];
 
       const project: Project = {
+        schemaVersion: 2,
+        clips: [
+          {
+            id: "saved",
+            title: "Saved",
+            kind: "video",
+            duration: 10,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: "source.mp4",
+            layerIndex: 1,
+            x: 100 / 1280,
+            y: 150 / 720,
+            width: 300 / 1280,
+            height: 200 / 720,
+            opacity: 0.7,
+          },
+        ],
+      };
+
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.clips[0].layerIndex).toBe(1);
+      expect(result.clips[0].x).toBeCloseTo(100 / 1280);
+      expect(result.clips[0].y).toBeCloseTo(150 / 720);
+      expect(result.clips[0].width).toBeCloseTo(300 / 1280);
+      expect(result.clips[0].height).toBeCloseTo(200 / 720);
+      expect(result.clips[0].opacity).toBe(0.7);
+    });
+
+    it("should migrate legacy pixel PiP coordinates on load", async () => {
+      const sourceClips = [createTestClip("source", 10)];
+
+      const project: Project = {
+        schemaVersion: 1,
+        layoutReferenceResolution: "1280x720",
         clips: [
           {
             id: "saved",
@@ -672,18 +712,29 @@ describe("utils/project", () => {
             y: 150,
             width: 300,
             height: 200,
-            opacity: 0.7,
+          },
+        ],
+        textOverlays: [
+          {
+            id: "text1",
+            text: "Hello",
+            fontsize: 40,
+            fontcolor: "#ffffff",
+            x: 50,
+            y: 650,
+            scrolling: false,
+            scrollSpeed: 20,
+            box: false,
+            boxColor: "black@0.5",
           },
         ],
       };
 
       const result = await applyProjectData(project, sourceClips);
-      expect(result.clips[0].layerIndex).toBe(1);
-      expect(result.clips[0].x).toBe(100);
-      expect(result.clips[0].y).toBe(150);
-      expect(result.clips[0].width).toBe(300);
-      expect(result.clips[0].height).toBe(200);
-      expect(result.clips[0].opacity).toBe(0.7);
+      expect(result.clips[0].x).toBeCloseTo(100 / 1280);
+      expect(result.clips[0].y).toBeCloseTo(150 / 720);
+      expect(result.textOverlays[0].x).toBeCloseTo(50 / 1280);
+      expect(result.textOverlays[0].y).toBeCloseTo(650 / 720);
     });
 
     it('should restore keyframes and stillImage from saved project', async () => {
