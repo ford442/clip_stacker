@@ -40,7 +40,10 @@ torch.backends.cuda.preferred_blas_library="cublas"
 torch.backends.cuda.preferred_linalg_library="cusolver"
 torch.set_float32_matmul_precision("highest")
 
+import contextlib
+import functools
 import random
+import threading
 import uuid
 import gradio as gr
 import numpy as np
@@ -195,20 +198,42 @@ def uploadNote(prompt,num_inference_steps,guidance_scale,timestamp):
         f.write(f"Model Scheduler: Euler_a all_custom before cuda \n")
         f.write(f"Model VAE: sdxl-vae to bfloat safetensor=false before cuda then attn_proc / scale factor 8 \n")
         f.write(f"Model UNET: ford442/RealVisXL_V5.0_BF16 \n")
-    upload_to_ftp(filename)
+    return filename
 
-# ----------------- CHANGE START -----------------
-# We no longer need this function as gr.Image will act as its own preview.
-# def display_image(file):
-#     if file is not None:
-#         return Image.open(file.name)
-#     else:
-#         return None
-# ----------------- CHANGE END -------------------
+@contextlib.contextmanager
+def matmul_precision(precision):
+    """Scope a global torch setting so run N behaves like run 1."""
+    previous = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision(precision)
+    try:
+        yield
+    finally:
+        torch.set_float32_matmul_precision(previous)
 
 
-@spaces.GPU(duration=40)
-def generate_30(
+def open_image_prompt(path):
+    """Load an uploaded image prompt, or None if the slot is empty.
+
+    No pre-resize: CLIPImageProcessor resizes to 224 regardless, so scaling to
+    the generation size here would only cost time — and at large widths would
+    mean upsampling a bitmap purely to throw the extra pixels away.
+    """
+    if path is None:
+        return None
+    return Image.open(path).convert('RGB')
+
+
+def upload_in_background(*filenames):
+    """Push results to FTP off the GPU-held path.
+
+    Uploading inside @spaces.GPU burns ZeroGPU quota on network wait for no
+    benefit; the files are already on disk by this point.
+    """
+    for filename in filenames:
+        threading.Thread(target=upload_to_ftp, args=(filename,), daemon=True).start()
+
+
+def run_generation(
     prompt: str = "",
     negative_prompt: str = "",
     use_negative_prompt: bool = False,
@@ -217,14 +242,11 @@ def generate_30(
     height: int = 768,
     guidance_scale: float = 4,
     num_inference_steps: int = 125,
-    # ----------------- CHANGE START -----------------
-    # Changed default from gr.File() to None. The input will be a string filepath.
     latent_file = None,
     latent_file_2 = None,
     latent_file_3 = None,
     latent_file_4 = None,
     latent_file_5 = None,
-    # ----------------- CHANGE END -------------------
     text_scale: float = 1.0,
     ip_scale: float = 1.0,
     latent_file_1_scale: float = 1.0,
@@ -232,286 +254,97 @@ def generate_30(
     latent_file_3_scale: float = 1.0,
     latent_file_4_scale: float = 1.0,
     latent_file_5_scale: float = 1.0,
+    combine_mode: str = "mean",
     samples=1,
-    progress=gr.Progress(track_tqdm=True)  # Add progress as a keyword argument
+    progress=gr.Progress(track_tqdm=True)
 ):
-    pipe.text_encoder=text_encoder
-    pipe.text_encoder_2=text_encoder_2
+    """The one generate implementation. The @spaces.GPU wrappers below differ
+    only in their duration budget."""
+    if latent_file is None:
+        print('-- IMAGE REQUIRED --')
+        return []
+
+    pipe.text_encoder = text_encoder
+    pipe.text_encoder_2 = text_encoder_2
     seed = random.randint(0, MAX_SEED)
-    generator = torch.Generator(device='cuda').manual_seed(seed)
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
-    
-    # ----------------- CHANGE START -----------------
-    # We now check if latent_file (which is a string path) is not None.
-    # And we open it directly, instead of using latent_file.name
-    if latent_file is not None:  # Check if a latent file is provided
-        sd_image_a = Image.open(latent_file).convert('RGB') # Use latent_file directly
-        sd_image_a.resize((height,width), Image.LANCZOS)
-        if latent_file_2 is not None:  # Check if a latent file is provided
-            sd_image_b = Image.open(latent_file_2).convert('RGB') # Use latent_file_2 directly
-            sd_image_b.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_b = None
-        if latent_file_3 is not None:  # Check if a latent file is provided
-            sd_image_c = Image.open(latent_file_3).convert('RGB') # Use latent_file_3 directly
-            sd_image_c.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_c = None
-        if latent_file_4 is not None:  # Check if a latent file is provided
-            sd_image_d = Image.open(latent_file_4).convert('RGB') # Use latent_file_4 directly
-            sd_image_d.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_d = None
-        if latent_file_5 is not None:  # Check if a latent file is provided
-            sd_image_e = Image.open(latent_file_5).convert('RGB') # Use latent_file_5 directly
-            sd_image_e.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_e = None
-    # ----------------- CHANGE END -------------------
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename= f'rv_IP_{timestamp}.png'
-        print("-- using image file --")
-        print('-- generating image --')
-        sd_image = ip_model.generate(
-                pil_image_1=sd_image_a,
-                pil_image_2=sd_image_b,
-                pil_image_3=sd_image_c,
-                pil_image_4=sd_image_d,
-                pil_image_5=sd_image_e,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                text_scale=text_scale,
-                ip_scale=ip_scale,
-                scale_1=latent_file_1_scale,
-                scale_2=latent_file_2_scale,
-                scale_3=latent_file_3_scale,
-                scale_4=latent_file_4_scale,
-                scale_5=latent_file_5_scale,
-                num_samples=samples,
-                seed=seed,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-        )
-        sd_image[0].save(filename,optimize=False,compress_level=0)
-        upload_to_ftp(filename)
-        uploadNote(prompt,num_inference_steps,guidance_scale,timestamp)
-        torch.set_float32_matmul_precision("medium")
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        with torch.no_grad():
-            upscale = upscaler(sd_image, tiling=True, tile_width=256, tile_height=256)
-        downscale1 = upscale.resize((upscale.width // 4, upscale.height // 4), Image.LANCZOS)
-        downscale_path = f"rvIP_upscale_{timestamp}.png"
-        downscale1.save(downscale_path,optimize=False,compress_level=0)
-        upload_to_ftp(downscale_path)
-        image_paths = [save_image(downscale1)]
-    else:
-        print('-- IMAGE REQUIRED --')
-        image_paths = [] # Return an empty list if no image was provided
-    return image_paths
+
+    sd_image_a = open_image_prompt(latent_file)
+    sd_image_b = open_image_prompt(latent_file_2)
+    sd_image_c = open_image_prompt(latent_file_3)
+    sd_image_d = open_image_prompt(latent_file_4)
+    sd_image_e = open_image_prompt(latent_file_5)
+
+    # The checkbox governs the user's negative prompt box; the quality style's
+    # own negative is part of the preset and stays either way.
+    styled_prompt, styled_negative_prompt = apply_style(
+        style_selection, prompt, negative_prompt if use_negative_prompt else "")
+
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f'rv_IP_{timestamp}.png'
+    print("-- using image file --")
+    print('-- generating image --')
+    sd_image = ip_model.generate(
+            pil_image_1=sd_image_a,
+            pil_image_2=sd_image_b,
+            pil_image_3=sd_image_c,
+            pil_image_4=sd_image_d,
+            pil_image_5=sd_image_e,
+            prompt=styled_prompt,
+            negative_prompt=styled_negative_prompt,
+            width=width,
+            height=height,
+            text_scale=text_scale,
+            ip_scale=ip_scale,
+            scale_1=latent_file_1_scale,
+            scale_2=latent_file_2_scale,
+            scale_3=latent_file_3_scale,
+            scale_4=latent_file_4_scale,
+            scale_5=latent_file_5_scale,
+            combine_mode=combine_mode,
+            num_samples=samples,
+            seed=seed,
+            num_inference_steps=num_inference_steps,
+            guidance_scale=guidance_scale,
+    )
+    sd_image[0].save(filename, optimize=False, compress_level=0)
+    note_filename = uploadNote(prompt, num_inference_steps, guidance_scale, timestamp)
+
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
+    # UpscaleWithModel returns a single image regardless of input, so feeding it
+    # the whole sample list would upscale every sample and discard all but the
+    # first. Only sd_image[0] is saved and returned.
+    with matmul_precision("medium"), torch.no_grad():
+        upscale = upscaler(sd_image[0], tiling=True, tile_width=256, tile_height=256)
+    downscale1 = upscale.resize((upscale.width // 4, upscale.height // 4), Image.LANCZOS)
+    downscale_path = f"rvIP_upscale_{timestamp}.png"
+    downscale1.save(downscale_path, optimize=False, compress_level=0)
+
+    upload_in_background(filename, note_filename, downscale_path)
+    return [save_image(downscale1)]
+
+
+# functools.wraps keeps run_generation's signature visible through the wrapper,
+# so Gradio still finds the gr.Progress parameter and injects the real tracker.
+@spaces.GPU(duration=40)
+@functools.wraps(run_generation)
+def generate_30(*args, **kwargs):
+    return run_generation(*args, **kwargs)
+
 
 @spaces.GPU(duration=70)
-def generate_60(
-    prompt: str = "",
-    negative_prompt: str = "",
-    use_negative_prompt: bool = False,
-    style_selection: str = "",
-    width: int = 768,
-    height: int = 768,
-    guidance_scale: float = 4,
-    num_inference_steps: int = 125,
-    # ----------------- CHANGE START -----------------
-    latent_file = None,
-    latent_file_2 = None,
-    latent_file_3 = None,
-    latent_file_4 = None,
-    latent_file_5 = None,
-    # ----------------- CHANGE END -------------------
-    text_scale: float = 1.0,
-    ip_scale: float = 1.0,
-    latent_file_1_scale: float = 1.0,
-    latent_file_2_scale: float = 1.0,
-    latent_file_3_scale: float = 1.0,
-    latent_file_4_scale: float = 1.0,
-    latent_file_5_scale: float = 1.0,
-    samples=1,
-    progress=gr.Progress(track_tqdm=True)  # Add progress as a keyword argument
-):
-    pipe.text_encoder=text_encoder
-    pipe.text_encoder_2=text_encoder_2
-    seed = random.randint(0, MAX_SEED)
-    generator = torch.Generator(device='cuda').manual_seed(seed)
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
-    
-    # ----------------- CHANGE START -----------------
-    if latent_file is not None:
-        sd_image_a = Image.open(latent_file).convert('RGB') # Use latent_file directly
-        sd_image_a.resize((height,width), Image.LANCZOS)
-        if latent_file_2 is not None:
-            sd_image_b = Image.open(latent_file_2).convert('RGB') # Use latent_file_2 directly
-            sd_image_b.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_b = None
-        if latent_file_3 is not None:
-            sd_image_c = Image.open(latent_file_3).convert('RGB') # Use latent_file_3 directly
-            sd_image_c.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_c = None
-        if latent_file_4 is not None:
-            sd_image_d = Image.open(latent_file_4).convert('RGB') # Use latent_file_4 directly
-            sd_image_d.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_d = None
-        if latent_file_5 is not None:
-            sd_image_e = Image.open(latent_file_5).convert('RGB') # Use latent_file_5 directly
-            sd_image_e.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_e = None
-    # ----------------- CHANGE END -------------------
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename= f'rv_IP_{timestamp}.png'
-        print("-- using image file --")
-        print('-- generating image --')
-        sd_image = ip_model.generate(
-                pil_image_1=sd_image_a,
-                pil_image_2=sd_image_b,
-                pil_image_3=sd_image_c,
-                pil_image_4=sd_image_d,
-                pil_image_5=sd_image_e,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                text_scale=text_scale,
-                ip_scale=ip_scale,
-                scale_1=latent_file_1_scale,
-                scale_2=latent_file_2_scale,
-                scale_3=latent_file_3_scale,
-                scale_4=latent_file_4_scale,
-                scale_5=latent_file_5_scale,
-                num_samples=samples,
-                seed=seed,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-        )
-        sd_image[0].save(filename,optimize=False,compress_level=0)
-        upload_to_ftp(filename)
-        uploadNote(prompt,num_inference_steps,guidance_scale,timestamp)
-        torch.set_float32_matmul_precision("medium")
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        with torch.no_grad():
-            upscale = upscaler(sd_image, tiling=True, tile_width=256, tile_height=256)
-        downscale1 = upscale.resize((upscale.width // 4, upscale.height // 4), Image.LANCZOS)
-        downscale_path = f"rvIP_upscale_{timestamp}.png"
-        downscale1.save(downscale_path,optimize=False,compress_level=0)
-        upload_to_ftp(downscale_path)
-        image_paths = [save_image(downscale1)]
-    else:
-        print('-- IMAGE REQUIRED --')
-        image_paths = []
-    return image_paths
+@functools.wraps(run_generation)
+def generate_60(*args, **kwargs):
+    return run_generation(*args, **kwargs)
+
 
 @spaces.GPU(duration=100)
-def generate_90(
-    prompt: str = "",
-    negative_prompt: str = "",
-    use_negative_prompt: bool = False,
-    style_selection: str = "",
-    width: int = 768,
-    height: int = 768,
-    guidance_scale: float = 4,
-    num_inference_steps: int = 125,
-    # ----------------- CHANGE START -----------------
-    latent_file = None,
-    latent_file_2 = None,
-    latent_file_3 = None,
-    latent_file_4 = None,
-    latent_file_5 = None,
-    # ----------------- CHANGE END -------------------
-    text_scale: float = 1.0,
-    ip_scale: float = 1.0,
-    latent_file_1_scale: float = 1.0,
-    latent_file_2_scale: float = 1.0,
-    latent_file_3_scale: float = 1.0,
-    latent_file_4_scale: float = 1.0,
-    latent_file_5_scale: float = 1.0,
-    samples=1,
-    progress=gr.Progress(track_tqdm=True)  # Add progress as a keyword argument
-):
-    pipe.text_encoder=text_encoder
-    pipe.text_encoder_2=text_encoder_2
-    seed = random.randint(0, MAX_SEED)
-    generator = torch.Generator(device='cuda').manual_seed(seed)
-    torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
-    
-    # ----------------- CHANGE START -----------------
-    if latent_file is not None:
-        sd_image_a = Image.open(latent_file).convert('RGB') # Use latent_file directly
-        sd_image_a.resize((height,width), Image.LANCZOS)
-        if latent_file_2 is not None:
-            sd_image_b = Image.open(latent_file_2).convert('RGB') # Use latent_file_2 directly
-            sd_image_b.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_b = None
-        if latent_file_3 is not None:
-            sd_image_c = Image.open(latent_file_3).convert('RGB') # Use latent_file_3 directly
-            sd_image_c.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_c = None
-        if latent_file_4 is not None:
-            sd_image_d = Image.open(latent_file_4).convert('RGB') # Use latent_file_4 directly
-            sd_image_d.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_d = None
-        if latent_file_5 is not None:
-            sd_image_e = Image.open(latent_file_5).convert('RGB') # Use latent_file_5 directly
-            sd_image_e.resize((height,width), Image.LANCZOS)
-        else:
-            sd_image_e = None
-    # ----------------- CHANGE END -------------------
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename= f'rv_IP_{timestamp}.png'
-        print("-- using image file --")
-        print('-- generating image --')
-        sd_image = ip_model.generate(
-                pil_image_1=sd_image_a,
-                pil_image_2=sd_image_b,
-                pil_image_3=sd_image_c,
-                pil_image_4=sd_image_d,
-                pil_image_5=sd_image_e,
-                prompt=prompt,
-                negative_prompt=negative_prompt,
-                text_scale=text_scale,
-                ip_scale=ip_scale,
-                scale_1=latent_file_1_scale,
-                scale_2=latent_file_2_scale,
-                scale_3=latent_file_3_scale,
-                scale_4=latent_file_4_scale,
-                scale_5=latent_file_5_scale,
-                num_samples=samples,
-                seed=seed,
-                num_inference_steps=num_inference_steps,
-                guidance_scale=guidance_scale,
-        )
-        sd_image[0].save(filename,optimize=False,compress_level=0)
-        upload_to_ftp(filename)
-        uploadNote(prompt,num_inference_steps,guidance_scale,timestamp)
-        torch.set_float32_matmul_precision("medium")
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
-        with torch.no_grad():
-            upscale = upscaler(sd_image, tiling=True, tile_width=256, tile_height=256)
-        downscale1 = upscale.resize((upscale.width // 4, upscale.height // 4), Image.LANCZOS)
-        downscale_path = f"rvIP_upscale_{timestamp}.png"
-        downscale1.save(downscale_path,optimize=False,compress_level=0)
-        upload_to_ftp(downscale_path)
-        image_paths = [save_image(downscale1)]
-    else:
-        print('-- IMAGE REQUIRED --')
-        image_paths = []
-    return image_paths
+@functools.wraps(run_generation)
+def generate_90(*args, **kwargs):
+    return run_generation(*args, **kwargs)
+
 
 def load_predefined_images1():
     predefined_images1 = [
@@ -570,9 +403,6 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
             value=1.0,
     )
     with gr.Row():
-        # ----------------- CHANGE START -----------------
-        # Replaced gr.File and gr.Image (preview) with a single gr.Image component
-        # Added sources=["upload", "clipboard"] and type="filepath"
         with gr.Column():
             latent_file = gr.Image(label="Image Prompt (Required)", sources=["upload", "clipboard"], type="filepath")
         file_1_strength =  gr.Slider(
@@ -618,7 +448,20 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
             step=0.01,
             value=1.0,
         )
-        # ----------------- CHANGE END -------------------
+        combine_mode = gr.Radio(
+            show_label=True,
+            container=True,
+            interactive=True,
+            choices=[
+                ("Mean (blend styles)", "mean"),
+                ("Concat (combine subjects)", "concat"),
+            ],
+            value="mean",
+            label="Multi-Image Combine Mode",
+            info="Mean blends the images into one conditioning. Concat gives each "
+                 "image its own tokens so attention can pick between them — better "
+                 "for combining distinct subjects, slightly slower.",
+        )
         style_selection = gr.Radio(
             show_label=True,
             container=True,
@@ -690,18 +533,6 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
         api_name=False,
     )
 
-    # ----------------- CHANGE START -----------------
-    # We no longer need the .change() events for latent_file,
-    # as the gr.Image component handles its own preview.
-    #
-    # latent_file.change(...)
-    # latent_file_2.change(...)
-    # latent_file_3.change(...)
-    # latent_file_4.change(...)
-    # latent_file_5.change(...)
-    #
-    # ----------------- CHANGE END -------------------
-
 
     gr.on(
         triggers=[
@@ -730,6 +561,7 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
             file_3_strength,
             file_4_strength,
             file_5_strength,
+            combine_mode,
             samples,
         ],
         outputs=[result],
@@ -762,6 +594,7 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
             file_3_strength,
             file_4_strength,
             file_5_strength,
+            combine_mode,
             samples,
         ],
         outputs=[result],
@@ -794,6 +627,7 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
             file_3_strength,
             file_4_strength,
             file_5_strength,
+            combine_mode,
             samples,
         ],
         outputs=[result],
