@@ -33,7 +33,21 @@ describe('finishing settings', () => {
   it('detects enabled stub passes with amount', () => {
     const settings = {
       ...DEFAULT_FINISHING,
-      sharpen: { enabled: true, amount: 0.4 },
+      grain: { enabled: true, amount: 0.4 },
+    };
+    expect(isFinishingActive(settings)).toBe(true);
+  });
+
+  it('detects active sharpen with radius/threshold', () => {
+    const settings = {
+      ...DEFAULT_FINISHING,
+      sharpen: {
+        ...DEFAULT_FINISHING.sharpen!,
+        enabled: true,
+        amount: 0.2,
+        radius: 1.5,
+        threshold: 0.03,
+      },
     };
     expect(isFinishingActive(settings)).toBe(true);
   });

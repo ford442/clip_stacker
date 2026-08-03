@@ -2,13 +2,14 @@
  * Ordered finishing pass chain — runs after compositing on WebGPU preview/export.
  *
  * Pass order: noise reduction → primary color → secondary color → LUT → sharpen → grain.
- * Noise reduction, primary color, and LUT are implemented; other slots are no-ops until
- * their effect issues land.
+ * Noise reduction, primary color, LUT, and sharpen are implemented; secondary and grain
+ * slots are no-ops until their effect issues land.
  */
 
 import { LutPass } from './lutPass';
 import { NoiseReductionGpuPass } from './noiseReductionPass';
 import { PrimaryColorGpuPass } from './primaryColorPass';
+import { SharpenGpuPass } from './sharpenPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
   isFinishingActive,
@@ -26,6 +27,7 @@ export class FinishingPassChain {
   private readonly lutPass: LutPass;
   private readonly primaryColorPass: PrimaryColorGpuPass;
   private readonly noiseReductionPass: NoiseReductionGpuPass;
+  private readonly sharpenPass: SharpenGpuPass;
   private pingTexture: GPUTexture | null = null;
   private pongTexture: GPUTexture | null = null;
   /** Previous frame for temporal denoise — cleared on seek via resetTemporal(). */
@@ -39,10 +41,12 @@ export class FinishingPassChain {
     lutPass: LutPass,
     primaryColorPass: PrimaryColorGpuPass,
     noiseReductionPass: NoiseReductionGpuPass,
+    sharpenPass: SharpenGpuPass,
   ) {
     this.lutPass = lutPass;
     this.primaryColorPass = primaryColorPass;
     this.noiseReductionPass = noiseReductionPass;
+    this.sharpenPass = sharpenPass;
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): FinishingPassChain {
@@ -50,6 +54,7 @@ export class FinishingPassChain {
       LutPass.create(device, format),
       PrimaryColorGpuPass.create(device, format),
       NoiseReductionGpuPass.create(device, format),
+      SharpenGpuPass.create(device, format),
     );
   }
 
@@ -227,11 +232,30 @@ export class FinishingPassChain {
       }
     }
 
-    if (isSharpenActive(settings.sharpen)) {
-      // TODO(sharpen): detail enhancement pass.
-      if (!isGrainActive(settings.grain)) {
-        this.blitToCanvas(device, current, canvasTexture, width, height);
+    if (isSharpenActive(settings.sharpen) && settings.sharpen) {
+      const sharpen = settings.sharpen;
+      const isLast = !hasLaterGpuPass('sharpen');
+      if (isLast) {
+        this.sharpenPass.applyBetweenTextures(
+          device,
+          current,
+          canvasTexture.createView(),
+          width,
+          height,
+          sharpen,
+        );
         wroteToCanvas = true;
+      } else {
+        runPass(() => {
+          this.sharpenPass.applyBetweenTextures(
+            device,
+            current,
+            next.createView(),
+            width,
+            height,
+            sharpen,
+          );
+        });
       }
     }
 
@@ -265,6 +289,7 @@ export class FinishingPassChain {
     this.lutPass.destroy();
     this.primaryColorPass.destroy();
     this.noiseReductionPass.destroy();
+    this.sharpenPass.destroy();
     this.pingTexture = null;
     this.pongTexture = null;
     this.prevFrameTexture = null;

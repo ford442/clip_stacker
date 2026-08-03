@@ -12,6 +12,7 @@ import {
 import { ColorGradePicker } from './ColorGradePicker';
 import { NoiseReductionPanel } from './NoiseReductionPanel';
 import { PrimaryColorPanel } from './PrimaryColorPanel';
+import { SharpenPanel } from './SharpenPanel';
 
 interface Props {
   settings: FinishingSettings;
@@ -19,7 +20,7 @@ interface Props {
 }
 
 const STUB_PASSES: Array<{
-  key: 'secondaryColor' | 'sharpen' | 'grain';
+  key: 'secondaryColor' | 'grain';
   label: string;
   description: string;
   defaults: FinishingSettings[keyof FinishingSettings];
@@ -29,12 +30,6 @@ const STUB_PASSES: Array<{
     label: 'Secondary color',
     description: 'Selective hue / saturation grades (coming soon)',
     defaults: DEFAULT_SECONDARY_COLOR,
-  },
-  {
-    key: 'sharpen',
-    label: 'Sharpen / detail',
-    description: 'Detail enhancement after creative grade (coming soon)',
-    defaults: DEFAULT_SHARPEN,
   },
   {
     key: 'grain',
@@ -48,6 +43,61 @@ export function FinishingPanel({ settings, onChange }: Props) {
   const lutGrade = lutPassToColorGrade(settings.lut);
   const primary = settings.primaryColor ?? DEFAULT_PRIMARY_COLOR;
   const noise = settings.noiseReduction ?? DEFAULT_NOISE_REDUCTION;
+  const sharpen = settings.sharpen ?? DEFAULT_SHARPEN;
+  const secondaryStub = STUB_PASSES.find((p) => p.key === 'secondaryColor')!;
+  const grainStub = STUB_PASSES.find((p) => p.key === 'grain')!;
+
+  const renderStub = ({
+    key,
+    label,
+    description,
+    defaults,
+  }: (typeof STUB_PASSES)[number]) => {
+    const pass = (settings[key] ?? defaults) as {
+      enabled: boolean;
+      amount?: number;
+    };
+    return (
+      <div key={key} className="finishing-pass-row">
+        <label className="finishing-pass-toggle" title={description}>
+          <input
+            type="checkbox"
+            checked={pass.enabled}
+            onChange={(e) =>
+              onChange(
+                withFinishingPass(settings, key, {
+                  ...(settings[key] ?? defaults),
+                  enabled: e.target.checked,
+                } as FinishingSettings[typeof key]),
+              )
+            }
+          />
+          {label}
+        </label>
+        {pass.enabled && (
+          <label className="finishing-pass-amount" title={`${label} strength`}>
+            Amount ({Math.round((pass.amount ?? 1) * 100)}%)
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.01}
+              value={pass.amount ?? 1}
+              onChange={(e) =>
+                onChange(
+                  withFinishingPass(settings, key, {
+                    ...(settings[key] ?? defaults),
+                    amount: Number(e.target.value),
+                  } as FinishingSettings[typeof key]),
+                )
+              }
+            />
+          </label>
+        )}
+        <p className="inspector-hint">{description}</p>
+      </div>
+    );
+  };
 
   return (
     <div className="finishing-panel">
@@ -55,8 +105,9 @@ export function FinishingPanel({ settings, onChange }: Props) {
       <p className="inspector-hint">
         <span className="finishing-parity-badge">WebGPU + GPU export</span>
         {' — '}
-        Noise reduction and primary color have best-effort FFmpeg parity;
-        Canvas2D does not apply finishing.
+        Noise, primary color, and sharpen have best-effort FFmpeg parity;
+        Canvas2D does not apply finishing. Order: noise → primary → secondary →
+        LUT → sharpen → grain.
       </p>
 
       <NoiseReductionPanel
@@ -71,57 +122,19 @@ export function FinishingPanel({ settings, onChange }: Props) {
         onChange={(next) => onChange(withFinishingPass(settings, 'primaryColor', next))}
       />
 
-      {STUB_PASSES.map(({ key, label, description, defaults }) => {
-        const pass = (settings[key] ?? defaults) as {
-          enabled: boolean;
-          amount?: number;
-        };
-        return (
-          <div key={key} className="finishing-pass-row">
-            <label className="finishing-pass-toggle" title={description}>
-              <input
-                type="checkbox"
-                checked={pass.enabled}
-                onChange={(e) =>
-                  onChange(
-                    withFinishingPass(settings, key, {
-                      ...(settings[key] ?? defaults),
-                      enabled: e.target.checked,
-                    } as FinishingSettings[typeof key]),
-                  )
-                }
-              />
-              {label}
-            </label>
-            {pass.enabled && (
-              <label className="finishing-pass-amount" title={`${label} strength`}>
-                Amount ({Math.round((pass.amount ?? 1) * 100)}%)
-                <input
-                  type="range"
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  value={pass.amount ?? 1}
-                  onChange={(e) =>
-                    onChange(
-                      withFinishingPass(settings, key, {
-                        ...(settings[key] ?? defaults),
-                        amount: Number(e.target.value),
-                      } as FinishingSettings[typeof key]),
-                    )
-                  }
-                />
-              </label>
-            )}
-            <p className="inspector-hint">{description}</p>
-          </div>
-        );
-      })}
+      {renderStub(secondaryStub)}
 
       <ColorGradePicker
         settings={lutGrade}
         onChange={(grade) => onChange(withColorGrade(settings, grade))}
       />
+
+      <SharpenPanel
+        settings={sharpen}
+        onChange={(next) => onChange(withFinishingPass(settings, 'sharpen', next))}
+      />
+
+      {renderStub(grainStub)}
     </div>
   );
 }
