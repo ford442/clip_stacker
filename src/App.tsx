@@ -266,12 +266,14 @@ export function App() {
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
 
   useEffect(() => {
-    if (!selectedClip) {
+    if (!selectedClipId) {
       setPlayheadTime(null);
       return;
     }
-    setPlayheadTime(selectedClip.trimStart);
-  }, [selectedClip?.id, selectedClip?.trimStart]);
+    const clip = clips.find((c) => c.id === selectedClipId);
+    if (!clip) return;
+    setPlayheadTime(clip.trimStart);
+  }, [selectedClipId, clips]);
 
   // ---------------------------------------------------------------------------
   // Clip management helpers

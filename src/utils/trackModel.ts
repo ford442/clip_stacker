@@ -199,7 +199,11 @@ export function toLegacyTimelineView(
       const clip = clipMap.get(item.clipId);
       if (!clip) continue;
       const layerIndex = vi === 0 ? 0 : vi;
-      result.push({ ...clip, layerIndex });
+      if ((clip.layerIndex ?? 0) === layerIndex) {
+        result.push(clip);
+      } else {
+        result.push({ ...clip, layerIndex });
+      }
     }
   }
 

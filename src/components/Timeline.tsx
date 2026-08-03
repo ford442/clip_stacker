@@ -1,7 +1,9 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ClipTransition } from '../types';
 import { useEditorClips, useEditorClipGroups, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedClipId } from '../store';
+import { editorStore } from '../store/editorStore';
+import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import {
   buildRulerTicks,
   clampPixelsPerSecond,
@@ -60,20 +62,28 @@ const VIRTUAL_OVERSCAN = 3;
 
 /** Scrolls the virtualizer when selection changes without re-rendering the timeline track. */
 function TimelineSelectionScroll({
-  clips,
-  virtualizer,
+  virtualizerRef,
 }: {
-  clips: ReturnType<typeof useEditorTimelineClips>;
-  virtualizer: ReturnType<typeof useVirtualizer<HTMLDivElement, Element>>;
+  virtualizerRef: RefObject<ReturnType<typeof useVirtualizer<HTMLDivElement, Element>> | null>;
 }) {
   const selectedClipId = useSelectedClipId();
+  const scrolledForRef = useRef<string | null>(null);
+
   useEffect(() => {
-    const selectedIndex = selectedClipId
-      ? clips.findIndex((clip) => clip.id === selectedClipId)
-      : -1;
+    if (!selectedClipId) {
+      scrolledForRef.current = null;
+      return;
+    }
+    if (scrolledForRef.current === selectedClipId) return;
+    scrolledForRef.current = selectedClipId;
+
+    const { tracks, clips, clipGroups } = editorStore.getState();
+    const timelineClips = getEffectiveTimelineClips(tracks, clips, clipGroups);
+    const selectedIndex = timelineClips.findIndex((clip) => clip.id === selectedClipId);
     if (selectedIndex < 0) return;
-    virtualizer.scrollToIndex(selectedIndex, { align: 'auto', behavior: 'smooth' });
-  }, [selectedClipId, clips, virtualizer]);
+    virtualizerRef.current?.scrollToIndex(selectedIndex, { align: 'auto' });
+  }, [selectedClipId, virtualizerRef]);
+
   return null;
 }
 
@@ -164,22 +174,34 @@ function TimelineImpl({
 
   const beatMarkers = useMemo(() => buildBeatMarkerLayouts(clipLayouts), [clipLayouts]);
 
+  const estimateSize = useCallback(
+    (index: number) => clipLayouts[index]?.width ?? MIN_CLIP_PIXEL_WIDTH,
+    [clipLayouts],
+  );
+  const getItemKey = useCallback(
+    (index: number) => clipLayouts[index]?.clip.id ?? index,
+    [clipLayouts],
+  );
+
   const virtualizer = useVirtualizer({
     horizontal: true,
     count: clipLayouts.length,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => clipLayouts[index]?.width ?? MIN_CLIP_PIXEL_WIDTH,
+    estimateSize,
     overscan: VIRTUAL_OVERSCAN,
-    getItemKey: (index) => clipLayouts[index]?.clip.id ?? index,
+    getItemKey,
   });
+  const virtualizerRef = useRef(virtualizer);
+  virtualizerRef.current = virtualizer;
 
   const virtualItems = virtualizer.getVirtualItems();
 
+  const virtualIndexKey = virtualItems.map((item) => item.index).join(',');
   const visibleIndexSet = useMemo(() => {
     const indices = new Set(virtualItems.map((item) => item.index));
     if (dragIndex !== null) indices.add(dragIndex);
     return indices;
-  }, [virtualItems, dragIndex]);
+  }, [virtualIndexKey, dragIndex]);
 
   const onThumbsLoaded = useCallback((clipId: string, thumbs: string[]) => {
     setThumbMap((prev) => (prev[clipId] ? prev : { ...prev, [clipId]: thumbs }));
@@ -220,11 +242,11 @@ function TimelineImpl({
         cancelTimelineMediaForClip(clip.id);
       }
     }
-  }, [visibleIndexSet, clipLayouts, clips, onThumbsLoaded, onWavesLoaded]);
+  }, [virtualIndexKey, clipLayouts, clips, onThumbsLoaded, onWavesLoaded]);
 
   useEffect(() => {
-    virtualizer.measure();
-  }, [clipLayouts, virtualizer]);
+    virtualizerRef.current.measure();
+  }, [clipLayouts]);
 
   const totalDuration = useMemo(
     () => computeTracksDuration(tracks, allClips, transitions, clipGroups),
@@ -447,7 +469,7 @@ function TimelineImpl({
 
   return (
     <section className="panel timeline-panel">
-      <TimelineSelectionScroll clips={clips} virtualizer={virtualizer} />
+      <TimelineSelectionScroll virtualizerRef={virtualizerRef} />
       <div className="timeline-header-row">
         <h2>Timeline</h2>
         <span className="timeline-total-dur muted">
