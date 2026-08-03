@@ -15,6 +15,11 @@ import {
   getBundledFont,
   resolveFontFileForOverlay,
 } from "../utils/textOverlay";
+import {
+  appendPrimaryColorFilters,
+  buildPrimaryColorFfmpegFilters,
+  type PrimaryColorSettings,
+} from "../utils/primaryColor";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   buildFfmpegLoadErrorMessage,
@@ -273,6 +278,7 @@ export function buildSingleClipFilter(
   clip: Clip,
   targetWidth: number = OUTPUT_WIDTH,
   targetHeight: number = OUTPUT_HEIGHT,
+  primaryColor?: PrimaryColorSettings,
 ): string {
   const duration = getClipDuration(clip);
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
@@ -287,9 +293,10 @@ export function buildSingleClipFilter(
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0)
       v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
+    // Primary color (best-effort FFmpeg parity). Other finishing passes TBD.
+    const primaryFilters = buildPrimaryColorFfmpegFilters(primaryColor);
+    if (primaryFilters) v += `,${primaryFilters}`;
     parts.push(`${v}[vout]`);
-    // TODO(finishing): append noise reduction / primary / secondary color passes
-    // before [vout] when FFmpeg equivalents land (see per-effect issues).
 
     let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
@@ -593,6 +600,7 @@ export async function performTwoPassEncode(
   onStatus: StatusCallback,
   totalDuration: number,
   onProgress?: ProgressCallback,
+  primaryColor?: PrimaryColorSettings,
 ): Promise<void> {
   emitProgress(onProgress, "FFmpeg re-encode (two-pass)", 0.12, false);
 
@@ -638,6 +646,7 @@ export async function performTwoPassEncode(
         rangeEnd,
         targetWidth,
         targetHeight,
+        primaryColor,
       ),
     );
     pass1ElapsedDuration += clipDuration;
@@ -664,6 +673,7 @@ export async function processClipPass1(
   rangeEnd: number,
   targetWidth: number = OUTPUT_WIDTH,
   targetHeight: number = OUTPUT_HEIGHT,
+  primaryColor?: PrimaryColorSettings,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
@@ -678,7 +688,10 @@ export async function processClipPass1(
     clip.videoWidth === targetWidth &&
     clip.videoHeight === targetHeight;
 
-  if (!clipNeedsEffects(clip) && matchesTargetResolution) {
+  const primaryFilters = buildPrimaryColorFfmpegFilters(primaryColor);
+  const needsPrimary = Boolean(primaryFilters);
+
+  if (!clipNeedsEffects(clip) && matchesTargetResolution && !needsPrimary) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
     // Audio must be explicitly transcoded so the intermediate has a consistent
     // codec for concat — pure -c copy silently drops audio from non-MP4 sources.
@@ -730,7 +743,9 @@ export async function processClipPass1(
     const videoFilter =
       `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS` +
       `,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease` +
-      `,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p[vout]`;
+      `,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p` +
+      (primaryFilters ? `,${primaryFilters}` : '') +
+      `[vout]`;
     const audioFilter =
       `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS` +
       `,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo[aout]`;
@@ -818,7 +833,7 @@ export async function processClipPass1(
       "-i",
       clip.inputName!,
       "-filter_complex",
-      buildSingleClipFilter(clip, targetWidth, targetHeight),
+      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor),
       "-map",
       "[vout]",
       "-map",
@@ -913,14 +928,17 @@ export async function mergeClipsWithTransitions(
   totalDuration: number,
   onProgress?: ProgressCallback,
   textOverlays: TextOverlay[] = [],
+  primaryColor?: PrimaryColorSettings,
 ): Promise<void> {
   onStatus("Building transition render...");
   emitProgress(onProgress, "FFmpeg transition render", 0.15, false);
 
   let effectiveFilterComplex = filterComplex;
+  // Primary color before text overlays (finishing order approximation on FFmpeg path).
+  effectiveFilterComplex = appendPrimaryColorFilters(effectiveFilterComplex, primaryColor);
   if (textOverlays.length > 0) {
     await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);
-    effectiveFilterComplex = appendTextOverlayFilters(filterComplex, textOverlays);
+    effectiveFilterComplex = appendTextOverlayFilters(effectiveFilterComplex, textOverlays);
   }
 
   const inputArgs: string[] = [];

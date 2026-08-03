@@ -144,7 +144,16 @@ export async function hybridMergeClips(
   }
 
   try {
-    const blob = await mergeClips(clips, transitions, settings, onStatus, textOverlays, onProgress, forceReencode);
+    const blob = await mergeClips(
+      clips,
+      transitions,
+      settings,
+      onStatus,
+      textOverlays,
+      onProgress,
+      forceReencode,
+      finishing,
+    );
     const ffmpegRenderPlan: RenderPlan =
       shaderOverlays.length > 0
         ? {

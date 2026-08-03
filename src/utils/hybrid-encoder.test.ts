@@ -29,6 +29,7 @@ import { isWebCodecsAvailable, encodeVideoWithWebCodecs } from './webcodecs';
 import { isAudioEncoderAvailable, assessWebCodecsAudioMix } from './webcodecs-audio';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
+import { DEFAULT_FINISHING } from './finishing';
 
 // Helper to create a minimal test clip
 function createTestClip(id: string, duration: number, overrides: Partial<Clip> = {}): Clip {
@@ -519,6 +520,7 @@ describe('utils/hybrid-encoder', () => {
         [],
         mockProgressCallback,
         true, // forceReencode passed through
+        DEFAULT_FINISHING,
       );
     });
   });

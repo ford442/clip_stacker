@@ -11,6 +11,7 @@ import { getClipDuration, clampOverlayPosition, isOverlayOffCanvas } from "../ut
 import { resolveClipLayoutPixels } from "../utils/overlayCoords";
 import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
 import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
+import { appendPrimaryColorFilters, type PrimaryColorSettings } from "../utils/primaryColor";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -255,6 +256,7 @@ export async function mergeClipsWithCompositing(
   onProgress?: ProgressCallback,
   transitions: ClipTransition[] = [],
   textOverlays: TextOverlay[] = [],
+  primaryColor?: PrimaryColorSettings,
 ): Promise<void> {
   onStatus("Building PiP/compositing render...");
   emitProgress(onProgress, "FFmpeg PiP/compositing render", 0.15, false);
@@ -263,14 +265,14 @@ export async function mergeClipsWithCompositing(
     onStatus(`Warning: ${message}`),
   );
 
+  // Primary color post-composite (best-effort). Remaining finishing TBD:
+  // noise → secondary → lut3d → unsharp → grain.
+  filterComplex = appendPrimaryColorFilters(filterComplex, primaryColor);
+
   if (textOverlays.length > 0) {
     await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);
     filterComplex = appendTextOverlayFilters(filterComplex, textOverlays);
   }
-
-  // TODO(finishing): insert post-composite finishing filters on [vout] when
-  // FFmpeg parity is implemented (noise → primary → secondary → lut3d →
-  // unsharp → grain). See src/utils/finishing.ts pass order.
 
   const inputArgs: string[] = [];
   for (const clip of clips) {

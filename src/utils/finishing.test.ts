@@ -38,6 +38,19 @@ describe('finishing settings', () => {
     expect(isFinishingActive(settings)).toBe(true);
   });
 
+  it('detects active primary color correction', () => {
+    const settings = {
+      ...DEFAULT_FINISHING,
+      primaryColor: {
+        ...DEFAULT_FINISHING.primaryColor!,
+        enabled: true,
+        exposure: -0.5,
+        temperature: 0.25,
+      },
+    };
+    expect(isFinishingActive(settings)).toBe(true);
+  });
+
   it('normalizes partial settings with safe defaults', () => {
     const normalized = normalizeFinishingSettings({
       lut: { enabled: true, lutId: 'warm', intensity: 1.5 },
