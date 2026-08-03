@@ -1,5 +1,8 @@
 import { memo, useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
-import { playbackStore, setPlayheadTime } from "../store/playbackStore";
+import {
+  playbackStore,
+  setPlayheadTime,
+} from "../store/playbackStore";
 import { usePlayheadTime } from "../hooks/usePlayheadTime";
 import type {
   Clip,
@@ -641,6 +644,9 @@ const HIDDEN_VIDEO_STYLE: CSSProperties = {
   height: 1,
 };
 
+/** Skip seek when media clock is already within this window of the playhead. */
+const SEEK_SYNC_THRESHOLD_SEC = 0.05;
+
 function WebGPUVideoPreview({
   clip,
   finishing,
@@ -652,6 +658,14 @@ function WebGPUVideoPreview({
   const engineRef = useRef<PreviewEngine | null>(null);
   const rafRef = useRef<number>(0);
   const frameFailuresRef = useRef(0);
+  // Keep finishing in a ref so slider edits don't tear down/recreate the GPU engine.
+  const finishingRef = useRef(finishing);
+  finishingRef.current = finishing;
+  // Clip fade/opacity used by the draw loop — updated without remounting the engine.
+  const clipDrawRef = useRef(clip);
+  clipDrawRef.current = clip;
+  // Suppress playhead writes from programmatic seeks (seek effect → seeked → setPlayhead).
+  const ignoreSeekReportRef = useRef(false);
   const webGpuAvailable =
     typeof navigator !== "undefined" && "gpu" in navigator;
   const [gpuActive, setGpuActive] = useState(false);
@@ -672,7 +686,7 @@ function WebGPUVideoPreview({
     setHasFrame(false);
     setGpuActive(false);
     setGpuFallback(!webGpuAvailable);
-  }, [clip.id, clip.objectUrl, webGpuAvailable, finishing]);
+  }, [clip.id, clip.objectUrl, webGpuAvailable]);
 
   useEffect(() => {
     let alive = true;
@@ -709,20 +723,22 @@ function WebGPUVideoPreview({
       try {
         const frame = new VideoFrame(video);
         frameFailuresRef.current = 0;
-        const elapsed = video.currentTime - clip.trimStart;
+        const drawClip = clipDrawRef.current;
+        const elapsed = video.currentTime - drawClip.trimStart;
         const duration =
-          (Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration) -
-          clip.trimStart;
+          (Number.isFinite(drawClip.trimEnd) ? drawClip.trimEnd : drawClip.duration) -
+          drawClip.trimStart;
         engine.renderFrame(
           frame,
           elapsed,
           duration,
-          clip.videoFadeIn,
-          clip.videoFadeOut,
-          clip.opacity ?? 1,
+          drawClip.videoFadeIn,
+          drawClip.videoFadeOut,
+          drawClip.opacity ?? 1,
         );
-        if (finishing && isFinishingActive(finishing)) {
-          engine.applyFinishing(finishing, {
+        const activeFinishing = finishingRef.current;
+        if (activeFinishing && isFinishingActive(activeFinishing)) {
+          engine.applyFinishing(activeFinishing, {
             frameIndex: grainFrameSeedFromTime(elapsed),
           });
         }
@@ -792,8 +808,7 @@ function WebGPUVideoPreview({
       engineRef.current = null;
       setGpuActive(false);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clip.id, clip.objectUrl, webGpuAvailable, finishing]);
+  }, [clip.id, clip.objectUrl, webGpuAvailable]);
 
   // An unexpected device loss (GPU process crash, driver reset) leaves any
   // live `PreviewEngine` holding a dead device — its draw calls silently
@@ -819,8 +834,15 @@ function WebGPUVideoPreview({
 
     const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     const target = Math.max(clip.trimStart, Math.min(playheadTime, trimEnd));
-    if (Math.abs(video.currentTime - target) > 0.05) {
+    if (Math.abs(video.currentTime - target) > SEEK_SYNC_THRESHOLD_SEC) {
+      // Suppress seeked/timeupdate → setPlayhead while we drive the media clock.
+      // Clear on the next frame so a non-seekable element can't leave the flag stuck
+      // (and can't bounce playhead ↔ seek forever when currentTime never lands).
+      ignoreSeekReportRef.current = true;
       video.currentTime = target;
+      requestAnimationFrame(() => {
+        ignoreSeekReportRef.current = false;
+      });
     }
   }, [
     clip.id,
@@ -835,7 +857,12 @@ function WebGPUVideoPreview({
     const video = videoRef.current;
     if (!video) return;
 
-    const reportTime = () => setPlayheadTime(video.currentTime);
+    const reportTime = () => {
+      if (ignoreSeekReportRef.current) return;
+      const t = video.currentTime;
+      if (!Number.isFinite(t)) return;
+      setPlayheadTime(t);
+    };
     video.addEventListener("timeupdate", reportTime);
     video.addEventListener("seeked", reportTime);
     return () => {
@@ -921,7 +948,11 @@ function AudioClipPreview({ clip }: { clip: Clip }) {
     const audio = audioRef.current;
     if (!audio) return;
 
-    const reportTime = () => setPlayheadTime(audio.currentTime);
+    const reportTime = () => {
+      const t = audio.currentTime;
+      if (!Number.isFinite(t)) return;
+      setPlayheadTime(t);
+    };
     audio.addEventListener("timeupdate", reportTime);
     audio.addEventListener("seeked", reportTime);
     return () => {
