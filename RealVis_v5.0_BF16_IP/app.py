@@ -51,13 +51,13 @@ from PIL import Image
 
 from diffusers import AutoencoderKL, StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler
 from transformers import CLIPTextModelWithProjection, CLIPTextModel
-from typing import Tuple
 import paramiko
 import datetime
 from gradio import themes
 from image_gen_aux import UpscaleWithModel
 from ip_adapter import IPAdapterXL
 from huggingface_hub import snapshot_download
+from style_presets import DEFAULT_STYLE_NAME, STYLE_NAMES, apply_style
 
 FTP_HOST = 'noahcohn.com'
 FTP_USER = 'ford442'
@@ -80,32 +80,6 @@ BATCH_SIZE = int(os.getenv("BATCH_SIZE", "1"))
 
 device = torch.device("cuda:0")
 
-style_list = [
-    {
-        "name": "3840 x 2160",
-        "prompt": "hyper-realistic 8K image of {prompt}. ultra-detailed, lifelike, high-resolution, sharp, vibrant colors, photorealistic",
-        "negative_prompt": "cartoonish, low resolution, blurry, simplistic, abstract, deformed, ugly",
-    },
-    {
-        "name": "2560 x 1440",
-        "prompt": "hyper-realistic 4K image of {prompt}. ultra-detailed, lifelike, high-resolution, sharp, vibrant colors, photorealistic",
-        "negative_prompt": "cartoonish, low resolution, blurry, simplistic, abstract, deformed, ugly",
-    },
-    {
-        "name": "HD+",
-        "prompt": "hyper-realistic 2K image of {prompt}. ultra-detailed, lifelike, high-resolution, sharp, vibrant colors, photorealistic",
-        "negative_prompt": "cartoonish, low resolution, blurry, simplistic, abstract, deformed, ugly",
-    },
-    {
-        "name": "Style Zero",
-        "prompt": "{prompt}",
-        "negative_prompt": "",
-    },
-]
-
-styles = {k["name"]: (k["prompt"], k["negative_prompt"]) for k in style_list}
-DEFAULT_STYLE_NAME = "Style Zero"
-STYLE_NAMES = list(styles.keys())
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 ## load IP Adapter
@@ -119,15 +93,6 @@ ip_ckpt = os.path.join(local_folder2, "ip-adapter_sdxl_vit-h.bin") # Correct pat
 
 upscaler = UpscaleWithModel.from_pretrained("Kim2091/ClearRealityV1").to(torch.device("cuda:0"))
 
-
-def apply_style(style_name: str, positive: str, negative: str = "") -> Tuple[str, str]:
-    if style_name in styles:
-        p, n = styles.get(style_name, styles[DEFAULT_STYLE_NAME])
-    else:
-        p, n = styles[DEFAULT_STYLE_NAME]
-    if not negative:
-        negative = ""
-    return p.replace("{prompt}", positive), n + negative
 
 def load_and_prepare_model():
     #vae = AutoencoderKL.from_pretrained("ford442/sdxl-vae-bf16", safety_checker=None)

@@ -141,3 +141,38 @@ def test_width_and_height_reach_the_model(handler):
             assert {"width", "height", "combine_mode"} <= passed
             return
     pytest.fail("no ip_model.generate(...) call found")
+
+
+def test_apply_style_is_called(handler):
+    for node in ast.walk(handler):
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+            if node.func.id == "apply_style":
+                return
+    pytest.fail("apply_style must be called in run_generation")
+
+
+def test_use_negative_prompt_gates_user_negative(handler):
+    """The checkbox must suppress the user's negative box, not the style preset."""
+    for node in ast.walk(handler):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id != "apply_style":
+            continue
+        if len(node.args) < 3:
+            continue
+        third = node.args[2]
+        if isinstance(third, ast.IfExp) and isinstance(third.test, ast.Name):
+            if third.test.id == "use_negative_prompt":
+                return
+    pytest.fail("apply_style third arg must be negative_prompt if use_negative_prompt else ''")
+
+
+def test_upscaler_receives_first_image_not_full_batch(handler):
+    for node in ast.walk(handler):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Name) and func.id == "upscaler":
+            if node.args and isinstance(node.args[0], ast.Subscript):
+                return
+    pytest.fail("upscaler must be called with sd_image[0], not the full sample list")
