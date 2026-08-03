@@ -321,6 +321,28 @@ export function clipNeedsEffects(clip: Clip): boolean {
   );
 }
 
+/** Still images and image files have no audio stream in FFmpeg. */
+export function clipHasSourceAudio(clip: Clip): boolean {
+  if (clip.kind === "audio") return true;
+  if (clip.stillImage) return false;
+  if (/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(clip.file.name)) return false;
+  return true;
+}
+
+/** Loop single-frame image inputs so trim/duration filters can reach clip length. */
+export function clipNeedsLoopInput(clip: Clip): boolean {
+  return (
+    clip.stillImage === true ||
+    /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(clip.file.name)
+  );
+}
+
+export function buildClipInputArgs(clip: Clip): string[] {
+  const input = clip.inputName!;
+  if (clipNeedsLoopInput(clip)) return ["-loop", "1", "-i", input];
+  return ["-i", input];
+}
+
 export function getSafeExtension(
   fileName: string,
   defaultExtension: string,
@@ -367,12 +389,18 @@ export function buildSingleClipFilter(
     if (grainFilters) v += `,${grainFilters}`;
     parts.push(`${v}[vout]`);
 
-    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
-    if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
-    if (clip.audioFadeOut > 0)
-      a += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
-    a += audioVolumeFilterSegment(clip.volume ?? 1);
-    parts.push(`${a}[aout]`);
+    if (clipHasSourceAudio(clip)) {
+      let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
+      if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
+      if (clip.audioFadeOut > 0)
+        a += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
+      a += audioVolumeFilterSegment(clip.volume ?? 1);
+      parts.push(`${a}[aout]`);
+    } else {
+      parts.push(
+        `anullsrc=channel_layout=stereo:sample_rate=44100:d=${duration}[aout]`,
+      );
+    }
   } else {
     // Synthesize a black video track for audio-only clips at the master canvas size.
     parts.push(
@@ -527,8 +555,7 @@ export async function mergeClipsLossless(
         outName,
       ];
       primaryArgs = [
-        "-i",
-        clip.inputName!,
+        ...buildClipInputArgs(clip),
         "-filter_complex",
         `${videoFilter};${audioFilter}`,
         "-map",
@@ -538,8 +565,7 @@ export async function mergeClipsLossless(
         ...encodeTail,
       ];
       silentAudioArgs = [
-        "-i",
-        clip.inputName!,
+        ...buildClipInputArgs(clip),
         "-f",
         "lavfi",
         "-i",
@@ -573,10 +599,9 @@ export async function mergeClipsLossless(
         "make_zero",
         outName,
       ];
-      primaryArgs = ["-i", clip.inputName!, ...durationArgs, ...codecTail];
+      primaryArgs = [...buildClipInputArgs(clip), ...durationArgs, ...codecTail];
       silentAudioArgs = [
-        "-i",
-        clip.inputName!,
+        ...buildClipInputArgs(clip),
         "-f",
         "lavfi",
         "-i",
@@ -590,19 +615,7 @@ export async function mergeClipsLossless(
       ];
     }
 
-    try {
-      await safeExec(
-        ffmpeg,
-        primaryArgs,
-        null,
-        `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}"`,
-      );
-    } catch (err) {
-      // Retry without source audio if the clip has no audio stream.  Add an
-      // anullsrc generator as a second input so the intermediate still carries
-      // a silent AAC track — necessary for a consistent stream layout when the
-      // final concat step combines clips with and without original audio.
-      if (!NO_AUDIO_STREAM_RE.test((err as Error).message ?? "")) throw err;
+    if (!clipHasSourceAudio(clip)) {
       onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
       await safeExec(
         ffmpeg,
@@ -610,6 +623,28 @@ export async function mergeClipsLossless(
         null,
         `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}" (silent audio)`,
       );
+    } else {
+      try {
+        await safeExec(
+          ffmpeg,
+          primaryArgs,
+          null,
+          `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}"`,
+        );
+      } catch (err) {
+        // Retry without source audio if the clip has no audio stream.  Add an
+        // anullsrc generator as a second input so the intermediate still carries
+        // a silent AAC track — necessary for a consistent stream layout when the
+        // final concat step combines clips with and without original audio.
+        if (!isNoAudioStreamError(err)) throw err;
+        onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+        await safeExec(
+          ffmpeg,
+          silentAudioArgs,
+          null,
+          `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}" (silent audio)`,
+        );
+      }
     }
 
     intermediates.push(outName);
@@ -877,33 +912,12 @@ export async function processClipPass1(
       rangeEnd,
       onProgress,
     };
-    try {
+
+    const encodeWithSilentAudio = async () => {
       await safeExec(
         ffmpeg,
         [
-          "-i",
-          clip.inputName!,
-          "-filter_complex",
-          `${videoFilter};${audioFilter}`,
-          "-map",
-          "[vout]",
-          "-map",
-          "[aout]",
-          ...encodeTail,
-        ],
-        progressCtx,
-        `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}"`,
-      );
-    } catch (err) {
-      // Clip has no audio stream — add a silent AAC track so all intermediates
-      // share an identical stream layout for concat.
-      if (!NO_AUDIO_STREAM_RE.test((err as Error).message ?? "")) throw err;
-      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
-      await safeExec(
-        ffmpeg,
-        [
-          "-i",
-          clip.inputName!,
+          ...buildClipInputArgs(clip),
           "-f",
           "lavfi",
           "-i",
@@ -921,6 +935,36 @@ export async function processClipPass1(
         progressCtx,
         `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}" (silent audio)`,
       );
+    };
+
+    if (!clipHasSourceAudio(clip)) {
+      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      await encodeWithSilentAudio();
+      return outName;
+    }
+
+    try {
+      await safeExec(
+        ffmpeg,
+        [
+          ...buildClipInputArgs(clip),
+          "-filter_complex",
+          `${videoFilter};${audioFilter}`,
+          "-map",
+          "[vout]",
+          "-map",
+          "[aout]",
+          ...encodeTail,
+        ],
+        progressCtx,
+        `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}"`,
+      );
+    } catch (err) {
+      // Clip has no audio stream — add a silent AAC track so all intermediates
+      // share an identical stream layout for concat.
+      if (!isNoAudioStreamError(err)) throw err;
+      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      await encodeWithSilentAudio();
     }
     return outName;
   }
@@ -930,8 +974,7 @@ export async function processClipPass1(
   await safeExec(
     ffmpeg,
     [
-      "-i",
-      clip.inputName!,
+      ...buildClipInputArgs(clip),
       "-filter_complex",
       buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction, sharpen, secondaryColor, grain),
       "-map",
@@ -1124,3 +1167,14 @@ export async function resetFFmpegInstance(): Promise<void> {
  */
 export const NO_AUDIO_STREAM_RE =
   /matches no streams|does not contain|no audio|Output file does not contain|Invalid audio stream/i;
+
+/** Detect missing-audio FFmpeg failures (worker often surfaces only "FS error"). */
+export function isNoAudioStreamError(error: unknown): boolean {
+  const parts = [
+    extractErrorMessage(error),
+    error instanceof Error ? error.message : "",
+    (error as { lastFfmpegError?: string }).lastFfmpegError ?? "",
+    getLastFfmpegError() ?? "",
+  ];
+  return NO_AUDIO_STREAM_RE.test(parts.join("\n"));
+}
