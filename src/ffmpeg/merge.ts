@@ -12,10 +12,12 @@ import { getClipDuration } from "../utils/project";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   DEFAULT_FINISHING,
+  isNoiseReductionActive,
   isPrimaryColorActive,
   type FinishingSettings,
 } from "../utils/finishing";
 import { buildPrimaryColorFfmpegFilters } from "../utils/primaryColor";
+import { buildNoiseReductionFfmpegFilters } from "../utils/noiseReduction";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -89,6 +91,16 @@ export async function mergeClips(
     isPrimaryColorActive(finishing.primaryColor) ? finishing.primaryColor : undefined;
   const primaryFilters = buildPrimaryColorFfmpegFilters(primaryColor);
   const needsPrimary = Boolean(primaryFilters);
+  const noiseReduction =
+    isNoiseReductionActive(finishing.noiseReduction) ? finishing.noiseReduction : undefined;
+  const noiseFilters = buildNoiseReductionFfmpegFilters(noiseReduction);
+  const needsNoise = Boolean(noiseFilters);
+
+  if (needsNoise) {
+    onStatus(
+      "Noise reduction enabled on FFmpeg path (hqdn3d) — encode may be significantly slower.",
+    );
+  }
 
   if (clips.length === 0) throw new Error("Upload clips before rendering.");
   const totalDuration = clips.reduce(
@@ -172,7 +184,7 @@ export async function mergeClips(
   // Primary color also requires a re-encode (no stream-copy finishing).
   const shouldForceReencodeNow =
     (forceReencode && renderPlan.path === "lossless-concat") ||
-    (needsPrimary && renderPlan.path === "lossless-concat");
+    ((needsPrimary || needsNoise) && renderPlan.path === "lossless-concat");
 
   // PiP/compositing and transition renders apply text overlays directly in
   // their filter_complex, avoiding a second full re-encode pass.
@@ -192,6 +204,7 @@ export async function mergeClips(
         activeTransitions,
         textOverlays,
         primaryColor,
+        noiseReduction,
       );
       textOverlaysApplied = textOverlays.length > 0;
     } else if (transitionFilterComplex) {
@@ -208,6 +221,7 @@ export async function mergeClips(
         onProgress,
         textOverlays,
         primaryColor,
+        noiseReduction,
       );
       textOverlaysApplied = textOverlays.length > 0;
     } else if (shouldForceReencodeNow) {
@@ -221,6 +235,7 @@ export async function mergeClips(
         totalDuration,
         onProgress,
         primaryColor,
+        noiseReduction,
       );
     } else if (effectivePlan.path === "lossless-concat") {
       // Lossless path (text overlays will be applied afterward if present)
@@ -237,6 +252,7 @@ export async function mergeClips(
         totalDuration,
         onProgress,
         primaryColor,
+        noiseReduction,
       );
     }
   } finally {

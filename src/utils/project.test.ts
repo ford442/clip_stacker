@@ -294,6 +294,26 @@ describe("utils/project", () => {
       expect(project.finishing?.primaryColor?.lift).toEqual([0.02, 0, -0.01]);
       expect(project.finishing?.primaryColor?.gain?.[0]).toBe(1.05);
     });
+
+    it('should serialize noise reduction finishing settings', () => {
+      const project = serializeProject([], [], [], [], {
+        noiseReduction: {
+          enabled: true,
+          amount: 1,
+          spatialStrength: 0.55,
+          spatialRadius: 3,
+          temporal: true,
+          temporalStrength: 0.3,
+          temporalMotionThreshold: 0.1,
+          lumaOnly: true,
+          draft: false,
+        },
+      });
+      expect(project.finishing?.noiseReduction?.enabled).toBe(true);
+      expect(project.finishing?.noiseReduction?.spatialStrength).toBe(0.55);
+      expect(project.finishing?.noiseReduction?.temporal).toBe(true);
+      expect(project.finishing?.noiseReduction?.temporalStrength).toBe(0.3);
+    });
   });
 
   // =========================================================================
@@ -892,6 +912,49 @@ describe("utils/project", () => {
       expect(result.finishing.primaryColor?.lift).toEqual([0.01, -0.02, 0]);
       expect(result.finishing.primaryColor?.gamma?.[2]).toBe(1.05);
       expect(result.finishing.primaryColor?.gain?.[0]).toBe(1.1);
+    });
+
+    it('should roundtrip noise reduction finishing settings', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const finishing = {
+        noiseReduction: {
+          enabled: true,
+          amount: 0.85,
+          spatialStrength: 0.6,
+          spatialRadius: 2.5,
+          temporal: true,
+          temporalStrength: 0.28,
+          temporalMotionThreshold: 0.12,
+          lumaOnly: true,
+          draft: false,
+        },
+      };
+      const serialized = serializeProject(sourceClips, [], [], [], finishing);
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: 'source1.mp4',
+          },
+        ],
+        finishing: serialized.finishing,
+      };
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.finishing.noiseReduction?.enabled).toBe(true);
+      expect(result.finishing.noiseReduction?.spatialStrength).toBe(0.6);
+      expect(result.finishing.noiseReduction?.spatialRadius).toBe(2.5);
+      expect(result.finishing.noiseReduction?.temporal).toBe(true);
+      expect(result.finishing.noiseReduction?.temporalStrength).toBe(0.28);
+      expect(result.finishing.noiseReduction?.lumaOnly).toBe(true);
     });
   });
 

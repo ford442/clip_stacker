@@ -51,6 +51,18 @@ describe('finishing settings', () => {
     expect(isFinishingActive(settings)).toBe(true);
   });
 
+  it('detects active noise reduction', () => {
+    const settings = {
+      ...DEFAULT_FINISHING,
+      noiseReduction: {
+        ...DEFAULT_FINISHING.noiseReduction!,
+        enabled: true,
+        spatialStrength: 0.5,
+      },
+    };
+    expect(isFinishingActive(settings)).toBe(true);
+  });
+
   it('normalizes partial settings with safe defaults', () => {
     const normalized = normalizeFinishingSettings({
       lut: { enabled: true, lutId: 'warm', intensity: 1.5 },

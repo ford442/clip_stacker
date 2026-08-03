@@ -5,9 +5,9 @@
  * Pass order (professional):
  *   noise reduction → primary color → secondary color → LUT → sharpen → grain
  *
- * Primary color (exposure / WB / lift-gamma-gain) is implemented on WebGPU with
- * best-effort FFmpeg WASM parity (`eq`, `colortemperature`, `colorbalance`).
- * Curves are deferred to v1.1. Canvas2D does not apply finishing.
+ * Primary color (exposure / WB / lift-gamma-gain) and noise reduction
+ * (spatial bilateral + optional temporal) are implemented on WebGPU with
+ * best-effort FFmpeg WASM parity. Canvas2D does not apply finishing.
  */
 
 import {
@@ -21,8 +21,14 @@ import {
   normalizePrimaryColorPass,
   type PrimaryColorSettings,
 } from './primaryColor';
+import {
+  DEFAULT_NOISE_REDUCTION_PARAMS,
+  normalizeNoiseReductionPass,
+  type NoiseReductionSettings,
+} from './noiseReduction';
 
 export type { PrimaryColorSettings } from './primaryColor';
+export type { NoiseReductionSettings } from './noiseReduction';
 
 export interface FinishingPassBase {
   enabled: boolean;
@@ -30,11 +36,8 @@ export interface FinishingPassBase {
   amount?: number;
 }
 
-/** Spatial + optional temporal noise reduction (WebGPU pass — see effect issue). */
-export interface NoiseReductionPass extends FinishingPassBase {
-  /** When true, uses a ping-pong previous-frame buffer (reset on seek). */
-  temporal?: boolean;
-}
+/** Spatial + optional temporal noise reduction — first finishing pass. */
+export type NoiseReductionPass = NoiseReductionSettings;
 
 /** Primary color correction / balancing — before creative LUT. */
 export type PrimaryColorPass = PrimaryColorSettings;
@@ -72,7 +75,7 @@ export interface FinishingSettings {
 export const DEFAULT_NOISE_REDUCTION: NoiseReductionPass = {
   enabled: false,
   amount: 1,
-  temporal: false,
+  ...DEFAULT_NOISE_REDUCTION_PARAMS,
 };
 
 export const DEFAULT_PRIMARY_COLOR: PrimaryColorPass = {
@@ -125,7 +128,11 @@ function passAmount(pass: FinishingPassBase | undefined): number {
 }
 
 export function isNoiseReductionActive(pass: NoiseReductionPass | undefined): boolean {
-  return passAmount(pass) > 0;
+  if (passAmount(pass) <= 0) return false;
+  const spatial = pass?.spatialStrength ?? 0;
+  const temporalOn = Boolean(pass?.temporal);
+  const temporal = pass?.temporalStrength ?? 0;
+  return spatial > 0 || (temporalOn && temporal > 0);
 }
 
 export function isPrimaryColorActive(pass: PrimaryColorPass | undefined): boolean {
@@ -234,12 +241,8 @@ function normalizeLutPass(raw: Partial<LutFinishingPass> | undefined): LutFinish
 export function normalizeFinishingSettings(
   raw: Partial<FinishingSettings> | undefined,
 ): FinishingSettings {
-  const noise = raw?.noiseReduction;
   return {
-    noiseReduction: {
-      ...normalizePassBase(noise, DEFAULT_NOISE_REDUCTION),
-      temporal: Boolean(noise?.temporal),
-    },
+    noiseReduction: normalizeNoiseReductionPass(raw?.noiseReduction, DEFAULT_NOISE_REDUCTION),
     primaryColor: normalizePrimaryColorPass(raw?.primaryColor, DEFAULT_PRIMARY_COLOR),
     secondaryColor: normalizePassBase(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
     lut: normalizeLutPass(raw?.lut),

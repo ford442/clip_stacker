@@ -13,6 +13,10 @@ import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
 import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
 import { appendPrimaryColorFilters, type PrimaryColorSettings } from "../utils/primaryColor";
 import {
+  appendNoiseReductionFilters,
+  type NoiseReductionSettings,
+} from "../utils/noiseReduction";
+import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
   recordFfmpegLog,
@@ -257,6 +261,7 @@ export async function mergeClipsWithCompositing(
   transitions: ClipTransition[] = [],
   textOverlays: TextOverlay[] = [],
   primaryColor?: PrimaryColorSettings,
+  noiseReduction?: NoiseReductionSettings,
 ): Promise<void> {
   onStatus("Building PiP/compositing render...");
   emitProgress(onProgress, "FFmpeg PiP/compositing render", 0.15, false);
@@ -265,8 +270,9 @@ export async function mergeClipsWithCompositing(
     onStatus(`Warning: ${message}`),
   );
 
-  // Primary color post-composite (best-effort). Remaining finishing TBD:
-  // noise → secondary → lut3d → unsharp → grain.
+  // Finishing post-composite: noise → primary. Remaining TBD:
+  // secondary → lut3d → unsharp → grain.
+  filterComplex = appendNoiseReductionFilters(filterComplex, noiseReduction);
   filterComplex = appendPrimaryColorFilters(filterComplex, primaryColor);
 
   if (textOverlays.length > 0) {
