@@ -20,6 +20,11 @@ import {
   buildPrimaryColorFfmpegFilters,
   type PrimaryColorSettings,
 } from "../utils/primaryColor";
+import {
+  appendNoiseReductionFilters,
+  buildNoiseReductionFfmpegFilters,
+  type NoiseReductionSettings,
+} from "../utils/noiseReduction";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   buildFfmpegLoadErrorMessage,
@@ -279,6 +284,7 @@ export function buildSingleClipFilter(
   targetWidth: number = OUTPUT_WIDTH,
   targetHeight: number = OUTPUT_HEIGHT,
   primaryColor?: PrimaryColorSettings,
+  noiseReduction?: NoiseReductionSettings,
 ): string {
   const duration = getClipDuration(clip);
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
@@ -293,7 +299,9 @@ export function buildSingleClipFilter(
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0)
       v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
-    // Primary color (best-effort FFmpeg parity). Other finishing passes TBD.
+    // Finishing: noise reduction then primary color (best-effort FFmpeg parity).
+    const noiseFilters = buildNoiseReductionFfmpegFilters(noiseReduction);
+    if (noiseFilters) v += `,${noiseFilters}`;
     const primaryFilters = buildPrimaryColorFfmpegFilters(primaryColor);
     if (primaryFilters) v += `,${primaryFilters}`;
     parts.push(`${v}[vout]`);
@@ -601,6 +609,7 @@ export async function performTwoPassEncode(
   totalDuration: number,
   onProgress?: ProgressCallback,
   primaryColor?: PrimaryColorSettings,
+  noiseReduction?: NoiseReductionSettings,
 ): Promise<void> {
   emitProgress(onProgress, "FFmpeg re-encode (two-pass)", 0.12, false);
 
@@ -647,6 +656,7 @@ export async function performTwoPassEncode(
         targetWidth,
         targetHeight,
         primaryColor,
+        noiseReduction,
       ),
     );
     pass1ElapsedDuration += clipDuration;
@@ -674,6 +684,7 @@ export async function processClipPass1(
   targetWidth: number = OUTPUT_WIDTH,
   targetHeight: number = OUTPUT_HEIGHT,
   primaryColor?: PrimaryColorSettings,
+  noiseReduction?: NoiseReductionSettings,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
@@ -690,8 +701,10 @@ export async function processClipPass1(
 
   const primaryFilters = buildPrimaryColorFfmpegFilters(primaryColor);
   const needsPrimary = Boolean(primaryFilters);
+  const noiseFilters = buildNoiseReductionFfmpegFilters(noiseReduction);
+  const needsNoise = Boolean(noiseFilters);
 
-  if (!clipNeedsEffects(clip) && matchesTargetResolution && !needsPrimary) {
+  if (!clipNeedsEffects(clip) && matchesTargetResolution && !needsPrimary && !needsNoise) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
     // Audio must be explicitly transcoded so the intermediate has a consistent
     // codec for concat — pure -c copy silently drops audio from non-MP4 sources.
@@ -744,6 +757,7 @@ export async function processClipPass1(
       `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS` +
       `,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease` +
       `,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p` +
+      (noiseFilters ? `,${noiseFilters}` : '') +
       (primaryFilters ? `,${primaryFilters}` : '') +
       `[vout]`;
     const audioFilter =
@@ -833,7 +847,7 @@ export async function processClipPass1(
       "-i",
       clip.inputName!,
       "-filter_complex",
-      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor),
+      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction),
       "-map",
       "[vout]",
       "-map",
@@ -929,12 +943,14 @@ export async function mergeClipsWithTransitions(
   onProgress?: ProgressCallback,
   textOverlays: TextOverlay[] = [],
   primaryColor?: PrimaryColorSettings,
+  noiseReduction?: NoiseReductionSettings,
 ): Promise<void> {
   onStatus("Building transition render...");
   emitProgress(onProgress, "FFmpeg transition render", 0.15, false);
 
   let effectiveFilterComplex = filterComplex;
-  // Primary color before text overlays (finishing order approximation on FFmpeg path).
+  // Noise reduction then primary color before text overlays.
+  effectiveFilterComplex = appendNoiseReductionFilters(effectiveFilterComplex, noiseReduction);
   effectiveFilterComplex = appendPrimaryColorFilters(effectiveFilterComplex, primaryColor);
   if (textOverlays.length > 0) {
     await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);

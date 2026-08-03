@@ -100,3 +100,15 @@ export function evaluatePreviewBudget(
     message: `Preview quality ${parts.join(" · ")} for performance.`,
   };
 }
+
+/**
+ * Suggested spatial radius for Draft NR at the given preview height.
+ * Keeps bilateral cost bounded when live preview is already resolution-capped.
+ */
+export function draftNoiseReductionRadius(
+  spatialRadius: number,
+  previewHeight: number = DEFAULT_PREVIEW_MAX_HEIGHT,
+): number {
+  const capped = previewHeight <= DEFAULT_PREVIEW_MAX_HEIGHT ? 2 : 3;
+  return Math.max(0, Math.min(spatialRadius, capped));
+}

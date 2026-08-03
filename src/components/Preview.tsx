@@ -42,6 +42,7 @@ import {
   type PreviewBackend,
 } from "../utils/feature-detector";
 import { evaluatePreviewBudget } from "../utils/previewBudget";
+import { shouldResetFinishingTemporal } from "../utils/noiseReduction";
 import { previewMetrics } from "../utils/previewMetrics";
 import { parseOutputResolution } from "../utils/resolution";
 import { createRenderScheduler } from "../utils/seekCoalescer";
@@ -262,11 +263,8 @@ function TimelineCompositorPreview({
       const engine = engineRef.current;
       if (!engine) return;
       const lastTime = lastRenderedTimeRef.current;
-      if (
-        lastTime != null &&
-        Math.abs(globalTime - lastTime) > 2 / 30 &&
-        !playingRef.current
-      ) {
+      // Clear temporal NR on any backward scrub or large discontinuous seek.
+      if (shouldResetFinishingTemporal(lastTime, globalTime, !!playingRef.current)) {
         engine.resetFinishingTemporal?.();
       }
       lastRenderedTimeRef.current = globalTime;

@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   capPreviewResolution,
   evaluatePreviewBudget,
+  draftNoiseReductionRadius,
   DEFAULT_PREVIEW_MAX_HEIGHT,
 } from './previewBudget';
 import { WEBGPU_LAYER_BUDGET } from './feature-detector';
@@ -70,5 +71,13 @@ describe('evaluatePreviewBudget', () => {
     expect(result.degraded).toBe(true);
     expect(result.message).toContain('Canvas2D');
     expect(result.message).toContain(String(WEBGPU_LAYER_BUDGET));
+  });
+});
+
+describe('draftNoiseReductionRadius', () => {
+  it('caps radius for preview-height budgets', () => {
+    expect(draftNoiseReductionRadius(4, 720)).toBe(2);
+    expect(draftNoiseReductionRadius(4, 1080)).toBe(3);
+    expect(draftNoiseReductionRadius(1, 720)).toBe(1);
   });
 });

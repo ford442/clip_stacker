@@ -2,10 +2,12 @@
  * Ordered finishing pass chain — runs after compositing on WebGPU preview/export.
  *
  * Pass order: noise reduction → primary color → secondary color → LUT → sharpen → grain.
- * Primary color and LUT are implemented; other slots are no-ops until their effect issues land.
+ * Noise reduction, primary color, and LUT are implemented; other slots are no-ops until
+ * their effect issues land.
  */
 
 import { LutPass } from './lutPass';
+import { NoiseReductionGpuPass } from './noiseReductionPass';
 import { PrimaryColorGpuPass } from './primaryColorPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
@@ -23,22 +25,31 @@ import { resolveLutData } from '../utils/lut';
 export class FinishingPassChain {
   private readonly lutPass: LutPass;
   private readonly primaryColorPass: PrimaryColorGpuPass;
+  private readonly noiseReductionPass: NoiseReductionGpuPass;
   private pingTexture: GPUTexture | null = null;
   private pongTexture: GPUTexture | null = null;
   /** Previous frame for temporal denoise — cleared on seek via resetTemporal(). */
   private prevFrameTexture: GPUTexture | null = null;
+  /** True after at least one frame has been copied into prevFrameTexture. */
+  private prevFrameValid = false;
   private textureWidth = 0;
   private textureHeight = 0;
 
-  private constructor(lutPass: LutPass, primaryColorPass: PrimaryColorGpuPass) {
+  private constructor(
+    lutPass: LutPass,
+    primaryColorPass: PrimaryColorGpuPass,
+    noiseReductionPass: NoiseReductionGpuPass,
+  ) {
     this.lutPass = lutPass;
     this.primaryColorPass = primaryColorPass;
+    this.noiseReductionPass = noiseReductionPass;
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): FinishingPassChain {
     return new FinishingPassChain(
       LutPass.create(device, format),
       PrimaryColorGpuPass.create(device, format),
+      NoiseReductionGpuPass.create(device, format),
     );
   }
 
@@ -78,8 +89,17 @@ export class FinishingPassChain {
     };
 
     const hasLaterGpuPass = (
-      after: 'primary' | 'secondary' | 'lut' | 'sharpen',
+      after: 'noise' | 'primary' | 'secondary' | 'lut' | 'sharpen',
     ): boolean => {
+      if (after === 'noise') {
+        return (
+          isPrimaryColorActive(settings.primaryColor) ||
+          isSecondaryColorActive(settings.secondaryColor) ||
+          isLutFinishingPassActive(settings.lut) ||
+          isSharpenActive(settings.sharpen) ||
+          isGrainActive(settings.grain)
+        );
+      }
       if (after === 'primary') {
         return (
           isSecondaryColorActive(settings.secondaryColor) ||
@@ -101,11 +121,47 @@ export class FinishingPassChain {
       return isGrainActive(settings.grain);
     };
 
-    if (isNoiseReductionActive(settings.noiseReduction)) {
-      // TODO(noise-reduction): spatial + optional temporal denoise pass.
-      // When temporal is enabled, read/write prevFrameTexture and swap each frame.
-      void settings.noiseReduction?.temporal;
-      void this.prevFrameTexture;
+    if (isNoiseReductionActive(settings.noiseReduction) && settings.noiseReduction) {
+      const nr = settings.noiseReduction;
+      const wantsTemporal = Boolean(nr.temporal) && (nr.temporalStrength ?? 0) > 0;
+      const prevForShader =
+        wantsTemporal && this.prevFrameValid ? this.prevFrameTexture : null;
+
+      const isLast = !hasLaterGpuPass('noise');
+      if (isLast) {
+        this.noiseReductionPass.applyBetweenTextures(
+          device,
+          current,
+          canvasTexture.createView(),
+          width,
+          height,
+          nr,
+          prevForShader,
+        );
+        wroteToCanvas = true;
+        if (wantsTemporal) {
+          this.ensurePrevFrameTexture(device, width, height);
+          this.copyToPrevFrame(device, canvasTexture, width, height);
+          this.prevFrameValid = true;
+        }
+      } else {
+        runPass(() => {
+          this.noiseReductionPass.applyBetweenTextures(
+            device,
+            current,
+            next.createView(),
+            width,
+            height,
+            nr,
+            prevForShader,
+          );
+        });
+        if (wantsTemporal) {
+          this.ensurePrevFrameTexture(device, width, height);
+          this.copyToPrevFrame(device, current, width, height);
+          this.prevFrameValid = true;
+        }
+      }
     }
 
     if (isPrimaryColorActive(settings.primaryColor) && settings.primaryColor) {
@@ -190,10 +246,16 @@ export class FinishingPassChain {
     }
   }
 
-  /** Clear temporal buffers after timeline seek or clip change. */
+  /** Clear temporal buffers after timeline seek, scrub-back, or clip change. */
   resetTemporal(): void {
     this.prevFrameTexture?.destroy();
     this.prevFrameTexture = null;
+    this.prevFrameValid = false;
+  }
+
+  /** True when a valid previous-frame buffer is ready for temporal blend. */
+  hasTemporalBuffer(): boolean {
+    return this.prevFrameValid && this.prevFrameTexture != null;
   }
 
   destroy(): void {
@@ -202,9 +264,51 @@ export class FinishingPassChain {
     this.prevFrameTexture?.destroy();
     this.lutPass.destroy();
     this.primaryColorPass.destroy();
+    this.noiseReductionPass.destroy();
     this.pingTexture = null;
     this.pongTexture = null;
     this.prevFrameTexture = null;
+    this.prevFrameValid = false;
+  }
+
+  private copyToPrevFrame(
+    device: GPUDevice,
+    source: GPUTexture,
+    width: number,
+    height: number,
+  ): void {
+    if (!this.prevFrameTexture) return;
+    const encoder = device.createCommandEncoder();
+    encoder.copyTextureToTexture(
+      { texture: source },
+      { texture: this.prevFrameTexture },
+      [width, height, 1],
+    );
+    device.queue.submit([encoder.finish()]);
+  }
+
+  private ensurePrevFrameTexture(
+    device: GPUDevice,
+    width: number,
+    height: number,
+  ): void {
+    if (
+      this.prevFrameTexture &&
+      this.textureWidth === width &&
+      this.textureHeight === height
+    ) {
+      return;
+    }
+    this.prevFrameTexture?.destroy();
+    this.prevFrameTexture = device.createTexture({
+      size: [width, height, 1],
+      format: 'rgba8unorm',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.COPY_SRC |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
   }
 
   private blitToCanvas(

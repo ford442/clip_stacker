@@ -154,3 +154,29 @@
   gap: 0.15rem;
   font-size: 0.78rem;
 }
+
+.noise-reduction-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.5rem 0;
+}
+
+.noise-reduction-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+}
+
+.noise-reduction-reset-btn {
+  font-size: 0.78rem;
+}
+
+.noise-reduction-group-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-top: 0.35rem;
+}
