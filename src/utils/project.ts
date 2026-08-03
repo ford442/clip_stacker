@@ -38,7 +38,14 @@ import {
 } from './textOverlay';
 import { isKnownTextShader } from '../webgpu/text/registry';
 import type { ColorGradeSettings } from './lut';
-import { DEFAULT_COLOR_GRADE, isColorGradeActive } from './lut';
+import type { FinishingSettings } from './finishing';
+import {
+  DEFAULT_FINISHING,
+  colorGradeToLutPass,
+  getColorGradeFromFinishing,
+  isFinishingActive,
+  resolveFinishingFromProject,
+} from './finishing';
 import {
   CHUNK_THRESHOLD_BYTES,
   uploadMediaChunked,
@@ -124,7 +131,7 @@ export function serializeProject(
   transitions: ClipTransition[] = [],
   textOverlays: TextOverlay[] = [],
   clipGroups: ClipGroup[] = [],
-  colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  finishing: FinishingSettings = DEFAULT_FINISHING,
   tracks: Track[] = [],
   layoutReferenceResolution?: string,
 ): Project {
@@ -222,14 +229,16 @@ export function serializeProject(
       }
     : {}),
     ...(textOverlays.length > 0 ? { textOverlays } : {}),
-    ...(isColorGradeActive(colorGrade) ? { colorGrade } : {}),
+    ...(isFinishingActive(finishing) ? { finishing } : {}),
   };
 }
 
 interface SerializeProjectOptions {
   mediaMode?: 'metadata' | 'embed' | 'remote';
   mediaClient?: ContaboStorageManagerClient;
+  /** @deprecated Prefer `finishing`. */
   colorGrade?: ColorGradeSettings;
+  finishing?: FinishingSettings;
   onRemoteUploadProgress?: (event: RemoteUploadProgressEvent) => void;
   onRemoteUploadError?: (
     event: RemoteUploadErrorEvent,
@@ -269,6 +278,7 @@ export interface AppliedProjectData {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   colorGrade: ColorGradeSettings;
+  finishing: FinishingSettings;
   skippedClipCount: number;
   skippedClipFileNames: string[];
   /** Human-readable descriptions of invalid color values that were reset to defaults. */
@@ -616,12 +626,17 @@ export async function serializeProjectWithMedia(
   tracks: Track[] = [],
 ): Promise<Project> {
   const mediaMode = options.mediaMode ?? 'metadata';
+  const finishing =
+    options.finishing ??
+    (options.colorGrade
+      ? { ...DEFAULT_FINISHING, lut: colorGradeToLutPass(options.colorGrade, true) }
+      : DEFAULT_FINISHING);
   const project = serializeProject(
     clips,
     transitions,
     textOverlays,
     clipGroups,
-    options.colorGrade ?? DEFAULT_COLOR_GRADE,
+    finishing,
     tracks,
   );
   if (mediaMode === 'metadata') return project;
@@ -943,20 +958,8 @@ export async function applyProjectData(
       })
     : [];
 
-  const colorGrade: ColorGradeSettings = project.colorGrade
-    ? {
-        lutId: project.colorGrade.lutId ?? DEFAULT_COLOR_GRADE.lutId,
-        intensity: Number.isFinite(project.colorGrade.intensity)
-          ? Math.max(0, Math.min(1, project.colorGrade.intensity))
-          : DEFAULT_COLOR_GRADE.intensity,
-        ...(project.colorGrade.customCubeText
-          ? { customCubeText: project.colorGrade.customCubeText }
-          : {}),
-        ...(project.colorGrade.customFileName
-          ? { customFileName: project.colorGrade.customFileName }
-          : {}),
-      }
-    : DEFAULT_COLOR_GRADE;
+  const finishing = resolveFinishingFromProject(project);
+  const colorGrade = getColorGradeFromFinishing(finishing);
 
   const savedTracks = Array.isArray(project.tracks)
     ? project.tracks.map(
@@ -987,6 +990,7 @@ export async function applyProjectData(
     transitions,
     textOverlays,
     colorGrade,
+    finishing,
     skippedClipCount: skippedCount,
     skippedClipFileNames,
     invalidColorWarnings,

@@ -10,7 +10,8 @@
  */
 
 import type { Clip } from '../types';
-import type { ColorGradeSettings } from '../utils/lut';
+import type { FinishingSettings } from '../utils/finishing';
+import { resolveTimelineFinishing } from '../utils/finishing';
 import {
   buildPreviewCompositionPlan,
   type PreviewClipLayer,
@@ -23,7 +24,7 @@ let renderer: WorkerTimelineRenderer | null = null;
 
 interface PendingRender {
   plan: PreviewCompositionPlan;
-  colorGrade?: ColorGradeSettings;
+  finishing?: FinishingSettings;
 }
 const pendingRenders = new Map<number, PendingRender>();
 const cancelledIds = new Set<number>();
@@ -59,8 +60,11 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         globalTime,
         maxWidth,
         maxHeight,
+        finishing,
         colorGrade,
       } = msg;
+
+      const resolvedFinishing = resolveTimelineFinishing({ finishing, colorGrade });
 
       if (cancelledIds.has(renderId)) {
         cancelledIds.delete(renderId);
@@ -101,7 +105,7 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         });
       }
 
-      pendingRenders.set(renderId, { plan, colorGrade });
+      pendingRenders.set(renderId, { plan, finishing: resolvedFinishing });
       post({ type: 'need-frames', renderId, requests });
       break;
     }
@@ -134,7 +138,7 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
       await renderer.renderFromFrames(
         pending.plan,
         entries,
-        pending.colorGrade,
+        pending.finishing,
         () => cancelledIds.has(renderId),
       );
 

@@ -9,7 +9,8 @@ import type {
   TextOverlay,
   Track,
 } from "../types";
-import type { ColorGradeSettings } from "../utils/lut";
+import type { FinishingSettings } from "../utils/finishing";
+import { isFinishingActive } from "../utils/finishing";
 import { sanitizeFilename } from "../utils/filename";
 import { computeTotalDuration } from "../utils/transitions";
 import { useMediaVolume } from "../hooks/useMediaVolume";
@@ -54,7 +55,7 @@ interface Props {
   transitions?: ClipTransition[];
   textOverlays?: TextOverlay[];
   exportSettings?: ExportSettings;
-  colorGrade?: ColorGradeSettings;
+  finishing?: FinishingSettings;
   outputUrl: string | null;
   exportFilename?: string;
   selectedClipId?: string | null;
@@ -83,7 +84,7 @@ function PreviewImpl({
   transitions = [],
   textOverlays = [],
   exportSettings,
-  colorGrade,
+  finishing,
   outputUrl,
   exportFilename,
   selectedClipId,
@@ -130,7 +131,7 @@ function PreviewImpl({
           transitions={transitions}
           textOverlays={textOverlays}
           exportSettings={exportSettings}
-          colorGrade={colorGrade}
+          finishing={finishing}
           selectedClipId={selectedClipId}
           selectedTextOverlayId={selectedTextOverlayId}
           onSelectClip={onSelectClip}
@@ -158,7 +159,7 @@ function PreviewImpl({
         <h2>Preview</h2>
         <WebGPUVideoPreview
           clip={clip}
-          colorGrade={colorGrade}
+          finishing={finishing}
         />
       </section>
     );
@@ -186,7 +187,7 @@ interface TimelinePreviewProps {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   exportSettings?: ExportSettings;
-  colorGrade?: ColorGradeSettings;
+  finishing?: FinishingSettings;
   selectedClipId?: string | null;
   selectedTextOverlayId?: string | null;
   onSelectClip?: (clipId: string | null) => void;
@@ -207,7 +208,7 @@ function TimelineCompositorPreview({
   transitions,
   textOverlays,
   exportSettings,
-  colorGrade,
+  finishing,
   selectedClipId = null,
   selectedTextOverlayId = null,
   onSelectClip,
@@ -254,11 +255,21 @@ function TimelineCompositorPreview({
   const previewSize = usePreviewSize(wrapperRef, timelineAspectRatio, DEFAULT_PREVIEW_CONSTRAINTS);
   const previewSizeRef = useRef(previewSize);
   previewSizeRef.current = previewSize;
+  const lastRenderedTimeRef = useRef<number | null>(null);
 
   const renderAt = useCallback(
     async (globalTime: number) => {
       const engine = engineRef.current;
       if (!engine) return;
+      const lastTime = lastRenderedTimeRef.current;
+      if (
+        lastTime != null &&
+        Math.abs(globalTime - lastTime) > 2 / 30 &&
+        !playingRef.current
+      ) {
+        engine.resetFinishingTemporal?.();
+      }
+      lastRenderedTimeRef.current = globalTime;
       const token = ++renderTokenRef.current;
       const isCancelled = () => token !== renderTokenRef.current;
       const frameStart = performance.now();
@@ -275,7 +286,7 @@ function TimelineCompositorPreview({
             isCancelled,
             maxHeight: size?.canvasHeight,
             maxWidth: size?.canvasWidth,
-            colorGrade,
+            finishing,
           },
         );
         if (isCancelled()) return;
@@ -314,7 +325,7 @@ function TimelineCompositorPreview({
         }
       }
     },
-    [timelineClips, clipGroups, transitions, textOverlays, exportSettings, colorGrade],
+    [timelineClips, clipGroups, transitions, textOverlays, exportSettings, finishing],
   );
 
   const requestRender = useCallback((globalTime: number) => {
@@ -619,7 +630,7 @@ function TimelineCompositorPreview({
 
 interface VideoPreviewProps {
   clip: Clip;
-  colorGrade?: ColorGradeSettings;
+  finishing?: FinishingSettings;
 }
 
 /** Hidden but still decodable — `display:none` stops frame delivery in Chromium. */
@@ -633,7 +644,7 @@ const HIDDEN_VIDEO_STYLE: CSSProperties = {
 
 function WebGPUVideoPreview({
   clip,
-  colorGrade,
+  finishing,
 }: VideoPreviewProps) {
   const playheadTime = usePlayheadTime();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -662,7 +673,7 @@ function WebGPUVideoPreview({
     setHasFrame(false);
     setGpuActive(false);
     setGpuFallback(!webGpuAvailable);
-  }, [clip.id, clip.objectUrl, webGpuAvailable, colorGrade]);
+  }, [clip.id, clip.objectUrl, webGpuAvailable, finishing]);
 
   useEffect(() => {
     let alive = true;
@@ -711,8 +722,8 @@ function WebGPUVideoPreview({
           clip.videoFadeOut,
           clip.opacity ?? 1,
         );
-        if (colorGrade) {
-          engine.applyColorGrade(colorGrade);
+        if (finishing && isFinishingActive(finishing)) {
+          engine.applyFinishing(finishing);
         }
         frame.close();
         setHasFrame(true);
@@ -781,7 +792,7 @@ function WebGPUVideoPreview({
       setGpuActive(false);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clip.id, clip.objectUrl, webGpuAvailable, colorGrade]);
+  }, [clip.id, clip.objectUrl, webGpuAvailable, finishing]);
 
   // An unexpected device loss (GPU process crash, driver reset) leaves any
   // live `PreviewEngine` holding a dead device — its draw calls silently

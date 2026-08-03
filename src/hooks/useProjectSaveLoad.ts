@@ -1,6 +1,6 @@
 import { useCallback, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
-import type { ColorGradeSettings } from "../utils/lut";
+import type { FinishingSettings } from "../utils/finishing";
 import type { EditSnapshot } from "../utils/editHistory";
 import {
   summarizeProjectForSave,
@@ -35,8 +35,8 @@ export function useProjectSaveLoad({
   clipGroups,
   transitions,
   textOverlays,
-  colorGrade,
-  setColorGrade,
+  finishing,
+  setFinishing,
   setClips,
   setClipGroups,
   setSelectedClipId,
@@ -50,8 +50,8 @@ export function useProjectSaveLoad({
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
-  colorGrade: ColorGradeSettings;
-  setColorGrade: (settings: ColorGradeSettings) => void;
+  finishing: FinishingSettings;
+  setFinishing: (settings: FinishingSettings) => void;
   setClips: (c: Clip[]) => void;
   setClipGroups: (cg: ClipGroup[]) => void;
   setSelectedClipId: (id: string | null) => void;
@@ -98,7 +98,7 @@ export function useProjectSaveLoad({
         transitions,
         textOverlays,
         clipGroups,
-        { mediaMode: "embed", onEmbedWarning: (message) => embedWarnings.push(message), colorGrade },
+        { mediaMode: "embed", onEmbedWarning: (message) => embedWarnings.push(message), finishing },
         tracks,
       );
       const payload = JSON.stringify(project, null, 2);
@@ -117,7 +117,7 @@ export function useProjectSaveLoad({
     } catch (error) {
       setStatus(`Could not export project: ${(error as Error).message}`);
     }
-  }, [clips, tracks, clipGroups, transitions, textOverlays, colorGrade, setStatus]);
+  }, [clips, tracks, clipGroups, transitions, textOverlays, finishing, setStatus]);
 
   const handleLoadProject = useCallback(
     async (file: File) => {
@@ -129,7 +129,7 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
-          colorGrade: loadedColorGrade,
+          finishing: loadedFinishing,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -145,7 +145,7 @@ export function useProjectSaveLoad({
           textOverlays: loadedOverlays,
           selectedClipId: selectedId,
         });
-        setColorGrade(loadedColorGrade);
+        setFinishing(loadedFinishing);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
@@ -170,7 +170,7 @@ export function useProjectSaveLoad({
       setTextOverlays,
       setStatus,
       resetHistory,
-      setColorGrade,
+      setFinishing,
     ],
   );
 
@@ -261,7 +261,7 @@ export function useProjectSaveLoad({
                 });
               });
             },
-            colorGrade,
+            finishing,
           },
           tracks,
         );
@@ -275,7 +275,7 @@ export function useProjectSaveLoad({
         setIsRemoteSaving(false);
       }
     },
-    [clips, tracks, clipGroups, transitions, textOverlays, colorGrade, setStatus],
+    [clips, tracks, clipGroups, transitions, textOverlays, finishing, setStatus],
   );
 
   const handleLoadRemote = useCallback(
@@ -290,7 +290,7 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
-          colorGrade: loadedColorGrade,
+          finishing: loadedFinishing,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -318,7 +318,7 @@ export function useProjectSaveLoad({
           textOverlays: loadedOverlays,
           selectedClipId: selectedId,
         });
-        setColorGrade(loadedColorGrade);
+        setFinishing(loadedFinishing);
 
         let msg = `Remote project loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
@@ -349,7 +349,7 @@ export function useProjectSaveLoad({
       setTextOverlays,
       setStatus,
       resetHistory,
-      setColorGrade,
+      setFinishing,
     ],
   );
 

@@ -288,6 +288,8 @@ export function buildSingleClipFilter(
     if (clip.videoFadeOut > 0)
       v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
     parts.push(`${v}[vout]`);
+    // TODO(finishing): append noise reduction / primary / secondary color passes
+    // before [vout] when FFmpeg equivalents land (see per-effect issues).
 
     let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;

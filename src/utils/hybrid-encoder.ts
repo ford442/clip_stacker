@@ -13,7 +13,7 @@
  */
 
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay, RenderPlan } from '../types';
-import { DEFAULT_COLOR_GRADE, type ColorGradeSettings } from '../utils/lut';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
@@ -50,7 +50,7 @@ export async function hybridMergeClips(
   forceReencode = false,
   renderPlan?: RenderPlan,
   clipGroups: ClipGroup[] = [],
-  colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  finishing: FinishingSettings = DEFAULT_FINISHING,
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
@@ -76,7 +76,7 @@ export async function hybridMergeClips(
     forceFFmpeg,
     useCanvas,
     webGpuAvailable,
-    colorGrade,
+    finishing,
   });
   const needsVideoNormalize = clipsNeedResolutionNormalization(clips, settings) || forceReencode;
   const { width, height } = parseOutputResolution(settings.outputResolution);
@@ -107,7 +107,7 @@ export async function hybridMergeClips(
           transitions,
           textOverlays,
           clipGroups,
-          colorGrade,
+          finishing,
           useWebCodecsAudio,
         );
 
