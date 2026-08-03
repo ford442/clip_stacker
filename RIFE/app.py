@@ -32,9 +32,14 @@ WORKSPACE_DIR = os.path.join(BASE_DIR, "workspace_temp")
 # Frame rate every stitched clip is normalized to. 30 rather than 60: upsampling
 # 24 fps sources to 60 was the main cause of multi-minute normalizations.
 STITCH_FPS = 30
+# Default hold time for still-image clips (matches clip_stacker STILL_IMAGE_DEFAULT_DURATION).
+STILL_IMAGE_DEFAULT_DURATION = 5.0
 # avg_frame_rate rarely lands exactly on 30 (30000/1001 is 29.97), and a clip
 # that close needs no resampling.
 FPS_TOLERANCE = 0.05
+IMAGE_EXTENSIONS = frozenset({
+    ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif",
+})
 # Recursion depth cap for morph interpolation; see morph_transition.
 MAX_MORPH_MULTI = 8
 
@@ -49,15 +54,29 @@ if not hasattr(np, 'int'):
 
 # ── Thumbnail: base64 data URIs ──────────
 
+def is_still_image(path):
+    """True when `path` looks like a single-frame image upload."""
+    ext = os.path.splitext(path)[1].lower()
+    return ext in IMAGE_EXTENSIONS
+
+
 def extract_thumb_b64(vid_path):
     """Pipe first frame to stdout as JPEG, return data URI. No temp files."""
     try:
-        cmd = [
-            'ffmpeg', '-i', vid_path,
-            '-ss', '00:00:00.5', '-vframes', '1',
-            '-vf', 'scale=240:-1',
-            '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'
-        ]
+        if is_still_image(vid_path):
+            cmd = [
+                'ffmpeg', '-i', vid_path,
+                '-vframes', '1',
+                '-vf', 'scale=240:-1',
+                '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+            ]
+        else:
+            cmd = [
+                'ffmpeg', '-i', vid_path,
+                '-ss', '00:00:00.5', '-vframes', '1',
+                '-vf', 'scale=240:-1',
+                '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+            ]
         result = subprocess.run(cmd, stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL, timeout=10)
         if result.returncode == 0 and result.stdout:
@@ -221,6 +240,68 @@ def clip_already_conforms(video_path, target_w, target_h, target_fps=STITCH_FPS)
     # one, and a non-AAC track would not concat cleanly with the re-encoded
     # AAC of its neighbours.
     return probe_audio_codec(video_path) == 'aac'
+
+
+def still_image_duration(path):
+    """Seconds to hold a still image when normalizing for stitch."""
+    duration = get_duration(path)
+    if duration is not None and duration > 0:
+        return duration
+    return STILL_IMAGE_DEFAULT_DURATION
+
+
+def normalize_still_image_for_stitch(
+    image_path, out_path, target_w, target_h, duration=None,
+):
+    """Turn a still image into an h264+aac clip at STITCH_FPS for concat."""
+    hold = duration if duration is not None else still_image_duration(image_path)
+    hold = max(0.1, float(hold))
+    scale = (
+        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps={STITCH_FPS}"
+    )
+    subprocess.run([
+        'ffmpeg', '-loop', '1', '-t', str(hold), '-i', image_path,
+        '-f', 'lavfi', '-i',
+        'anullsrc=channel_layout=stereo:sample_rate=44100',
+        '-vf', scale,
+        '-map', '0:v:0', '-map', '1:a:0',
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+        '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+        '-shortest', '-movflags', '+faststart',
+        '-y', out_path,
+    ], check=True, capture_output=True, text=True)
+
+
+def normalize_video_for_stitch(vid_path, out_path, target_w, target_h):
+    """Re-encode a video clip to the stitch target (scale/pad/fps + AAC audio)."""
+    scale = (
+        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps={STITCH_FPS}"
+    )
+    has_audio = probe_audio_codec(vid_path) != ''
+    if has_audio:
+        subprocess.run([
+            'ffmpeg', '-i', vid_path, '-vf', scale,
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+            '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+            '-movflags', '+faststart',
+            '-y', out_path,
+        ], check=True, capture_output=True, text=True)
+    else:
+        duration = get_duration(vid_path) or STILL_IMAGE_DEFAULT_DURATION
+        subprocess.run([
+            'ffmpeg', '-i', vid_path,
+            '-f', 'lavfi', '-i',
+            'anullsrc=channel_layout=stereo:sample_rate=44100',
+            '-vf', scale,
+            '-map', '0:v:0', '-map', '1:a:0',
+            '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+            '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+            '-t', str(max(0.1, duration)),
+            '-shortest', '-movflags', '+faststart',
+            '-y', out_path,
+        ], check=True, capture_output=True, text=True)
 
 
 def get_duration(video_path):
@@ -429,16 +510,10 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
                 '-movflags', '+faststart', '-y', out
             ], check=True)
             copied += 1
+        elif is_still_image(vid_path) or probe_video_stream(vid_path) is None:
+            normalize_still_image_for_stitch(vid_path, out, target_w, target_h)
         else:
-            scale = (f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-                     f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps={STITCH_FPS}")
-            subprocess.run([
-                'ffmpeg', '-i', vid_path, '-vf', scale,
-                '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
-                '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
-                '-movflags', '+faststart',
-                '-y', out
-            ], check=True)
+            normalize_video_for_stitch(vid_path, out, target_w, target_h)
         normalized.append(out)
     print(f"Stitch: {copied}/{clip_count} clips stream-copied, "
           f"{clip_count - copied} re-encoded")
@@ -560,7 +635,10 @@ def handle_upload(files):
     paths = []
     for f in files:
         src = f.name if hasattr(f, "name") else str(f)
-        dst = os.path.join(WORKSPACE_DIR, f"uploaded_{uuid.uuid4().hex}.mp4")
+        ext = os.path.splitext(src)[1].lower()
+        if ext not in IMAGE_EXTENSIONS and ext != ".mp4":
+            ext = ".mp4"
+        dst = os.path.join(WORKSPACE_DIR, f"uploaded_{uuid.uuid4().hex}{ext}")
         shutil.copy(src, dst)
         paths.append(dst)
 
@@ -634,9 +712,9 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             gr.Markdown("### Upload clips → select & reorder → stitch")
 
             stitch_inputs = gr.File(
-                label="Upload Video Clips (multiple)",
+                label="Upload Video or Still-Image Clips (multiple)",
                 file_count="multiple",
-                file_types=["video"],
+                file_types=["video", "image"],
                 height=100
             )
 
@@ -787,7 +865,7 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
     # call client.predict("/stitch", [...]) directly. Components are hidden — it
     # exists only to register the named "/stitch" API route.
     api_files = gr.File(
-        file_count="multiple", file_types=["video"], visible=False,
+        file_count="multiple", file_types=["video", "image"], visible=False,
     )
     api_res = gr.Textbox(value="1920x1080", visible=False)
     api_audio = gr.Audio(type="filepath", sources=["upload"], visible=False)

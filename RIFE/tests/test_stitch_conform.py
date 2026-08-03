@@ -68,6 +68,66 @@ def make_video(path, width=1920, height=1080, fps=30, seconds=1,
     return str(path)
 
 
+def make_still_image(path, width=1920, height=1080):
+    subprocess.run([
+        "ffmpeg", "-v", "error", "-f", "lavfi",
+        "-i", f"color=c=red:s={width}x{height}",
+        "-frames:v", "1", "-y", str(path),
+    ], check=True, capture_output=True)
+    return str(path)
+
+
+def test_is_still_image_recognises_common_extensions(app, tmp_path):
+    path = make_still_image(tmp_path / "frame.png")
+    assert app.is_still_image(path) is True
+    video = make_video(tmp_path / "clip.mp4")
+    assert app.is_still_image(video) is False
+
+
+def test_still_image_does_not_conform(app, tmp_path):
+    path = make_still_image(tmp_path / "still.png")
+    assert app.clip_already_conforms(path, "1920", "1080") is False
+
+
+def test_normalize_still_image_produces_h264_aac(app, tmp_path):
+    source = make_still_image(tmp_path / "still.png", 800, 600)
+    out = str(tmp_path / "norm.mp4")
+    app.normalize_still_image_for_stitch(source, out, "1920", "1080", duration=2)
+
+    info = app.probe_video_stream(out)
+    assert info is not None
+    assert info["codec"] == "h264"
+    assert info["width"] == 1920
+    assert info["height"] == 1080
+    assert info["fps"] == pytest.approx(app.STITCH_FPS, abs=0.05)
+    assert app.probe_audio_codec(out) == "aac"
+    duration = app.get_duration(out)
+    assert duration == pytest.approx(2.0, abs=0.15)
+
+
+def test_still_image_thumb_is_data_uri(app, tmp_path):
+    path = make_still_image(tmp_path / "still.png")
+    thumb = app.extract_thumb_b64(path)
+    assert thumb is not None
+    assert thumb.startswith("data:image/jpeg;base64,")
+
+
+def test_stitch_videos_accepts_still_image_plus_video(app, tmp_path):
+    still = make_still_image(tmp_path / "still.png", 640, 480)
+    video = make_video(tmp_path / "clip.mp4", 640, 480, 30, seconds=1)
+    out = app.stitch_videos([still, video], "1920x1080")
+    assert out is not None
+    assert os.path.exists(out)
+    info = app.probe_video_stream(out)
+    assert info is not None
+    assert info["width"] == 1920
+    assert info["height"] == 1080
+    duration = app.get_duration(out)
+    assert duration is not None
+    # Default 5s still + ~1s video.
+    assert duration == pytest.approx(6.0, abs=0.5)
+
+
 def test_probe_reads_real_stream_properties(app, tmp_path):
     path = make_video(tmp_path / "a.mp4", width=1280, height=720, fps=25)
     info = app.probe_video_stream(path)

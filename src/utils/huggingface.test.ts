@@ -72,7 +72,7 @@ describe("stitchClipsOnGpu", () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
     await expect(stitchClipsOnGpu([], "1920x1080")).rejects.toThrow(
-      /no video clips/i,
+      /no clips to stitch/i,
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
