@@ -265,7 +265,7 @@ export interface GpuStitchResult {
  * NOT apply fades, transitions, PiP, text overlays, or per-clip volume. Those
  * remain the responsibility of the in-browser FFmpeg render path.
  *
- * @param clipBlobs  - Trimmed video clips, in timeline order.
+ * @param clipBlobs  - Trimmed clips (video or still-image segments), in timeline order.
  * @param resolution - Target resolution as "WIDTHxHEIGHT" (e.g. "1920x1080").
  * @param onProgress - Optional progress callback.
  */
@@ -275,7 +275,7 @@ export async function stitchClipsOnGpu(
   onProgress?: (event: RifeProgressEvent) => void,
 ): Promise<GpuStitchResult> {
   if (clipBlobs.length === 0) {
-    throw new Error("No video clips to stitch.");
+    throw new Error("No clips to stitch.");
   }
 
   onProgress?.({

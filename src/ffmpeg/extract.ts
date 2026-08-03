@@ -92,6 +92,10 @@ export async function extractTrimmedVideoClip(
 
   onStatus(`Preparing trimmed segment of "${clip.title}"…`);
 
+  const isStillImage =
+    clip.stillImage === true ||
+    /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(clip.file.name);
+
   try {
     await safeWriteFile(
       ffmpeg,
@@ -101,12 +105,34 @@ export async function extractTrimmedVideoClip(
     );
 
     const args: string[] = [];
-    if (clip.trimStart > 0) args.push("-ss", String(clip.trimStart));
-    args.push("-i", inputName);
-    if (Number.isFinite(clip.trimEnd)) {
-      args.push("-t", String(clip.trimEnd - clip.trimStart));
+    if (isStillImage) {
+      if (clip.trimStart > 0) args.push("-ss", String(clip.trimStart));
+      args.push("-loop", "1", "-t", String(dur), "-i", inputName);
+      args.push(
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=channel_layout=stereo:sample_rate=44100",
+      );
+      args.push("-map", "0:v:0", "-map", "1:a:0");
+      args.push(
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-shortest",
+        outputName,
+      );
+    } else {
+      if (clip.trimStart > 0) args.push("-ss", String(clip.trimStart));
+      args.push("-i", inputName);
+      if (Number.isFinite(clip.trimEnd)) {
+        args.push("-t", String(clip.trimEnd - clip.trimStart));
+      }
+      args.push("-c", "copy", "-avoid_negative_ts", "make_zero", outputName);
     }
-    args.push("-c", "copy", "-avoid_negative_ts", "make_zero", outputName);
 
     await safeExec(
       ffmpeg,

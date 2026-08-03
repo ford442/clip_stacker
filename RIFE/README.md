@@ -39,7 +39,7 @@ breaks `src/utils/huggingface.ts`:
 | `api_name`          | Inputs                                                  | Output |
 |---------------------|---------------------------------------------------------|--------|
 | `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool)   | MP4    |
-| `stitch`            | videos, resolution, audio, audio mode, overlay volume     | MP4    |
+| `stitch`            | videos or still images, resolution, audio, audio mode, overlay volume | MP4    |
 | `morph`             | 2-frame video, frame count, output fps                    | MP4    |
 
 ## Deploying
