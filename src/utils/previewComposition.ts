@@ -119,6 +119,11 @@ export interface TimelineRenderOptions {
   colorGrade?: import('./lut').ColorGradeSettings;
   /** Decoder-cursor frame source for export; omitted for live preview. */
   frameProvider?: LayerFrameProvider;
+  /**
+   * Integer frame index for temporal grain seed. Export should pass the
+   * encoder loop index; preview may omit (derived from plan.globalTime).
+   */
+  frameIndex?: number;
 }
 
 export interface PreviewCompositionPlan {

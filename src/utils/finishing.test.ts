@@ -76,10 +76,14 @@ describe('finishing settings', () => {
     expect(normalized.secondaryColor?.grades[0].maskType).toBe('hue');
   });
 
-  it('detects enabled stub passes with amount', () => {
+  it('detects enabled grain pass with amount', () => {
     const settings = {
       ...DEFAULT_FINISHING,
-      grain: { enabled: true, amount: 0.4 },
+      grain: {
+        ...DEFAULT_FINISHING.grain!,
+        enabled: true,
+        amount: 0.4,
+      },
     };
     expect(isFinishingActive(settings)).toBe(true);
   });

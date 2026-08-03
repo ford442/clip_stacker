@@ -128,8 +128,11 @@ export class ExportCompositor {
     this.engine.clearToBlack();
   }
 
-  applyFinishing(settings: import('../utils/finishing').FinishingSettings): void {
-    this.engine.applyFinishing(settings);
+  applyFinishing(
+    settings: import('../utils/finishing').FinishingSettings,
+    opts?: { frameIndex?: number },
+  ): void {
+    this.engine.applyFinishing(settings, opts);
   }
 
   /** @deprecated Use applyFinishing(). */

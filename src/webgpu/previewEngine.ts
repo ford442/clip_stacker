@@ -346,7 +346,10 @@ export class PreviewEngine {
   }
 
   /** Apply the finishing pass chain after compositing. */
-  applyFinishing(settings: FinishingSettings): void {
+  applyFinishing(
+    settings: FinishingSettings,
+    opts?: { frameIndex?: number },
+  ): void {
     if (this.destroyed || !isFinishingActive(settings)) return;
     this.finishingChain.apply(
       this.device,
@@ -354,6 +357,7 @@ export class PreviewEngine {
       this.canvas.width,
       this.canvas.height,
       settings,
+      opts,
     );
   }
 

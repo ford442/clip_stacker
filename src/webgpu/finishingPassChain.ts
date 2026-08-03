@@ -2,8 +2,7 @@
  * Ordered finishing pass chain — runs after compositing on WebGPU preview/export.
  *
  * Pass order: noise reduction → primary color → secondary color → LUT → sharpen → grain.
- * Noise reduction, primary color, secondary color, LUT, and sharpen are implemented;
- * grain is a no-op until its effect issue lands.
+ * Grain / optical emulation is always last so later steps cannot soften the grain.
  */
 
 import { LutPass } from './lutPass';
@@ -11,6 +10,7 @@ import { NoiseReductionGpuPass } from './noiseReductionPass';
 import { PrimaryColorGpuPass } from './primaryColorPass';
 import { SecondaryColorGpuPass } from './secondaryColorPass';
 import { SharpenGpuPass } from './sharpenPass';
+import { GrainGpuPass } from './grainPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
   isFinishingActive,
@@ -24,12 +24,18 @@ import {
 } from '../utils/finishing';
 import { resolveLutData } from '../utils/lut';
 
+export interface FinishingApplyOptions {
+  /** Integer frame index for temporal grain seed (export / quantized preview). */
+  frameIndex?: number;
+}
+
 export class FinishingPassChain {
   private readonly lutPass: LutPass;
   private readonly primaryColorPass: PrimaryColorGpuPass;
   private readonly secondaryColorPass: SecondaryColorGpuPass;
   private readonly noiseReductionPass: NoiseReductionGpuPass;
   private readonly sharpenPass: SharpenGpuPass;
+  private readonly grainPass: GrainGpuPass;
   private pingTexture: GPUTexture | null = null;
   private pongTexture: GPUTexture | null = null;
   /** Previous frame for temporal denoise — cleared on seek via resetTemporal(). */
@@ -45,12 +51,14 @@ export class FinishingPassChain {
     secondaryColorPass: SecondaryColorGpuPass,
     noiseReductionPass: NoiseReductionGpuPass,
     sharpenPass: SharpenGpuPass,
+    grainPass: GrainGpuPass,
   ) {
     this.lutPass = lutPass;
     this.primaryColorPass = primaryColorPass;
     this.secondaryColorPass = secondaryColorPass;
     this.noiseReductionPass = noiseReductionPass;
     this.sharpenPass = sharpenPass;
+    this.grainPass = grainPass;
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): FinishingPassChain {
@@ -60,6 +68,7 @@ export class FinishingPassChain {
       SecondaryColorGpuPass.create(device, format),
       NoiseReductionGpuPass.create(device, format),
       SharpenGpuPass.create(device, format),
+      GrainGpuPass.create(device, format),
     );
   }
 
@@ -72,8 +81,13 @@ export class FinishingPassChain {
     width: number,
     height: number,
     settings: FinishingSettings,
+    options?: FinishingApplyOptions,
   ): void {
     if (!isFinishingActive(settings) || width <= 0 || height <= 0) return;
+
+    const frameSeed = Number.isFinite(options?.frameIndex)
+      ? Math.max(0, Math.floor(options!.frameIndex as number))
+      : 0;
 
     const canvasTexture = context.getCurrentTexture();
     this.ensurePingPongTextures(device, width, height);
@@ -287,9 +301,17 @@ export class FinishingPassChain {
       }
     }
 
-    if (isGrainActive(settings.grain)) {
-      // TODO(grain): film grain pass (always last).
-      this.blitToCanvas(device, current, canvasTexture, width, height);
+    if (isGrainActive(settings.grain) && settings.grain) {
+      // Always last — write directly to the canvas swapchain.
+      this.grainPass.applyBetweenTextures(
+        device,
+        current,
+        canvasTexture.createView(),
+        width,
+        height,
+        settings.grain,
+        frameSeed,
+      );
       wroteToCanvas = true;
     }
 
@@ -319,6 +341,7 @@ export class FinishingPassChain {
     this.secondaryColorPass.destroy();
     this.noiseReductionPass.destroy();
     this.sharpenPass.destroy();
+    this.grainPass.destroy();
     this.pingTexture = null;
     this.pongTexture = null;
     this.prevFrameTexture = null;

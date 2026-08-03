@@ -883,6 +883,26 @@ describe("utils/project", () => {
           threshold: 0.04,
           midtoneDetail: 0.2,
         },
+        grain: {
+          enabled: true,
+          amount: 0.4,
+          size: 0.55,
+          softness: 0.6,
+          monochrome: true,
+          bloomAmount: 0.08,
+          vignette: {
+            enabled: true,
+            amount: 0.25,
+            midpoint: 0.5,
+            roundness: 0.3,
+          },
+          halation: {
+            enabled: false,
+            threshold: 0.7,
+            amount: 0.2,
+            radius: 8,
+          },
+        },
       };
       const serialized = serializeProject(sourceClips, [], [], [], finishing);
       const project: Project = {
@@ -911,6 +931,14 @@ describe("utils/project", () => {
       expect(result.finishing.sharpen?.radius).toBe(1.5);
       expect(result.finishing.sharpen?.threshold).toBe(0.04);
       expect(result.finishing.sharpen?.midtoneDetail).toBe(0.2);
+      expect(result.finishing.grain?.enabled).toBe(true);
+      expect(result.finishing.grain?.amount).toBe(0.4);
+      expect(result.finishing.grain?.size).toBe(0.55);
+      expect(result.finishing.grain?.softness).toBe(0.6);
+      expect(result.finishing.grain?.monochrome).toBe(true);
+      expect(result.finishing.grain?.vignette.enabled).toBe(true);
+      expect(result.finishing.grain?.vignette.amount).toBe(0.25);
+      expect(result.finishing.grain?.halation.enabled).toBe(false);
     });
 
     it('should roundtrip primary color finishing settings', async () => {

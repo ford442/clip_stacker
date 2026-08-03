@@ -205,6 +205,48 @@
   color: #c47b2c;
 }
 
+.grain-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.5rem 0;
+}
+
+.grain-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+}
+
+.grain-reset-btn {
+  font-size: 0.78rem;
+}
+
+.grain-group-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-top: 0.35rem;
+}
+
+.grain-preset-row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.grain-preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.grain-preset-chip {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+}
+
 .secondary-color-panel {
   display: grid;
   gap: 0.55rem;

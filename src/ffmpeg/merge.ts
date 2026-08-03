@@ -12,6 +12,7 @@ import { getClipDuration } from "../utils/project";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   DEFAULT_FINISHING,
+  isGrainActive,
   isNoiseReductionActive,
   isPrimaryColorActive,
   isSecondaryColorActive,
@@ -22,6 +23,7 @@ import { buildPrimaryColorFfmpegFilters } from "../utils/primaryColor";
 import { buildNoiseReductionFfmpegFilters } from "../utils/noiseReduction";
 import { buildSecondaryColorFfmpegFilters } from "../utils/secondaryColor";
 import { buildSharpenFfmpegFilters } from "../utils/sharpen";
+import { buildGrainFfmpegFilters } from "../utils/grain";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -104,6 +106,11 @@ export async function mergeClips(
     isSharpenActive(finishing.sharpen) ? finishing.sharpen : undefined;
   const sharpenFilters = buildSharpenFfmpegFilters(sharpen);
   const needsSharpen = Boolean(sharpenFilters);
+  const grain =
+    isGrainActive(finishing.grain) ? finishing.grain : undefined;
+  const grainFilters = buildGrainFfmpegFilters(grain);
+  const needsGrain = Boolean(grainFilters) || Boolean(grain?.bloomAmount) ||
+    Boolean(grain?.halation?.enabled && (grain.halation.amount ?? 0) > 0);
   const secondaryColorRaw =
     isSecondaryColorActive(finishing.secondaryColor) ? finishing.secondaryColor : undefined;
   const needsSecondary = Boolean(buildSecondaryColorFfmpegFilters(secondaryColorRaw));
@@ -117,6 +124,12 @@ export async function mergeClips(
   if (needsSharpen) {
     onStatus(
       "Sharpening enabled on FFmpeg path (unsharp) — best-effort parity with WebGPU.",
+    );
+  }
+
+  if (needsGrain) {
+    onStatus(
+      "Film grain / optical enabled on FFmpeg path (noise+vignette;halation best-effort).",
     );
   }
 
@@ -206,10 +219,10 @@ export async function mergeClips(
       : null;
 
   // If force re-encode is enabled, skip lossless path and go straight to re-encoding
-  // Primary / secondary / NR / sharpen also require a re-encode (no stream-copy finishing).
+  // Primary / secondary / NR / sharpen / grain also require a re-encode (no stream-copy finishing).
   const shouldForceReencodeNow =
     (forceReencode && renderPlan.path === "lossless-concat") ||
-    ((needsPrimary || needsSecondary || needsNoise || needsSharpen) &&
+    ((needsPrimary || needsSecondary || needsNoise || needsSharpen || needsGrain) &&
       renderPlan.path === "lossless-concat");
 
   // PiP/compositing and transition renders apply text overlays directly in
@@ -233,6 +246,7 @@ export async function mergeClips(
         noiseReduction,
         sharpen,
         secondaryColor,
+        grain,
       );
       textOverlaysApplied = textOverlays.length > 0;
     } else if (transitionFilterComplex) {
@@ -252,6 +266,7 @@ export async function mergeClips(
         noiseReduction,
         sharpen,
         secondaryColor,
+        grain,
       );
       textOverlaysApplied = textOverlays.length > 0;
     } else if (shouldForceReencodeNow) {
@@ -268,6 +283,7 @@ export async function mergeClips(
         noiseReduction,
         sharpen,
         secondaryColor,
+        grain,
       );
     } else if (effectivePlan.path === "lossless-concat") {
       // Lossless path (text overlays will be applied afterward if present)
@@ -287,6 +303,7 @@ export async function mergeClips(
         noiseReduction,
         sharpen,
         secondaryColor,
+        grain,
       );
     }
   } finally {

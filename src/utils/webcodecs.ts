@@ -459,7 +459,7 @@ async function encodeTimelineComposite(
       height,
       width,
     );
-    await engine.renderPlan(plan, { finishing, frameProvider });
+    await engine.renderPlan(plan, { finishing, frameProvider, frameIndex });
     return plan;
   };
 
@@ -678,6 +678,7 @@ async function encodeVideoFrames(
             targetWidth,
             targetHeight,
             finishing,
+            frameCount,
           );
 
           const frameCanvas = overlayPass
@@ -717,6 +718,7 @@ async function encodeVideoFrames(
           targetWidth,
           targetHeight,
           finishing,
+          frameCount,
         );
 
         const frameCanvas = overlayPass
@@ -786,6 +788,7 @@ async function encodeVideoFramesFromDecoder(
           targetWidth,
           targetHeight,
           finishing,
+          frameCount,
         );
       } finally {
         frame.close();
@@ -828,6 +831,7 @@ function drawCompositedVideoFrame(
   targetWidth: number,
   targetHeight: number,
   finishing: FinishingSettings,
+  frameIndex?: number,
 ): void {
   if (compositor.kind === 'webgpu' && compositor.gpuCompositor) {
     compositor.gpuCompositor.renderFrame(
@@ -837,7 +841,9 @@ function drawCompositedVideoFrame(
       clip.videoFadeIn,
       clip.videoFadeOut,
     );
-    compositor.gpuCompositor.applyFinishing(finishing);
+    compositor.gpuCompositor.applyFinishing(finishing, {
+      frameIndex: frameIndex ?? 0,
+    });
     return;
   }
 
@@ -872,6 +878,7 @@ function drawCompositedFrame(
   targetWidth: number,
   targetHeight: number,
   finishing: FinishingSettings = DEFAULT_FINISHING,
+  frameIndex?: number,
 ): void {
   if (compositor.kind === 'webgpu' && compositor.gpuCompositor) {
     const frame = new VideoFrame(video, { timestamp: Math.round(elapsed * 1_000_000) });
@@ -883,7 +890,9 @@ function drawCompositedFrame(
       clip.videoFadeOut,
     );
     frame.close();
-    compositor.gpuCompositor.applyFinishing(finishing);
+    compositor.gpuCompositor.applyFinishing(finishing, {
+      frameIndex: frameIndex ?? Math.max(0, Math.round(elapsed * TARGET_FPS)),
+    });
     return;
   }
 

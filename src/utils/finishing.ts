@@ -7,8 +7,9 @@
  *
  * Primary color (exposure / WB / lift-gamma-gain), secondary color (hue /
  * window qualifiers), noise reduction (spatial bilateral + optional temporal),
- * and sharpening (unsharp + midtone detail) are implemented on WebGPU with
- * best-effort FFmpeg WASM parity. Canvas2D does not apply finishing.
+ * sharpening (unsharp + midtone detail), and film grain / optical emulation
+ * are implemented on WebGPU with best-effort FFmpeg WASM parity. Canvas2D does
+ * not apply finishing (grain is not WYSIWYG on Canvas2D).
  */
 
 import {
@@ -38,11 +39,24 @@ import {
   normalizeSharpenPass,
   type SharpenSettings,
 } from './sharpen';
+import {
+  DEFAULT_GRAIN_PARAMS,
+  GRAIN_AMOUNT_RECOMMENDED,
+  isGrainNeutral,
+  normalizeGrainPass,
+  type GrainSettings,
+} from './grain';
 
 export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
 export type { SharpenSettings } from './sharpen';
 export type { SecondaryColorSettings, SecondaryGrade, SecondaryMaskType } from './secondaryColor';
+export type {
+  GrainSettings,
+  GrainVignetteSettings,
+  GrainHalationSettings,
+  GrainPresetId,
+} from './grain';
 
 export interface FinishingPassBase {
   enabled: boolean;
@@ -69,8 +83,8 @@ export interface LutFinishingPass extends FinishingPassBase {
 /** Sharpening / detail enhancement — after LUT, before grain. */
 export type SharpenPass = SharpenSettings;
 
-/** Film grain + optical emulation — applied last (WebGPU pass — see effect issue). */
-export interface GrainPass extends FinishingPassBase {}
+/** Film grain + optical emulation — applied last (WebGPU + best-effort FFmpeg). */
+export type GrainPass = GrainSettings;
 
 /**
  * Fixed slots per pass type. Omitted or disabled passes are skipped in the chain.
@@ -120,7 +134,10 @@ export const DEFAULT_SHARPEN: SharpenPass = {
 
 export const DEFAULT_GRAIN: GrainPass = {
   enabled: false,
-  amount: 1,
+  amount: GRAIN_AMOUNT_RECOMMENDED,
+  ...DEFAULT_GRAIN_PARAMS,
+  vignette: { ...DEFAULT_GRAIN_PARAMS.vignette },
+  halation: { ...DEFAULT_GRAIN_PARAMS.halation },
 };
 
 export const DEFAULT_FINISHING: FinishingSettings = {
@@ -129,7 +146,11 @@ export const DEFAULT_FINISHING: FinishingSettings = {
   secondaryColor: { ...DEFAULT_SECONDARY_COLOR, grades: [] },
   lut: { ...DEFAULT_LUT_PASS },
   sharpen: { ...DEFAULT_SHARPEN },
-  grain: { ...DEFAULT_GRAIN },
+  grain: {
+    ...DEFAULT_GRAIN,
+    vignette: { ...DEFAULT_GRAIN.vignette },
+    halation: { ...DEFAULT_GRAIN.halation },
+  },
 };
 
 function clamp01(v: number): number {
@@ -174,7 +195,8 @@ export function isSharpenActive(pass: SharpenPass | undefined): boolean {
 }
 
 export function isGrainActive(pass: GrainPass | undefined): boolean {
-  return passAmount(pass) > 0;
+  if (!pass?.enabled) return false;
+  return !isGrainNeutral(pass);
 }
 
 /** True when any finishing pass is enabled with a non-zero amount/intensity. */
@@ -227,18 +249,6 @@ export function getColorGradeFromFinishing(
   return lutPassToColorGrade(settings.lut);
 }
 
-function normalizePassBase<T extends FinishingPassBase>(
-  raw: Partial<T> | undefined,
-  defaults: T,
-): T {
-  if (!raw || typeof raw !== 'object') return { ...defaults };
-  const enabled = Boolean(raw.enabled);
-  const amount = Number.isFinite(raw.amount)
-    ? clamp01(raw.amount as number)
-    : defaults.amount ?? 1;
-  return { ...defaults, ...raw, enabled, amount };
-}
-
 function normalizeLutPass(raw: Partial<LutFinishingPass> | undefined): LutFinishingPass {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_LUT_PASS };
   const enabled = Boolean(raw.enabled);
@@ -266,7 +276,7 @@ export function normalizeFinishingSettings(
     secondaryColor: normalizeSecondaryColorPass(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
     lut: normalizeLutPass(raw?.lut),
     sharpen: normalizeSharpenPass(raw?.sharpen, DEFAULT_SHARPEN),
-    grain: normalizePassBase(raw?.grain, DEFAULT_GRAIN),
+    grain: normalizeGrainPass(raw?.grain, DEFAULT_GRAIN),
   };
 }
 
