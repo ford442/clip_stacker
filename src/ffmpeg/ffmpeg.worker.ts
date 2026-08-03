@@ -58,6 +58,9 @@ self.onmessage = async (event: MessageEvent<WorkerRpcRequest>) => {
       case 'exec': {
         if (!ffmpeg) throw new Error('FFmpeg is not loaded in worker');
         const code = await ffmpeg.exec(request.args);
+        if (code !== 0) {
+          throw new Error(`FFmpeg exited with code ${code}`);
+        }
         respond(id, { ok: true, result: code });
         break;
       }
