@@ -10,6 +10,7 @@ import {
   withFinishingPass,
 } from '../utils/finishing';
 import { ColorGradePicker } from './ColorGradePicker';
+import { GrainPanel } from './GrainPanel';
 import { NoiseReductionPanel } from './NoiseReductionPanel';
 import { PrimaryColorPanel } from './PrimaryColorPanel';
 import { SecondaryColorPanel } from './SecondaryColorPanel';
@@ -34,10 +35,10 @@ export function FinishingPanel({ settings, onChange }: Props) {
       <p className="inspector-hint">
         <span className="finishing-parity-badge">WebGPU + GPU export</span>
         {' — '}
-        Noise, primary, secondary (hue→lut3d), and sharpen have best-effort
-        FFmpeg parity; window secondaries and creative LUT are WebGPU-only.
-        Canvas2D does not apply finishing. Order: noise → primary → secondary →
-        LUT → sharpen → grain.
+        Noise, primary, secondary (hue→lut3d), sharpen, and grain have
+        best-effort FFmpeg parity; window secondaries and creative LUT are
+        WebGPU-only. Canvas2D does not apply finishing. Order: noise → primary →
+        secondary → LUT → sharpen → grain.
       </p>
 
       <NoiseReductionPanel
@@ -69,49 +70,10 @@ export function FinishingPanel({ settings, onChange }: Props) {
         onChange={(next) => onChange(withFinishingPass(settings, 'sharpen', next))}
       />
 
-      <div className="finishing-pass-row">
-        <label
-          className="finishing-pass-toggle"
-          title="Grain and optical emulation — applied last (coming soon)"
-        >
-          <input
-            type="checkbox"
-            checked={grain.enabled}
-            onChange={(e) =>
-              onChange(
-                withFinishingPass(settings, 'grain', {
-                  ...grain,
-                  enabled: e.target.checked,
-                }),
-              )
-            }
-          />
-          Film grain
-        </label>
-        {grain.enabled && (
-          <label className="finishing-pass-amount" title="Film grain strength">
-            Amount ({Math.round((grain.amount ?? 1) * 100)}%)
-            <input
-              type="range"
-              min={0}
-              max={1}
-              step={0.01}
-              value={grain.amount ?? 1}
-              onChange={(e) =>
-                onChange(
-                  withFinishingPass(settings, 'grain', {
-                    ...grain,
-                    amount: Number(e.target.value),
-                  }),
-                )
-              }
-            />
-          </label>
-        )}
-        <p className="inspector-hint">
-          Grain and optical emulation — applied last (coming soon)
-        </p>
-      </div>
+      <GrainPanel
+        settings={grain}
+        onChange={(next) => onChange(withFinishingPass(settings, 'grain', next))}
+      />
     </div>
   );
 }

@@ -11,6 +11,7 @@ import type {
 } from "../types";
 import type { FinishingSettings } from "../utils/finishing";
 import { isFinishingActive } from "../utils/finishing";
+import { grainFrameSeedFromTime } from "../utils/grain";
 import { sanitizeFilename } from "../utils/filename";
 import { computeTotalDuration } from "../utils/transitions";
 import { useMediaVolume } from "../hooks/useMediaVolume";
@@ -721,7 +722,9 @@ function WebGPUVideoPreview({
           clip.opacity ?? 1,
         );
         if (finishing && isFinishingActive(finishing)) {
-          engine.applyFinishing(finishing);
+          engine.applyFinishing(finishing, {
+            frameIndex: grainFrameSeedFromTime(elapsed),
+          });
         }
         frame.close();
         setHasFrame(true);

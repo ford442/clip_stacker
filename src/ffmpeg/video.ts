@@ -25,6 +25,10 @@ import {
   type SharpenSettings,
 } from "../utils/sharpen";
 import {
+  appendGrainFilters,
+  type GrainSettings,
+} from "../utils/grain";
+import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
   recordFfmpegLog,
@@ -272,6 +276,7 @@ export async function mergeClipsWithCompositing(
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
   secondaryColor?: SecondaryColorSettings,
+  grain?: GrainSettings,
 ): Promise<void> {
   onStatus("Building PiP/compositing render...");
   emitProgress(onProgress, "FFmpeg PiP/compositing render", 0.15, false);
@@ -280,12 +285,13 @@ export async function mergeClipsWithCompositing(
     onStatus(`Warning: ${message}`),
   );
 
-  // Finishing post-composite: noise → primary → secondary (lut3d) → unsharp.
-  // Creative LUT + grain remain TBD / WebGPU-only.
+  // Finishing post-composite: noise → primary → secondary (lut3d) → unsharp → grain.
+  // Creative LUT remains WebGPU-only; grain FFmpeg path is best-effort.
   filterComplex = appendNoiseReductionFilters(filterComplex, noiseReduction);
   filterComplex = appendPrimaryColorFilters(filterComplex, primaryColor);
   filterComplex = appendSecondaryColorFilters(filterComplex, secondaryColor);
   filterComplex = appendSharpenFilters(filterComplex, sharpen);
+  filterComplex = appendGrainFilters(filterComplex, grain);
 
   if (textOverlays.length > 0) {
     await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);

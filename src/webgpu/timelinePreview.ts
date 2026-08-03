@@ -5,6 +5,7 @@
 import type { Clip, ClipTransition, TextOverlay } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
 import { resolveTimelineFinishing } from '../utils/finishing';
+import { grainFrameSeedFromTime } from '../utils/grain';
 import { projectHasKeyframeAnimation } from '../utils/animatedLayout';
 import {
   buildPreviewCompositionPlan,
@@ -415,7 +416,9 @@ export class TimelinePreviewEngine implements TimelineCompositor {
 
     const finishing = resolveTimelineFinishing(options);
     if (finishing) {
-      this.engine.applyFinishing(finishing);
+      const frameIndex =
+        options?.frameIndex ?? grainFrameSeedFromTime(plan.globalTime);
+      this.engine.applyFinishing(finishing, { frameIndex });
     }
 
     this.mediaPool.enforceBudget(drawnClipIds);
@@ -560,6 +563,7 @@ export class WorkerTimelineRenderer {
     frames: CapturedFrameEntry[],
     finishing?: FinishingSettings,
     isCancelled?: () => boolean,
+    frameIndex?: number,
   ): Promise<void> {
     if (isCancelled?.()) {
       frames.forEach((f) => f.frame.close());
@@ -689,7 +693,9 @@ export class WorkerTimelineRenderer {
     }
 
     if (!isCancelled?.() && finishing) {
-      this.engine.applyFinishing(finishing);
+      const seed =
+        frameIndex ?? grainFrameSeedFromTime(plan.globalTime);
+      this.engine.applyFinishing(finishing, { frameIndex: seed });
     }
   }
 

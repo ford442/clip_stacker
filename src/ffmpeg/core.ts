@@ -40,6 +40,11 @@ import {
   buildSharpenFfmpegFilters,
   type SharpenSettings,
 } from "../utils/sharpen";
+import {
+  appendGrainFilters,
+  buildGrainFfmpegFilters,
+  type GrainSettings,
+} from "../utils/grain";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   buildFfmpegLoadErrorMessage,
@@ -333,6 +338,7 @@ export function buildSingleClipFilter(
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
   secondaryColor?: SecondaryColorSettings,
+  grain?: GrainSettings,
 ): string {
   const duration = getClipDuration(clip);
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
@@ -347,7 +353,7 @@ export function buildSingleClipFilter(
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0)
       v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
-    // Finishing: noise → primary → secondary (lut3d) → sharpen.
+    // Finishing: noise → primary → secondary (lut3d) → sharpen → grain (linear).
     const noiseFilters = buildNoiseReductionFfmpegFilters(noiseReduction);
     if (noiseFilters) v += `,${noiseFilters}`;
     const primaryFilters = buildPrimaryColorFfmpegFilters(primaryColor);
@@ -356,6 +362,9 @@ export function buildSingleClipFilter(
     if (secondaryFilters) v += `,${secondaryFilters}`;
     const sharpenFilters = buildSharpenFfmpegFilters(sharpen);
     if (sharpenFilters) v += `,${sharpenFilters}`;
+    // Linear grain only here (noise+vignette); bloom uses labeled pads via appendGrainFilters.
+    const grainFilters = buildGrainFfmpegFilters(grain);
+    if (grainFilters) v += `,${grainFilters}`;
     parts.push(`${v}[vout]`);
 
     let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
@@ -664,6 +673,7 @@ export async function performTwoPassEncode(
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
   secondaryColor?: SecondaryColorSettings,
+  grain?: GrainSettings,
 ): Promise<void> {
   emitProgress(onProgress, "FFmpeg re-encode (two-pass)", 0.12, false);
 
@@ -713,6 +723,7 @@ export async function performTwoPassEncode(
         noiseReduction,
         sharpen,
         secondaryColor,
+        grain,
       ),
     );
     pass1ElapsedDuration += clipDuration;
@@ -743,6 +754,7 @@ export async function processClipPass1(
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
   secondaryColor?: SecondaryColorSettings,
+  grain?: GrainSettings,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
@@ -763,6 +775,8 @@ export async function processClipPass1(
   const needsNoise = Boolean(noiseFilters);
   const sharpenFilters = buildSharpenFfmpegFilters(sharpen);
   const needsSharpen = Boolean(sharpenFilters);
+  const grainFilters = buildGrainFfmpegFilters(grain);
+  const needsGrain = Boolean(grainFilters);
   const secondaryFilters = buildSecondaryColorFfmpegFilters(secondaryColor);
   const needsSecondary = Boolean(secondaryFilters);
 
@@ -772,6 +786,7 @@ export async function processClipPass1(
     !needsPrimary &&
     !needsNoise &&
     !needsSharpen &&
+    !needsGrain &&
     !needsSecondary
   ) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
@@ -829,6 +844,7 @@ export async function processClipPass1(
       (noiseFilters ? `,${noiseFilters}` : '') +
       (primaryFilters ? `,${primaryFilters}` : '') +
       (sharpenFilters ? `,${sharpenFilters}` : '') +
+      (grainFilters ? `,${grainFilters}` : '') +
       `[vout]`;
     const audioFilter =
       `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS` +
@@ -917,7 +933,7 @@ export async function processClipPass1(
       "-i",
       clip.inputName!,
       "-filter_complex",
-      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction, sharpen, secondaryColor),
+      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction, sharpen, secondaryColor, grain),
       "-map",
       "[vout]",
       "-map",
@@ -1016,16 +1032,18 @@ export async function mergeClipsWithTransitions(
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
   secondaryColor?: SecondaryColorSettings,
+  grain?: GrainSettings,
 ): Promise<void> {
   onStatus("Building transition render...");
   emitProgress(onProgress, "FFmpeg transition render", 0.15, false);
 
   let effectiveFilterComplex = filterComplex;
-  // Noise → primary → secondary (lut3d) → sharpen before text overlays.
+  // Noise → primary → secondary (lut3d) → sharpen → grain before text overlays.
   effectiveFilterComplex = appendNoiseReductionFilters(effectiveFilterComplex, noiseReduction);
   effectiveFilterComplex = appendPrimaryColorFilters(effectiveFilterComplex, primaryColor);
   effectiveFilterComplex = appendSecondaryColorFilters(effectiveFilterComplex, secondaryColor);
   effectiveFilterComplex = appendSharpenFilters(effectiveFilterComplex, sharpen);
+  effectiveFilterComplex = appendGrainFilters(effectiveFilterComplex, grain);
   if (textOverlays.length > 0) {
     await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);
     effectiveFilterComplex = appendTextOverlayFilters(effectiveFilterComplex, textOverlays);
