@@ -388,8 +388,10 @@ export interface Project {
    * Schema v2 stores normalized coordinates; this field documents the migration source.
    */
   layoutReferenceResolution?: string;
-  /** Final-stage 3D LUT color grade applied on the WebGPU export path. */
+  /** Final-stage 3D LUT color grade applied on the WebGPU export path. @deprecated Use `finishing.lut`. */
   colorGrade?: import('../utils/lut').ColorGradeSettings;
+  /** Ordered finishing pass chain (noise → primary → secondary → LUT → sharpen → grain). */
+  finishing?: import('../utils/finishing').FinishingSettings;
   /**
    * How source media was stored when this project was saved. Used on load
    * to pick between `sourceMediaDataUrl` and `sourceMediaUrl` authoritatively,

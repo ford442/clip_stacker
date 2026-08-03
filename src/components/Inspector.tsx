@@ -31,8 +31,8 @@ import {
 import { WaveformCanvas } from './WaveformCanvas';
 import { FadeCanvasPreview } from './FadeCanvasPreview';
 import { KeyframeMiniEditor } from './KeyframeMiniEditor';
-import { ColorGradePicker } from './ColorGradePicker';
-import type { ColorGradeSettings } from '../utils/lut';
+import { FinishingPanel } from './FinishingPanel';
+import type { FinishingSettings } from '../utils/finishing';
 
 interface ClipValues {
   title: string;
@@ -58,8 +58,8 @@ interface Props {
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onApplyKenBurns?: () => void;
   onExportSettingsChange: (settings: ExportSettings) => void;
-  colorGrade?: ColorGradeSettings;
-  onColorGradeChange?: (settings: ColorGradeSettings) => void;
+  finishing?: FinishingSettings;
+  onFinishingChange?: (settings: FinishingSettings) => void;
   onExtractAudio?: () => void;
   onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
   rifeProcessing?: boolean;
@@ -164,8 +164,8 @@ function InspectorImpl({
   onKeyframesChange,
   onApplyKenBurns,
   onExportSettingsChange,
-  colorGrade,
-  onColorGradeChange,
+  finishing,
+  onFinishingChange,
   onExtractAudio,
   onRife,
   rifeProcessing,
@@ -1072,8 +1072,8 @@ function InspectorImpl({
         Faster preset = quicker encode, slightly larger file.
       </p>
 
-      {colorGrade && onColorGradeChange && (
-        <ColorGradePicker settings={colorGrade} onChange={onColorGradeChange} />
+      {finishing && onFinishingChange && (
+        <FinishingPanel settings={finishing} onChange={onFinishingChange} />
       )}
 
       <div className="inspector-group-label">WebCodecs (GPU path)</div>

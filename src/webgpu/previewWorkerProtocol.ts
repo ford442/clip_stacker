@@ -13,6 +13,7 @@ import type {
   ExportSettings,
   TextOverlay,
 } from '../types';
+import type { FinishingSettings } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan } from '../utils/previewComposition';
 
@@ -86,6 +87,8 @@ export type PreviewWorkerInbound =
       globalTime: number;
       maxWidth?: number;
       maxHeight?: number;
+      finishing?: FinishingSettings;
+      /** @deprecated Prefer `finishing`. */
       colorGrade?: ColorGradeSettings;
     }
   | {

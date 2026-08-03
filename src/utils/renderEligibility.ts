@@ -1,7 +1,7 @@
 import type { Clip, ClipTransition, TextOverlay } from '../types';
 import { clipHasVolumeAdjustment } from './audioVolume';
 import { clipHasKeyframes } from './animatedLayout';
-import { isColorGradeActive, type ColorGradeSettings } from './lut';
+import { isFinishingActive, type FinishingSettings } from './finishing';
 
 /** Mirrors ffmpegService clipNeedsEffects — shared for encoder path selection. */
 export function clipNeedsEffects(clip: Clip): boolean {
@@ -43,7 +43,7 @@ export function needsMultiLayerComposition(
 /** Solid text overlays are rasterized in a post-pass over decoder output. */
 export function needsOverlayPass(
   textOverlays: TextOverlay[],
-  _colorGrade?: ColorGradeSettings,
+  _finishing?: FinishingSettings,
 ): boolean {
   if (textOverlays.length === 0) return false;
   return !hasShaderTextOverlays(textOverlays);
@@ -54,7 +54,7 @@ export function shouldUseTimelineGpuExport(
   clips: Clip[],
   transitions: ClipTransition[],
   textOverlays: TextOverlay[],
-  _colorGrade?: ColorGradeSettings,
+  _finishing?: FinishingSettings,
 ): boolean {
   if (needsMultiLayerComposition(clips, transitions)) return true;
   // Shader fills use WebGPU readback on the timeline compositor path.
@@ -71,14 +71,30 @@ export function canUseGpuVideoEncoder(
     forceFFmpeg?: boolean;
     useCanvas?: boolean;
     webGpuAvailable?: boolean;
-    colorGrade?: ColorGradeSettings;
+    /** @deprecated Prefer `finishing`. */
+    colorGrade?: import('./lut').ColorGradeSettings;
+    finishing?: FinishingSettings;
   } = {},
 ): boolean {
+  const finishing = options.finishing;
+  const legacyGrade = options.colorGrade;
+  const effectiveFinishing =
+    finishing ??
+    (legacyGrade
+      ? {
+          lut: {
+            enabled: legacyGrade.lutId !== 'none' && legacyGrade.intensity > 0,
+            lutId: legacyGrade.lutId,
+            intensity: legacyGrade.intensity,
+          },
+        }
+      : undefined);
+
   if (options.forceFFmpeg || options.useCanvas) return false;
-  if (shouldUseTimelineGpuExport(clips, transitions, textOverlays, options.colorGrade)) {
+  if (shouldUseTimelineGpuExport(clips, transitions, textOverlays, effectiveFinishing)) {
     return options.webGpuAvailable === true;
   }
-  if (isColorGradeActive(options.colorGrade)) {
+  if (isFinishingActive(effectiveFinishing)) {
     return options.webGpuAvailable === true;
   }
   if (clips.some((clip) => clip.rifeProcessed)) return false;

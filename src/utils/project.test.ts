@@ -266,13 +266,12 @@ describe("utils/project", () => {
       expect(project.clips[0].bpmEstimate).toBe(120);
     });
 
-    it('should serialize color grade settings', () => {
+    it('should serialize finishing settings', () => {
       const project = serializeProject([], [], [], [], {
-        lutId: 'film',
-        intensity: 0.75,
+        lut: { enabled: true, lutId: 'film', intensity: 0.75 },
       });
-      expect(project.colorGrade?.lutId).toBe('film');
-      expect(project.colorGrade?.intensity).toBe(0.75);
+      expect(project.finishing?.lut?.lutId).toBe('film');
+      expect(project.finishing?.lut?.intensity).toBe(0.75);
     });
   });
 
@@ -793,8 +792,41 @@ describe("utils/project", () => {
       };
 
       const result = await applyProjectData(project, sourceClips);
+      expect(result.finishing.lut?.lutId).toBe('teal-orange');
+      expect(result.finishing.lut?.intensity).toBe(0.6);
       expect(result.colorGrade.lutId).toBe('teal-orange');
-      expect(result.colorGrade.intensity).toBe(0.6);
+    });
+
+    it('should roundtrip finishing settings', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const finishing = {
+        lut: { enabled: true, lutId: 'film', intensity: 0.55 },
+        sharpen: { enabled: true, amount: 0.3 },
+      };
+      const serialized = serializeProject(sourceClips, [], [], [], finishing);
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: 'source1.mp4',
+          },
+        ],
+        finishing: serialized.finishing,
+      };
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.finishing.lut?.lutId).toBe('film');
+      expect(result.finishing.lut?.intensity).toBe(0.55);
+      expect(result.finishing.sharpen?.enabled).toBe(true);
+      expect(result.finishing.sharpen?.amount).toBe(0.3);
     });
   });
 

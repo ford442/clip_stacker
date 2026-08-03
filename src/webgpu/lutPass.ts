@@ -105,6 +105,43 @@ export class LutPass {
       [width, height, 1],
     );
 
+    this.encodePass(
+      device,
+      encoder,
+      this.inputTexture!,
+      canvasTexture.createView(),
+      intensity,
+    );
+    device.queue.submit([encoder.finish()]);
+  }
+
+  /**
+   * Run the LUT shader from an input texture to an output render target.
+   * Used by FinishingPassChain for ping-pong intermediate passes.
+   */
+  applyBetweenTextures(
+    device: GPUDevice,
+    inputTexture: GPUTexture,
+    outputView: GPUTextureView,
+    width: number,
+    height: number,
+    intensity: number,
+  ): void {
+    if (!this.lutTexture || this.lutSize <= 0 || intensity <= 0) return;
+    if (width <= 0 || height <= 0) return;
+
+    const encoder = device.createCommandEncoder();
+    this.encodePass(device, encoder, inputTexture, outputView, intensity);
+    device.queue.submit([encoder.finish()]);
+  }
+
+  private encodePass(
+    device: GPUDevice,
+    encoder: GPUCommandEncoder,
+    inputTexture: GPUTexture,
+    outputView: GPUTextureView,
+    intensity: number,
+  ): void {
     this.uniformData[0] = intensity;
     this.uniformData[1] = this.lutSize;
     device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
@@ -113,9 +150,9 @@ export class LutPass {
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: this.sampler },
-        { binding: 1, resource: this.inputTexture!.createView() },
+        { binding: 1, resource: inputTexture.createView() },
         { binding: 2, resource: this.sampler },
-        { binding: 3, resource: this.lutTexture.createView() },
+        { binding: 3, resource: this.lutTexture!.createView() },
         { binding: 4, resource: { buffer: this.uniformBuffer } },
       ],
     });
@@ -123,7 +160,7 @@ export class LutPass {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: canvasTexture.createView(),
+          view: outputView,
           loadOp: 'clear',
           storeOp: 'store',
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
@@ -134,7 +171,6 @@ export class LutPass {
     pass.setBindGroup(0, bindGroup);
     pass.draw(6);
     pass.end();
-    device.queue.submit([encoder.finish()]);
   }
 
   destroy(): void {

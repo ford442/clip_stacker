@@ -1,22 +1,22 @@
-import { useState } from "react";
-import type { ExportSettings, RenderPlan } from "../types";
-import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { DEFAULT_COLOR_GRADE, type ColorGradeSettings } from "../utils/lut";
+import { useState } from 'react';
+import type { ExportSettings, RenderPlan } from '../types';
+import { DEFAULT_EXPORT_SETTINGS } from '../types';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 
 export function useRenderState() {
   const [exportSettings, setExportSettings] = useState<ExportSettings>(
     DEFAULT_EXPORT_SETTINGS,
   );
-  const [colorGrade, setColorGrade] = useState<ColorGradeSettings>(
-    DEFAULT_COLOR_GRADE,
+  const [finishing, setFinishing] = useState<FinishingSettings>(
+    DEFAULT_FINISHING,
   );
   const [forceFFmpeg, setForceFFmpeg] = useState(false);
   const [useCanvasRenderer, setUseCanvasRenderer] = useState(false);
   const [audioReactive, setAudioReactive] = useState(true);
   const [forceReencode, setForceReencode] = useState(false);
 
-  const [status, setStatus] = useState("");
-  const [progressStage, setProgressStage] = useState("");
+  const [status, setStatus] = useState('');
+  const [progressStage, setProgressStage] = useState('');
   const [progressValue, setProgressValue] = useState<number | null>(null);
   const [progressIndeterminate, setProgressIndeterminate] = useState(false);
 
@@ -24,7 +24,7 @@ export function useRenderState() {
   const [ffmpegLoading, setFfmpegLoading] = useState(false);
   const [ffmpegFailed, setFfmpegFailed] = useState(false);
   const [outputUrl, setOutputUrl] = useState<string | null>(null);
-  const [encoderPath, setEncoderPath] = useState<string>("");
+  const [encoderPath, setEncoderPath] = useState<string>('');
   const [renderPlan, setRenderPlan] = useState<RenderPlan | null>(null);
   const [rifeProcessingClipId, setRifeProcessingClipId] = useState<
     string | null
@@ -33,8 +33,8 @@ export function useRenderState() {
   return {
     exportSettings,
     setExportSettings,
-    colorGrade,
-    setColorGrade,
+    finishing,
+    setFinishing,
     forceFFmpeg,
     setForceFFmpeg,
     useCanvasRenderer,

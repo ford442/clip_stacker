@@ -113,7 +113,9 @@ export interface TimelineRenderOptions {
   maxHeight?: number;
   /** Optional override for the preview width cap. */
   maxWidth?: number;
-  /** Final-stage 3D LUT color grade (WebGPU path only). */
+  /** Project finishing pass chain (WebGPU path only). */
+  finishing?: import('./finishing').FinishingSettings;
+  /** @deprecated Prefer `finishing`. */
   colorGrade?: import('./lut').ColorGradeSettings;
   /** Decoder-cursor frame source for export; omitted for live preview. */
   frameProvider?: LayerFrameProvider;
@@ -155,6 +157,8 @@ export interface TimelineCompositor {
     options?: TimelineRenderOptions,
   ): Promise<PreviewCompositionPlan>;
   syncClips(clips: Clip[]): void;
+  /** Clear temporal finishing buffers after a discontinuous seek (WebGPU only). */
+  resetFinishingTemporal?(): void;
   /** Pause pooled decoders for idle teardown (preview paused/backgrounded). */
   pauseDecoders(): void;
   destroy(): void;

@@ -7,9 +7,11 @@ import {
   type TransitionPipelineCache,
 } from "./transitions/transitionPass";
 import type { TransitionRenderParams } from "./transitions/types";
-import { LutPass } from "./lutPass";
+import { FinishingPassChain } from "./finishingPassChain";
 import type { ColorGradeSettings } from "../utils/lut";
-import { isColorGradeActive, resolveLutData } from "../utils/lut";
+import { isColorGradeActive } from "../utils/lut";
+import type { FinishingSettings } from "../utils/finishing";
+import { isFinishingActive } from "../utils/finishing";
 import {
   AUDIO_UNIFORM_OFFSET,
   ZERO_AUDIO_REACTIVE,
@@ -65,7 +67,7 @@ export class PreviewEngine {
   private transitionUniformBuffer: GPUBuffer;
   private transitionUniformData = new Float32Array(TRANSITION_UNIFORM_FLOATS);
   private transitionPipelineCache: TransitionPipelineCache;
-  private lutPass: LutPass;
+  private finishingChain: FinishingPassChain;
   private destroyed = false;
   private audioReactive: AudioReactiveState = { ...ZERO_AUDIO_REACTIVE };
 
@@ -77,7 +79,7 @@ export class PreviewEngine {
     uniformBuffer: GPUBuffer,
     transitionUniformBuffer: GPUBuffer,
     transitionPipelineCache: TransitionPipelineCache,
-    lutPass: LutPass,
+    finishingChain: FinishingPassChain,
     format: GPUTextureFormat,
   ) {
     this.device = device;
@@ -87,7 +89,7 @@ export class PreviewEngine {
     this.uniformBuffer = uniformBuffer;
     this.transitionUniformBuffer = transitionUniformBuffer;
     this.transitionPipelineCache = transitionPipelineCache;
-    this.lutPass = lutPass;
+    this.finishingChain = finishingChain;
     this.format = format;
     // Placeholder; overwritten by the factory before the instance is returned.
     this.canvas = { width: 0, height: 0 } as unknown as OffscreenCanvas;
@@ -135,7 +137,7 @@ export class PreviewEngine {
     });
 
     const transitionPipelineCache = createTransitionPipelineCache(device, format);
-    const lutPass = LutPass.create(device, format);
+    const finishingChain = FinishingPassChain.create(device, format);
 
     const bindGroupLayout = device.createBindGroupLayout({
       entries: [
@@ -190,7 +192,7 @@ export class PreviewEngine {
       uniformBuffer,
       transitionUniformBuffer,
       transitionPipelineCache,
-      lutPass,
+      finishingChain,
       format,
     );
     engine.canvas = canvas;
@@ -343,19 +345,35 @@ export class PreviewEngine {
     this.device.queue.submit([encoder.finish()]);
   }
 
-  /** Apply a 3D LUT as the final pass on the current canvas contents. */
-  applyColorGrade(settings: ColorGradeSettings): void {
-    if (this.destroyed || !isColorGradeActive(settings)) return;
-    const lut = resolveLutData(settings);
-    if (!lut) return;
-    this.lutPass.setLut(this.device, lut);
-    this.lutPass.apply(
+  /** Apply the finishing pass chain after compositing. */
+  applyFinishing(settings: FinishingSettings): void {
+    if (this.destroyed || !isFinishingActive(settings)) return;
+    this.finishingChain.apply(
       this.device,
       this.context,
       this.canvas.width,
       this.canvas.height,
-      settings.intensity,
+      settings,
     );
+  }
+
+  /** Clear temporal finishing buffers after seek or clip change. */
+  resetFinishingTemporal(): void {
+    if (this.destroyed) return;
+    this.finishingChain.resetTemporal();
+  }
+
+  /** @deprecated Use applyFinishing() — kept for callers not yet migrated. */
+  applyColorGrade(settings: ColorGradeSettings): void {
+    this.applyFinishing({
+      lut: {
+        enabled: isColorGradeActive(settings),
+        lutId: settings.lutId,
+        intensity: settings.intensity,
+        ...(settings.customCubeText ? { customCubeText: settings.customCubeText } : {}),
+        ...(settings.customFileName ? { customFileName: settings.customFileName } : {}),
+      },
+    });
   }
 
   /**
@@ -368,6 +386,6 @@ export class PreviewEngine {
     this.destroyed = true;
     this.uniformBuffer.destroy();
     this.transitionUniformBuffer.destroy();
-    this.lutPass.destroy();
+    this.finishingChain.destroy();
   }
 }

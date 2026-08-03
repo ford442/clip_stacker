@@ -155,8 +155,8 @@ export function App() {
   const {
     exportSettings,
     setExportSettings,
-    colorGrade,
-    setColorGrade,
+    finishing,
+    setFinishing,
     forceFFmpeg,
     setForceFFmpeg,
     useCanvasRenderer,
@@ -213,8 +213,8 @@ export function App() {
     clipGroups,
     transitions,
     textOverlays,
-    colorGrade,
-    setColorGrade,
+    finishing,
+    setFinishing,
     setClips,
     setClipGroups,
     setSelectedClipId,
@@ -637,7 +637,7 @@ export function App() {
         forceReencode,
         plan,
         clipGroups,
-        colorGrade,
+        finishing,
       );
       const url = URL.createObjectURL(result.blob);
       setOutputUrl(url);
@@ -1526,7 +1526,7 @@ export function App() {
           transitions={transitions}
           textOverlays={textOverlays}
           exportSettings={exportSettings}
-          colorGrade={colorGrade}
+          finishing={finishing}
           outputUrl={outputUrl}
           exportFilename={exportSettings.filename}
           selectedClipId={selectedClipId}
@@ -1539,8 +1539,8 @@ export function App() {
         />
         <Inspector
           exportSettings={exportSettings}
-          colorGrade={colorGrade}
-          onColorGradeChange={setColorGrade}
+          finishing={finishing}
+          onFinishingChange={setFinishing}
           onChange={handleInspectorChange}
           onKeyframesChange={handleClipKeyframesChange}
           onApplyKenBurns={handleApplyKenBurns}

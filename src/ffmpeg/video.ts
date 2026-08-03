@@ -268,6 +268,10 @@ export async function mergeClipsWithCompositing(
     filterComplex = appendTextOverlayFilters(filterComplex, textOverlays);
   }
 
+  // TODO(finishing): insert post-composite finishing filters on [vout] when
+  // FFmpeg parity is implemented (noise → primary → secondary → lut3d →
+  // unsharp → grain). See src/utils/finishing.ts pass order.
+
   const inputArgs: string[] = [];
   for (const clip of clips) {
     inputArgs.push("-i", clip.inputName!);

@@ -24,7 +24,8 @@ import { getClipDuration } from './project';
 import { parseOutputResolution } from './resolution';
 import { computeTotalDuration } from './transitions';
 import { needsOverlayPass, shouldUseTimelineGpuExport } from './renderEligibility';
-import { DEFAULT_COLOR_GRADE, type ColorGradeSettings } from './lut';
+import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
+import { resolveTimelineFinishing } from './finishing';
 import { buildPreviewCompositionPlan } from './previewComposition';
 import { drawTextOverlays, renderTextOverlaysAsync } from './canvas-renderer';
 import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompositor';
@@ -244,12 +245,12 @@ export async function encodeVideoWithWebCodecs(
   transitions: ClipTransition[] = [],
   textOverlays: TextOverlay[] = [],
   clipGroups: ClipGroup[] = [],
-  colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  finishing: FinishingSettings = DEFAULT_FINISHING,
   includeWebCodecsAudio = false,
 ): Promise<Blob> {
   const { width, height } = parseOutputResolution(settings.outputResolution);
 
-  if (shouldUseTimelineGpuExport(clips, transitions, textOverlays, colorGrade)) {
+  if (shouldUseTimelineGpuExport(clips, transitions, textOverlays, finishing)) {
     const webGpuOk = await isWebGpuExportAvailable();
     if (!webGpuOk) {
       throw new Error('WebGPU required for GPU timeline compositor export');
@@ -264,7 +265,7 @@ export async function encodeVideoWithWebCodecs(
       height,
       onStatus,
       onProgress,
-      colorGrade,
+      finishing,
       includeWebCodecsAudio,
     );
   }
@@ -304,7 +305,7 @@ export async function encodeVideoWithWebCodecs(
   let videoTimeUs = 0;
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
   let elapsedDuration = 0;
-  const overlayPass = needsOverlayPass(textOverlays, colorGrade)
+  const overlayPass = needsOverlayPass(textOverlays, finishing)
     ? new DecoderTextOverlayPass(
         clips,
         clipGroups,
@@ -333,7 +334,7 @@ export async function encodeVideoWithWebCodecs(
         videoTimeUs,
         width,
         height,
-        colorGrade,
+        finishing,
         elapsedDuration,
         overlayPass,
       );
@@ -393,7 +394,7 @@ async function encodeTimelineComposite(
   height: number,
   onStatus: StatusCallback,
   onProgress?: ProgressCallback,
-  colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  finishing: FinishingSettings = DEFAULT_FINISHING,
   includeWebCodecsAudio = false,
 ): Promise<Blob> {
   onStatus(`WebGPU timeline export (${width}x${height})...`);
@@ -421,6 +422,7 @@ async function encodeTimelineComposite(
   }
 
   const engine = await TimelinePreviewEngine.create(videoCanvas, clips);
+  engine.resetFinishingTemporal();
   // Decoder cursors deliver frames by walking each layer's source time
   // forward — export never scrubs — so this replaces the <video> element
   // seek in the hot path. Layers whose codec/container it can't handle fall
@@ -457,7 +459,7 @@ async function encodeTimelineComposite(
       height,
       width,
     );
-    await engine.renderPlan(plan, { colorGrade, frameProvider });
+    await engine.renderPlan(plan, { finishing, frameProvider });
     return plan;
   };
 
@@ -593,7 +595,7 @@ async function encodeVideoFrames(
   startTimeUs: number,
   targetWidth: number,
   targetHeight: number,
-  colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  finishing: FinishingSettings = DEFAULT_FINISHING,
   clipGlobalStartSec = 0,
   overlayPass: DecoderTextOverlayPass | null = null,
 ): Promise<number> {
@@ -626,7 +628,7 @@ async function encodeVideoFrames(
       startTimeUs,
       targetWidth,
       targetHeight,
-      colorGrade,
+      finishing,
       trimStart,
       trimEnd,
       clipDuration,
@@ -675,7 +677,7 @@ async function encodeVideoFrames(
             clip,
             targetWidth,
             targetHeight,
-            colorGrade,
+            finishing,
           );
 
           const frameCanvas = overlayPass
@@ -714,7 +716,7 @@ async function encodeVideoFrames(
           clip,
           targetWidth,
           targetHeight,
-          colorGrade,
+          finishing,
         );
 
         const frameCanvas = overlayPass
@@ -761,7 +763,7 @@ async function encodeVideoFramesFromDecoder(
   startTimeUs: number,
   targetWidth: number,
   targetHeight: number,
-  colorGrade: ColorGradeSettings,
+  finishing: FinishingSettings,
   trimStart: number,
   trimEnd: number,
   clipDuration: number,
@@ -783,7 +785,7 @@ async function encodeVideoFramesFromDecoder(
           clip,
           targetWidth,
           targetHeight,
-          colorGrade,
+          finishing,
         );
       } finally {
         frame.close();
@@ -825,7 +827,7 @@ function drawCompositedVideoFrame(
   clip: Clip,
   targetWidth: number,
   targetHeight: number,
-  colorGrade: ColorGradeSettings,
+  finishing: FinishingSettings,
 ): void {
   if (compositor.kind === 'webgpu' && compositor.gpuCompositor) {
     compositor.gpuCompositor.renderFrame(
@@ -835,7 +837,7 @@ function drawCompositedVideoFrame(
       clip.videoFadeIn,
       clip.videoFadeOut,
     );
-    compositor.gpuCompositor.applyColorGrade(colorGrade);
+    compositor.gpuCompositor.applyFinishing(finishing);
     return;
   }
 
@@ -869,7 +871,7 @@ function drawCompositedFrame(
   clip: Clip,
   targetWidth: number,
   targetHeight: number,
-  colorGrade: ColorGradeSettings = DEFAULT_COLOR_GRADE,
+  finishing: FinishingSettings = DEFAULT_FINISHING,
 ): void {
   if (compositor.kind === 'webgpu' && compositor.gpuCompositor) {
     const frame = new VideoFrame(video, { timestamp: Math.round(elapsed * 1_000_000) });
@@ -881,7 +883,7 @@ function drawCompositedFrame(
       clip.videoFadeOut,
     );
     frame.close();
-    compositor.gpuCompositor.applyColorGrade(colorGrade);
+    compositor.gpuCompositor.applyFinishing(finishing);
     return;
   }
 

@@ -128,6 +128,11 @@ export class ExportCompositor {
     this.engine.clearToBlack();
   }
 
+  applyFinishing(settings: import('../utils/finishing').FinishingSettings): void {
+    this.engine.applyFinishing(settings);
+  }
+
+  /** @deprecated Use applyFinishing(). */
   applyColorGrade(settings: import('../utils/lut').ColorGradeSettings): void {
     this.engine.applyColorGrade(settings);
   }

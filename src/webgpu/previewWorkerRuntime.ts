@@ -7,6 +7,8 @@
  */
 
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
+import type { FinishingSettings } from '../utils/finishing';
+import { resolveTimelineFinishing } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan, TimelineCompositor, TimelineRenderOptions } from '../utils/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
@@ -31,6 +33,8 @@ export interface RenderTimelineParams {
   globalTime: number;
   maxWidth?: number;
   maxHeight?: number;
+  finishing?: FinishingSettings;
+  /** @deprecated Prefer `finishing`. */
   colorGrade?: ColorGradeSettings;
 }
 
@@ -205,7 +209,7 @@ export class PreviewWorkerRuntime {
         globalTime: params.globalTime,
         maxWidth: params.maxWidth,
         maxHeight: params.maxHeight,
-        colorGrade: params.colorGrade,
+        finishing: resolveTimelineFinishing(params),
       };
       this.worker.postMessage(renderMsg);
     });
@@ -398,7 +402,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         globalTime,
         maxWidth: options?.maxWidth,
         maxHeight: options?.maxHeight,
-        colorGrade: options?.colorGrade,
+        finishing: resolveTimelineFinishing(options),
       },
       captureFrames,
     );

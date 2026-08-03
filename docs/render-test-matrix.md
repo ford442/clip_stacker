@@ -12,5 +12,6 @@ Manual test cases for the clip_stacker render pipeline.
 | R006 | P2 | PiP overlay | Set layerIndex > 0 on second clip, Render | Compositing filter_complex |
 | R007 | P2 | Text overlay | Add text overlay, Render | drawtext in filter_complex |
 | R008 | P1 | FFmpeg load failure | Block CDN / clear cache, Render | Retry button, no "undefined" in status |
+| R009 | P2 | Finishing passes (LUT) | Enable 3D LUT in Export → Finishing, preview + GPU export | Graded preview/export on WebGPU path; Canvas2D/FFmpeg ungraded |
 
 Run `./scripts/debug-render.sh` for automated smoke tests, then verify R002 and R003 manually via `npm run preview`.

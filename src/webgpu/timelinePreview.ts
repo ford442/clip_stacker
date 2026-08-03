@@ -3,7 +3,8 @@
  */
 
 import type { Clip, ClipTransition, TextOverlay } from '../types';
-import type { ColorGradeSettings } from '../utils/lut';
+import type { FinishingSettings } from '../utils/finishing';
+import { resolveTimelineFinishing } from '../utils/finishing';
 import { projectHasKeyframeAnimation } from '../utils/animatedLayout';
 import {
   buildPreviewCompositionPlan,
@@ -184,6 +185,10 @@ export class TimelinePreviewEngine implements TimelineCompositor {
         this.engine.resize();
       }
     }
+  }
+
+  resetFinishingTemporal(): void {
+    this.engine.resetFinishingTemporal();
   }
 
   async renderPlan(
@@ -408,8 +413,9 @@ export class TimelinePreviewEngine implements TimelineCompositor {
 
     if (options?.isCancelled?.()) return;
 
-    if (options?.colorGrade) {
-      this.engine.applyColorGrade(options.colorGrade);
+    const finishing = resolveTimelineFinishing(options);
+    if (finishing) {
+      this.engine.applyFinishing(finishing);
     }
 
     this.mediaPool.enforceBudget(drawnClipIds);
@@ -552,7 +558,7 @@ export class WorkerTimelineRenderer {
   async renderFromFrames(
     plan: PreviewCompositionPlan,
     frames: CapturedFrameEntry[],
-    colorGrade?: ColorGradeSettings,
+    finishing?: FinishingSettings,
     isCancelled?: () => boolean,
   ): Promise<void> {
     if (isCancelled?.()) {
@@ -682,8 +688,8 @@ export class WorkerTimelineRenderer {
       this.engine.clearToBlack();
     }
 
-    if (!isCancelled?.() && colorGrade) {
-      this.engine.applyColorGrade(colorGrade);
+    if (!isCancelled?.() && finishing) {
+      this.engine.applyFinishing(finishing);
     }
   }
 
