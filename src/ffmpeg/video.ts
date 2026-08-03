@@ -17,6 +17,10 @@ import {
   type NoiseReductionSettings,
 } from "../utils/noiseReduction";
 import {
+  appendSecondaryColorFilters,
+  type SecondaryColorSettings,
+} from "../utils/secondaryColor";
+import {
   appendSharpenFilters,
   type SharpenSettings,
 } from "../utils/sharpen";
@@ -267,6 +271,7 @@ export async function mergeClipsWithCompositing(
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
+  secondaryColor?: SecondaryColorSettings,
 ): Promise<void> {
   onStatus("Building PiP/compositing render...");
   emitProgress(onProgress, "FFmpeg PiP/compositing render", 0.15, false);
@@ -275,10 +280,11 @@ export async function mergeClipsWithCompositing(
     onStatus(`Warning: ${message}`),
   );
 
-  // Finishing post-composite: noise → primary → unsharp. Remaining TBD:
-  // secondary → lut3d → grain.
+  // Finishing post-composite: noise → primary → secondary (lut3d) → unsharp.
+  // Creative LUT + grain remain TBD / WebGPU-only.
   filterComplex = appendNoiseReductionFilters(filterComplex, noiseReduction);
   filterComplex = appendPrimaryColorFilters(filterComplex, primaryColor);
+  filterComplex = appendSecondaryColorFilters(filterComplex, secondaryColor);
   filterComplex = appendSharpenFilters(filterComplex, sharpen);
 
   if (textOverlays.length > 0) {

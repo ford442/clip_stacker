@@ -204,3 +204,89 @@
   font-size: 0.72rem;
   color: #c47b2c;
 }
+
+.secondary-color-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.5rem 0;
+}
+
+.secondary-color-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+}
+
+.secondary-color-reset-btn,
+.secondary-add-grade-btn,
+.secondary-grade-remove-btn {
+  font-size: 0.78rem;
+}
+
+.secondary-color-group-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-top: 0.35rem;
+}
+
+.secondary-preset-row {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.secondary-preset-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.secondary-preset-chip {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+}
+
+.secondary-grade-card {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.secondary-grade-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.finishing-pass-row {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0.5rem 0;
+}
+
+.finishing-pass-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.finishing-pass-amount {
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.82rem;
+}
+
+.finishing-parity-badge {
+  font-weight: 600;
+  color: var(--gold-bright, var(--gold));
+}

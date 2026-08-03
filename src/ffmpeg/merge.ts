@@ -14,11 +14,13 @@ import {
   DEFAULT_FINISHING,
   isNoiseReductionActive,
   isPrimaryColorActive,
+  isSecondaryColorActive,
   isSharpenActive,
   type FinishingSettings,
 } from "../utils/finishing";
 import { buildPrimaryColorFfmpegFilters } from "../utils/primaryColor";
 import { buildNoiseReductionFfmpegFilters } from "../utils/noiseReduction";
+import { buildSecondaryColorFfmpegFilters } from "../utils/secondaryColor";
 import { buildSharpenFfmpegFilters } from "../utils/sharpen";
 import {
   isFfmpegLoadFailed,
@@ -57,6 +59,7 @@ import {
   processClipPass1,
   mergeClipsPass2,
   mergeClipsWithTransitions,
+  prepareSecondaryColorFfmpeg,
   DEFAULT_VIDEO_SIZE,
   OUTPUT_WIDTH,
   OUTPUT_HEIGHT,
@@ -101,6 +104,9 @@ export async function mergeClips(
     isSharpenActive(finishing.sharpen) ? finishing.sharpen : undefined;
   const sharpenFilters = buildSharpenFfmpegFilters(sharpen);
   const needsSharpen = Boolean(sharpenFilters);
+  const secondaryColorRaw =
+    isSecondaryColorActive(finishing.secondaryColor) ? finishing.secondaryColor : undefined;
+  const needsSecondary = Boolean(buildSecondaryColorFfmpegFilters(secondaryColorRaw));
 
   if (needsNoise) {
     onStatus(
@@ -123,6 +129,13 @@ export async function mergeClips(
   const ffmpeg = await ensureFfmpeg(onStatus, onProgress);
   onStatus("Preparing media...");
   emitProgress(onProgress, "Preparing media", 0.02, false);
+
+  // Bake hue-only secondary grades into lut3d before any encode path uses them.
+  const secondaryColor = await prepareSecondaryColorFfmpeg(
+    ffmpeg,
+    secondaryColorRaw,
+    onStatus,
+  );
 
   // Clean up leftover files from a previous run.
   for (const entry of await ffmpeg.listDir("/")) {
@@ -193,10 +206,11 @@ export async function mergeClips(
       : null;
 
   // If force re-encode is enabled, skip lossless path and go straight to re-encoding
-  // Primary color / NR / sharpen also require a re-encode (no stream-copy finishing).
+  // Primary / secondary / NR / sharpen also require a re-encode (no stream-copy finishing).
   const shouldForceReencodeNow =
     (forceReencode && renderPlan.path === "lossless-concat") ||
-    ((needsPrimary || needsNoise || needsSharpen) && renderPlan.path === "lossless-concat");
+    ((needsPrimary || needsSecondary || needsNoise || needsSharpen) &&
+      renderPlan.path === "lossless-concat");
 
   // PiP/compositing and transition renders apply text overlays directly in
   // their filter_complex, avoiding a second full re-encode pass.
@@ -218,6 +232,7 @@ export async function mergeClips(
         primaryColor,
         noiseReduction,
         sharpen,
+        secondaryColor,
       );
       textOverlaysApplied = textOverlays.length > 0;
     } else if (transitionFilterComplex) {
@@ -236,6 +251,7 @@ export async function mergeClips(
         primaryColor,
         noiseReduction,
         sharpen,
+        secondaryColor,
       );
       textOverlaysApplied = textOverlays.length > 0;
     } else if (shouldForceReencodeNow) {
@@ -251,6 +267,7 @@ export async function mergeClips(
         primaryColor,
         noiseReduction,
         sharpen,
+        secondaryColor,
       );
     } else if (effectivePlan.path === "lossless-concat") {
       // Lossless path (text overlays will be applied afterward if present)
@@ -269,6 +286,7 @@ export async function mergeClips(
         primaryColor,
         noiseReduction,
         sharpen,
+        secondaryColor,
       );
     }
   } finally {
