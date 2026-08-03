@@ -180,3 +180,27 @@
   opacity: 0.75;
   margin-top: 0.35rem;
 }
+
+.sharpen-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.5rem 0;
+}
+
+.sharpen-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+}
+
+.sharpen-reset-btn {
+  font-size: 0.78rem;
+}
+
+.sharpen-soft-cap-warning {
+  display: block;
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: #c47b2c;
+}

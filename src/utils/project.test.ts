@@ -842,7 +842,13 @@ describe("utils/project", () => {
       const sourceClips = [createTestClip('source1', 5)];
       const finishing = {
         lut: { enabled: true, lutId: 'film', intensity: 0.55 },
-        sharpen: { enabled: true, amount: 0.3 },
+        sharpen: {
+          enabled: true,
+          amount: 0.3,
+          radius: 1.5,
+          threshold: 0.04,
+          midtoneDetail: 0.2,
+        },
       };
       const serialized = serializeProject(sourceClips, [], [], [], finishing);
       const project: Project = {
@@ -868,6 +874,9 @@ describe("utils/project", () => {
       expect(result.finishing.lut?.intensity).toBe(0.55);
       expect(result.finishing.sharpen?.enabled).toBe(true);
       expect(result.finishing.sharpen?.amount).toBe(0.3);
+      expect(result.finishing.sharpen?.radius).toBe(1.5);
+      expect(result.finishing.sharpen?.threshold).toBe(0.04);
+      expect(result.finishing.sharpen?.midtoneDetail).toBe(0.2);
     });
 
     it('should roundtrip primary color finishing settings', async () => {

@@ -5,9 +5,10 @@
  * Pass order (professional):
  *   noise reduction → primary color → secondary color → LUT → sharpen → grain
  *
- * Primary color (exposure / WB / lift-gamma-gain) and noise reduction
- * (spatial bilateral + optional temporal) are implemented on WebGPU with
- * best-effort FFmpeg WASM parity. Canvas2D does not apply finishing.
+ * Primary color (exposure / WB / lift-gamma-gain), noise reduction
+ * (spatial bilateral + optional temporal), and sharpening (unsharp + midtone
+ * detail) are implemented on WebGPU with best-effort FFmpeg WASM parity.
+ * Canvas2D does not apply finishing.
  */
 
 import {
@@ -26,9 +27,16 @@ import {
   normalizeNoiseReductionPass,
   type NoiseReductionSettings,
 } from './noiseReduction';
+import {
+  DEFAULT_SHARPEN_PARAMS,
+  SHARPEN_AMOUNT_RECOMMENDED,
+  normalizeSharpenPass,
+  type SharpenSettings,
+} from './sharpen';
 
 export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
+export type { SharpenSettings } from './sharpen';
 
 export interface FinishingPassBase {
   enabled: boolean;
@@ -53,8 +61,8 @@ export interface LutFinishingPass extends FinishingPassBase {
   customFileName?: string;
 }
 
-/** Sharpening / detail enhancement (WebGPU pass — see effect issue). */
-export interface SharpenPass extends FinishingPassBase {}
+/** Sharpening / detail enhancement — after LUT, before grain. */
+export type SharpenPass = SharpenSettings;
 
 /** Film grain + optical emulation — applied last (WebGPU pass — see effect issue). */
 export interface GrainPass extends FinishingPassBase {}
@@ -100,7 +108,8 @@ export const DEFAULT_LUT_PASS: LutFinishingPass = {
 
 export const DEFAULT_SHARPEN: SharpenPass = {
   enabled: false,
-  amount: 1,
+  amount: SHARPEN_AMOUNT_RECOMMENDED,
+  ...DEFAULT_SHARPEN_PARAMS,
 };
 
 export const DEFAULT_GRAIN: GrainPass = {
@@ -151,7 +160,10 @@ export function isLutFinishingPassActive(pass: LutFinishingPass | undefined): bo
 }
 
 export function isSharpenActive(pass: SharpenPass | undefined): boolean {
-  return passAmount(pass) > 0;
+  if (!pass?.enabled) return false;
+  const amount = Number.isFinite(pass.amount) ? clamp01(pass.amount as number) : 0;
+  const midtone = Number.isFinite(pass.midtoneDetail) ? clamp01(pass.midtoneDetail) : 0;
+  return amount > 0 || midtone > 0;
 }
 
 export function isGrainActive(pass: GrainPass | undefined): boolean {
@@ -246,7 +258,7 @@ export function normalizeFinishingSettings(
     primaryColor: normalizePrimaryColorPass(raw?.primaryColor, DEFAULT_PRIMARY_COLOR),
     secondaryColor: normalizePassBase(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
     lut: normalizeLutPass(raw?.lut),
-    sharpen: normalizePassBase(raw?.sharpen, DEFAULT_SHARPEN),
+    sharpen: normalizeSharpenPass(raw?.sharpen, DEFAULT_SHARPEN),
     grain: normalizePassBase(raw?.grain, DEFAULT_GRAIN),
   };
 }

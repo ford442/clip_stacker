@@ -25,6 +25,11 @@ import {
   buildNoiseReductionFfmpegFilters,
   type NoiseReductionSettings,
 } from "../utils/noiseReduction";
+import {
+  appendSharpenFilters,
+  buildSharpenFfmpegFilters,
+  type SharpenSettings,
+} from "../utils/sharpen";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   buildFfmpegLoadErrorMessage,
@@ -285,6 +290,7 @@ export function buildSingleClipFilter(
   targetHeight: number = OUTPUT_HEIGHT,
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
+  sharpen?: SharpenSettings,
 ): string {
   const duration = getClipDuration(clip);
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
@@ -299,11 +305,13 @@ export function buildSingleClipFilter(
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0)
       v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
-    // Finishing: noise reduction then primary color (best-effort FFmpeg parity).
+    // Finishing: noise → primary → sharpen (best-effort FFmpeg parity).
     const noiseFilters = buildNoiseReductionFfmpegFilters(noiseReduction);
     if (noiseFilters) v += `,${noiseFilters}`;
     const primaryFilters = buildPrimaryColorFfmpegFilters(primaryColor);
     if (primaryFilters) v += `,${primaryFilters}`;
+    const sharpenFilters = buildSharpenFfmpegFilters(sharpen);
+    if (sharpenFilters) v += `,${sharpenFilters}`;
     parts.push(`${v}[vout]`);
 
     let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
@@ -610,6 +618,7 @@ export async function performTwoPassEncode(
   onProgress?: ProgressCallback,
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
+  sharpen?: SharpenSettings,
 ): Promise<void> {
   emitProgress(onProgress, "FFmpeg re-encode (two-pass)", 0.12, false);
 
@@ -657,6 +666,7 @@ export async function performTwoPassEncode(
         targetHeight,
         primaryColor,
         noiseReduction,
+        sharpen,
       ),
     );
     pass1ElapsedDuration += clipDuration;
@@ -685,6 +695,7 @@ export async function processClipPass1(
   targetHeight: number = OUTPUT_HEIGHT,
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
+  sharpen?: SharpenSettings,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
@@ -703,8 +714,10 @@ export async function processClipPass1(
   const needsPrimary = Boolean(primaryFilters);
   const noiseFilters = buildNoiseReductionFfmpegFilters(noiseReduction);
   const needsNoise = Boolean(noiseFilters);
+  const sharpenFilters = buildSharpenFfmpegFilters(sharpen);
+  const needsSharpen = Boolean(sharpenFilters);
 
-  if (!clipNeedsEffects(clip) && matchesTargetResolution && !needsPrimary && !needsNoise) {
+  if (!clipNeedsEffects(clip) && matchesTargetResolution && !needsPrimary && !needsNoise && !needsSharpen) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
     // Audio must be explicitly transcoded so the intermediate has a consistent
     // codec for concat — pure -c copy silently drops audio from non-MP4 sources.
@@ -759,6 +772,7 @@ export async function processClipPass1(
       `,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p` +
       (noiseFilters ? `,${noiseFilters}` : '') +
       (primaryFilters ? `,${primaryFilters}` : '') +
+      (sharpenFilters ? `,${sharpenFilters}` : '') +
       `[vout]`;
     const audioFilter =
       `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS` +
@@ -847,7 +861,7 @@ export async function processClipPass1(
       "-i",
       clip.inputName!,
       "-filter_complex",
-      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction),
+      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction, sharpen),
       "-map",
       "[vout]",
       "-map",
@@ -944,14 +958,16 @@ export async function mergeClipsWithTransitions(
   textOverlays: TextOverlay[] = [],
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
+  sharpen?: SharpenSettings,
 ): Promise<void> {
   onStatus("Building transition render...");
   emitProgress(onProgress, "FFmpeg transition render", 0.15, false);
 
   let effectiveFilterComplex = filterComplex;
-  // Noise reduction then primary color before text overlays.
+  // Noise → primary → sharpen before text overlays.
   effectiveFilterComplex = appendNoiseReductionFilters(effectiveFilterComplex, noiseReduction);
   effectiveFilterComplex = appendPrimaryColorFilters(effectiveFilterComplex, primaryColor);
+  effectiveFilterComplex = appendSharpenFilters(effectiveFilterComplex, sharpen);
   if (textOverlays.length > 0) {
     await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);
     effectiveFilterComplex = appendTextOverlayFilters(effectiveFilterComplex, textOverlays);

@@ -17,6 +17,10 @@ import {
   type NoiseReductionSettings,
 } from "../utils/noiseReduction";
 import {
+  appendSharpenFilters,
+  type SharpenSettings,
+} from "../utils/sharpen";
+import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
   recordFfmpegLog,
@@ -262,6 +266,7 @@ export async function mergeClipsWithCompositing(
   textOverlays: TextOverlay[] = [],
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
+  sharpen?: SharpenSettings,
 ): Promise<void> {
   onStatus("Building PiP/compositing render...");
   emitProgress(onProgress, "FFmpeg PiP/compositing render", 0.15, false);
@@ -270,10 +275,11 @@ export async function mergeClipsWithCompositing(
     onStatus(`Warning: ${message}`),
   );
 
-  // Finishing post-composite: noise → primary. Remaining TBD:
-  // secondary → lut3d → unsharp → grain.
+  // Finishing post-composite: noise → primary → unsharp. Remaining TBD:
+  // secondary → lut3d → grain.
   filterComplex = appendNoiseReductionFilters(filterComplex, noiseReduction);
   filterComplex = appendPrimaryColorFilters(filterComplex, primaryColor);
+  filterComplex = appendSharpenFilters(filterComplex, sharpen);
 
   if (textOverlays.length > 0) {
     await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);
