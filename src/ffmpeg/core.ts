@@ -26,6 +26,16 @@ import {
   type NoiseReductionSettings,
 } from "../utils/noiseReduction";
 import {
+  appendSecondaryColorFilters,
+  bakeSecondaryColorLut,
+  buildSecondaryColorFfmpegFilters,
+  secondaryHasHueGrades,
+  secondaryHasWindowGrades,
+  secondaryLutToCubeText,
+  SECONDARY_COLOR_LUT_FILENAME,
+  type SecondaryColorSettings,
+} from "../utils/secondaryColor";
+import {
   appendSharpenFilters,
   buildSharpenFfmpegFilters,
   type SharpenSettings,
@@ -235,6 +245,37 @@ export async function safeWriteFile(
   }
 }
 
+/**
+ * Bake hue-only secondary grades into a `.cube` on the FFmpeg VFS for `lut3d`.
+ * Window masks have no FFmpeg parity — status notes that when relevant.
+ * Returns the pass when a lut3d filter should be appended; otherwise undefined.
+ */
+export async function prepareSecondaryColorFfmpeg(
+  ffmpeg: IFfmpegRuntime,
+  pass: SecondaryColorSettings | undefined,
+  onStatus: StatusCallback,
+): Promise<SecondaryColorSettings | undefined> {
+  if (!pass?.enabled) return undefined;
+  if (secondaryHasWindowGrades(pass)) {
+    onStatus(
+      "Secondary window masks are WebGPU-only — FFmpeg applies hue-only grades via lut3d when present.",
+    );
+  }
+  if (!secondaryHasHueGrades(pass)) {
+    return undefined;
+  }
+  const lut = bakeSecondaryColorLut(pass);
+  if (!lut) return undefined;
+  await safeWriteFile(
+    ffmpeg,
+    SECONDARY_COLOR_LUT_FILENAME,
+    secondaryLutToCubeText(lut),
+    "write secondary lut3d",
+  );
+  onStatus("Secondary color: baked hue grades to lut3d for FFmpeg path.");
+  return pass;
+}
+
 /** Safe readFile with diagnostics. */
 export async function safeReadFile(
   ffmpeg: IFfmpegRuntime,
@@ -291,6 +332,7 @@ export function buildSingleClipFilter(
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
+  secondaryColor?: SecondaryColorSettings,
 ): string {
   const duration = getClipDuration(clip);
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
@@ -305,11 +347,13 @@ export function buildSingleClipFilter(
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0)
       v += `,fade=t=out:st=${safeVideoOut}:d=${clip.videoFadeOut}`;
-    // Finishing: noise → primary → sharpen (best-effort FFmpeg parity).
+    // Finishing: noise → primary → secondary (lut3d) → sharpen.
     const noiseFilters = buildNoiseReductionFfmpegFilters(noiseReduction);
     if (noiseFilters) v += `,${noiseFilters}`;
     const primaryFilters = buildPrimaryColorFfmpegFilters(primaryColor);
     if (primaryFilters) v += `,${primaryFilters}`;
+    const secondaryFilters = buildSecondaryColorFfmpegFilters(secondaryColor);
+    if (secondaryFilters) v += `,${secondaryFilters}`;
     const sharpenFilters = buildSharpenFfmpegFilters(sharpen);
     if (sharpenFilters) v += `,${sharpenFilters}`;
     parts.push(`${v}[vout]`);
@@ -619,6 +663,7 @@ export async function performTwoPassEncode(
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
+  secondaryColor?: SecondaryColorSettings,
 ): Promise<void> {
   emitProgress(onProgress, "FFmpeg re-encode (two-pass)", 0.12, false);
 
@@ -667,6 +712,7 @@ export async function performTwoPassEncode(
         primaryColor,
         noiseReduction,
         sharpen,
+        secondaryColor,
       ),
     );
     pass1ElapsedDuration += clipDuration;
@@ -696,6 +742,7 @@ export async function processClipPass1(
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
+  secondaryColor?: SecondaryColorSettings,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
   const clipDuration = getClipDuration(clip);
@@ -716,8 +763,17 @@ export async function processClipPass1(
   const needsNoise = Boolean(noiseFilters);
   const sharpenFilters = buildSharpenFfmpegFilters(sharpen);
   const needsSharpen = Boolean(sharpenFilters);
+  const secondaryFilters = buildSecondaryColorFfmpegFilters(secondaryColor);
+  const needsSecondary = Boolean(secondaryFilters);
 
-  if (!clipNeedsEffects(clip) && matchesTargetResolution && !needsPrimary && !needsNoise && !needsSharpen) {
+  if (
+    !clipNeedsEffects(clip) &&
+    matchesTargetResolution &&
+    !needsPrimary &&
+    !needsNoise &&
+    !needsSharpen &&
+    !needsSecondary
+  ) {
     // Fast path: copy video (no decode/encode) + normalize audio to AAC.
     // Audio must be explicitly transcoded so the intermediate has a consistent
     // codec for concat — pure -c copy silently drops audio from non-MP4 sources.
@@ -861,7 +917,7 @@ export async function processClipPass1(
       "-i",
       clip.inputName!,
       "-filter_complex",
-      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction, sharpen),
+      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction, sharpen, secondaryColor),
       "-map",
       "[vout]",
       "-map",
@@ -959,14 +1015,16 @@ export async function mergeClipsWithTransitions(
   primaryColor?: PrimaryColorSettings,
   noiseReduction?: NoiseReductionSettings,
   sharpen?: SharpenSettings,
+  secondaryColor?: SecondaryColorSettings,
 ): Promise<void> {
   onStatus("Building transition render...");
   emitProgress(onProgress, "FFmpeg transition render", 0.15, false);
 
   let effectiveFilterComplex = filterComplex;
-  // Noise → primary → sharpen before text overlays.
+  // Noise → primary → secondary (lut3d) → sharpen before text overlays.
   effectiveFilterComplex = appendNoiseReductionFilters(effectiveFilterComplex, noiseReduction);
   effectiveFilterComplex = appendPrimaryColorFilters(effectiveFilterComplex, primaryColor);
+  effectiveFilterComplex = appendSecondaryColorFilters(effectiveFilterComplex, secondaryColor);
   effectiveFilterComplex = appendSharpenFilters(effectiveFilterComplex, sharpen);
   if (textOverlays.length > 0) {
     await ensureFontsForOverlays(ffmpeg, onStatus, textOverlays);

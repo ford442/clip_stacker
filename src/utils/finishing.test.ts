@@ -30,6 +30,52 @@ describe('finishing settings', () => {
     });
   });
 
+  it('detects active secondary color with a selective grade', () => {
+    const settings = {
+      ...DEFAULT_FINISHING,
+      secondaryColor: {
+        enabled: true,
+        amount: 1,
+        grades: [
+          {
+            enabled: true,
+            maskType: 'hue' as const,
+            hueCenter: 210,
+            hueWidth: 60,
+            hueSoftness: 12,
+            windowCenterX: 0.5,
+            windowCenterY: 0.5,
+            windowWidth: 0.5,
+            windowHeight: 0.5,
+            windowRotation: 0,
+            windowFeather: 0.15,
+            hueShift: 0,
+            satScale: 0.7,
+            lumOffset: 0,
+            satOffset: 0,
+          },
+        ],
+      },
+    };
+    expect(isFinishingActive(settings)).toBe(true);
+  });
+
+  it('normalizes unknown secondary mask types to hue', () => {
+    const normalized = normalizeFinishingSettings({
+      secondaryColor: {
+        enabled: true,
+        grades: [
+          {
+            enabled: true,
+            maskType: 'bitmap',
+            satScale: 0.5,
+          } as never,
+        ],
+      },
+    });
+    expect(normalized.secondaryColor?.grades[0].maskType).toBe('hue');
+  });
+
   it('detects enabled stub passes with amount', () => {
     const settings = {
       ...DEFAULT_FINISHING,

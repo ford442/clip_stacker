@@ -274,6 +274,40 @@ describe("utils/project", () => {
       expect(project.finishing?.lut?.intensity).toBe(0.75);
     });
 
+    it('should serialize secondary color finishing settings', () => {
+      const project = serializeProject([], [], [], [], {
+        secondaryColor: {
+          enabled: true,
+          amount: 0.9,
+          grades: [
+            {
+              enabled: true,
+              maskType: 'hue+window',
+              hueCenter: 205,
+              hueWidth: 55,
+              hueSoftness: 14,
+              windowCenterX: 0.48,
+              windowCenterY: 0.4,
+              windowWidth: 0.55,
+              windowHeight: 0.45,
+              windowRotation: 10,
+              windowFeather: 0.22,
+              hueShift: -8,
+              satScale: 0.75,
+              lumOffset: 0.03,
+              satOffset: -0.05,
+              invertMask: false,
+            },
+          ],
+        },
+      });
+      expect(project.finishing?.secondaryColor?.enabled).toBe(true);
+      expect(project.finishing?.secondaryColor?.grades).toHaveLength(1);
+      expect(project.finishing?.secondaryColor?.grades?.[0].maskType).toBe('hue+window');
+      expect(project.finishing?.secondaryColor?.grades?.[0].hueCenter).toBe(205);
+      expect(project.finishing?.secondaryColor?.grades?.[0].satScale).toBe(0.75);
+    });
+
     it('should serialize primary color finishing settings', () => {
       const project = serializeProject([], [], [], [], {
         primaryColor: {
@@ -921,6 +955,130 @@ describe("utils/project", () => {
       expect(result.finishing.primaryColor?.lift).toEqual([0.01, -0.02, 0]);
       expect(result.finishing.primaryColor?.gamma?.[2]).toBe(1.05);
       expect(result.finishing.primaryColor?.gain?.[0]).toBe(1.1);
+    });
+
+    it('should roundtrip secondary color finishing settings', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const finishing = {
+        secondaryColor: {
+          enabled: true,
+          amount: 0.85,
+          grades: [
+            {
+              enabled: true,
+              maskType: 'hue' as const,
+              hueCenter: 210,
+              hueWidth: 65,
+              hueSoftness: 16,
+              windowCenterX: 0.5,
+              windowCenterY: 0.5,
+              windowWidth: 0.5,
+              windowHeight: 0.5,
+              windowRotation: 0,
+              windowFeather: 0.15,
+              hueShift: 12,
+              satScale: 0.6,
+              lumOffset: -0.02,
+              satOffset: 0.05,
+              invertMask: false,
+            },
+            {
+              enabled: true,
+              maskType: 'window' as const,
+              hueCenter: 0,
+              hueWidth: 60,
+              hueSoftness: 15,
+              windowCenterX: 0.3,
+              windowCenterY: 0.7,
+              windowWidth: 0.4,
+              windowHeight: 0.35,
+              windowRotation: -20,
+              windowFeather: 0.25,
+              hueShift: 0,
+              satScale: 1,
+              lumOffset: 0.08,
+              satOffset: 0,
+              invertMask: true,
+            },
+          ],
+        },
+      };
+      const serialized = serializeProject(sourceClips, [], [], [], finishing);
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: 'source1.mp4',
+          },
+        ],
+        finishing: serialized.finishing,
+      };
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.finishing.secondaryColor?.enabled).toBe(true);
+      expect(result.finishing.secondaryColor?.amount).toBe(0.85);
+      expect(result.finishing.secondaryColor?.grades).toHaveLength(2);
+      expect(result.finishing.secondaryColor?.grades?.[0].maskType).toBe('hue');
+      expect(result.finishing.secondaryColor?.grades?.[0].satScale).toBe(0.6);
+      expect(result.finishing.secondaryColor?.grades?.[1].maskType).toBe('window');
+      expect(result.finishing.secondaryColor?.grades?.[1].invertMask).toBe(true);
+      expect(result.finishing.secondaryColor?.grades?.[1].windowRotation).toBe(-20);
+    });
+
+    it('should fail-safe unknown secondary mask types on load', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: 'source1.mp4',
+          },
+        ],
+        finishing: {
+          secondaryColor: {
+            enabled: true,
+            amount: 1,
+            grades: [
+              {
+                enabled: true,
+                maskType: 'tracker' as never,
+                hueCenter: 100,
+                hueWidth: 40,
+                hueSoftness: 10,
+                windowCenterX: 0.5,
+                windowCenterY: 0.5,
+                windowWidth: 0.5,
+                windowHeight: 0.5,
+                windowRotation: 0,
+                windowFeather: 0.1,
+                hueShift: 0,
+                satScale: 0.5,
+                lumOffset: 0,
+                satOffset: 0,
+              },
+            ],
+          },
+        },
+      };
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.finishing.secondaryColor?.grades?.[0].maskType).toBe('hue');
     });
 
     it('should roundtrip noise reduction finishing settings', async () => {

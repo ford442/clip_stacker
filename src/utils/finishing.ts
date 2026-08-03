@@ -5,10 +5,10 @@
  * Pass order (professional):
  *   noise reduction → primary color → secondary color → LUT → sharpen → grain
  *
- * Primary color (exposure / WB / lift-gamma-gain), noise reduction
- * (spatial bilateral + optional temporal), and sharpening (unsharp + midtone
- * detail) are implemented on WebGPU with best-effort FFmpeg WASM parity.
- * Canvas2D does not apply finishing.
+ * Primary color (exposure / WB / lift-gamma-gain), secondary color (hue /
+ * window qualifiers), noise reduction (spatial bilateral + optional temporal),
+ * and sharpening (unsharp + midtone detail) are implemented on WebGPU with
+ * best-effort FFmpeg WASM parity. Canvas2D does not apply finishing.
  */
 
 import {
@@ -28,6 +28,11 @@ import {
   type NoiseReductionSettings,
 } from './noiseReduction';
 import {
+  hasActiveSecondaryGrades,
+  normalizeSecondaryColorPass,
+  type SecondaryColorSettings,
+} from './secondaryColor';
+import {
   DEFAULT_SHARPEN_PARAMS,
   SHARPEN_AMOUNT_RECOMMENDED,
   normalizeSharpenPass,
@@ -37,6 +42,7 @@ import {
 export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
 export type { SharpenSettings } from './sharpen';
+export type { SecondaryColorSettings, SecondaryGrade, SecondaryMaskType } from './secondaryColor';
 
 export interface FinishingPassBase {
   enabled: boolean;
@@ -50,9 +56,8 @@ export type NoiseReductionPass = NoiseReductionSettings;
 /** Primary color correction / balancing — before creative LUT. */
 export type PrimaryColorPass = PrimaryColorSettings;
 
-/** Secondary / selective color correction (WebGPU pass — see effect issue). */
-export interface SecondaryColorPass extends FinishingPassBase {}
-
+/** Secondary / selective color — hue qualifiers + power windows (≤3 grades). */
+export type SecondaryColorPass = SecondaryColorSettings;
 /** Creative 3D LUT — maps to the existing LutPass / ColorGradeSettings. */
 export interface LutFinishingPass extends FinishingPassBase {
   lutId: string;
@@ -98,6 +103,7 @@ export const DEFAULT_PRIMARY_COLOR: PrimaryColorPass = {
 export const DEFAULT_SECONDARY_COLOR: SecondaryColorPass = {
   enabled: false,
   amount: 1,
+  grades: [],
 };
 
 export const DEFAULT_LUT_PASS: LutFinishingPass = {
@@ -120,7 +126,7 @@ export const DEFAULT_GRAIN: GrainPass = {
 export const DEFAULT_FINISHING: FinishingSettings = {
   noiseReduction: { ...DEFAULT_NOISE_REDUCTION },
   primaryColor: { ...DEFAULT_PRIMARY_COLOR },
-  secondaryColor: { ...DEFAULT_SECONDARY_COLOR },
+  secondaryColor: { ...DEFAULT_SECONDARY_COLOR, grades: [] },
   lut: { ...DEFAULT_LUT_PASS },
   sharpen: { ...DEFAULT_SHARPEN },
   grain: { ...DEFAULT_GRAIN },
@@ -149,7 +155,8 @@ export function isPrimaryColorActive(pass: PrimaryColorPass | undefined): boolea
 }
 
 export function isSecondaryColorActive(pass: SecondaryColorPass | undefined): boolean {
-  return passAmount(pass) > 0;
+  if (passAmount(pass) <= 0) return false;
+  return hasActiveSecondaryGrades(pass);
 }
 
 export function isLutFinishingPassActive(pass: LutFinishingPass | undefined): boolean {
@@ -256,7 +263,7 @@ export function normalizeFinishingSettings(
   return {
     noiseReduction: normalizeNoiseReductionPass(raw?.noiseReduction, DEFAULT_NOISE_REDUCTION),
     primaryColor: normalizePrimaryColorPass(raw?.primaryColor, DEFAULT_PRIMARY_COLOR),
-    secondaryColor: normalizePassBase(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
+    secondaryColor: normalizeSecondaryColorPass(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
     lut: normalizeLutPass(raw?.lut),
     sharpen: normalizeSharpenPass(raw?.sharpen, DEFAULT_SHARPEN),
     grain: normalizePassBase(raw?.grain, DEFAULT_GRAIN),
