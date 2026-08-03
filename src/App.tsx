@@ -30,7 +30,6 @@ import {
   DEFAULT_TEXT_OVERLAY_Y,
 } from "./utils/overlayCoords";
 import { parseCanvasSize } from "./utils/pipPreset";
-import { findMatchingClipIndex } from "./utils/clipMatching";
 import { DEFAULT_SCROLL_SPEED } from "./utils/textOverlay";
 import { reindexTransitions, shiftTransitionsForInsert } from "./utils/transitions";
 import {
@@ -44,7 +43,6 @@ import {
 } from "./utils/clipOperations";
 import { snapSplitTimeToBeat } from "./utils/beatSnap";
 import {
-  appendClipToTracks,
   moveClipBetweenTracks,
   removeClipFromTracks,
   replaceClipOnTrackAfterSplit,
@@ -98,7 +96,8 @@ import {
   writeStorageAuthToken,
 } from "./utils/storageAuth";
 import { generateDebugReport } from "./utils/debugReport";
-import { playbackStore, setPlayheadTime } from "./store";
+import { editorStore, playbackStore, setPlayheadTime } from "./store";
+import { planAddClip } from "./utils/planAddClip";
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length <= 3) return names.join(", ");
@@ -267,12 +266,14 @@ export function App() {
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
 
   useEffect(() => {
-    if (!selectedClip) {
+    if (!selectedClipId) {
       setPlayheadTime(null);
       return;
     }
-    setPlayheadTime(selectedClip.trimStart);
-  }, [selectedClip?.id, selectedClip?.trimStart]);
+    const clip = clips.find((c) => c.id === selectedClipId);
+    if (!clip) return;
+    setPlayheadTime(clip.trimStart);
+  }, [selectedClipId, clips]);
 
   // ---------------------------------------------------------------------------
   // Clip management helpers
@@ -280,65 +281,13 @@ export function App() {
 
   /** Add a new clip to the state and set up A/B grouping if a matching clip exists. */
   const addClipToState = useCallback((newClip: Clip) => {
-    setClips((prevClips) => {
-      const existingNames = prevClips.map((c) => c.file.name);
-      const matchIndex = findMatchingClipIndex(
-        existingNames,
-        newClip.file.name,
-      );
-
-      if (matchIndex >= 0) {
-        // Found a match — assign to existing group as variant B
-        const matchedClip = prevClips[matchIndex];
-        const groupId = matchedClip.groupId ?? createClipId();
-
-        setClipGroups((prevGroups) => {
-          const existingGroup = prevGroups.find((g) => g.id === groupId);
-          if (existingGroup) {
-            // Update existing group
-            return prevGroups.map((g) =>
-              g.id === groupId
-                ? {
-                    ...g,
-                    variants: {
-                      ...g.variants,
-                      B: { ...newClip, groupId, groupVariant: "B" },
-                    },
-                  }
-                : g,
-            );
-          }
-          // Create new group from matched clip + new clip
-          return [
-            ...prevGroups,
-            {
-              id: groupId,
-              variants: {
-                A: { ...matchedClip, groupId, groupVariant: "A" },
-                B: { ...newClip, groupId, groupVariant: "B" },
-              },
-              activeVariant: "A", // keep the original on the timeline by default
-            },
-          ];
-        });
-
-        // Tag the matched clip with its group
-        const taggedMatch = {
-          ...matchedClip,
-          groupId,
-          groupVariant: "A" as const,
-        };
-        const taggedNew = { ...newClip, groupId, groupVariant: "B" as const };
-
-        return prevClips
-          .map((c, i) => (i === matchIndex ? taggedMatch : c))
-          .concat(taggedNew);
-      }
-
-      // No match — just append
-      const nextClips = [...prevClips, newClip];
-      setTracks((prevTracks) => appendClipToTracks(prevTracks, newClip, nextClips));
-      return nextClips;
+    const { clips: prevClips, tracks: prevTracks, clipGroups: prevGroups } =
+      editorStore.getState();
+    const plan = planAddClip(prevClips, prevTracks, prevGroups, newClip);
+    editorStore.setState({
+      clips: plan.clips,
+      ...(plan.tracks ? { tracks: plan.tracks } : {}),
+      ...(plan.clipGroups ? { clipGroups: plan.clipGroups } : {}),
     });
   }, []);
 
