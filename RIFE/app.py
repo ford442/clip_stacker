@@ -20,7 +20,6 @@ import subprocess
 import sys
 import numpy as np
 import gradio as gr
-import base64
 import uuid
 
 # --- Constants ---
@@ -52,45 +51,66 @@ if not hasattr(np, 'float'):
 if not hasattr(np, 'int'):
     np.int = int
 
-# ── Thumbnail: base64 data URIs ──────────
-
 def is_still_image(path):
     """True when `path` looks like a single-frame image upload."""
     ext = os.path.splitext(path)[1].lower()
     return ext in IMAGE_EXTENSIONS
 
+# ── Thumbnail JPEG files (Gradio Gallery needs real paths, not data URIs) ───
 
-def extract_thumb_b64(vid_path):
-    """Pipe first frame to stdout as JPEG, return data URI. No temp files."""
+def extract_thumb_path(media_path):
+    """Write a small JPEG thumbnail and return its path."""
+    thumb_path = os.path.join(WORKSPACE_DIR, f"thumb_{uuid.uuid4().hex}.jpg")
     try:
-        if is_still_image(vid_path):
+        if is_still_image(media_path):
             cmd = [
-                'ffmpeg', '-i', vid_path,
+                'ffmpeg', '-i', media_path,
                 '-vframes', '1',
                 '-vf', 'scale=240:-1',
-                '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+                '-y', thumb_path,
             ]
         else:
             cmd = [
-                'ffmpeg', '-i', vid_path,
+                'ffmpeg', '-i', media_path,
                 '-ss', '00:00:00.5', '-vframes', '1',
                 '-vf', 'scale=240:-1',
-                '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1',
+                '-y', thumb_path,
             ]
-        result = subprocess.run(cmd, stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL, timeout=10)
-        if result.returncode == 0 and result.stdout:
-            b64 = base64.b64encode(result.stdout).decode('utf-8')
-            return f"data:image/jpeg;base64,{b64}"
+        result = subprocess.run(
+            cmd, stderr=subprocess.DEVNULL, timeout=10,
+        )
+        if result.returncode == 0 and os.path.isfile(thumb_path) and os.path.getsize(thumb_path) > 0:
+            return thumb_path
     except Exception as e:
-        print(f"Thumb failed {vid_path}: {e}")
+        print(f"Thumb failed {media_path}: {e}")
+    try:
+        if os.path.exists(thumb_path):
+            os.remove(thumb_path)
+    except OSError:
+        pass
     return None
 
+
+def delete_thumb_file(thumb_entry):
+    """Remove a generated gallery thumbnail from the workspace."""
+    if not thumb_entry:
+        return
+    path = thumb_entry[0]
+    if not path or not isinstance(path, str) or path.startswith('data:'):
+        return
+    if not path.startswith(WORKSPACE_DIR):
+        return
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
 def create_thumbs(paths):
-    """Return list of (data_uri_or_None, label) for each path."""
+    """Return list of (thumb_path_or_None, label) for each path."""
     out = []
     for i, p in enumerate(paths):
-        out.append((extract_thumb_b64(p), f"{i+1}. {os.path.basename(p)}"))
+        out.append((extract_thumb_path(p), f"{i+1}. {os.path.basename(p)}"))
     return out
 
 # ── Environment setup ─────────────────────────────────────────────────────────
@@ -579,8 +599,12 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
 # ── Clip reorder: Gallery + pure Python state (no JS bridge) ──────────────────
 
 def gallery_items(thumbs):
-    """Gradio Gallery value from (data_uri, label) pairs."""
-    return [(uri, label) for uri, label in thumbs]
+    """Gradio Gallery value from (thumb_path, label) pairs."""
+    items = []
+    for path, label in thumbs:
+        if path and os.path.isfile(path):
+            items.append((path, label))
+    return items
 
 def selection_label(paths, sel):
     if not paths:
@@ -676,10 +700,16 @@ def remove_clip(paths, thumbs, sel):
     sel = int(sel)
     if not paths or sel < 0 or sel >= len(paths):
         return reorder_panel_outputs(paths, thumbs, sel)
+    delete_thumb_file(thumbs[sel])
     paths = [p for i, p in enumerate(paths) if i != sel]
     thumbs = [t for i, t in enumerate(thumbs) if i != sel]
     new_sel = max(0, min(sel, len(paths) - 1))
     return reorder_panel_outputs(paths, thumbs, new_sel)
+
+def clear_all_clips(_paths, thumbs):
+    for thumb in thumbs or []:
+        delete_thumb_file(thumb)
+    return reorder_panel_outputs([], [], 0)
 
 # ── Gradio UI ─────────────────────────────────────────────────────────────────
 
@@ -848,7 +878,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
     )
 
     clr_btn.click(
-        fn=lambda: reorder_panel_outputs([], [], 0),
+        fn=clear_all_clips,
+        inputs=[paths_state, thumbs_state],
         outputs=_reorder_outs,
     )
 
