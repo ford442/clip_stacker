@@ -2,10 +2,11 @@
  * Ordered finishing pass chain — runs after compositing on WebGPU preview/export.
  *
  * Pass order: noise reduction → primary color → secondary color → LUT → sharpen → grain.
- * Only the LUT pass is implemented today; other slots are no-ops until their effect issues land.
+ * Primary color and LUT are implemented; other slots are no-ops until their effect issues land.
  */
 
 import { LutPass } from './lutPass';
+import { PrimaryColorGpuPass } from './primaryColorPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
   isFinishingActive,
@@ -21,6 +22,7 @@ import { resolveLutData } from '../utils/lut';
 
 export class FinishingPassChain {
   private readonly lutPass: LutPass;
+  private readonly primaryColorPass: PrimaryColorGpuPass;
   private pingTexture: GPUTexture | null = null;
   private pongTexture: GPUTexture | null = null;
   /** Previous frame for temporal denoise — cleared on seek via resetTemporal(). */
@@ -28,12 +30,16 @@ export class FinishingPassChain {
   private textureWidth = 0;
   private textureHeight = 0;
 
-  private constructor(lutPass: LutPass) {
+  private constructor(lutPass: LutPass, primaryColorPass: PrimaryColorGpuPass) {
     this.lutPass = lutPass;
+    this.primaryColorPass = primaryColorPass;
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): FinishingPassChain {
-    return new FinishingPassChain(LutPass.create(device, format));
+    return new FinishingPassChain(
+      LutPass.create(device, format),
+      PrimaryColorGpuPass.create(device, format),
+    );
   }
 
   /**
@@ -71,6 +77,30 @@ export class FinishingPassChain {
       next = swap;
     };
 
+    const hasLaterGpuPass = (
+      after: 'primary' | 'secondary' | 'lut' | 'sharpen',
+    ): boolean => {
+      if (after === 'primary') {
+        return (
+          isSecondaryColorActive(settings.secondaryColor) ||
+          isLutFinishingPassActive(settings.lut) ||
+          isSharpenActive(settings.sharpen) ||
+          isGrainActive(settings.grain)
+        );
+      }
+      if (after === 'secondary') {
+        return (
+          isLutFinishingPassActive(settings.lut) ||
+          isSharpenActive(settings.sharpen) ||
+          isGrainActive(settings.grain)
+        );
+      }
+      if (after === 'lut') {
+        return isSharpenActive(settings.sharpen) || isGrainActive(settings.grain);
+      }
+      return isGrainActive(settings.grain);
+    };
+
     if (isNoiseReductionActive(settings.noiseReduction)) {
       // TODO(noise-reduction): spatial + optional temporal denoise pass.
       // When temporal is enabled, read/write prevFrameTexture and swap each frame.
@@ -78,8 +108,31 @@ export class FinishingPassChain {
       void this.prevFrameTexture;
     }
 
-    if (isPrimaryColorActive(settings.primaryColor)) {
-      // TODO(primary-color): primary color correction pass.
+    if (isPrimaryColorActive(settings.primaryColor) && settings.primaryColor) {
+      const primary = settings.primaryColor;
+      const isLast = !hasLaterGpuPass('primary');
+      if (isLast) {
+        this.primaryColorPass.applyBetweenTextures(
+          device,
+          current,
+          canvasTexture.createView(),
+          width,
+          height,
+          primary,
+        );
+        wroteToCanvas = true;
+      } else {
+        runPass(() => {
+          this.primaryColorPass.applyBetweenTextures(
+            device,
+            current,
+            next.createView(),
+            width,
+            height,
+            primary,
+          );
+        });
+      }
     }
 
     if (isSecondaryColorActive(settings.secondaryColor)) {
@@ -91,8 +144,7 @@ export class FinishingPassChain {
       if (lut) {
         this.lutPass.setLut(device, lut);
         const intensity = settings.lut!.intensity;
-        const isLastGpuPass =
-          !isSharpenActive(settings.sharpen) && !isGrainActive(settings.grain);
+        const isLastGpuPass = !hasLaterGpuPass('lut');
 
         if (isLastGpuPass) {
           this.lutPass.applyBetweenTextures(
@@ -149,6 +201,7 @@ export class FinishingPassChain {
     this.pongTexture?.destroy();
     this.prevFrameTexture?.destroy();
     this.lutPass.destroy();
+    this.primaryColorPass.destroy();
     this.pingTexture = null;
     this.pongTexture = null;
     this.prevFrameTexture = null;

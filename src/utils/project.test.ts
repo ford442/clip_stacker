@@ -273,6 +273,27 @@ describe("utils/project", () => {
       expect(project.finishing?.lut?.lutId).toBe('film');
       expect(project.finishing?.lut?.intensity).toBe(0.75);
     });
+
+    it('should serialize primary color finishing settings', () => {
+      const project = serializeProject([], [], [], [], {
+        primaryColor: {
+          enabled: true,
+          amount: 1,
+          exposure: 0.75,
+          contrast: 1.1,
+          saturation: 0.95,
+          temperature: -0.2,
+          tint: 0.1,
+          lift: [0.02, 0, -0.01],
+          gamma: [1, 1.05, 1],
+          gain: [1.05, 1, 0.98],
+        },
+      });
+      expect(project.finishing?.primaryColor?.enabled).toBe(true);
+      expect(project.finishing?.primaryColor?.exposure).toBe(0.75);
+      expect(project.finishing?.primaryColor?.lift).toEqual([0.02, 0, -0.01]);
+      expect(project.finishing?.primaryColor?.gain?.[0]).toBe(1.05);
+    });
   });
 
   // =========================================================================
@@ -827,6 +848,50 @@ describe("utils/project", () => {
       expect(result.finishing.lut?.intensity).toBe(0.55);
       expect(result.finishing.sharpen?.enabled).toBe(true);
       expect(result.finishing.sharpen?.amount).toBe(0.3);
+    });
+
+    it('should roundtrip primary color finishing settings', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const finishing = {
+        primaryColor: {
+          enabled: true,
+          amount: 0.9,
+          exposure: -0.4,
+          contrast: 1.2,
+          saturation: 1.05,
+          temperature: 0.35,
+          tint: -0.15,
+          lift: [0.01, -0.02, 0] as [number, number, number],
+          gamma: [0.95, 1, 1.05] as [number, number, number],
+          gain: [1.1, 1, 0.9] as [number, number, number],
+        },
+      };
+      const serialized = serializeProject(sourceClips, [], [], [], finishing);
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: 'source1.mp4',
+          },
+        ],
+        finishing: serialized.finishing,
+      };
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.finishing.primaryColor?.enabled).toBe(true);
+      expect(result.finishing.primaryColor?.exposure).toBe(-0.4);
+      expect(result.finishing.primaryColor?.temperature).toBe(0.35);
+      expect(result.finishing.primaryColor?.lift).toEqual([0.01, -0.02, 0]);
+      expect(result.finishing.primaryColor?.gamma?.[2]).toBe(1.05);
+      expect(result.finishing.primaryColor?.gain?.[0]).toBe(1.1);
     });
   });
 

@@ -4,6 +4,10 @@
  *
  * Pass order (professional):
  *   noise reduction → primary color → secondary color → LUT → sharpen → grain
+ *
+ * Primary color (exposure / WB / lift-gamma-gain) is implemented on WebGPU with
+ * best-effort FFmpeg WASM parity (`eq`, `colortemperature`, `colorbalance`).
+ * Curves are deferred to v1.1. Canvas2D does not apply finishing.
  */
 
 import {
@@ -12,6 +16,14 @@ import {
   isColorGradeActive,
   type ColorGradeSettings,
 } from './lut';
+import {
+  DEFAULT_PRIMARY_COLOR_PARAMS,
+  normalizePrimaryColorPass,
+  type PrimaryColorSettings,
+} from './primaryColor';
+
+export type { PrimaryColorSettings } from './primaryColor';
+
 export interface FinishingPassBase {
   enabled: boolean;
   /** Effect strength 0 (bypass) → 1 (full). Defaults to 1 when enabled. */
@@ -24,8 +36,8 @@ export interface NoiseReductionPass extends FinishingPassBase {
   temporal?: boolean;
 }
 
-/** Primary color correction / balancing (WebGPU pass — see effect issue). */
-export interface PrimaryColorPass extends FinishingPassBase {}
+/** Primary color correction / balancing — before creative LUT. */
+export type PrimaryColorPass = PrimaryColorSettings;
 
 /** Secondary / selective color correction (WebGPU pass — see effect issue). */
 export interface SecondaryColorPass extends FinishingPassBase {}
@@ -66,6 +78,10 @@ export const DEFAULT_NOISE_REDUCTION: NoiseReductionPass = {
 export const DEFAULT_PRIMARY_COLOR: PrimaryColorPass = {
   enabled: false,
   amount: 1,
+  ...DEFAULT_PRIMARY_COLOR_PARAMS,
+  lift: [...DEFAULT_PRIMARY_COLOR_PARAMS.lift] as [number, number, number],
+  gamma: [...DEFAULT_PRIMARY_COLOR_PARAMS.gamma] as [number, number, number],
+  gain: [...DEFAULT_PRIMARY_COLOR_PARAMS.gain] as [number, number, number],
 };
 
 export const DEFAULT_SECONDARY_COLOR: SecondaryColorPass = {
@@ -224,7 +240,7 @@ export function normalizeFinishingSettings(
       ...normalizePassBase(noise, DEFAULT_NOISE_REDUCTION),
       temporal: Boolean(noise?.temporal),
     },
-    primaryColor: normalizePassBase(raw?.primaryColor, DEFAULT_PRIMARY_COLOR),
+    primaryColor: normalizePrimaryColorPass(raw?.primaryColor, DEFAULT_PRIMARY_COLOR),
     secondaryColor: normalizePassBase(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
     lut: normalizeLutPass(raw?.lut),
     sharpen: normalizePassBase(raw?.sharpen, DEFAULT_SHARPEN),

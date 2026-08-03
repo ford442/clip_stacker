@@ -47,11 +47,17 @@ import {
   resolveFinishingFromProject,
 } from './finishing';
 import {
+  DEFAULT_CANVAS_HEIGHT,
+  DEFAULT_CANVAS_WIDTH,
+} from './constants';
+import {
   CHUNK_THRESHOLD_BYTES,
   uploadMediaChunked,
   type ChunkedUploadProgress,
 } from './storageUpload';
 import { resolveProjectTracks, syncTracksWithClips } from './trackModel';
+
+export { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './constants';
 
 const FADE_SAFETY_MARGIN = 0.01;
 
@@ -75,10 +81,6 @@ export function getClipDuration(clip: Clip): number {
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   return Math.max(MIN_CLIP_DURATION, end - clip.trimStart);
 }
-
-/** Default compositing canvas size (matches OUTPUT_WIDTH/OUTPUT_HEIGHT in ffmpeg/core). */
-export const DEFAULT_CANVAS_WIDTH = 1280;
-export const DEFAULT_CANVAS_HEIGHT = 720;
 
 /**
  * Clamp a PiP overlay's x/y position so that at least one pixel of the

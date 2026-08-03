@@ -1,6 +1,6 @@
 import type { Clip, TextOverlay } from '../types';
 import type { Keyframe } from './keyframes';
-import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './project';
+import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './constants';
 
 /** Canvas size in output pixels. */
 export interface CanvasSize {

@@ -113,3 +113,44 @@
   justify-self: start;
   font-size: 0.78rem;
 }
+
+.primary-color-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.5rem 0;
+}
+
+.primary-color-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+}
+
+.primary-color-reset-btn {
+  font-size: 0.78rem;
+}
+
+.primary-color-group-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-top: 0.35rem;
+}
+
+.primary-color-triplet {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.primary-color-triplet-label {
+  font-size: 0.82rem;
+}
+
+.primary-color-channel {
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.78rem;
+}
