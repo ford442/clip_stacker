@@ -49,6 +49,7 @@ import {
   reorderMainTrackClips,
   syncTracksWithClips,
 } from "./utils/trackModel";
+import { formatEncoderPathLabel } from "./utils/encoderPathLabel";
 import { hybridMergeClips } from "./utils/hybrid-encoder";
 import {
   extractAudioToWav,
@@ -597,14 +598,7 @@ export function App() {
         setRenderPlan(result.renderPlan);
       }
 
-      const pathLabel =
-        result.path === "canvas"
-          ? "🎨 Canvas (audio-reactive)"
-          : result.path === "webcodecs-av"
-            ? "⚡ GPU (WebCodecs A/V)"
-            : result.path === "webcodecs"
-              ? "⚡ GPU (WebCodecs + FFmpeg audio)"
-              : "🖥 FFmpeg";
+      const pathLabel = formatEncoderPathLabel(result.path);
       setStatus(`Render complete via ${pathLabel}. Download your merged MP4.`);
       setProgressStage(`Render complete via ${pathLabel}`);
       setProgressValue(1);
@@ -1385,12 +1379,7 @@ export function App() {
         <p>Upload, trim, reorder, fade, and merge clips into one MP4.</p>
         {encoderPath && (
           <span className="encoder-used-badge">
-            Last render:{" "}
-            {encoderPath === "canvas"
-              ? "🎨 Canvas (audio-reactive)"
-              : encoderPath === "webcodecs"
-                ? "⚡ GPU (WebCodecs)"
-                : "🖥 FFmpeg"}
+            Last export: {formatEncoderPathLabel(encoderPath)}
           </span>
         )}
       </header>
