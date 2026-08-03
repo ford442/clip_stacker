@@ -105,11 +105,13 @@ def test_normalize_still_image_produces_h264_aac(app, tmp_path):
     assert duration == pytest.approx(2.0, abs=0.15)
 
 
-def test_still_image_thumb_is_data_uri(app, tmp_path):
+def test_still_image_thumb_is_jpeg_file(app, tmp_path):
     path = make_still_image(tmp_path / "still.png")
-    thumb = app.extract_thumb_b64(path)
+    thumb = app.extract_thumb_path(path)
     assert thumb is not None
-    assert thumb.startswith("data:image/jpeg;base64,")
+    assert os.path.isfile(thumb)
+    assert thumb.endswith('.jpg')
+    assert os.path.getsize(thumb) > 0
 
 
 def test_stitch_videos_accepts_still_image_plus_video(app, tmp_path):
