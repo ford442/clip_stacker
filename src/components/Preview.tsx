@@ -336,7 +336,10 @@ function TimelineCompositorPreview({
 
   useEffect(() => {
     schedulerRef.current = createRenderScheduler(renderAt, () => {
-      renderTokenRef.current += 1;
+      // Cancelling an in-flight composite during playback leaves a blank canvas.
+      if (!playingRef.current) {
+        renderTokenRef.current += 1;
+      }
     });
     return () => {
       schedulerRef.current?.cancel();
@@ -438,7 +441,11 @@ function TimelineCompositorPreview({
     engineRef.current?.syncClips(timelineClips);
     const time = playheadTime ?? globalTimeRef.current;
     globalTimeRef.current = time;
-    requestRender(time);
+    // Playback tick drives renders; playhead updates here would double-fire and,
+    // while paused scrubbing, this is the sole render trigger.
+    if (!playingRef.current) {
+      requestRender(time);
+    }
   }, [
     timelineClips,
     clipGroups,
