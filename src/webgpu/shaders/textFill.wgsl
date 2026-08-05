@@ -11,11 +11,14 @@ struct TextFillUniforms {
   time: f32,
   width: f32,
   height: f32,
-  // generic params (shader-specific meaning)
+  _pad0: f32,
   p0: f32,
   p1: f32,
   p2: f32,
-  p3: f32,
+  mode: f32,
+  c0: vec4<f32>,
+  c1: vec4<f32>,
+  c2: vec4<f32>,
 };
 
 struct VertexOutput {
@@ -58,19 +61,17 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 
 // ---- Fill implementations (selected by swapping the called function) ----
 
-fn fill_gradient(uv: vec2<f32>, t: f32, p: vec4<f32>) -> vec3<f32> {
-  // p0 = speed, p1 = angle (radians-ish), p2 unused, p3 unused
+fn fill_gradient(uv: vec2<f32>, t: f32, p: vec4<f32>, c0: vec3<f32>, c1: vec3<f32>) -> vec3<f32> {
+  // p0 = speed, p1 = angle (radians-ish)
   let speed = p.x;
   let angle = p.y;
   let dir = vec2<f32>(cos(angle), sin(angle));
   let proj = dot(uv - vec2<f32>(0.5), dir);
   let phase = fract(proj * 1.5 + t * speed * 0.5);
-  let c1 = vec3<f32>(0.2, 0.6, 1.0);
-  let c2 = vec3<f32>(1.0, 0.3, 0.7);
-  return mix(c1, c2, smoothstep(0.0, 1.0, phase));
+  return mix(c0, c1, smoothstep(0.0, 1.0, phase));
 }
 
-fn fill_plasma(uv: vec2<f32>, t: f32, p: vec4<f32>) -> vec3<f32> {
+fn fill_plasma(uv: vec2<f32>, t: f32, p: vec4<f32>, c0: vec3<f32>, c1: vec3<f32>, c2: vec3<f32>) -> vec3<f32> {
   // p0 = scale, p1 = speed
   let scale = max(p.x, 0.1);
   let speed = p.y;
@@ -79,18 +80,11 @@ fn fill_plasma(uv: vec2<f32>, t: f32, p: vec4<f32>) -> vec3<f32> {
   let b = sin(v.y * 2.7 - t * speed * 0.8);
   let c = sin((v.x + v.y) * 4.0 + t * speed * 1.3);
   let n = (a + b + c) * 0.333 + 0.5;
-  // palette
-  let col = vec3<f32>(
-    0.5 + 0.5 * sin(n * 6.28318),
-    0.5 + 0.5 * sin(n * 6.28318 + 2.094),
-    0.5 + 0.5 * sin(n * 6.28318 + 4.188)
-  );
+  let w0 = 0.5 + 0.5 * sin(n * 6.28318);
+  let w1 = 0.5 + 0.5 * sin(n * 6.28318 + 2.094);
+  let w2 = 0.5 + 0.5 * sin(n * 6.28318 + 4.188);
+  let col = c0 * w0 + c1 * w1 + c2 * w2;
   return clamp(col, vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-fn fill_color(uv: vec2<f32>, t: f32, p: vec4<f32>) -> vec3<f32> {
-  // Fallback solid-ish (uses p0,p1,p2 as rgb-ish normalized 0..1)
-  return clamp(vec3<f32>(p.x, p.y, p.z), vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
 @fragment
@@ -103,14 +97,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(0.0, 0.0, 0.0, 0.0);
   }
 
-  let params = vec4<f32>(u.p0, u.p1, u.p2, u.p3);
-  // mode in p3: 0 gradient, 1 plasma
-  let mode = floor(u.p3 + 0.5);
+  let params = vec4<f32>(u.p0, u.p1, u.p2, u.mode);
+  let mode = floor(u.mode + 0.5);
   var rgb: vec3<f32>;
   if (mode < 0.5) {
-    rgb = fill_gradient(in.uv, u.time, params);
+    rgb = fill_gradient(in.uv, u.time, params, u.c0.rgb, u.c1.rgb);
   } else {
-    rgb = fill_plasma(in.uv, u.time, params);
+    rgb = fill_plasma(in.uv, u.time, params, u.c0.rgb, u.c1.rgb, u.c2.rgb);
   }
   return vec4<f32>(rgb * alpha, alpha);
 }

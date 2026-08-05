@@ -125,4 +125,48 @@ describe("muxProcessedVideoWithSourceAudio", () => {
     expect(result.type).toBe("video/mp4");
     expect(onStatus).toHaveBeenCalledWith("Source audio restored.");
   });
+
+  it("adds silent audio when the source clip is a still image", async () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "video/mp4" });
+    const clip = makeClip({
+      stillImage: true,
+      file: new File([new Uint8Array([7, 8, 9])], "photo.png", {
+        type: "image/png",
+      }),
+      trimStart: 0,
+      trimEnd: 3,
+    });
+    const onStatus = vi.fn();
+
+    await muxProcessedVideoWithSourceAudio(blob, clip, onStatus);
+
+    const instance = mocked.instances[mocked.instances.length - 1]!;
+    expect(instance.exec).toHaveBeenCalledWith([
+      "-i",
+      "processed-video.mp4",
+      "-f",
+      "lavfi",
+      "-i",
+      "anullsrc=channel_layout=stereo:sample_rate=44100:d=3",
+      "-map",
+      "0:v:0",
+      "-map",
+      "1:a:0",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-movflags",
+      "+faststart",
+      "-t",
+      "3",
+      "processed-with-audio.mp4",
+    ]);
+    expect(mocked.fetchFile).not.toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledWith(
+      'Clip "Clip 1" has no audio — adding silence...',
+    );
+  });
 });

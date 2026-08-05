@@ -888,6 +888,7 @@ export async function renderTextOverlaysAsync(
           time: plan.globalTime,
           shaderId: overlay.shaderId,
           params: overlay.shaderParams,
+          colors: overlay.shaderColors,
           width: plan.canvasWidth,
           height: plan.canvasHeight,
           maskCacheKey,
