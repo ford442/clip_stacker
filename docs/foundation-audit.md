@@ -39,7 +39,7 @@ verified status:
 | #145 | WebGPU on main thread | **Resolved** | `src/webgpu/preview.worker.ts` + `PreviewWorkerAdapter` off-thread the compositor, with a main-thread fallback (`src/components/Preview.tsx:303-308`) |
 | #146 | FFmpeg SAB / core-mt fallback | **Resolved** | `src/ffmpeg/ffmpegCommon.ts` selects single-threaded `@ffmpeg/core` vs multi-threaded `@ffmpeg/core-mt` from `crossOriginIsolated` + `SharedArrayBuffer` (`:113-115`), with CDN fallbacks and remediation logging (`:175`). Remote media serves `Cross-Origin-Resource-Policy: cross-origin` (`contabo_storage_manager/config/storage.noahcohn.com.conf`, `chunked_media_upload.py:136`) |
 | #147 | WebCodecs decode in export | **Resolved** | `src/utils/webcodecs-decoder.ts` + `src/utils/hybrid-encoder.ts` |
-| #148 | Web Audio playback graph | **Resolved** | `src/audio/playbackManager.ts`, `src/audio/schedule.ts` (+ `useTimelineAudioPlayback` hook) |
+| #148 | Web Audio playback graph | **Resolved** | `src/audio/playbackManager.ts`, `src/audio/schedule.ts`, bed ducking + live gains, analyser meter (`usePlaybackAnalyserLevels`); see `docs/web-audio-playback.md` |
 | #149 | Chunked resumable uploads | **Resolved** | `src/utils/storageUpload.ts`; server side `contabo_storage_manager/python/chunked_media_upload.py` |
 | #150 | Virtualized timeline DOM | **Resolved** | `src/components/VirtualClipBlock.tsx` + `@tanstack/react-virtual` |
 | #151 | WASM audio analysis | **Resolved** | `src/wasm/audioAnalysis.ts`, `audioAnalysisWorker.ts`, `audioReactiveUniforms.ts` |

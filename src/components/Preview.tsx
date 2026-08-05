@@ -19,6 +19,7 @@ import { sanitizeFilename } from "../utils/filename";
 import { computeTotalDuration } from "../utils/transitions";
 import { useMediaVolume } from "../hooks/useMediaVolume";
 import { useTimelineAudioPlayback } from "../hooks/useTimelineAudioPlayback";
+import { usePlaybackAnalyserLevels } from "../hooks/usePlaybackAnalyserLevels";
 import {
   DEFAULT_PREVIEW_CONSTRAINTS,
   PREVIEW_SIZE_THRESHOLD_PX,
@@ -532,6 +533,7 @@ function TimelineCompositorPreview({
   };
 
   const displayTime = playheadTime ?? globalTimeRef.current;
+  const meter = usePlaybackAnalyserLevels(audioPlayback, isPlaying && audioClockActive);
 
   return (
     <div ref={wrapperRef} className="preview-video-wrapper">
@@ -595,13 +597,29 @@ function TimelineCompositorPreview({
           <button type="button" onClick={togglePlayback} aria-label="Play/Pause">
             {isPlaying ? "⏸ Pause" : "▶ Play"}
           </button>
+          <span
+            className="preview-audio-meter"
+            title={
+              audioClockActive
+                ? "Web Audio playback meter (AnalyserNode)"
+                : "Web Audio unavailable — muted wall-clock preview"
+            }
+            aria-hidden="true"
+          >
+            <span
+              className="preview-audio-meter-fill"
+              style={{
+                transform: `scaleX(${Math.min(1, meter.rms * 3).toFixed(3)})`,
+              }}
+            />
+          </span>
           <label className="preview-scrub-label">
             Timeline {displayTime.toFixed(2)}s / {totalDuration.toFixed(2)}s
             <input
               type="range"
               min={0}
               max={Math.max(totalDuration, 0.01)}
-              step={0.01}
+              step={1 / 30}
               value={Math.min(displayTime, totalDuration)}
               onChange={(e) => {
                 const next = Number(e.target.value);

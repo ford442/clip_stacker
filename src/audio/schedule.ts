@@ -21,7 +21,15 @@ export interface AudioScheduleEntry {
   volume: number;
   audioFadeIn: number;
   audioFadeOut: number;
+  /**
+   * Audio-bed / music track clip. When its timeline range overlaps a non-bed
+   * (dialogue / base) entry, playback ducks its gain for intelligible speech.
+   */
+  isBed?: boolean;
 }
+
+/** Linear gain applied to overlapping bed clips (≈ −9 dB). */
+export const BED_DUCK_LINEAR = 0.35;
 
 function isBaseClip(clip: Clip): boolean {
   return (clip.layerIndex ?? 0) === 0;
@@ -31,6 +39,7 @@ function entryFromClip(
   clip: Clip,
   timelineStart: number,
   duration: number,
+  isBed = false,
 ): AudioScheduleEntry {
   return {
     clipId: clip.id,
@@ -41,6 +50,7 @@ function entryFromClip(
     volume: clampClipVolume(clip.volume),
     audioFadeIn: Math.max(0, clip.audioFadeIn),
     audioFadeOut: Math.max(0, clip.audioFadeOut),
+    ...(isBed ? { isBed: true } : {}),
   };
 }
 
@@ -60,43 +70,53 @@ export function buildAudioSchedule(
   const timelineClips = getTimelineClips(clips, groups);
   if (timelineClips.length === 0) return [];
 
-  const baseClips = timelineClips.filter(isBaseClip);
-  const pipClips = timelineClips.filter((clip) => !isBaseClip(clip));
+  // Audio-kind clips are placed only via audio tracks (below). Including them
+  // in the base/PiP layout would double-schedule beds and break ducking.
+  const videoTimelineClips = timelineClips.filter((clip) => clip.kind !== 'audio');
+  if (videoTimelineClips.length === 0 && audioTracks(tracks).length === 0) {
+    return [];
+  }
+
+  const baseClips = videoTimelineClips.filter(isBaseClip);
+  const pipClips = videoTimelineClips.filter((clip) => !isBaseClip(clip));
   const hasPip = pipClips.length > 0;
 
-  const scheduleClips = hasPip ? baseClips : timelineClips;
+  const scheduleClips = hasPip ? baseClips : videoTimelineClips;
   const scheduleTimelineIndices = hasPip
-    ? timelineClips
+    ? videoTimelineClips
         .map((clip, index) => ({ clip, index }))
         .filter(({ clip }) => isBaseClip(clip))
         .map(({ index }) => index)
-    : timelineClips.map((_, index) => index);
+    : videoTimelineClips.map((_, index) => index);
   const scheduleTransitions = hasPip
-    ? filterBaseLayerTransitions(timelineClips, transitions)
+    ? filterBaseLayerTransitions(videoTimelineClips, transitions)
     : transitions;
 
-  const segments = buildClipTimelineSegments(
-    scheduleClips,
-    scheduleTransitions,
-    scheduleTimelineIndices,
-  );
+  const entries: AudioScheduleEntry[] = [];
 
-  const entries: AudioScheduleEntry[] = segments.map((segment) =>
-    entryFromClip(segment.clip, segment.startTime, segment.duration),
-  );
+  if (scheduleClips.length > 0) {
+    const segments = buildClipTimelineSegments(
+      scheduleClips,
+      scheduleTransitions,
+      scheduleTimelineIndices,
+    );
+    for (const segment of segments) {
+      entries.push(entryFromClip(segment.clip, segment.startTime, segment.duration));
+    }
+  }
 
   for (const clip of pipClips) {
     entries.push(entryFromClip(clip, 0, getClipDuration(clip)));
   }
 
   // Concurrent audio-bed clips from dedicated audio tracks.
-  const timelineClipsById = new Map(getTimelineClips(clips, groups).map((c) => [c.id, c]));
+  const clipsById = new Map(timelineClips.map((c) => [c.id, c]));
   for (const track of audioTracks(tracks)) {
     if (track.muted) continue;
     for (const item of track.items) {
-      const clip = timelineClipsById.get(item.clipId);
+      const clip = clipsById.get(item.clipId);
       if (!clip || clip.kind !== 'audio') continue;
-      entries.push(entryFromClip(clip, item.startTime, getClipDuration(clip)));
+      entries.push(entryFromClip(clip, item.startTime, getClipDuration(clip), true));
     }
   }
 
@@ -113,4 +133,56 @@ export function entriesActiveAtOrAfter(
       entry.duration > 0 &&
       globalTime < entry.timelineStart + entry.duration - 1e-6,
   );
+}
+
+/** True when two schedule lists place the same clips/buffers at the same times. */
+export function schedulesMatchStructure(
+  a: AudioScheduleEntry[],
+  b: AudioScheduleEntry[],
+): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const left = a[i];
+    const right = b[i];
+    if (
+      left.clipId !== right.clipId ||
+      left.objectUrl !== right.objectUrl ||
+      left.timelineStart !== right.timelineStart ||
+      left.duration !== right.duration ||
+      left.bufferOffset !== right.bufferOffset ||
+      Boolean(left.isBed) !== Boolean(right.isBed)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether a bed entry's timeline range overlaps any non-bed (dialogue) entry.
+ * Used for real-time volume ducking under speech / base clips.
+ */
+export function bedOverlapsDialogue(
+  entry: AudioScheduleEntry,
+  schedule: AudioScheduleEntry[],
+): boolean {
+  if (!entry.isBed) return false;
+  const entryEnd = entry.timelineStart + entry.duration;
+  return schedule.some((other) => {
+    if (other.isBed || other.clipId === entry.clipId) return false;
+    const otherEnd = other.timelineStart + other.duration;
+    return other.timelineStart < entryEnd && entry.timelineStart < otherEnd;
+  });
+}
+
+/** Effective linear volume after optional bed ducking. */
+export function effectiveEntryVolume(
+  entry: AudioScheduleEntry,
+  schedule: AudioScheduleEntry[],
+  duckLinear: number = BED_DUCK_LINEAR,
+): number {
+  if (bedOverlapsDialogue(entry, schedule)) {
+    return entry.volume * duckLinear;
+  }
+  return entry.volume;
 }

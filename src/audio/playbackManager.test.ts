@@ -195,4 +195,20 @@ describe('AudioPlaybackManager lifecycle', () => {
     );
     await manager.dispose();
   });
+
+  it('clamps master volume and returns zero analyser levels without a context', async () => {
+    const manager = new AudioPlaybackManager();
+    manager.setMasterVolume(5);
+    expect(manager.getMasterVolume()).toBe(2);
+    manager.setMasterVolume(-1);
+    expect(manager.getMasterVolume()).toBe(0);
+    expect(manager.readAnalyserLevels()).toEqual({
+      rms: 0,
+      peak: 0,
+      bass: 0,
+      mid: 0,
+      treble: 0,
+    });
+    await manager.dispose();
+  });
 });
