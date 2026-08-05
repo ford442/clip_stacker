@@ -1,15 +1,14 @@
 /**
  * WebCodecs-based encoder for GPU-accelerated video export.
  *
- * Architecture:
- *  - Video: VideoDecoder (WebCodecs demux/decode, see webcodecs-decoder.ts)
- *    → WebGPU or Canvas compositor → VideoEncoder (hardware H.264/HEVC/AV1)
- *    → mp4-muxer (video-only)
- *  - Decode fallback: HTMLVideoElement → requestVideoFrameCallback capture when
- *    a clip cannot be demuxed/decoded with WebCodecs
- *  - Audio: mixed via `buildAudioSchedule` + `OfflineAudioContext`, encoded
- *    with `AudioEncoder` (AAC-LC) into the same mp4-muxer session when
- *    supported; otherwise muxed separately via FFmpeg (`muxVideoWithAudio`).
+ * Architecture (Holy Grail path):
+ *  - Decode: VideoDecoder (mp4box demux + ring buffer; see webcodecs-decoder.ts)
+ *  - Composite: WebGPU exportCompositor / timelinePreview (VideoFrame → shaders)
+ *  - Encode: VideoEncoder (hardware H.264/HEVC/AV1) ← canvas after GPU flush
+ *  - Mux: mp4-muxer (video + optional WebCodecs AAC); FFmpeg only for audio mux
+ *    fallback via muxVideoWithAudio when AudioEncoder path is unavailable
+ *  - Decode fallback: HTMLVideoElement → requestVideoFrameCallback when a clip
+ *    cannot be demuxed/decoded with WebCodecs
  *
  * When transitions are active and WebGPU is available, the timeline compositor
  * renders identical WGSL transition frames as preview (WYSIWYG export).
@@ -25,7 +24,6 @@ import { parseOutputResolution } from './resolution';
 import { computeTotalDuration } from './transitions';
 import { needsOverlayPass, shouldUseTimelineGpuExport } from './renderEligibility';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
-import { resolveTimelineFinishing } from './finishing';
 import { buildPreviewCompositionPlan } from './previewComposition';
 import { drawTextOverlays, renderTextOverlaysAsync } from './canvas-renderer';
 import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompositor';
@@ -84,7 +82,7 @@ async function muxTimelineAudioIfRequested(
 ): Promise<void> {
   if (!includeAudio) return;
   onStatus('Mixing and encoding timeline audio (WebCodecs AAC)...');
-  onProgress?.({ stage: 'WebCodecs audio encode', progress: 0.93, indeterminate: false });
+  onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.audio, progress: 0.93, indeterminate: false });
   const encoded = await encodeTimelineAudio(clips, clipGroups, transitions);
   if (encoded) {
     addAacChunksToMuxer(muxer, encoded.chunks);
@@ -170,6 +168,41 @@ export async function resolveEncoderCodec(
   }
   return candidates[candidates.length - 1];
 }
+
+/**
+ * Map H.264 CRF to an approximate bits-per-pixel for WebCodecs bitrate.
+ * CRF 18 ≈ 0.1 bpp at 30 fps; halves every ~6 CRF (mirrors libx264 intuition).
+ */
+export function crfToBitsPerPixel(crf: number): number {
+  const clamped = Math.max(0, Math.min(51, crf));
+  return 0.1 * Math.pow(0.5, (clamped - 18) / 6);
+}
+
+/**
+ * Resolve VideoEncoder bitrate from ExportSettings.
+ * `videoBitrate > 0` wins; `0` means auto-derive from CRF × resolution × fps.
+ */
+export function resolveEncoderBitrate(
+  settings: Pick<ExportSettings, 'videoBitrate' | 'crf'>,
+  width: number,
+  height: number,
+  fps: number = TARGET_FPS,
+): number {
+  if (settings.videoBitrate > 0) return settings.videoBitrate;
+  const bpp = crfToBitsPerPixel(settings.crf);
+  const derived = Math.round(width * height * fps * bpp);
+  // Keep encoder configs in a sane range for browser hardware encoders.
+  return Math.max(500_000, Math.min(50_000_000, derived));
+}
+
+/** Progress stage labels for the decode → composite → encode hot path. */
+export const WEBCODECS_PROGRESS_STAGES = {
+  init: 'Initializing GPU encoder',
+  decodeCompositeEncode: 'Decode → composite → encode',
+  flush: 'Flushing hardware encoder',
+  audio: 'WebCodecs audio encode',
+  finalize: 'Finalizing GPU video',
+} as const;
 
 declare global {
   interface HTMLVideoElement {
@@ -275,7 +308,7 @@ export async function encodeVideoWithWebCodecs(
       ? 'Initializing WebGPU + hardware encoder...'
       : 'Initializing GPU hardware encoder...',
   );
-  onProgress?.({ stage: 'Initializing GPU encoder', progress: 0, indeterminate: false });
+  onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.init, progress: 0, indeterminate: false });
 
   const compositor = await resolveCompositor(width, height, compositorPreference);
   onStatus(
@@ -285,6 +318,7 @@ export async function encodeVideoWithWebCodecs(
   );
 
   const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
+  const bitrate = resolveEncoderBitrate(settings, width, height);
   const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
@@ -297,7 +331,7 @@ export async function encodeVideoWithWebCodecs(
     codec: encoderCodec.codec,
     width,
     height,
-    bitrate: settings.videoBitrate,
+    bitrate,
     framerate: TARGET_FPS,
     hardwareAcceleration: 'prefer-hardware',
   });
@@ -322,7 +356,7 @@ export async function encodeVideoWithWebCodecs(
       const clip = clips[i];
       onStatus(`GPU encode [${i + 1}/${clips.length}]: "${clip.title}"...`);
       onProgress?.({
-        stage: `GPU encode: ${clip.title}`,
+        stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode,
         progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
         indeterminate: totalDuration <= 0,
       });
@@ -342,14 +376,14 @@ export async function encodeVideoWithWebCodecs(
 
       elapsedDuration += getClipDuration(clip);
       onProgress?.({
-        stage: `GPU encode: ${clip.title}`,
+        stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode,
         progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
         indeterminate: totalDuration <= 0,
       });
     }
 
     onStatus('Flushing GPU encoder...');
-    onProgress?.({ stage: 'Flushing GPU encoder', progress: 0.9, indeterminate: false });
+    onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.flush, progress: 0.9, indeterminate: false });
     await videoEncoder.flush();
     if (videoError) throw videoError;
 
@@ -364,7 +398,7 @@ export async function encodeVideoWithWebCodecs(
     );
 
     muxer.finalize();
-    onProgress?.({ stage: 'Finalizing GPU video', progress: 0.92, indeterminate: false });
+    onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.finalize, progress: 0.92, indeterminate: false });
 
     const { buffer } = muxer.target as ArrayBufferTarget;
     return new Blob([buffer], { type: 'video/mp4' });
@@ -398,7 +432,7 @@ async function encodeTimelineComposite(
   includeWebCodecsAudio = false,
 ): Promise<Blob> {
   onStatus(`WebGPU timeline export (${width}x${height})...`);
-  onProgress?.({ stage: 'GPU timeline encode', progress: 0, indeterminate: false });
+  onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode, progress: 0, indeterminate: false });
 
   const timelineClips = getTimelineClips(clips, clipGroups);
   const totalDuration = computeTotalDuration(timelineClips, transitions);
@@ -430,6 +464,7 @@ async function encodeTimelineComposite(
   const frameProvider = new TimelineDecoderFrameProvider();
 
   const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
+  const bitrate = resolveEncoderBitrate(settings, width, height);
   const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
@@ -442,7 +477,7 @@ async function encodeTimelineComposite(
     codec: encoderCodec.codec,
     width,
     height,
-    bitrate: settings.videoBitrate,
+    bitrate,
     framerate: TARGET_FPS,
     hardwareAcceleration: 'prefer-hardware',
   });
@@ -483,7 +518,7 @@ async function encodeTimelineComposite(
         lastStatusFrame = frameIndex;
       }
       onProgress?.({
-        stage: 'GPU timeline encode',
+        stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode,
         progress: mapWebCodecsProgress(globalTime, totalDuration),
         indeterminate: totalDuration <= 0,
       });
@@ -492,6 +527,9 @@ async function encodeTimelineComposite(
       if (frameIndex + 1 < totalFrames) {
         pendingRender = renderTimelineFrame(frameIndex + 1);
       }
+
+      // Wait for WebGPU submit to land before capturing pixels for encode.
+      await engine.flush();
 
       let frameSource: CanvasImageSource;
       if (hasTextOverlays) {
@@ -521,6 +559,7 @@ async function encodeTimelineComposite(
     }
 
     onStatus('Flushing GPU encoder...');
+    onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.flush, progress: 0.9, indeterminate: false });
     await videoEncoder.flush();
     if (videoError) throw videoError;
 
@@ -588,6 +627,25 @@ class DecoderTextOverlayPass {
   }
 }
 
+async function captureCompositedFrame(
+  compositor: ResolvedCompositor,
+  overlayPass: DecoderTextOverlayPass | null,
+  globalTimeSec: number,
+  timestamp: number,
+  durationUs: number,
+): Promise<VideoFrame> {
+  if (compositor.gpuCompositor) {
+    await compositor.gpuCompositor.flush();
+  }
+  const frameCanvas = overlayPass
+    ? overlayPass.compositeFrame(compositor, globalTimeSec)
+    : compositor.canvas;
+  return new VideoFrame(frameCanvas, {
+    timestamp,
+    duration: durationUs,
+  });
+}
+
 async function encodeVideoFrames(
   encoder: VideoEncoder,
   compositor: ResolvedCompositor,
@@ -605,13 +663,13 @@ async function encodeVideoFrames(
 
   if (clip.kind === 'audio') {
     drawBlackFrame(compositor, targetWidth, targetHeight);
-    const frameCanvas = overlayPass
-      ? overlayPass.compositeFrame(compositor, clipGlobalStartSec)
-      : compositor.canvas;
-    const frame = new VideoFrame(frameCanvas, {
-      timestamp: startTimeUs,
-      duration: Math.round(clipDuration * 1_000_000),
-    });
+    const frame = await captureCompositedFrame(
+      compositor,
+      overlayPass,
+      clipGlobalStartSec,
+      startTimeUs,
+      Math.round(clipDuration * 1_000_000),
+    );
     encoder.encode(frame, { keyFrame: true });
     frame.close();
     return startTimeUs + Math.round(clipDuration * 1_000_000);
@@ -657,7 +715,7 @@ async function encodeVideoFrames(
       await new Promise<void>((resolve, reject) => {
         let done = false;
 
-        const onFrame = (_now: DOMHighResTimeStamp, meta: { mediaTime: number }) => {
+        const onFrame = async (_now: DOMHighResTimeStamp, meta: { mediaTime: number }) => {
           if (done) return;
 
           const mediaTime = meta.mediaTime;
@@ -681,16 +739,22 @@ async function encodeVideoFrames(
             frameCount,
           );
 
-          const frameCanvas = overlayPass
-            ? overlayPass.compositeFrame(compositor, clipGlobalStartSec + elapsed)
-            : compositor.canvas;
-          const frame = new VideoFrame(frameCanvas, {
-            timestamp,
-            duration: Math.round(1_000_000 / TARGET_FPS),
-          });
-          encoder.encode(frame, { keyFrame: frameCount % 60 === 0 });
-          frame.close();
-          frameCount++;
+          try {
+            const frame = await captureCompositedFrame(
+              compositor,
+              overlayPass,
+              clipGlobalStartSec + elapsed,
+              timestamp,
+              Math.round(1_000_000 / TARGET_FPS),
+            );
+            encoder.encode(frame, { keyFrame: frameCount % 60 === 0 });
+            frame.close();
+            frameCount++;
+          } catch (err) {
+            done = true;
+            reject(err);
+            return;
+          }
 
           video.requestVideoFrameCallback!(onFrame);
         };
@@ -721,13 +785,13 @@ async function encodeVideoFrames(
           frameCount,
         );
 
-        const frameCanvas = overlayPass
-          ? overlayPass.compositeFrame(compositor, clipGlobalStartSec + elapsed)
-          : compositor.canvas;
-        const frame = new VideoFrame(frameCanvas, {
+        const frame = await captureCompositedFrame(
+          compositor,
+          overlayPass,
+          clipGlobalStartSec + elapsed,
           timestamp,
-          duration: Math.round(1_000_000 / TARGET_FPS),
-        });
+          Math.round(1_000_000 / TARGET_FPS),
+        );
         encoder.encode(frame, { keyFrame: frameCount % 60 === 0 });
         frame.close();
         frameCount++;
@@ -794,14 +858,12 @@ async function encodeVideoFramesFromDecoder(
         frame.close();
       }
 
-      const encodedFrame = new VideoFrame(
-        overlayPass
-          ? overlayPass.compositeFrame(compositor, clipGlobalStartSec + elapsed)
-          : compositor.canvas,
-        {
-          timestamp: startTimeUs + Math.round(elapsed * 1_000_000),
-          duration: Math.round(1_000_000 / TARGET_FPS),
-        },
+      const encodedFrame = await captureCompositedFrame(
+        compositor,
+        overlayPass,
+        clipGlobalStartSec + elapsed,
+        startTimeUs + Math.round(elapsed * 1_000_000),
+        Math.round(1_000_000 / TARGET_FPS),
       );
       encoder.encode(encodedFrame, { keyFrame: frameCount % 60 === 0 });
       encodedFrame.close();

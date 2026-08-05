@@ -381,6 +381,17 @@ export class PreviewEngine {
   }
 
   /**
+   * Wait until submitted GPU work has landed in the canvas swapchain.
+   * Required before `new VideoFrame(canvas)` / VideoEncoder so export does not
+   * capture a stale or partially drawn buffer.
+   */
+  async flush(): Promise<void> {
+    if (this.destroyed) return;
+    const done = this.device.queue.onSubmittedWorkDone?.();
+    if (done) await done;
+  }
+
+  /**
    * Releases this engine's own buffers/textures. Does NOT destroy the
    * (shared) `GPUDevice` — that is owned by `gpuDevice.ts` and used by other
    * subsystems (text fill, other preview instances).

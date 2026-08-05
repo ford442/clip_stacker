@@ -1077,17 +1077,37 @@ function InspectorImpl({
       )}
 
       <div className="inspector-group-label">WebCodecs (GPU path)</div>
-      <label title="Target video bitrate for WebCodecs encoder in Mbps">
-        Video bitrate ({(exportSettings.videoBitrate / 1_000_000).toFixed(0)} Mbps)
+      <label title="Hardware encoder codec. HEVC/AV1 fall back to H.264 when unsupported.">
+        Video codec
+        <select
+          value={exportSettings.videoCodec ?? 'h264'}
+          onChange={(e) =>
+            updateExport('videoCodec', e.target.value as NonNullable<ExportSettings['videoCodec']>)
+          }
+        >
+          <option value="h264">H.264 (hardware)</option>
+          <option value="hevc">HEVC / H.265</option>
+          <option value="av1">AV1</option>
+        </select>
+      </label>
+      <label title="Target video bitrate for WebCodecs encoder. Set to Auto to derive from CRF.">
+        Video bitrate (
+        {exportSettings.videoBitrate <= 0
+          ? 'Auto from CRF'
+          : `${(exportSettings.videoBitrate / 1_000_000).toFixed(0)} Mbps`}
+        )
         <input
           type="range"
-          min="2000000"
+          min="0"
           max="50000000"
           step="1000000"
           value={exportSettings.videoBitrate}
           onChange={(e) => updateExport('videoBitrate', Number(e.target.value))}
         />
       </label>
+      <p className="inspector-hint">
+        Bitrate 0 = auto from CRF × resolution. Codec choice applies to the GPU export path only.
+      </p>
       <button
         type="button"
         className="btn-secondary"
