@@ -3,9 +3,14 @@ import type { Clip } from '../types';
 import {
   buildClipInputArgs,
   buildSingleClipFilter,
+  buildStillImageFfmpegArgs,
+  buildStillImageVideoFilter,
   clipHasSourceAudio,
   clipNeedsLoopInput,
   isNoAudioStreamError,
+  isStillImageClip,
+  resolveStillImageEncodeDimensions,
+  STILL_IMAGE_OUTPUT_FPS,
 } from './core';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
@@ -49,6 +54,58 @@ describe('still image FFmpeg helpers', () => {
     expect(filter).toContain('[vout]');
     expect(filter).toContain('anullsrc=channel_layout=stereo');
     expect(filter).not.toContain('[0:a]');
+  });
+
+  it('buildStillImageFfmpegArgs produces NLE-friendly encode settings', () => {
+    const args = buildStillImageFfmpegArgs({
+      inputName: 'splash.png',
+      outputName: 'splash.mp4',
+      durationSec: 5,
+      width: 1920,
+      height: 1080,
+    });
+    expect(args).toContain('-loop');
+    expect(args).toContain('-tune');
+    expect(args).toContain('stillimage');
+    expect(args).toContain('-movflags');
+    expect(args).toContain('+faststart');
+    expect(args).toContain('-vsync');
+    expect(args).toContain('cfr');
+    expect(args.join(' ')).toContain(`fps=${STILL_IMAGE_OUTPUT_FPS}`);
+    expect(args.join(' ')).toContain('anullsrc=channel_layout=stereo:sample_rate=44100:d=5');
+    expect(args).not.toContain('-shortest');
+  });
+
+  it('buildStillImageVideoFilter scales, pads, and sets CFR fps', () => {
+    expect(buildStillImageVideoFilter(1920, 1080)).toBe(
+      'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p',
+    );
+  });
+
+  it('resolveStillImageEncodeDimensions rounds to even sizes', () => {
+    expect(resolveStillImageEncodeDimensions({ videoWidth: 801, videoHeight: 601 })).toEqual({
+      width: 800,
+      height: 600,
+    });
+  });
+
+  it('isStillImageClip detects flag and file extension', () => {
+    expect(
+      isStillImageClip({
+        stillImage: true,
+        file: new File([], 'x.bin', { type: 'application/octet-stream' }),
+      }),
+    ).toBe(true);
+    expect(
+      isStillImageClip({
+        file: new File([], 'photo.jpg', { type: 'image/jpeg' }),
+      }),
+    ).toBe(true);
+    expect(
+      isStillImageClip({
+        file: new File([], 'clip.mp4', { type: 'video/mp4' }),
+      }),
+    ).toBe(false);
   });
 
   it('isNoAudioStreamError matches FFmpeg log text when message is generic FS error', () => {

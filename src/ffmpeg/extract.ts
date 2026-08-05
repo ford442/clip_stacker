@@ -34,6 +34,8 @@ import {
   clipNeedsEffects,
   getSafeExtension,
   buildSingleClipFilter,
+  buildStillImageFfmpegArgsForClip,
+  isStillImageClip,
   getFfmpegEnvironmentDiagnostics,
   toBlobURLWithRetry,
   toBlobURLWithFallback,
@@ -92,10 +94,6 @@ export async function extractTrimmedVideoClip(
 
   onStatus(`Preparing trimmed segment of "${clip.title}"…`);
 
-  const isStillImage =
-    clip.stillImage === true ||
-    /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(clip.file.name);
-
   try {
     await safeWriteFile(
       ffmpeg,
@@ -105,25 +103,14 @@ export async function extractTrimmedVideoClip(
     );
 
     const args: string[] = [];
-    if (isStillImage) {
-      if (clip.trimStart > 0) args.push("-ss", String(clip.trimStart));
-      args.push("-loop", "1", "-t", String(dur), "-i", inputName);
+    if (isStillImageClip(clip)) {
       args.push(
-        "-f",
-        "lavfi",
-        "-i",
-        "anullsrc=channel_layout=stereo:sample_rate=44100",
-      );
-      args.push("-map", "0:v:0", "-map", "1:a:0");
-      args.push(
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-shortest",
-        outputName,
+        ...buildStillImageFfmpegArgsForClip(
+          clip,
+          inputName,
+          outputName,
+          dur,
+        ),
       );
     } else {
       if (clip.trimStart > 0) args.push("-ss", String(clip.trimStart));

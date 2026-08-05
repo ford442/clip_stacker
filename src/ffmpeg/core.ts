@@ -321,20 +321,146 @@ export function clipNeedsEffects(clip: Clip): boolean {
   );
 }
 
+/** CFR frame rate for still-image clips materialized as MP4 (NLE-friendly). */
+export const STILL_IMAGE_OUTPUT_FPS = 30;
+
+const STILL_IMAGE_FILE_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i;
+
+/** True when the clip source is a still image (flag or image file extension). */
+export function isStillImageClip(
+  clip: Pick<Clip, "stillImage" | "file">,
+): boolean {
+  return clip.stillImage === true || STILL_IMAGE_FILE_RE.test(clip.file.name);
+}
+
 /** Still images and image files have no audio stream in FFmpeg. */
 export function clipHasSourceAudio(clip: Clip): boolean {
   if (clip.kind === "audio") return true;
-  if (clip.stillImage) return false;
-  if (/\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(clip.file.name)) return false;
+  if (isStillImageClip(clip)) return false;
   return true;
 }
 
 /** Loop single-frame image inputs so trim/duration filters can reach clip length. */
 export function clipNeedsLoopInput(clip: Clip): boolean {
-  return (
-    clip.stillImage === true ||
-    /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i.test(clip.file.name)
-  );
+  return isStillImageClip(clip);
+}
+
+function evenVideoDimension(value: number): number {
+  const n = Math.max(2, Math.floor(value));
+  return n % 2 === 0 ? n : n - 1;
+}
+
+/** Target encode size for a still image (even dimensions for yuv420p). */
+export function resolveStillImageEncodeDimensions(
+  clip: Pick<Clip, "videoWidth" | "videoHeight">,
+): { width: number; height: number } {
+  const width = evenVideoDimension(clip.videoWidth ?? OUTPUT_WIDTH);
+  const height = evenVideoDimension(clip.videoHeight ?? OUTPUT_HEIGHT);
+  return { width, height };
+}
+
+/** Video filter chain for edit-friendly still-image MP4 output. */
+export function buildStillImageVideoFilter(
+  width: number,
+  height: number,
+  fps: number = STILL_IMAGE_OUTPUT_FPS,
+): string {
+  return [
+    `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
+    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+    `fps=${fps}`,
+    "format=yuv420p",
+  ].join(",");
+}
+
+export interface StillImageEncodeOptions {
+  inputName: string;
+  outputName: string;
+  durationSec: number;
+  width: number;
+  height: number;
+}
+
+/**
+ * FFmpeg CLI args that turn a still image into an H.264+AAC MP4 hold clip.
+ * Uses CFR, regular keyframes, and faststart for broad NLE compatibility.
+ */
+export function buildStillImageFfmpegArgs(
+  options: StillImageEncodeOptions,
+): string[] {
+  const { inputName, outputName, width, height } = options;
+  const durationSec = Math.max(0.1, options.durationSec);
+  const gop = STILL_IMAGE_OUTPUT_FPS;
+  const vf = buildStillImageVideoFilter(width, height);
+
+  return [
+    "-loop",
+    "1",
+    "-t",
+    String(durationSec),
+    "-i",
+    inputName,
+    "-f",
+    "lavfi",
+    "-i",
+    `anullsrc=channel_layout=stereo:sample_rate=44100:d=${durationSec}`,
+    "-vf",
+    vf,
+    "-map",
+    "0:v:0",
+    "-map",
+    "1:a:0",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "fast",
+    "-crf",
+    "18",
+    "-tune",
+    "stillimage",
+    "-profile:v",
+    "high",
+    "-level",
+    "4.1",
+    "-g",
+    String(gop),
+    "-keyint_min",
+    String(gop),
+    "-sc_threshold",
+    "0",
+    "-pix_fmt",
+    "yuv420p",
+    "-vsync",
+    "cfr",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ar",
+    "44100",
+    "-movflags",
+    "+faststart",
+    "-t",
+    String(durationSec),
+    outputName,
+  ];
+}
+
+/** Convenience wrapper using clip native dimensions when available. */
+export function buildStillImageFfmpegArgsForClip(
+  clip: Pick<Clip, "videoWidth" | "videoHeight">,
+  inputName: string,
+  outputName: string,
+  durationSec: number,
+): string[] {
+  const { width, height } = resolveStillImageEncodeDimensions(clip);
+  return buildStillImageFfmpegArgs({
+    inputName,
+    outputName,
+    durationSec,
+    width,
+    height,
+  });
 }
 
 export function buildClipInputArgs(clip: Clip): string[] {
