@@ -465,6 +465,11 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     this.mediaPool.pauseAll();
   }
 
+  /** Ensure GPU work is complete before capturing the canvas for VideoEncoder. */
+  async flush(): Promise<void> {
+    await this.engine.flush();
+  }
+
   destroy(): void {
     this.mediaPool.destroy();
     this.engine.destroy();

@@ -140,6 +140,11 @@ export class ExportCompositor {
     this.engine.applyColorGrade(settings);
   }
 
+  /** Ensure GPU work is complete before capturing the canvas for VideoEncoder. */
+  async flush(): Promise<void> {
+    await this.engine.flush();
+  }
+
   destroy(): void {
     this.engine.destroy();
   }

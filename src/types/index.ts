@@ -203,7 +203,7 @@ export interface ExportSettings {
   crf: number;
   /** libx264 preset. Default 'medium'. */
   preset: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium' | 'slow' | 'slower' | 'veryslow';
-  /** Target video bitrate in bits/s for the WebCodecs path (0 = auto). */
+  /** Target video bitrate in bits/s for the WebCodecs path (0 = auto from CRF). */
   videoBitrate: number;
   /** Output filename (without extension; .mp4 is automatically appended). */
   filename: string;

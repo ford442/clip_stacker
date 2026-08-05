@@ -186,7 +186,8 @@ async function demuxClip(source: Blob): Promise<DemuxedClip> {
     codec: track.codec,
     codedWidth: track.video?.width || track.track_width,
     codedHeight: track.video?.height || track.track_height,
-    hardwareAcceleration: 'no-preference',
+    // Prefer hardware decode so export stays GPU-bound end-to-end when available.
+    hardwareAcceleration: 'prefer-hardware',
   };
   const description = extractDecoderDescription(isoFile, track.id);
   if (description) config.description = description;

@@ -55,7 +55,10 @@ fallback and explicit override only.
    (`src/utils/webcodecs.ts`). `ExportSettings.videoCodec` selects
    `h264` (default) / `hevc` / `av1`; HEVC and AV1 are probed with
    `VideoEncoder.isConfigSupported` and silently fall back to hardware H.264.
-   The H.264 level is chosen from the output resolution.
+   The H.264 level is chosen from the output resolution. Bitrate comes from
+   `resolveEncoderBitrate()`: an explicit `videoBitrate`, or auto from CRF ×
+   resolution when bitrate is `0`. Before each canvas capture the compositor
+   awaits `GPUQueue.onSubmittedWorkDone` so encode never reads a stale frame.
 4. **Mix + encode (audio, happy path)** — `buildAudioSchedule`
    (`src/audio/schedule.ts`) places trimmed clips with volume and fades
    (including dissolve overlaps and PiP overlays). `OfflineAudioContext`
