@@ -20,7 +20,7 @@ import {
   MIN_SCROLL_SPEED,
   MAX_SCROLL_SPEED,
 } from "../utils/textOverlay";
-import { TEXT_SHADERS, getTextShader, resolveShaderParams } from "../webgpu/text/registry";
+import { TEXT_SHADERS, getTextShader, resolveShaderColors, resolveShaderParams } from "../webgpu/text/registry";
 import { textOverlayHasKeyframes } from "../utils/animatedLayout";
 import { KeyframeMiniEditor } from "./KeyframeMiniEditor";
 
@@ -240,6 +240,11 @@ function TextOverlayPanelImpl({
                           Use a named color (e.g. "white"), "#RRGGBB", or "0xRRGGBB".
                         </p>
                       )}
+                      {overlay.fill === 'shader' && (
+                        <p className="inspector-hint" style={{ marginTop: '0.15rem' }}>
+                          Used only when FFmpeg export falls back to solid color.
+                        </p>
+                      )}
                     </label>
                   </div>
 
@@ -288,7 +293,8 @@ function TextOverlayPanelImpl({
                             onChange={(e) => {
                               const id = e.target.value;
                               const nextParams = resolveShaderParams(id, overlay.shaderParams);
-                              onUpdate({ ...overlay, shaderId: id, shaderParams: nextParams });
+                              const nextColors = resolveShaderColors(id, overlay.shaderColors);
+                              onUpdate({ ...overlay, shaderId: id, shaderParams: nextParams, shaderColors: nextColors });
                             }}
                           >
                             {TEXT_SHADERS.map((s) => (
@@ -299,9 +305,45 @@ function TextOverlayPanelImpl({
                         {(() => {
                           const def = getTextShader(overlay.shaderId);
                           const params = def?.params ?? [];
-                          if (!params.length) return null;
+                          const colors = def?.colors ?? [];
                           return (
                             <div style={{ marginTop: '0.25rem' }}>
+                              {colors.map((c) => {
+                                const resolved = resolveShaderColors(overlay.shaderId, overlay.shaderColors);
+                                const cur = resolved[c.key] ?? c.default;
+                                const swatch = cur.startsWith('#') ? cur : '#ffffff';
+                                return (
+                                  <label key={c.key} style={{ display: 'block', marginBottom: '0.15rem' }}>
+                                    {c.label}
+                                    <div className="tol-color-row">
+                                      <input
+                                        type="color"
+                                        className="tol-color-swatch"
+                                        value={swatch}
+                                        onChange={(e) => {
+                                          const next = {
+                                            ...(overlay.shaderColors || {}),
+                                            [c.key]: e.target.value,
+                                          };
+                                          onUpdate({ ...overlay, shaderColors: next });
+                                        }}
+                                      />
+                                      <input
+                                        type="text"
+                                        value={cur}
+                                        onChange={(e) => {
+                                          const next = {
+                                            ...(overlay.shaderColors || {}),
+                                            [c.key]: e.target.value,
+                                          };
+                                          onUpdate({ ...overlay, shaderColors: next });
+                                        }}
+                                        placeholder={c.default}
+                                      />
+                                    </div>
+                                  </label>
+                                );
+                              })}
                               {params.map((p) => {
                                 const cur = (overlay.shaderParams && overlay.shaderParams[p.key]) ?? p.default;
                                 return (

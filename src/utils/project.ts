@@ -929,6 +929,26 @@ export async function applyProjectData(
           (o as any).shaderParams && typeof (o as any).shaderParams === 'object'
             ? { ...(o as any).shaderParams }
             : undefined;
+        const shaderColorsRaw =
+          (o as any).shaderColors && typeof (o as any).shaderColors === 'object'
+            ? (o as any).shaderColors as Record<string, unknown>
+            : undefined;
+        const shaderColors = shaderColorsRaw
+          ? Object.fromEntries(
+              Object.entries(shaderColorsRaw)
+                .filter(([, v]) => typeof v === 'string')
+                .map(([k, v]) => {
+                  const raw = String(v);
+                  const sanitized = sanitizeFfmpegColor(raw, raw);
+                  if (sanitized !== raw) {
+                    invalidColorWarnings.push(
+                      `Text overlay ${label}: invalid shader color "${raw}" for "${k}" reset to ${sanitized}.`,
+                    );
+                  }
+                  return [k, sanitized];
+                }),
+            )
+          : undefined;
         return {
           id: String(o.id ?? ''),
           text: String(o.text ?? ''),
@@ -944,6 +964,7 @@ export async function applyProjectData(
           ...(fill ? { fill } : {}),
           ...(shaderId ? { shaderId } : {}),
           ...(shaderParams ? { shaderParams } : {}),
+          ...(shaderColors && Object.keys(shaderColors).length ? { shaderColors } : {}),
           ...(o.keyframes
             ? {
                 keyframes: usesPixelLayout

@@ -334,6 +334,8 @@ export interface TextOverlay {
   shaderId?: string;
   /** Per-shader numeric parameters (uniforms). Keys are shader-defined. */
   shaderParams?: Record<string, number>;
+  /** Per-shader color parameters (hex/named FFmpeg colors). Keys are shader-defined. */
+  shaderColors?: Record<string, string>;
 }
 
 export interface SerializedClipGroup {

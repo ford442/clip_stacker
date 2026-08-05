@@ -99,16 +99,6 @@ function parseAlphaSuffix(alpha: string): number {
   return clamp01(n > 1 ? n / 255 : n);
 }
 
-/**
- * Convert an FFmpeg color expression into a CSS color string plus a separate
- * alpha factor, for rendering text overlays on a 2D canvas. The alpha is
- * returned separately so callers can apply it via `globalAlpha` (composing it
- * with any layer opacity). Assumes `value` is already a valid FFmpeg color
- * (run it through {@link sanitizeFfmpegColor} first).
- *
- * Examples: `0xff8800` → `{ color: '#ff8800', alpha: 1 }`,
- * `black@0.5` → `{ color: 'black', alpha: 0.5 }`.
- */
 export function ffmpegColorToCss(value: string): {
   color: string;
   alpha: number;
@@ -127,4 +117,40 @@ export function ffmpegColorToCss(value: string): {
     color: color || "white",
     alpha: alphaPart === null ? 1 : parseAlphaSuffix(alphaPart),
   };
+}
+
+const NAMED_COLOR_RGB: Record<string, [number, number, number]> = {
+  white: [1, 1, 1],
+  black: [0, 0, 0],
+  red: [1, 0, 0],
+  green: [0, 0.5, 0],
+  blue: [0, 0, 1],
+  yellow: [1, 1, 0],
+  cyan: [0, 1, 1],
+  magenta: [1, 0, 1],
+};
+
+function parseHexRgb(hex: string): [number, number, number] | null {
+  const clean = hex.replace(/^#/, "").replace(/^0x/i, "");
+  if (!/^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/.test(clean)) return null;
+  const r = parseInt(clean.slice(0, 2), 16) / 255;
+  const g = parseInt(clean.slice(2, 4), 16) / 255;
+  const b = parseInt(clean.slice(4, 6), 16) / 255;
+  return [r, g, b];
+}
+
+/**
+ * Convert an FFmpeg color to linear RGB in [0, 1] for GPU uniforms.
+ * Falls back to `fallback` when parsing fails.
+ */
+export function ffmpegColorToRgb01(
+  value: string,
+  fallback: [number, number, number] = [1, 1, 1],
+): [number, number, number] {
+  const { color } = ffmpegColorToCss(value);
+  const hexRgb = parseHexRgb(color);
+  if (hexRgb) return hexRgb;
+  const named = NAMED_COLOR_RGB[color.toLowerCase()];
+  if (named) return named;
+  return fallback;
 }

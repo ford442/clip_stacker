@@ -56,6 +56,30 @@ def is_still_image(path):
     ext = os.path.splitext(path)[1].lower()
     return ext in IMAGE_EXTENSIONS
 
+
+def nle_friendly_h264_video_args(gop=None):
+    """libx264 flags aligned with clip_stacker buildStillImageFfmpegArgs."""
+    gop = gop or STITCH_FPS
+    return [
+        '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
+        '-tune', 'stillimage',
+        '-profile:v', 'high', '-level', '4.1',
+        '-g', str(gop), '-keyint_min', str(gop), '-sc_threshold', '0',
+        '-pix_fmt', 'yuv420p', '-vsync', 'cfr',
+    ]
+
+
+def nle_friendly_aac_audio_args():
+    return ['-c:a', 'aac', '-b:a', '192k', '-ar', '44100']
+
+
+def stitch_scale_filter(target_w, target_h):
+    """Scale/pad/fps filter chain with explicit yuv420p for concat compatibility."""
+    return (
+        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps={STITCH_FPS},format=yuv420p"
+    )
+
 # ── Thumbnail JPEG files (Gradio Gallery needs real paths, not data URIs) ───
 
 def extract_thumb_path(media_path):
@@ -276,50 +300,44 @@ def normalize_still_image_for_stitch(
     """Turn a still image into an h264+aac clip at STITCH_FPS for concat."""
     hold = duration if duration is not None else still_image_duration(image_path)
     hold = max(0.1, float(hold))
-    scale = (
-        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps={STITCH_FPS}"
-    )
     subprocess.run([
         'ffmpeg', '-loop', '1', '-t', str(hold), '-i', image_path,
         '-f', 'lavfi', '-i',
-        'anullsrc=channel_layout=stereo:sample_rate=44100',
-        '-vf', scale,
+        f'anullsrc=channel_layout=stereo:sample_rate=44100:d={hold}',
+        '-vf', stitch_scale_filter(target_w, target_h),
         '-map', '0:v:0', '-map', '1:a:0',
-        '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
-        '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
-        '-shortest', '-movflags', '+faststart',
+        *nle_friendly_h264_video_args(),
+        *nle_friendly_aac_audio_args(),
+        '-movflags', '+faststart',
+        '-t', str(hold),
         '-y', out_path,
     ], check=True, capture_output=True, text=True)
 
 
 def normalize_video_for_stitch(vid_path, out_path, target_w, target_h):
     """Re-encode a video clip to the stitch target (scale/pad/fps + AAC audio)."""
-    scale = (
-        f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps={STITCH_FPS}"
-    )
+    scale = stitch_scale_filter(target_w, target_h)
     has_audio = probe_audio_codec(vid_path) != ''
     if has_audio:
         subprocess.run([
             'ffmpeg', '-i', vid_path, '-vf', scale,
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
-            '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
+            *nle_friendly_h264_video_args(),
+            *nle_friendly_aac_audio_args(),
             '-movflags', '+faststart',
             '-y', out_path,
         ], check=True, capture_output=True, text=True)
     else:
-        duration = get_duration(vid_path) or STILL_IMAGE_DEFAULT_DURATION
+        duration = max(0.1, get_duration(vid_path) or STILL_IMAGE_DEFAULT_DURATION)
         subprocess.run([
             'ffmpeg', '-i', vid_path,
             '-f', 'lavfi', '-i',
-            'anullsrc=channel_layout=stereo:sample_rate=44100',
+            f'anullsrc=channel_layout=stereo:sample_rate=44100:d={duration}',
             '-vf', scale,
             '-map', '0:v:0', '-map', '1:a:0',
-            '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
-            '-c:a', 'aac', '-b:a', '192k', '-ar', '44100',
-            '-t', str(max(0.1, duration)),
-            '-shortest', '-movflags', '+faststart',
+            *nle_friendly_h264_video_args(),
+            *nle_friendly_aac_audio_args(),
+            '-movflags', '+faststart',
+            '-t', str(duration),
             '-y', out_path,
         ], check=True, capture_output=True, text=True)
 
@@ -424,9 +442,23 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
         raise Exception(f"RIFE failed: {r.stderr}")
     
     src = output_path if os.path.exists(output_path) else no_audio
-    subprocess.run(['ffmpeg', '-i', src, '-c:v', 'libx264',
-                    '-pix_fmt', 'yuv420p', '-movflags', '+faststart',
-                    '-y', final_path], check=True)
+    has_audio = probe_audio_codec(safe_input) != ''
+    if has_audio:
+        subprocess.run([
+            'ffmpeg', '-i', src, '-i', safe_input,
+            '-map', '0:v:0', '-map', '1:a:0?',
+            *nle_friendly_h264_video_args(),
+            *nle_friendly_aac_audio_args(),
+            '-movflags', '+faststart',
+            '-shortest', '-y', final_path,
+        ], check=True, capture_output=True, text=True)
+    else:
+        subprocess.run([
+            'ffmpeg', '-i', src,
+            *nle_friendly_h264_video_args(),
+            '-an', '-movflags', '+faststart',
+            '-y', final_path,
+        ], check=True, capture_output=True, text=True)
     
     if create_boomerang:
         fps = get_fps(final_path)
@@ -481,9 +513,9 @@ def morph_transition(frame_pair_video, frame_count, output_fps=30):
     in_rate = rife_frames * output_fps / frame_count
     subprocess.run([
         'ffmpeg', '-r', f'{in_rate:.6f}', '-i', src,
-        '-vf', f'fps={output_fps}',
+        '-vf', f'fps={output_fps},format=yuv420p',
         '-frames:v', str(frame_count),
-        '-c:v', 'libx264', '-pix_fmt', 'yuv420p',
+        *nle_friendly_h264_video_args(gop=int(output_fps)),
         '-movflags', '+faststart', '-an',
         '-y', morph_out,
     ], check=True, capture_output=True, text=True)
@@ -563,6 +595,7 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
             '-map', '0:v:0', '-map', '[a]',
             '-c:v', 'copy',
             '-c:a', 'aac', '-b:a', '320k',
+            '-movflags', '+faststart',
             '-y', output_final
         ]
         if duration:
@@ -580,11 +613,14 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
             '-map', '0:v:0', '-map', '[a]',
             '-c:v', 'copy',
             '-c:a', 'aac', '-b:a', '320k',
-            '-shortest', '-y', output_final
+            '-shortest', '-movflags', '+faststart', '-y', output_final
         ]
     else:
-        # Keep original audio
-        cmd = ['ffmpeg', '-i', concat_video, '-c', 'copy', '-y', output_final]
+        # Keep original audio — remux with faststart for broad player/NLE compatibility.
+        cmd = [
+            'ffmpeg', '-i', concat_video, '-c', 'copy',
+            '-movflags', '+faststart', '-y', output_final,
+        ]
 
     subprocess.run(cmd, check=True)
 

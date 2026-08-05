@@ -32,6 +32,7 @@ import {
   safeReadFile,
   execWithFfmpegProgress,
   clipNeedsEffects,
+  clipHasSourceAudio,
   getSafeExtension,
   buildSingleClipFilter,
   getFfmpegEnvironmentDiagnostics,
@@ -101,41 +102,76 @@ export async function muxProcessedVideoWithSourceAudio(
       new Uint8Array(await videoBlob.arrayBuffer()),
       "processed video write input",
     );
-    await safeWriteFile(
-      ffmpeg,
-      sourceInputName,
-      await fetchFile(clip.file),
-      "processed video write source audio",
-    );
 
-    const filterComplex = `[1:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS[aout]`;
+    const duration = end - clip.trimStart;
 
-    await safeExec(
-      ffmpeg,
-      [
-        "-i",
-        videoInputName,
-        "-i",
+    if (!clipHasSourceAudio(clip)) {
+      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      await safeExec(
+        ffmpeg,
+        [
+          "-i",
+          videoInputName,
+          "-f",
+          "lavfi",
+          "-i",
+          `anullsrc=channel_layout=stereo:sample_rate=44100:d=${duration}`,
+          "-map",
+          "0:v:0",
+          "-map",
+          "1:a:0",
+          "-c:v",
+          "copy",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "192k",
+          "-movflags",
+          "+faststart",
+          "-t",
+          String(duration),
+          outputName,
+        ],
+        null,
+        `Mux processed video with silent audio for "${clip.title}"`,
+      );
+    } else {
+      await safeWriteFile(
+        ffmpeg,
         sourceInputName,
-        "-filter_complex",
-        filterComplex,
-        "-map",
-        "0:v:0",
-        "-map",
-        "[aout]",
-        "-c:v",
-        "copy",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-movflags",
-        "+faststart",
-        outputName,
-      ],
-      null,
-      `Mux processed video with source audio for "${clip.title}"`,
-    );
+        await fetchFile(clip.file),
+        "processed video write source audio",
+      );
+
+      const filterComplex = `[1:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS[aout]`;
+
+      await safeExec(
+        ffmpeg,
+        [
+          "-i",
+          videoInputName,
+          "-i",
+          sourceInputName,
+          "-filter_complex",
+          filterComplex,
+          "-map",
+          "0:v:0",
+          "-map",
+          "[aout]",
+          "-c:v",
+          "copy",
+          "-c:a",
+          "aac",
+          "-b:a",
+          "192k",
+          "-movflags",
+          "+faststart",
+          outputName,
+        ],
+        null,
+        `Mux processed video with source audio for "${clip.title}"`,
+      );
+    }
 
     const output = await safeReadFile(
       ffmpeg,
@@ -144,7 +180,11 @@ export async function muxProcessedVideoWithSourceAudio(
     );
     const plain = new Uint8Array(output).buffer as ArrayBuffer;
 
-    onStatus("Source audio restored.");
+    onStatus(
+      clipHasSourceAudio(clip)
+        ? "Source audio restored."
+        : "Silent audio track added.",
+    );
     return new Blob([plain], { type: "video/mp4" });
   } finally {
     try {

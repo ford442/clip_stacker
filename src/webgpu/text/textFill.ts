@@ -18,13 +18,20 @@
 
 import textFillShader from '../shaders/textFill.wgsl?raw';
 import { acquireGpuContext } from '../gpuDevice';
-import { getTextShader, resolveShaderParams } from './registry';
+import { ffmpegColorToRgb01 } from '../../utils/color';
+import { getTextShader, resolveShaderColors, resolveShaderParams } from './registry';
 
 export interface UniformSlots {
   p0: number;
   p1: number;
   p2: number;
   mode: number;
+}
+
+export interface ColorUniformSlots {
+  c0: [number, number, number];
+  c1: [number, number, number];
+  c2: [number, number, number];
 }
 
 /**
@@ -51,10 +58,35 @@ export function mapParamsToUniformSlots(
   return slots;
 }
 
+/** Resolve shader color keys into uniform slots c0..c2. */
+export function mapColorsToUniformSlots(
+  shaderId: string | undefined | null,
+  colors?: Record<string, string>,
+): ColorUniformSlots {
+  const shaderDef = getTextShader(shaderId);
+  const resolved = resolveShaderColors(shaderId, colors);
+  const slots: ColorUniformSlots = {
+    c0: [1, 1, 1],
+    c1: [1, 1, 1],
+    c2: [1, 1, 1],
+  };
+  if (!shaderDef?.colorSlots) return slots;
+  for (const [key, slot] of Object.entries(shaderDef.colorSlots)) {
+    const raw = resolved[key];
+    if (!raw) continue;
+    const rgb = ffmpegColorToRgb01(raw);
+    if (slot === 0) slots.c0 = rgb;
+    else if (slot === 1) slots.c1 = rgb;
+    else slots.c2 = rgb;
+  }
+  return slots;
+}
+
 export interface TextFillOptions {
   time: number;
   shaderId?: string;
   params?: Record<string, number>;
+  colors?: Record<string, string>;
   /** Target size; if omitted, derived from mask. */
   width?: number;
   height?: number;
@@ -68,12 +100,14 @@ export interface TextFillOptions {
   maskCacheKey?: string;
 }
 
+const UNIFORM_FLOAT_COUNT = 20;
+
 export class TextFillRenderer {
   private readonly device: GPUDevice;
   private readonly pipeline: GPURenderPipeline;
   private readonly sampler: GPUSampler;
   private readonly uniformBuffer: GPUBuffer;
-  private readonly uniformData = new Float32Array(8);
+  private readonly uniformData = new Float32Array(UNIFORM_FLOAT_COUNT);
   private readonly format: GPUTextureFormat;
   private readonly outputCanvas: HTMLCanvasElement;
   private context: GPUCanvasContext | null = null;
@@ -116,7 +150,7 @@ export class TextFillRenderer {
     });
 
     const uniformBuffer = device.createBuffer({
-      size: 8 * 4,
+      size: UNIFORM_FLOAT_COUNT * 4,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -203,23 +237,37 @@ export class TextFillRenderer {
     return this.bindGroup;
   }
 
-  /** Write time + the shader's declared params into uniform slots p0..p2; p3 always carries `mode`. */
+  /** Write time + shader params/colors into the uniform buffer. */
   private writeUniforms(width: number, height: number, opts: TextFillOptions): void {
     const slots = mapParamsToUniformSlots(opts.shaderId, opts.params);
+    const colors = mapColorsToUniformSlots(opts.shaderId, opts.colors);
 
     this.uniformData[0] = opts.time ?? 0;
     this.uniformData[1] = width;
     this.uniformData[2] = height;
+    this.uniformData[3] = 0;
     this.uniformData[4] = slots.p0;
     this.uniformData[5] = slots.p1;
     this.uniformData[6] = slots.p2;
     this.uniformData[7] = slots.mode;
+    this.uniformData[8] = colors.c0[0];
+    this.uniformData[9] = colors.c0[1];
+    this.uniformData[10] = colors.c0[2];
+    this.uniformData[11] = 1;
+    this.uniformData[12] = colors.c1[0];
+    this.uniformData[13] = colors.c1[1];
+    this.uniformData[14] = colors.c1[2];
+    this.uniformData[15] = 1;
+    this.uniformData[16] = colors.c2[0];
+    this.uniformData[17] = colors.c2[1];
+    this.uniformData[18] = colors.c2[2];
+    this.uniformData[19] = 1;
     this.device.queue.writeBuffer(
       this.uniformBuffer,
       0,
       this.uniformData.buffer,
       this.uniformData.byteOffset,
-      8 * 4,
+      UNIFORM_FLOAT_COUNT * 4,
     );
   }
 

@@ -104,6 +104,15 @@ def test_normalize_still_image_produces_h264_aac(app, tmp_path):
     duration = app.get_duration(out)
     assert duration == pytest.approx(2.0, abs=0.15)
 
+    pix_fmt = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "v:0",
+         "-show_entries", "stream=pix_fmt,profile", "-of",
+         "default=noprint_wrappers=1:nokey=1", out],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip().splitlines()
+    assert "yuv420p" in pix_fmt
+    assert any("High" in line for line in pix_fmt)
+
 
 def test_still_image_thumb_is_jpeg_file(app, tmp_path):
     path = make_still_image(tmp_path / "still.png")
