@@ -1,9 +1,10 @@
 /**
  * Main-thread proxy for the off-thread WebGPU preview worker.
  *
- * Transfers OffscreenCanvas to the worker on creation, then provides a
- * promise-based API for timeline rendering.  Frame capture (seek + VideoFrame)
- * stays on the main thread via a caller-supplied callback.
+ * Transfers OffscreenCanvas to the worker only after a successful GPU probe,
+ * then provides a promise-based API for timeline rendering.  Frame capture
+ * (seek + VideoFrame) stays on the main thread via a caller-supplied callback;
+ * independent media elements are sought in parallel.
  */
 
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
@@ -14,6 +15,8 @@ import type { PreviewCompositionPlan, TimelineCompositor, TimelineRenderOptions 
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
 import { previewMetrics } from '../utils/previewMetrics';
 import {
+  groupFrameRequestsByMedia,
+  PREVIEW_WORKER_INIT_TIMEOUT_MS,
   toWorkerClip,
   type CapturedFrame,
   type FrameRequest,
@@ -23,6 +26,37 @@ import {
 } from './previewWorkerProtocol';
 
 export type { FrameRequest, CapturedFrame };
+
+/** True after `transferControlToOffscreen()` — the element can no longer host a context. */
+export function isCanvasTransferred(canvas: HTMLCanvasElement): boolean {
+  try {
+    // Re-assigning width is a no-op on a live canvas but throws InvalidStateError
+    // once control has been transferred. Avoid getContext() here — that would
+    // lock an unused canvas into a 2D context and block WebGPU fallback.
+    const { width } = canvas;
+    canvas.width = width;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Replace a neutered (transferred) canvas with a fresh element that can host
+ * WebGPU / Canvas2D for the main-thread fallback path.
+ */
+export function replaceTransferredCanvas(oldCanvas: HTMLCanvasElement): HTMLCanvasElement {
+  const next = document.createElement('canvas');
+  next.className = oldCanvas.className;
+  next.width = oldCanvas.width || 1280;
+  next.height = oldCanvas.height || 720;
+  for (const { name, value } of Array.from(oldCanvas.attributes)) {
+    if (name === 'width' || name === 'height' || name === 'class') continue;
+    next.setAttribute(name, value);
+  }
+  oldCanvas.parentElement?.replaceChild(next, oldCanvas);
+  return next;
+}
 
 export interface RenderTimelineParams {
   clips: WorkerClip[];
@@ -54,11 +88,31 @@ interface PendingRender {
   captureFrames: FrameCaptureCallback;
 }
 
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms,
+    );
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 export class PreviewWorkerRuntime {
   private readonly worker: Worker;
   private nextRenderId = 0;
   private readonly pendingRenders = new Map<number, PendingRender>();
   private lastRenderId = -1;
+  private destroyed = false;
 
   private constructor(worker: Worker) {
     this.worker = worker;
@@ -72,8 +126,15 @@ export class PreviewWorkerRuntime {
   }
 
   /**
-   * Create the runtime by transferring canvas control to the worker.
-   * Returns null if OffscreenCanvas or WebGPU is unavailable.
+   * Create the runtime by probing the worker for WebGPU, then transferring
+   * canvas control only when the probe succeeds. Returns null if OffscreenCanvas
+   * or WebGPU is unavailable — the caller's canvas is left usable for
+   * main-thread fallback.
+   *
+   * If the GPU probe succeeds but compositor init fails after the canvas has
+   * already been transferred, returns null and the canvas is neutered. Callers
+   * should detect that with `isCanvasTransferred` and swap in a fresh element
+   * before attempting the main-thread compositor.
    */
   static async create(canvas: HTMLCanvasElement): Promise<PreviewWorkerRuntime | null> {
     if (
@@ -90,20 +151,35 @@ export class PreviewWorkerRuntime {
 
     const runtime = new PreviewWorkerRuntime(worker);
 
-    const webgpuAvailable = await new Promise<boolean>((resolve) => {
-      // Override message handler temporarily to catch the 'ready' message
-      // before any render messages can arrive.
-      const originalHandler = (event: MessageEvent<PreviewWorkerOutbound>) => {
-        if (event.data.type === 'ready') {
-          worker.onmessage = (e: MessageEvent<PreviewWorkerOutbound>) =>
-            runtime.handleMessage(e.data);
-          resolve(event.data.webgpuAvailable);
-        }
-      };
-      worker.onmessage = originalHandler;
+    try {
+      const webgpuAvailable = await withTimeout(
+        new Promise<boolean>((resolve, reject) => {
+          const onMessage = (event: MessageEvent<PreviewWorkerOutbound>) => {
+            if (event.data.type === 'ready') {
+              worker.removeEventListener('message', onMessage);
+              resolve(event.data.webgpuAvailable);
+            }
+          };
+          worker.addEventListener('message', onMessage);
+          worker.addEventListener(
+            'error',
+            () => {
+              worker.removeEventListener('message', onMessage);
+              reject(new Error('Preview worker failed to load'));
+            },
+            { once: true },
+          );
+        }),
+        PREVIEW_WORKER_INIT_TIMEOUT_MS,
+        'Preview worker GPU probe',
+      );
 
-      worker.onerror = () => resolve(false);
+      if (!webgpuAvailable) {
+        worker.terminate();
+        return null;
+      }
 
+      // Phase 2 — only transfer after the probe succeeds.
       const offscreen = canvas.transferControlToOffscreen();
       const initMsg: PreviewWorkerInbound = {
         type: 'init',
@@ -111,20 +187,38 @@ export class PreviewWorkerRuntime {
         width: canvas.clientWidth || 1280,
         height: canvas.clientHeight || 720,
       };
-      worker.postMessage(initMsg, [offscreen as unknown as Transferable]);
-    });
 
-    if (!webgpuAvailable) {
+      await withTimeout(
+        new Promise<void>((resolve, reject) => {
+          const onMessage = (event: MessageEvent<PreviewWorkerOutbound>) => {
+            if (event.data.type === 'initialized') {
+              worker.removeEventListener('message', onMessage);
+              worker.onmessage = (e: MessageEvent<PreviewWorkerOutbound>) =>
+                runtime.handleMessage(e.data);
+              resolve();
+            } else if (event.data.type === 'error') {
+              worker.removeEventListener('message', onMessage);
+              reject(new Error(event.data.message));
+            }
+          };
+          worker.addEventListener('message', onMessage);
+          worker.postMessage(initMsg, [offscreen as unknown as Transferable]);
+        }),
+        PREVIEW_WORKER_INIT_TIMEOUT_MS,
+        'Preview worker canvas init',
+      );
+
+      return runtime;
+    } catch {
       worker.terminate();
       return null;
     }
-
-    return runtime;
   }
 
   private handleMessage(msg: PreviewWorkerOutbound): void {
     switch (msg.type) {
-      case 'ready': {
+      case 'ready':
+      case 'initialized': {
         // Handled during create(); ignored after init.
         break;
       }
@@ -136,6 +230,10 @@ export class PreviewWorkerRuntime {
         pending
           .captureFrames(msg.requests)
           .then((frames) => {
+            if (this.destroyed || !this.pendingRenders.has(msg.renderId)) {
+              frames.forEach((f) => f.frame.close());
+              return;
+            }
             // VideoFrame is Transferable — transfer ownership to worker.
             const transferList = frames.map((f) => f.frame as unknown as Transferable);
             const response: PreviewWorkerInbound = {
@@ -146,10 +244,10 @@ export class PreviewWorkerRuntime {
             this.worker.postMessage(response, transferList);
           })
           .catch((err) => {
-            const pending = this.pendingRenders.get(msg.renderId);
-            if (pending) {
+            const pendingRender = this.pendingRenders.get(msg.renderId);
+            if (pendingRender) {
               this.pendingRenders.delete(msg.renderId);
-              pending.reject(err instanceof Error ? err : new Error(String(err)));
+              pendingRender.reject(err instanceof Error ? err : new Error(String(err)));
             }
           });
         break;
@@ -239,9 +337,21 @@ export class PreviewWorkerRuntime {
     this.worker.postMessage(msg);
   }
 
-  destroy(): void {
-    const msg: PreviewWorkerInbound = { type: 'destroy' };
+  resetFinishingTemporal(): void {
+    const msg: PreviewWorkerInbound = { type: 'reset-finishing' };
     this.worker.postMessage(msg);
+  }
+
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    try {
+      const msg: PreviewWorkerInbound = { type: 'destroy' };
+      this.worker.postMessage(msg);
+    } catch {
+      // Worker may already be gone.
+    }
+    this.worker.terminate();
     const err = new Error('PreviewWorkerRuntime destroyed');
     for (const pending of this.pendingRenders.values()) pending.reject(err);
     this.pendingRenders.clear();
@@ -298,8 +408,9 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   }
 
   /**
-   * Create a worker-backed compositor.  Transfers canvas control to the worker.
-   * Returns null if OffscreenCanvas or WebGPU is unavailable in the worker.
+   * Create a worker-backed compositor.  Transfers canvas control to the worker
+   * only after a successful GPU probe. Returns null if OffscreenCanvas or
+   * WebGPU is unavailable — the canvas remains usable for main-thread fallback.
    */
   static async create(
     canvas: HTMLCanvasElement,
@@ -319,77 +430,84 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
     globalTime: number,
     options?: TimelineRenderOptions,
   ): Promise<PreviewCompositionPlan> {
-    const captureFrames: FrameCaptureCallback = async (requests) => {
-      const captured: CapturedFrame[] = [];
+    const captureOne = async (req: FrameRequest): Promise<CapturedFrame | null> => {
+      if (options?.isCancelled?.()) return null;
 
-      for (const req of requests) {
-        if (options?.isCancelled?.()) break;
-
-        // RIFE morph segment — keyed by mediaObjectUrl.
-        if (req.mediaObjectUrl) {
-          const video = this.pool.getVideoForUrl(req.clipId, req.mediaObjectUrl);
-          const seekStart = performance.now();
-          await seekVideoTo(video, req.sourceTime);
-          previewMetrics.recordSeek(performance.now() - seekStart);
-          if (options?.isCancelled?.()) break;
-          const frame = await captureVideoFrameFromElement(video);
-          if (frame) {
-            captured.push({
-              clipId: req.clipId,
-              role: req.role,
-              frame,
-              videoWidth: video.videoWidth,
-              videoHeight: video.videoHeight,
-            });
-          }
-          continue;
-        }
-
-        const clip = clips.find((c) => c.id === req.clipId);
-        if (!clip) continue;
-
-        if (clip.stillImage) {
-          const img = this.pool.getStillImage(clip);
-          if (!img.complete) {
-            await new Promise<void>((resolve) => {
-              img.onload = () => resolve();
-              img.onerror = () => resolve();
-            });
-          }
-          if (options?.isCancelled?.()) break;
-          const frame = await captureStillVideoFrame(img);
-          if (frame) {
-            captured.push({
-              clipId: req.clipId,
-              role: req.role,
-              frame,
-              videoWidth: img.naturalWidth,
-              videoHeight: img.naturalHeight,
-            });
-          }
-          continue;
-        }
-
-        if (clip.kind !== 'video') continue;
-
-        const video = this.pool.getVideo(clip);
+      // RIFE morph segment — keyed by mediaObjectUrl.
+      if (req.mediaObjectUrl) {
+        const video = this.pool.getVideoForUrl(req.clipId, req.mediaObjectUrl);
         const seekStart = performance.now();
         await seekVideoTo(video, req.sourceTime);
         previewMetrics.recordSeek(performance.now() - seekStart);
-        if (options?.isCancelled?.()) break;
+        if (options?.isCancelled?.()) return null;
         const frame = await captureVideoFrameFromElement(video);
-        if (frame) {
-          captured.push({
-            clipId: req.clipId,
-            role: req.role,
-            frame,
-            videoWidth: video.videoWidth,
-            videoHeight: video.videoHeight,
-          });
-        }
+        if (!frame) return null;
+        return {
+          clipId: req.clipId,
+          role: req.role,
+          frame,
+          videoWidth: video.videoWidth,
+          videoHeight: video.videoHeight,
+        };
       }
 
-      return captured;
+      const clip = clips.find((c) => c.id === req.clipId);
+      if (!clip) return null;
+
+      if (clip.stillImage) {
+        const img = this.pool.getStillImage(clip);
+        if (!img.complete) {
+          await new Promise<void>((resolve) => {
+            img.onload = () => resolve();
+            img.onerror = () => resolve();
+          });
+        }
+        if (options?.isCancelled?.()) return null;
+        const frame = await captureStillVideoFrame(img);
+        if (!frame) return null;
+        return {
+          clipId: req.clipId,
+          role: req.role,
+          frame,
+          videoWidth: img.naturalWidth,
+          videoHeight: img.naturalHeight,
+        };
+      }
+
+      if (clip.kind !== 'video') return null;
+
+      const video = this.pool.getVideo(clip);
+      const seekStart = performance.now();
+      await seekVideoTo(video, req.sourceTime);
+      previewMetrics.recordSeek(performance.now() - seekStart);
+      if (options?.isCancelled?.()) return null;
+      const frame = await captureVideoFrameFromElement(video);
+      if (!frame) return null;
+      return {
+        clipId: req.clipId,
+        role: req.role,
+        frame,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight,
+      };
+    };
+
+    const captureFrames: FrameCaptureCallback = async (requests) => {
+      // Seek different media elements in parallel; keep same-element requests
+      // sequential so the shared <video> does not thrash.
+      const groupsOfRequests = groupFrameRequestsByMedia(requests);
+      const groupResults = await Promise.all(
+        groupsOfRequests.map(async (group) => {
+          const captured: CapturedFrame[] = [];
+          for (const req of group) {
+            if (options?.isCancelled?.()) break;
+            const frame = await captureOne(req);
+            if (frame) captured.push(frame);
+          }
+          return captured;
+        }),
+      );
+      return groupResults.flat();
     };
 
     const plan = await this.runtime.renderTimeline(
@@ -419,10 +537,16 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   syncClips(clips: Clip[]): void {
     this.pool.pruneExcept(new Set(clips.map((c) => c.id)));
     previewMetrics.setDecoderCount(this.pool.size, this.pool.limit);
+    this.runtime.syncClips(clips);
   }
 
   pauseDecoders(): void {
     this.pool.pauseAll();
+    this.runtime.pauseDecoders();
+  }
+
+  resetFinishingTemporal(): void {
+    this.runtime.resetFinishingTemporal();
   }
 
   destroy(): void {

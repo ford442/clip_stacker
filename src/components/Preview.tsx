@@ -32,7 +32,7 @@ import {
   shouldUseTimelinePreview,
   TimelinePreviewEngine,
 } from "../webgpu/timelinePreview";
-import { PreviewWorkerAdapter } from "../webgpu/previewWorkerRuntime";
+import { PreviewWorkerAdapter, isCanvasTransferred } from "../webgpu/previewWorkerRuntime";
 import {
   renderTextOverlayCanvas,
   renderTextOverlaysAsync,
@@ -231,8 +231,8 @@ function TimelineCompositorPreview({
     tracks,
   );
   const wrapperRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const textCanvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const textCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<TimelineCompositor | null>(null);
   const schedulerRef = useRef<ReturnType<typeof createRenderScheduler> | null>(
     null,
@@ -243,6 +243,9 @@ function TimelineCompositorPreview({
   const renderTokenRef = useRef(0);
   const renderFailuresRef = useRef(0);
   const backendRef = useRef<PreviewBackend>("unavailable");
+  /** After a post-transfer worker init failure, skip the worker and use main-thread WebGPU. */
+  const skipPreviewWorkerRef = useRef(false);
+  const [canvasGeneration, setCanvasGeneration] = useState(0);
   const [backend, setBackend] = useState<PreviewBackend>("unavailable");
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioClockActive, setAudioClockActive] = useState(false);
@@ -370,10 +373,19 @@ function TimelineCompositorPreview({
 
       try {
         if (chosen === "webgpu") {
-          // Attempt off-thread worker path first; fall back to main-thread if
-          // OffscreenCanvas or WebGPU is unavailable in the worker context.
-          engine = await PreviewWorkerAdapter.create(canvas, timelineClips);
+          // Prefer the OffscreenCanvas worker. Probe runs before transfer so a
+          // failed probe leaves this canvas usable. A rare post-transfer init
+          // failure neuters the element — remount via canvasGeneration and
+          // fall back to main-thread WebGPU on the next effect pass.
+          if (!skipPreviewWorkerRef.current) {
+            engine = await PreviewWorkerAdapter.create(canvas, timelineClips);
+          }
           if (!engine) {
+            if (isCanvasTransferred(canvas)) {
+              skipPreviewWorkerRef.current = true;
+              setCanvasGeneration((generation) => generation + 1);
+              return;
+            }
             engine = await TimelinePreviewEngine.create(canvas, timelineClips);
           }
         } else if (chosen === "canvas2d") {
@@ -420,8 +432,9 @@ function TimelineCompositorPreview({
       backendRef.current = "unavailable";
       setBackend("unavailable");
     };
+    // Re-run when canvasGeneration bumps after a neutered-canvas remount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [canvasGeneration]);
 
   // Same reasoning as the single-clip preview: a lost device leaves this
   // engine's draw calls silently no-op-ing rather than throwing, so the
@@ -542,6 +555,7 @@ function TimelineCompositorPreview({
         style={previewActive ? undefined : { display: "none" }}
       >
         <canvas
+          key={canvasGeneration}
           ref={canvasRef}
           className="preview-timeline-canvas"
           aria-label="Timeline composition preview"
