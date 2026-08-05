@@ -330,6 +330,8 @@ const STILL_IMAGE_FILE_RE = /\.(png|jpe?g|webp|gif|bmp|tiff?)$/i;
 export function isStillImageClip(
   clip: Pick<Clip, "stillImage" | "file">,
 ): boolean {
+  // Materialized video (e.g. after RIFE) is no longer an image source for FFmpeg.
+  if (clip.file.type.startsWith("video/")) return false;
   return clip.stillImage === true || STILL_IMAGE_FILE_RE.test(clip.file.name);
 }
 
@@ -646,6 +648,25 @@ export async function mergeClipsLossless(
     const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     onStatus(`Fast copy [${index + 1}/${clips.length}]: "${clip.title}"...`);
 
+    // Still images cannot be stream-copied: FFmpeg would mux PNG/MJPEG frames into
+    // MP4, which breaks concat with H.264 neighbours and fails in most NLEs.
+    if (isStillImageClip(clip)) {
+      onStatus(`Encoding still image "${clip.title}" to H.264…`);
+      await safeExec(
+        ffmpeg,
+        buildStillImageFfmpegArgsForClip(
+          clip,
+          clip.inputName!,
+          outName,
+          clipDuration,
+        ),
+        null,
+        `Lossless still encode ${index + 1}/${clips.length} "${clip.title}"`,
+      );
+      intermediates.push(outName);
+      continue;
+    }
+
     let primaryArgs: string[];
     let silentAudioArgs: string[];
 
@@ -943,6 +964,7 @@ export async function processClipPass1(
 
   if (
     !clipNeedsEffects(clip) &&
+    !isStillImageClip(clip) &&
     matchesTargetResolution &&
     !needsPrimary &&
     !needsNoise &&

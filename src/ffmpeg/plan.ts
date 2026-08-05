@@ -40,6 +40,7 @@ import {
   execWithFfmpegProgress,
   clipNeedsEffects,
   getSafeExtension,
+  isStillImageClip,
   buildSingleClipFilter,
   getFfmpegEnvironmentDiagnostics,
   toBlobURLWithRetry,
@@ -175,6 +176,20 @@ function computeRenderPlanPath(
       reason: `${effectClips.length > 1 ? "Clips" : "Clip"} ${titles} ${reasonDetail}`,
       willReencode: true,
       description: `Re-encoding ${titles} with CRF ${settings.crf} (${settings.preset} preset)`,
+    };
+  }
+
+  const stillClips = clips.filter(isStillImageClip);
+  if (stillClips.length > 0) {
+    const titles = stillClips.map((c) => `"${c.title}"`).join(", ");
+    return {
+      path: "effects-reencoding",
+      reason:
+        stillClips.length === 1
+          ? `Still image ${titles} must be encoded as H.264 video before concat`
+          : `Still images ${titles} must be encoded as H.264 video before concat`,
+      willReencode: true,
+      description: `Re-encoding still image clips with CRF ${settings.crf} (${settings.preset} preset)`,
     };
   }
 

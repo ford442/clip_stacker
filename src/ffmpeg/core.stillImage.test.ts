@@ -108,6 +108,15 @@ describe('still image FFmpeg helpers', () => {
     ).toBe(false);
   });
 
+  it('isStillImageClip returns false for materialized video even with stillImage flag', () => {
+    expect(
+      isStillImageClip({
+        stillImage: true,
+        file: new File([], 'rife_2x_photo.png', { type: 'video/mp4' }),
+      }),
+    ).toBe(false);
+  });
+
   it('isNoAudioStreamError matches FFmpeg log text when message is generic FS error', () => {
     const err = new Error('ErrnoError: FS error');
     (err as { lastFfmpegError?: string }).lastFfmpegError =
