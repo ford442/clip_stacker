@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type DragEvent } from 'react';
+import { memo, useCallback, useRef, type CSSProperties, type DragEvent, type TouchEvent } from 'react';
 import type { ClipTransition } from '../types';
 import { editorActions, useIsClipSelected } from '../store';
 import { WaveformCanvas } from './WaveformCanvas';
@@ -10,6 +10,13 @@ const TRANSITION_COLORS: Record<string, string> = {
   motion: '#f06292',
   morph: '#26c6da',
 };
+
+/** Horizontal distance (px) required to trigger a swipe-swap. */
+const SWIPE_THRESHOLD_PX = 48;
+/** Max vertical movement (px) allowed for a gesture to still count as horizontal swipe. */
+const SWIPE_VERTICAL_TOLERANCE_PX = 36;
+/** Hold duration (ms) before starting a drag-reorder (long-press). */
+const LONG_PRESS_MS = 420;
 
 interface Props {
   layout: VirtualClipLayout;
@@ -27,6 +34,7 @@ interface Props {
   onEditTransition: (transition: ClipTransition) => void;
   onDragStart: (e: DragEvent, index: number) => void;
   onDragEnd: () => void;
+  /** Called on long-press to begin full drag-reorder. */
   onTouchStart: (index: number) => void;
 }
 
@@ -53,6 +61,111 @@ function VirtualClipBlockImpl({
   const isLoadingWave = clip.kind === 'audio' && waves === undefined;
   const layerIndex = clip.layerIndex ?? 0;
   const isOverlay = layerIndex > 0;
+
+  // Touch / swipe-swap state (kept in refs so the memoized component stays pure).
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didLongPressRef = useRef(false);
+  const didSwipeRef = useRef(false);
+
+  const clearLongPress = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const handleTouchStart = useCallback(
+    (e: TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      const t = e.touches[0];
+      touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
+      didLongPressRef.current = false;
+      didSwipeRef.current = false;
+      clearLongPress();
+      longPressTimerRef.current = setTimeout(() => {
+        didLongPressRef.current = true;
+        onTouchStart(index); // start the parent drag-reorder
+        // Optional haptic feedback when available
+        if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
+          try {
+            navigator.vibrate(12);
+          } catch {
+            /* ignore */
+          }
+        }
+      }, LONG_PRESS_MS);
+    },
+    [clearLongPress, index, onTouchStart],
+  );
+
+  const handleTouchMove = useCallback(
+    (e: TouchEvent) => {
+      if (!touchStartRef.current || e.touches.length !== 1) return;
+      const t = e.touches[0];
+      const dx = t.clientX - touchStartRef.current.x;
+      const dy = t.clientY - touchStartRef.current.y;
+      // Cancel long-press as soon as the finger moves meaningfully.
+      if (Math.abs(dx) > 8 || Math.abs(dy) > 8) {
+        clearLongPress();
+      }
+    },
+    [clearLongPress],
+  );
+
+  const handleTouchEnd = useCallback(
+    (e: TouchEvent) => {
+      clearLongPress();
+      const start = touchStartRef.current;
+      touchStartRef.current = null;
+      if (!start || didLongPressRef.current) {
+        // Long-press already handed control to the parent drag system.
+        return;
+      }
+      // Use the last known touch (or changedTouches[0]) for end position.
+      const endTouch = e.changedTouches[0];
+      if (!endTouch) return;
+      const dx = endTouch.clientX - start.x;
+      const dy = endTouch.clientY - start.y;
+      const elapsed = Date.now() - start.time;
+
+      // Quick horizontal swipe → adjacent swap.
+      if (
+        elapsed < 600 &&
+        Math.abs(dx) >= SWIPE_THRESHOLD_PX &&
+        Math.abs(dy) <= SWIPE_VERTICAL_TOLERANCE_PX
+      ) {
+        didSwipeRef.current = true;
+        e.preventDefault(); // stop synthetic click
+        if (dx < 0) {
+          // Swipe left → move clip left (toward earlier position)
+          if (index > 0) onMoveUp(index);
+        } else {
+          // Swipe right → move clip right (toward later position)
+          if (index < clipCount - 1) onMoveDown(index);
+        }
+      }
+    },
+    [clearLongPress, clipCount, index, onMoveDown, onMoveUp],
+  );
+
+  const handleTouchCancel = useCallback(() => {
+    clearLongPress();
+    touchStartRef.current = null;
+    didLongPressRef.current = false;
+    didSwipeRef.current = false;
+  }, [clearLongPress]);
+
+  const handleClick = useCallback(() => {
+    // Suppress the click that follows a swipe or long-press so we don't
+    // accidentally change selection right after a reorder gesture.
+    if (didSwipeRef.current || didLongPressRef.current) {
+      didSwipeRef.current = false;
+      didLongPressRef.current = false;
+      return;
+    }
+    editorActions.setSelectedClipId(clip.id);
+  }, [clip.id]);
 
   return (
     <>
@@ -82,17 +195,20 @@ function VirtualClipBlockImpl({
         draggable
         onDragStart={(e) => onDragStart(e, index)}
         onDragEnd={onDragEnd}
-        onTouchStart={() => onTouchStart(index)}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchCancel}
       >
         <div
           className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
             isSelected ? ' selected' : ''
           }${isOverlay ? ' timeline-clip--pip' : ''}`}
-          onClick={() => editorActions.setSelectedClipId(clip.id)}
+          onClick={handleClick}
           title={
             isOverlay
-              ? `${clip.title}\nPicture-in-Picture overlay (layer ${layerIndex}) — plays from the start of the output, not at its position on this row.`
-              : clip.title
+              ? `${clip.title}\nPicture-in-Picture overlay (layer ${layerIndex}) — plays from the start of the output, not at its position on this row.\n\nSwipe left/right to swap with neighbor, or long-press then drag to reorder.`
+              : `${clip.title}\n\nSwipe left/right to swap with neighbor, or long-press then drag to reorder.`
           }
         >
           {clip.kind === 'video' ? (
@@ -113,8 +229,8 @@ function VirtualClipBlockImpl({
             <span
               className="timeline-drag-handle"
               role="img"
-              aria-label="Drag handle — drag to reorder clip"
-              title="Drag to reorder"
+              aria-label="Drag handle — long-press then drag to reorder, or swipe left/right to swap"
+              title="Long-press + drag to reorder · swipe ←/→ to swap"
             >
               ⠿
             </span>

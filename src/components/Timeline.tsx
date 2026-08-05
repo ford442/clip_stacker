@@ -385,6 +385,8 @@ function TimelineImpl({
   }, []);
 
   // ── Touch handlers (mobile) ──────────────────────────────────────────────
+  // Long-press is now initiated inside VirtualClipBlock; this only receives
+  // the index once the long-press timer fires so full free-reorder can start.
   const handleTouchStart = useCallback((index: number) => {
     touchDragRef.current = index;
     lastTouchPos.current = null;
@@ -528,7 +530,10 @@ function TimelineImpl({
           </button>
         </div>
       </div>
-      <p className="timeline-hint muted">Drag clips between tracks or reorder on Video 1. Shift + scroll wheel zooms.</p>
+      <p className="timeline-hint muted">
+        Swipe left/right on a clip to swap with its neighbor. Long-press then drag to reorder freely
+        or move between tracks. Shift + scroll wheel zooms.
+      </p>
       {hasOverlayClips && (
         <p className="timeline-hint timeline-hint--pip muted">
           🖼 Clips marked <strong>PiP</strong> are Picture-in-Picture overlays — they composite on
