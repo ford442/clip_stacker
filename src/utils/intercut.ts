@@ -1,0 +1,157 @@
+/**
+ * Intercut (strobe / flash-cut) slice planning for FFmpeg concat demuxer.
+ *
+ * Each slice references a source inpoint/outpoint on clip A or B. Source offsets
+ * advance independently — output timeline position must NOT be used as inpoint.
+ */
+
+import type { Keyframe, KeyframeEasing } from './keyframes';
+import { sampleKeyframes } from './keyframes';
+
+export type IntercutSlot = 'A' | 'B';
+
+export interface IntercutSourceBounds {
+  /** Source media time where readable content starts (seconds). */
+  trimStart: number;
+  /** Source media time where readable content ends (seconds, exclusive). */
+  trimEnd: number;
+}
+
+export interface IntercutSlice {
+  slot: IntercutSlot;
+  inpoint: number;
+  outpoint: number;
+}
+
+export interface FrequencyAutomationConfig {
+  /** Total output duration of the generated intercut (seconds). */
+  totalDurationSec: number;
+  startFrequencyHz: number;
+  endFrequencyHz: number;
+  /** Optional Hz keyframes over [0, totalDurationSec]. Overrides start/end ramp. */
+  frequencyKeyframes?: Keyframe[];
+  /** Easing for the implicit start→end ramp when frequencyKeyframes is omitted. */
+  easing?: KeyframeEasing;
+}
+
+export interface BuildIntercutSlicesConfig {
+  sourceA: IntercutSourceBounds;
+  sourceB: IntercutSourceBounds;
+  automation: FrequencyAutomationConfig;
+  /** Floor on slice length; caps max Hz. Default one 60 fps frame. */
+  minSliceSec?: number;
+  /** First visible slice comes from clip A when true (default). */
+  startWithA?: boolean;
+}
+
+/** Minimum slice length (seconds) before stream-copy concat is considered safe. */
+export const INTERCUT_MIN_STREAM_COPY_SLICE_SEC = 0.5;
+
+/**
+ * Sample cut frequency (Hz) at a point on the output timeline.
+ */
+export function frequencyHzAtTime(
+  automation: FrequencyAutomationConfig,
+  outputTimeSec: number,
+): number {
+  const { totalDurationSec, startFrequencyHz, endFrequencyHz, frequencyKeyframes, easing } =
+    automation;
+
+  if (frequencyKeyframes?.length) {
+    return sampleKeyframes(frequencyKeyframes, outputTimeSec, startFrequencyHz);
+  }
+
+  const track: Keyframe[] = [
+    { t: 0, value: startFrequencyHz, easing },
+    { t: totalDurationSec, value: endFrequencyHz },
+  ];
+  return sampleKeyframes(track, outputTimeSec, startFrequencyHz);
+}
+
+/**
+ * Build alternating A/B slices for concat demuxer `inpoint` / `outpoint` entries.
+ */
+export function buildIntercutSlices(config: BuildIntercutSlicesConfig): IntercutSlice[] {
+  const {
+    sourceA,
+    sourceB,
+    automation,
+    minSliceSec = 1 / 60,
+    startWithA = true,
+  } = config;
+
+  const { totalDurationSec } = automation;
+  if (totalDurationSec <= 0) return [];
+
+  const slices: IntercutSlice[] = [];
+  let outputTime = 0;
+  let useA = startWithA;
+  let offsetA = sourceA.trimStart;
+  let offsetB = sourceB.trimStart;
+
+  while (outputTime < totalDurationSec - 1e-9) {
+    const hz = frequencyHzAtTime(automation, outputTime);
+    const safeHz = Math.max(hz, 0.1);
+    let sliceDuration = Math.max(1 / safeHz, minSliceSec);
+
+    const remaining = totalDurationSec - outputTime;
+    if (sliceDuration > remaining) {
+      sliceDuration = remaining;
+    }
+    if (sliceDuration <= 1e-9) break;
+
+    if (useA) {
+      const inpoint = offsetA;
+      const outpoint = Math.min(offsetA + sliceDuration, sourceA.trimEnd);
+      const actual = outpoint - inpoint;
+      if (actual <= 1e-9) break;
+      slices.push({ slot: 'A', inpoint, outpoint });
+      offsetA = outpoint;
+      outputTime += actual;
+    } else {
+      const inpoint = offsetB;
+      const outpoint = Math.min(offsetB + sliceDuration, sourceB.trimEnd);
+      const actual = outpoint - inpoint;
+      if (actual <= 1e-9) break;
+      slices.push({ slot: 'B', inpoint, outpoint });
+      offsetB = outpoint;
+      outputTime += actual;
+    }
+
+    useA = !useA;
+  }
+
+  return slices;
+}
+
+/**
+ * FFmpeg concat demuxer v2 playlist (file + inpoint + outpoint per slice).
+ */
+export function buildConcatPlaylist(
+  slices: IntercutSlice[],
+  fileA: string,
+  fileB: string,
+): string {
+  const lines: string[] = [];
+  for (const slice of slices) {
+    const file = slice.slot === 'A' ? fileA : fileB;
+    const escaped = file.replace(/'/g, "'\\''");
+    lines.push(`file '${escaped}'`);
+    lines.push(`inpoint ${slice.inpoint.toFixed(6)}`);
+    lines.push(`outpoint ${slice.outpoint.toFixed(6)}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/** True when every slice is long enough for keyframe-safe stream copy. */
+export function canUseStreamCopyForIntercut(slices: IntercutSlice[]): boolean {
+  if (slices.length === 0) return false;
+  return slices.every(
+    (s) => s.outpoint - s.inpoint >= INTERCUT_MIN_STREAM_COPY_SLICE_SEC,
+  );
+}
+
+/** Sum of slice durations on the output timeline. */
+export function intercutOutputDuration(slices: IntercutSlice[]): number {
+  return slices.reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+}

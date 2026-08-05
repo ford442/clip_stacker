@@ -6,3 +6,4 @@ export * from "./muxSource";
 export * from "./plan";
 export * from "./merge";
 export * from "./mux";
+export * from "./intercutGenerator";
