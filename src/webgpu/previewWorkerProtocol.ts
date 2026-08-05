@@ -1,9 +1,17 @@
 /**
  * Typed message protocol for the off-thread WebGPU preview worker.
  *
+ * Startup (two-phase so the display canvas is never transferred unless the
+ * worker can actually run WebGPU — otherwise main-thread fallback would find
+ * a neutered canvas):
+ *   1. Worker boots and posts `ready` after a GPU probe (no canvas yet).
+ *   2. Main transfers OffscreenCanvas only when `webgpuAvailable: true`.
+ *   3. Worker posts `initialized` once the real compositor is up.
+ *
  * Main → Worker: init, render, frames-ready, cancel, resize, sync-clips,
- *                pause-decoders, destroy
- * Worker → Main: ready, need-frames, render-complete, render-cancelled, error
+ *                pause-decoders, reset-finishing, destroy
+ * Worker → Main: ready, initialized, need-frames, render-complete,
+ *                render-cancelled, error
  */
 
 import type {
@@ -28,6 +36,43 @@ export type WorkerClip = Omit<Clip, 'file'>;
 export function toWorkerClip(clip: Clip): WorkerClip {
   const { file: _file, ...rest } = clip;
   return rest;
+}
+
+/**
+ * Stable key for grouping frame-capture work. Requests that share a media
+ * element must stay sequential; different keys can run in parallel.
+ */
+export function frameCaptureGroupKey(request: {
+  clipId: string;
+  mediaObjectUrl?: string;
+}): string {
+  return request.mediaObjectUrl
+    ? `${request.clipId}::${request.mediaObjectUrl}`
+    : request.clipId;
+}
+
+/**
+ * Partition frame requests into parallel-safe groups (one group per media
+ * element). Order within each group is preserved; group order follows first
+ * appearance in `requests`.
+ */
+export function groupFrameRequestsByMedia<T extends {
+  clipId: string;
+  mediaObjectUrl?: string;
+}>(requests: T[]): T[][] {
+  const groups = new Map<string, T[]>();
+  const order: string[] = [];
+  for (const request of requests) {
+    const key = frameCaptureGroupKey(request);
+    let group = groups.get(key);
+    if (!group) {
+      group = [];
+      groups.set(key, group);
+      order.push(key);
+    }
+    group.push(request);
+  }
+  return order.map((key) => groups.get(key)!);
 }
 
 /**
@@ -64,6 +109,9 @@ export interface CapturedFrame {
   videoWidth: number;
   videoHeight: number;
 }
+
+/** How long main waits for the worker GPU probe / init before falling back. */
+export const PREVIEW_WORKER_INIT_TIMEOUT_MS = 5_000;
 
 // --------------------------------------------------------------------------
 // Main → Worker messages
@@ -110,6 +158,7 @@ export type PreviewWorkerInbound =
       clips: WorkerClip[];
     }
   | { type: 'pause-decoders' }
+  | { type: 'reset-finishing' }
   | { type: 'destroy' };
 
 // --------------------------------------------------------------------------
@@ -118,8 +167,13 @@ export type PreviewWorkerInbound =
 
 export type PreviewWorkerOutbound =
   | {
+      /** GPU probe result — posted before any canvas is transferred. */
       type: 'ready';
       webgpuAvailable: boolean;
+    }
+  | {
+      /** Real compositor is bound to the transferred OffscreenCanvas. */
+      type: 'initialized';
     }
   | {
       type: 'need-frames';

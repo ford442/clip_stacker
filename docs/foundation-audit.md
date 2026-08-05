@@ -36,7 +36,7 @@ verified status:
 | # | Gap | Status | Evidence |
 |---|-----|--------|----------|
 | #144 | Core app state in `App.tsx` | **Advanced (this branch)** | Editing state + undo/redo extracted to Zustand `src/store/editorStore.ts`; `useEditHistory` is now a thin binding. See below. |
-| #145 | WebGPU on main thread | **Resolved** | `src/webgpu/preview.worker.ts` + `PreviewWorkerAdapter` off-thread the compositor, with a main-thread fallback (`src/components/Preview.tsx:303-308`) |
+| #145 | WebGPU on main thread | **Resolved** | `src/webgpu/preview.worker.ts` + `PreviewWorkerAdapter` off-thread the compositor (two-phase GPU probe before canvas transfer; main-thread fallback via `replaceTransferredCanvas`), with seek/VideoFrame capture remaining on the main thread (`src/components/Preview.tsx`) |
 | #146 | FFmpeg SAB / core-mt fallback | **Resolved** | `src/ffmpeg/ffmpegCommon.ts` selects single-threaded `@ffmpeg/core` vs multi-threaded `@ffmpeg/core-mt` from `crossOriginIsolated` + `SharedArrayBuffer` (`:113-115`), with CDN fallbacks and remediation logging (`:175`). Remote media serves `Cross-Origin-Resource-Policy: cross-origin` (`contabo_storage_manager/config/storage.noahcohn.com.conf`, `chunked_media_upload.py:136`) |
 | #147 | WebCodecs decode in export | **Resolved** | `src/utils/webcodecs-decoder.ts` + `src/utils/hybrid-encoder.ts` |
 | #148 | Web Audio playback graph | **Resolved** | `src/audio/playbackManager.ts`, `src/audio/schedule.ts` (+ `useTimelineAudioPlayback` hook) |

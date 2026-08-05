@@ -7,6 +7,9 @@
  *   3. Worker posts 'need-frames' with per-layer seek requests.
  *   4. Main captures VideoFrames from hidden <video> elements and posts 'frames-ready'.
  *   5. Worker renders layers to OffscreenCanvas and posts 'render-complete'.
+ *
+ * Startup is two-phase: probe GPU first (no canvas), then accept the
+ * transferred OffscreenCanvas only after main sees webgpuAvailable: true.
  */
 
 import type { Clip } from '../types';
@@ -17,6 +20,7 @@ import {
   type PreviewClipLayer,
   type PreviewCompositionPlan,
 } from '../utils/previewComposition';
+import { acquireGpuContext } from './gpuDevice';
 import { WorkerTimelineRenderer, type CapturedFrameEntry } from './timelinePreview';
 import type { PreviewWorkerInbound, PreviewWorkerOutbound, FrameRequest } from './previewWorkerProtocol';
 
@@ -33,16 +37,38 @@ function post(msg: PreviewWorkerOutbound): void {
   self.postMessage(msg);
 }
 
+/** Probe WebGPU without touching the display canvas. */
+async function probeWebGpu(): Promise<boolean> {
+  if (!('gpu' in navigator)) return false;
+  try {
+    const ctx = await acquireGpuContext();
+    return !!ctx.device;
+  } catch {
+    return false;
+  }
+}
+
+// Phase-1 probe as soon as the worker module loads — before main transfers
+// the canvas — so a failed probe never neuters the DOM canvas.
+void probeWebGpu().then((webgpuAvailable) => {
+  post({ type: 'ready', webgpuAvailable });
+});
+
 self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
   const msg = event.data;
   switch (msg.type) {
     case 'init': {
       try {
+        renderer?.destroy();
         renderer = await WorkerTimelineRenderer.create(msg.canvas);
         renderer.resizeCanvas(msg.width, msg.height);
-        post({ type: 'ready', webgpuAvailable: true });
-      } catch {
-        post({ type: 'ready', webgpuAvailable: false });
+        post({ type: 'initialized' });
+      } catch (err) {
+        renderer = null;
+        post({
+          type: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
       break;
     }
@@ -160,6 +186,11 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
 
     case 'resize': {
       renderer?.resizeCanvas(msg.width, msg.height);
+      break;
+    }
+
+    case 'reset-finishing': {
+      renderer?.resetFinishingTemporal();
       break;
     }
 

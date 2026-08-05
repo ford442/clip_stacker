@@ -32,7 +32,7 @@ describe('selectPreviewBackend', () => {
 
 describe('previewBackendLabel', () => {
   it('maps each backend to a UI badge label', () => {
-    expect(previewBackendLabel('webgpu')).toBe('WebGPU Timeline');
+    expect(previewBackendLabel('webgpu')).toBe('WebGPU Worker');
     expect(previewBackendLabel('canvas2d')).toBe('Canvas2D Timeline');
     expect(previewBackendLabel('unavailable')).toBe('Preview unavailable');
   });

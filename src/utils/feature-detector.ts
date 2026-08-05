@@ -5,6 +5,8 @@ export interface BrowserCapabilities {
   webcodecs: boolean;
   /** WebGPU API available. */
   webgpu: boolean;
+  /** OffscreenCanvas + transferControlToOffscreen for worker preview. */
+  offscreenCanvas: boolean;
   /** Hardware-accelerated H.264 VideoEncoder reported as supported. */
   hardwareH264: boolean;
   /** MediaRecorder can produce MP4 container output. */
@@ -59,6 +61,11 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
     }
   }
 
+  const offscreenCanvas =
+    typeof OffscreenCanvas !== "undefined" &&
+    typeof HTMLCanvasElement !== "undefined" &&
+    typeof HTMLCanvasElement.prototype.transferControlToOffscreen === "function";
+
   const mediaRecorderMp4 =
     typeof MediaRecorder !== "undefined" &&
     (MediaRecorder.isTypeSupported("video/mp4;codecs=avc1,mp4a.40.2") ||
@@ -85,6 +92,7 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
   _cached = {
     webcodecs,
     webgpu,
+    offscreenCanvas,
     hardwareH264,
     mediaRecorderMp4,
     sharedArrayBuffer,
@@ -129,7 +137,7 @@ export function selectPreviewBackend(
 export function previewBackendLabel(backend: PreviewBackend): string {
   switch (backend) {
     case "webgpu":
-      return "WebGPU Timeline";
+      return "WebGPU Worker";
     case "canvas2d":
       return "Canvas2D Timeline";
     default:
@@ -152,6 +160,7 @@ export function formatCapabilities(caps: BrowserCapabilities): string {
   lines.push(`WebCodecs: ${caps.webcodecs ? "✓" : "✗"}`);
   lines.push(`Hardware H.264: ${caps.hardwareH264 ? "✓" : "✗"}`);
   lines.push(`WebGPU: ${caps.webgpu ? "✓" : "✗"}`);
+  lines.push(`OffscreenCanvas: ${caps.offscreenCanvas ? "✓" : "✗"}`);
   lines.push(`MediaRecorder MP4: ${caps.mediaRecorderMp4 ? "✓" : "✗"}`);
   lines.push(`SharedArrayBuffer: ${caps.sharedArrayBuffer ? "✓" : "✗"}`);
   lines.push(`CrossOriginIsolated: ${caps.crossOriginIsolated ? "✓" : "✗"}`);

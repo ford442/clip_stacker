@@ -709,6 +709,10 @@ export class WorkerTimelineRenderer {
     return 0;
   }
 
+  resetFinishingTemporal(): void {
+    this.engine.resetFinishingTemporal();
+  }
+
   destroy(): void {
     this.engine.destroy();
   }
