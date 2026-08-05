@@ -61,6 +61,22 @@ describe("calculateRenderPlan", () => {
     expect(plan.reason).toContain('already match');
   });
 
+  it('forces re-encoding when a still image is in the timeline', () => {
+    const still = makeClip({
+      title: 'Photo.png',
+      stillImage: true,
+      file: new File([], 'Photo.png', { type: 'image/png' }),
+      videoWidth: 1920,
+      videoHeight: 1080,
+    });
+
+    const plan = calculateRenderPlan([still], [], [], DEFAULT_EXPORT_SETTINGS);
+
+    expect(plan.path).toBe('effects-reencoding');
+    expect(plan.willReencode).toBe(true);
+    expect(plan.reason).toContain('Still image');
+  });
+
   it('forces re-encoding when clips have mixed native resolutions', () => {
     const clips = [
       makeClip({ videoWidth: 1920, videoHeight: 1080 }),

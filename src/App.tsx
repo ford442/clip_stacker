@@ -1007,9 +1007,10 @@ export function App() {
         );
 
         const modeLabel = mode === "boomerang" ? "boomerang" : `${multiplier}x`;
+        const baseName = clipSnapshot.file.name.replace(/\.[^.]+$/, "");
         const processedFile = new File(
           [blobWithAudio],
-          `rife_${modeLabel}_${clipSnapshot.file.name}`,
+          `rife_${modeLabel}_${baseName}.mp4`,
           { type: blobWithAudio.type },
         );
         const processedUrl = URL.createObjectURL(processedFile);
