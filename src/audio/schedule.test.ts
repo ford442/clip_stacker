@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
-import type { Clip, ClipGroup, ClipTransition } from '../types';
+import type { Clip, ClipGroup, ClipTransition, Track } from '../types';
 import {
+  BED_DUCK_LINEAR,
+  bedOverlapsDialogue,
   buildAudioSchedule,
+  effectiveEntryVolume,
   entriesActiveAtOrAfter,
+  schedulesMatchStructure,
 } from './schedule';
 
 function makeClip(
@@ -121,5 +125,40 @@ describe('entriesActiveAtOrAfter', () => {
       'b',
     ]);
     expect(entriesActiveAtOrAfter(entries, 8)).toEqual([]);
+  });
+});
+
+describe('bed ducking helpers', () => {
+  it('marks audio-track clips as beds and ducks under overlapping dialogue', () => {
+    const dialogue = makeClip('vox', 4);
+    const bed = makeClip('music', 8, { kind: 'audio' });
+    const tracks: Track[] = [
+      {
+        id: 'audio-1',
+        kind: 'audio',
+        label: 'Music',
+        items: [{ clipId: 'music', startTime: 0 }],
+      },
+    ];
+    const schedule = buildAudioSchedule([dialogue, bed], [], [], tracks);
+    const bedEntry = schedule.find((e) => e.clipId === 'music');
+    const voxEntry = schedule.find((e) => e.clipId === 'vox');
+    expect(bedEntry?.isBed).toBe(true);
+    expect(voxEntry?.isBed).toBeFalsy();
+    expect(bedOverlapsDialogue(bedEntry!, schedule)).toBe(true);
+    expect(effectiveEntryVolume(bedEntry!, schedule)).toBeCloseTo(
+      bedEntry!.volume * BED_DUCK_LINEAR,
+    );
+  });
+
+  it('detects structure-only schedule equality for live gain updates', () => {
+    const base = buildAudioSchedule([makeClip('a', 2)], [], []);
+    const louder = base.map((e) => ({ ...e, volume: 1.5 }));
+    expect(schedulesMatchStructure(base, louder)).toBe(true);
+    expect(
+      schedulesMatchStructure(base, [
+        { ...base[0], timelineStart: 1 },
+      ]),
+    ).toBe(false);
   });
 });

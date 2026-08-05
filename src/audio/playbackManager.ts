@@ -2,7 +2,9 @@ import type { Clip, ClipGroup, ClipTransition, Track } from '../types';
 import { ClipAudioCache } from './clipAudioCache';
 import {
   buildAudioSchedule,
+  effectiveEntryVolume,
   entriesActiveAtOrAfter,
+  schedulesMatchStructure,
   type AudioScheduleEntry,
 } from './schedule';
 
@@ -14,6 +16,26 @@ export interface AudioPlaybackStatus {
   available: boolean;
   currentTime: number;
 }
+
+/** Instantaneous meter reading from the playback AnalyserNode. */
+export interface AnalyserLevels {
+  /** Broadband RMS in 0–1. */
+  rms: number;
+  /** Peak sample in 0–1. */
+  peak: number;
+  /** Low / mid / high band energies in 0–1 (for reactive shaders / meters). */
+  bass: number;
+  mid: number;
+  treble: number;
+}
+
+export const ZERO_ANALYSER_LEVELS: AnalyserLevels = {
+  rms: 0,
+  peak: 0,
+  bass: 0,
+  mid: 0,
+  treble: 0,
+};
 
 type StatusListener = (status: AudioPlaybackStatus) => void;
 
@@ -49,6 +71,11 @@ export class AudioPlaybackManager {
   private listeners = new Set<StatusListener>();
   private syncGeneration = 0;
   private scheduleGeneration = 0;
+  /** Coalesces rapid scrub seeks while playing into one reschedule. */
+  private seekGeneration = 0;
+  private masterVolume = 1;
+  private analyserTimeDomain: Float32Array | null = null;
+  private analyserFrequency: Float32Array | null = null;
 
   /** Whether Web Audio routing is usable (false → muted visual preview). */
   get isAvailable(): boolean {
@@ -57,6 +84,69 @@ export class AudioPlaybackManager {
 
   getAnalyser(): AnalyserNode | null {
     return this.analyser;
+  }
+
+  /** Master output gain (0–2). Live-updates without restarting sources. */
+  getMasterVolume(): number {
+    return this.masterVolume;
+  }
+
+  setMasterVolume(volume: number): void {
+    this.masterVolume = Math.max(0, Math.min(2, volume));
+    if (this.masterGain && this.ctx) {
+      const now = this.ctx.currentTime;
+      this.masterGain.gain.cancelScheduledValues(now);
+      this.masterGain.gain.setValueAtTime(this.masterGain.gain.value, now);
+      this.masterGain.gain.linearRampToValueAtTime(this.masterVolume, now + 0.03);
+    }
+  }
+
+  /**
+   * Sample the AnalyserNode for waveform meters / audio-reactive uniforms.
+   * Returns zeros when the graph is unavailable or idle.
+   */
+  readAnalyserLevels(): AnalyserLevels {
+    if (!this.analyser) return { ...ZERO_ANALYSER_LEVELS };
+
+    const binCount = this.analyser.frequencyBinCount;
+    if (!this.analyserTimeDomain || this.analyserTimeDomain.length !== this.analyser.fftSize) {
+      this.analyserTimeDomain = new Float32Array(this.analyser.fftSize);
+    }
+    if (!this.analyserFrequency || this.analyserFrequency.length !== binCount) {
+      this.analyserFrequency = new Float32Array(binCount);
+    }
+
+    this.analyser.getFloatTimeDomainData(
+      this.analyserTimeDomain as unknown as Float32Array<ArrayBuffer>,
+    );
+    this.analyser.getFloatFrequencyData(
+      this.analyserFrequency as unknown as Float32Array<ArrayBuffer>,
+    );
+
+    let sumSq = 0;
+    let peak = 0;
+    for (let i = 0; i < this.analyserTimeDomain.length; i++) {
+      const s = this.analyserTimeDomain[i];
+      sumSq += s * s;
+      const abs = Math.abs(s);
+      if (abs > peak) peak = abs;
+    }
+    const rms = Math.sqrt(sumSq / Math.max(1, this.analyserTimeDomain.length));
+
+    // Frequency data is in dB (−∞…0). Map bands to 0–1 loosely.
+    const bass = bandEnergy(this.analyserFrequency, 0, Math.floor(binCount * 0.08));
+    const mid = bandEnergy(
+      this.analyserFrequency,
+      Math.floor(binCount * 0.08),
+      Math.floor(binCount * 0.4),
+    );
+    const treble = bandEnergy(
+      this.analyserFrequency,
+      Math.floor(binCount * 0.4),
+      binCount,
+    );
+
+    return { rms, peak, bass, mid, treble };
   }
 
   subscribe(listener: StatusListener): () => void {
@@ -109,6 +199,7 @@ export class AudioPlaybackManager {
       }
       this.ctx = new Ctx();
       this.masterGain = this.ctx.createGain();
+      this.masterGain.gain.value = this.masterVolume;
       this.analyser = this.ctx.createAnalyser();
       this.analyser.fftSize = 2048;
       this.masterGain.connect(this.analyser);
@@ -144,6 +235,7 @@ export class AudioPlaybackManager {
   /**
    * Rebuild the schedule and warm-decode audio for the current timeline.
    * Safe to call frequently; in-flight decodes are coalesced per clip.
+   * Volume-only edits while playing update GainNodes in place (no restart).
    */
   async syncTimeline(
     clips: Clip[],
@@ -151,7 +243,9 @@ export class AudioPlaybackManager {
     transitions: ClipTransition[],
     tracks: Track[] = [],
   ): Promise<void> {
-    this.schedule = buildAudioSchedule(clips, groups, transitions, tracks);
+    const nextSchedule = buildAudioSchedule(clips, groups, transitions, tracks);
+    const structureUnchanged = schedulesMatchStructure(this.schedule, nextSchedule);
+    this.schedule = nextSchedule;
     const keepIds = new Set(this.schedule.map((e) => e.clipId));
     this.cache.prune(keepIds);
 
@@ -168,11 +262,14 @@ export class AudioPlaybackManager {
     );
     if (generation !== this.syncGeneration) return;
 
-    // If already playing, reschedule so volume/trim edits take effect.
     if (this.state === 'playing') {
-      const t = this.getCurrentTime();
-      this.stopSources();
-      await this.scheduleFrom(t);
+      if (structureUnchanged && this.active.length > 0) {
+        this.applyLiveGains();
+      } else {
+        const t = this.getCurrentTime();
+        this.stopSources();
+        await this.scheduleFrom(t);
+      }
     }
   }
 
@@ -208,19 +305,30 @@ export class AudioPlaybackManager {
 
   /**
    * Seek / scrub to `timelineTime`. While playing, sources are stopped and
-   * re-scheduled from the new offset (sample-accurate within one buffer period).
+   * re-scheduled from the new offset. Rapid scrub events are coalesced so the
+   * graph only rebuilds once per animation frame (~frame-accurate).
    */
   async seek(timelineTime: number): Promise<void> {
     const t = Math.max(0, timelineTime);
     this.pausedAt = t;
-    if (this.state === 'playing') {
-      this.stopSources();
-      if (this.ctx) {
-        this.timelineOrigin = t;
-        this.contextOrigin = this.ctx.currentTime;
-        await this.scheduleFrom(t);
+    this.emit();
+
+    if (this.state !== 'playing' || !this.ctx) return;
+
+    const generation = ++this.seekGeneration;
+    await new Promise<void>((resolve) => {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => resolve());
+      } else {
+        setTimeout(resolve, 0);
       }
-    }
+    });
+    if (generation !== this.seekGeneration || this.state !== 'playing') return;
+
+    this.stopSources();
+    this.timelineOrigin = this.pausedAt;
+    this.contextOrigin = this.ctx.currentTime;
+    await this.scheduleFrom(this.pausedAt);
     this.emit();
   }
 
@@ -237,6 +345,7 @@ export class AudioPlaybackManager {
    */
   async dispose(): Promise<void> {
     this.syncGeneration += 1;
+    this.seekGeneration += 1;
     this.stopSources();
     this.cache.clear();
     this.schedule = [];
@@ -245,6 +354,8 @@ export class AudioPlaybackManager {
     this.pausedAt = 0;
     this.timelineOrigin = 0;
     this.contextOrigin = 0;
+    this.analyserTimeDomain = null;
+    this.analyserFrequency = null;
 
     const ctx = this.ctx;
     this.ctx = null;
@@ -295,6 +406,27 @@ export class AudioPlaybackManager {
     this.active = [];
   }
 
+  /** Push current schedule volumes (with ducking) onto active GainNodes. */
+  private applyLiveGains(): void {
+    if (!this.ctx) return;
+    const now = this.ctx.currentTime;
+    for (const active of this.active) {
+      const updated = this.schedule.find(
+        (entry) =>
+          entry.clipId === active.entry.clipId &&
+          entry.timelineStart === active.entry.timelineStart &&
+          entry.objectUrl === active.entry.objectUrl,
+      );
+      if (!updated) continue;
+      active.entry = updated;
+      const volume = effectiveEntryVolume(updated, this.schedule);
+      const param = active.gain.gain;
+      param.cancelScheduledValues(now);
+      param.setValueAtTime(param.value, now);
+      param.linearRampToValueAtTime(volume, now + 0.04);
+    }
+  }
+
   private async scheduleFrom(globalTime: number): Promise<void> {
     if (!this.ctx || !this.masterGain || this.state !== 'playing') return;
 
@@ -303,6 +435,19 @@ export class AudioPlaybackManager {
     const master = this.masterGain;
     const now = ctx.currentTime;
     const remaining = entriesActiveAtOrAfter(this.schedule, globalTime);
+
+    // Prefetch all buffers in parallel so later clips aren't delayed by
+    // earlier decodes (keeps multi-clip starts gapless).
+    await Promise.all(
+      remaining.map((entry) => this.cache.get(entry.clipId, entry.objectUrl, ctx)),
+    );
+    if (
+      generation !== this.scheduleGeneration ||
+      this.state !== 'playing' ||
+      this.ctx !== ctx
+    ) {
+      return;
+    }
 
     for (const entry of remaining) {
       if (generation !== this.scheduleGeneration) return;
@@ -340,9 +485,10 @@ export class AudioPlaybackManager {
       source.buffer = buffer;
 
       const gain = ctx.createGain();
+      const duckedVolume = effectiveEntryVolume(entry, this.schedule);
       applyGainEnvelope(
         gain.gain,
-        entry,
+        { ...entry, volume: duckedVolume },
         when,
         playDuration,
         clipElapsed,
@@ -371,6 +517,19 @@ export class AudioPlaybackManager {
       this.active.push(active);
     }
   }
+}
+
+/** Map a slice of Analyser frequency bins (dB) to a 0–1 energy. */
+function bandEnergy(frequencyDb: Float32Array, start: number, end: number): number {
+  if (end <= start) return 0;
+  let sum = 0;
+  for (let i = start; i < end; i++) {
+    // getFloatFrequencyData is typically −100…0 dB.
+    const db = frequencyDb[i];
+    const linear = db <= -100 ? 0 : Math.pow(10, db / 20);
+    sum += linear;
+  }
+  return Math.min(1, sum / (end - start));
 }
 
 /**
