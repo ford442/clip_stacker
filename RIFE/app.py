@@ -36,6 +36,10 @@ STILL_IMAGE_DEFAULT_DURATION = 5.0
 # avg_frame_rate rarely lands exactly on 30 (30000/1001 is 29.97), and a clip
 # that close needs no resampling.
 FPS_TOLERANCE = 0.05
+# MP4 media timescale forced on every normalized clip. A multiple of both 30
+# and 30000/1001 keeps frame durations integral either way, and forcing one
+# value means the concat demuxer never has to reconcile two time bases.
+VIDEO_TRACK_TIMESCALE = 30000
 IMAGE_EXTENSIONS = frozenset({
     ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tiff", ".tif",
 })
@@ -58,26 +62,53 @@ def is_still_image(path):
 
 
 def nle_friendly_h264_video_args(gop=None):
-    """libx264 flags aligned with clip_stacker buildStillImageFfmpegArgs."""
+    """libx264 flags aligned with clip_stacker buildStillImageFfmpegArgs.
+
+    Editors are stricter than players. Beyond codec/profile they want a
+    constant frame rate, a declared colour space and one fixed media
+    timescale — a still-image clip encoded without those lands in an NLE as a
+    variable-rate, colour-shifted, oddly-timed asset even though it plays fine
+    in VLC. Everything here is emitted for every clip so the whole concat set
+    is byte-level uniform.
+    """
     gop = gop or STITCH_FPS
     return [
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
         '-tune', 'stillimage',
         '-profile:v', 'high', '-level', '4.1',
         '-g', str(gop), '-keyint_min', str(gop), '-sc_threshold', '0',
-        '-pix_fmt', 'yuv420p', '-vsync', 'cfr',
+        '-pix_fmt', 'yuv420p',
+        # No B-frames: reordering writes negative DTS and CTS offsets, which
+        # the MP4 muxer papers over with an edit list. Editors that ignore
+        # edit lists then show the clip off by a frame or two, and stills gain
+        # nothing from B-frames anyway.
+        '-bf', '0',
+        # Constant frame rate, declared in both the stream and the container.
+        '-vsync', 'cfr', '-r', str(STITCH_FPS),
+        # Untagged H.264 makes editors guess bt601 vs bt709; a still rendered
+        # through the shader path then reads as colour-shifted next to clips
+        # that are tagged. Say it explicitly.
+        '-colorspace', 'bt709', '-color_primaries', 'bt709',
+        '-color_trc', 'bt709', '-color_range', 'tv',
+        # One timescale everywhere: mixing the muxer's per-clip defaults is
+        # what makes a concat-copied file report VFR / wrong duration.
+        '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
     ]
 
 
 def nle_friendly_aac_audio_args():
-    return ['-c:a', 'aac', '-b:a', '192k', '-ar', '44100']
+    return ['-c:a', 'aac', '-b:a', '192k', '-ar', '44100', '-ac', '2']
 
 
 def stitch_scale_filter(target_w, target_h):
     """Scale/pad/fps filter chain with explicit yuv420p for concat compatibility."""
     return (
         f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
-        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps={STITCH_FPS},format=yuv420p"
+        f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
+        # PNG/JPEG density metadata can yield a non-square sample aspect that
+        # editors honour, stretching the still against its neighbours.
+        f"setsar=1,fps={STITCH_FPS},format=yuv420p,"
+        f"setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
     )
 
 # ── Thumbnail JPEG files (Gradio Gallery needs real paths, not data URIs) ───
@@ -559,6 +590,9 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
             # the faststart flag the concat step expects.
             subprocess.run([
                 'ffmpeg', '-i', vid_path, '-c', 'copy',
+                # Same bitstream, but retimed onto the shared timescale so it
+                # concats against the re-encoded clips without timestamp drift.
+                '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
                 '-movflags', '+faststart', '-y', out
             ], check=True)
             copied += 1
@@ -579,8 +613,16 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
 
     # ── Step 2: Concatenate videos (lossless) ───────────────────────
     subprocess.run([
-        'ffmpeg', '-f', 'concat', '-safe', '0', '-i', list_path,
-        '-c', 'copy', '-y', concat_video
+        # +genpts regenerates presentation timestamps across the joins rather
+        # than trusting each segment's own; stale ones read as gaps in an
+        # editor. muxdelay/muxpreload 0 keeps the result starting at zero.
+        'ffmpeg', '-fflags', '+genpts', '-f', 'concat', '-safe', '0',
+        '-i', list_path,
+        '-c', 'copy',
+        '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
+        '-muxpreload', '0', '-muxdelay', '0',
+        '-movflags', '+faststart',
+        '-y', concat_video
     ], check=True)
 
     progress(0.95, desc="Finalizing stitched output")
@@ -594,7 +636,8 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
             '-filter_complex', '[1:a]apad[a]',
             '-map', '0:v:0', '-map', '[a]',
             '-c:v', 'copy',
-            '-c:a', 'aac', '-b:a', '320k',
+            '-c:a', 'aac', '-b:a', '320k', '-ar', '44100', '-ac', '2',
+            '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
             '-movflags', '+faststart',
             '-y', output_final
         ]
@@ -612,13 +655,15 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
             '-filter_complex', filter_complex,
             '-map', '0:v:0', '-map', '[a]',
             '-c:v', 'copy',
-            '-c:a', 'aac', '-b:a', '320k',
+            '-c:a', 'aac', '-b:a', '320k', '-ar', '44100', '-ac', '2',
+            '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
             '-shortest', '-movflags', '+faststart', '-y', output_final
         ]
     else:
         # Keep original audio — remux with faststart for broad player/NLE compatibility.
         cmd = [
             'ffmpeg', '-i', concat_video, '-c', 'copy',
+            '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
             '-movflags', '+faststart', '-y', output_final,
         ]
 
