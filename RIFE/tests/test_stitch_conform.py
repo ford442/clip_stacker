@@ -114,6 +114,51 @@ def test_normalize_still_image_produces_h264_aac(app, tmp_path):
     assert any("High" in line for line in pix_fmt)
 
 
+def probe(path, entries, stream="v:0"):
+    """Map ffprobe stream fields by name — it emits them in its own order."""
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", stream,
+         "-show_entries", entries, "-of", "default=noprint_wrappers=1", path],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip().splitlines()
+    return dict(line.split("=", 1) for line in out if "=" in line)
+
+
+def test_normalized_still_is_tagged_and_square_pixel(app, tmp_path):
+    """Editors read these tags literally; leaving them unset is the bug."""
+    source = make_still_image(tmp_path / "still.png", 800, 600)
+    out = str(tmp_path / "norm.mp4")
+    app.normalize_still_image_for_stitch(source, out, "1920", "1080", duration=1)
+
+    fields = probe(out, "stream=color_space,color_primaries,color_transfer,"
+                        "sample_aspect_ratio,time_base")
+    assert fields["color_space"] == "bt709"
+    assert fields["color_primaries"] == "bt709"
+    assert fields["color_transfer"] == "bt709"
+    assert fields["sample_aspect_ratio"] == "1:1"  # square pixels after setsar
+    assert fields["time_base"] == f"1/{app.VIDEO_TRACK_TIMESCALE}"
+
+
+def test_stitched_output_is_constant_rate_on_one_timescale(app, tmp_path):
+    """A still + a video must join without VFR timestamps or a shifted start."""
+    still = make_still_image(tmp_path / "still.png", 640, 480)
+    video = make_video(tmp_path / "clip.mp4", 640, 480, 30, seconds=1)
+    out = app.stitch_videos([still, video], "1920x1080")
+
+    fields = probe(
+        out, "stream=avg_frame_rate,r_frame_rate,time_base,start_time")
+    assert fields["time_base"] == f"1/{app.VIDEO_TRACK_TIMESCALE}"
+    # r_frame_rate is derived from the actual frame spacing: an exact 30/1
+    # means no join left a short or long frame behind.
+    assert fields["r_frame_rate"] == f"{app.STITCH_FPS}/1"
+    num, den = (int(x) for x in fields["avg_frame_rate"].split("/"))
+    assert num / den == pytest.approx(app.STITCH_FPS, abs=0.2)
+    # Only the AAC priming offset (1024/44100 ≈ 0.023s) may remain; anything
+    # larger means a join left the video shifted against its own timeline.
+    assert float(fields["start_time"]) < 0.03
+    assert probe(out, "stream=has_b_frames")["has_b_frames"] == "0"
+
+
 def test_still_image_thumb_is_jpeg_file(app, tmp_path):
     path = make_still_image(tmp_path / "still.png")
     thumb = app.extract_thumb_path(path)
