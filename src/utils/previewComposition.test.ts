@@ -84,6 +84,16 @@ describe('previewComposition', () => {
       expect(layers[0].sourceTime).toBeCloseTo(1);
     });
 
+    it('maps sourceTime through playbackRate', () => {
+      const clips = [makeClip('a', 10, { playbackRate: 2 })];
+      // Output duration is 5s; at global t=1, local=1 → source = 0 + 1*2 = 2
+      const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 1);
+      const layers = clipLayers(plan);
+      expect(plan.totalDuration).toBeCloseTo(5);
+      expect(layers[0].localElapsed).toBeCloseTo(1);
+      expect(layers[0].sourceTime).toBeCloseTo(2);
+    });
+
     it('matches sequential FFmpeg order for non-transition stacks', () => {
       const clips = [makeClip('a', 4), makeClip('b', 4), makeClip('c', 4)];
 

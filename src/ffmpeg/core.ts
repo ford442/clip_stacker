@@ -8,6 +8,12 @@ import type {
 import { getClipDuration } from "../utils/project";
 import { resolveTargetResolution } from "../utils/resolution";
 import { audioVolumeFilterSegment, clipHasVolumeAdjustment } from "../utils/audioVolume";
+import {
+  audioTempoFilterSegment,
+  clipHasPlaybackRateAdjustment,
+  getClipPlaybackRate,
+  videoSetptsFilter,
+} from "../utils/playbackRate";
 import { assertValidBundledFontBytes } from "../utils/fontBytes";
 import {
   buildDrawtextFilter,
@@ -317,7 +323,8 @@ export function clipNeedsEffects(clip: Clip): boolean {
     clip.videoFadeOut > 0 ||
     clip.audioFadeIn > 0 ||
     clip.audioFadeOut > 0 ||
-    clipHasVolumeAdjustment(clip)
+    clipHasVolumeAdjustment(clip) ||
+    clipHasPlaybackRateAdjustment(clip)
   );
 }
 
@@ -494,10 +501,13 @@ export function buildSingleClipFilter(
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   const safeVideoOut = Math.max(0, duration - clip.videoFadeOut);
   const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
+  const rate = getClipPlaybackRate(clip);
+  const setpts = videoSetptsFilter(rate);
+  const atempo = audioTempoFilterSegment(rate);
   const parts: string[] = [];
 
   if (clip.kind === "video") {
-    let v = `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS`;
+    let v = `[0:v]trim=start=${clip.trimStart}:end=${end},${setpts}`;
     v += `,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease`;
     v += `,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
@@ -518,7 +528,7 @@ export function buildSingleClipFilter(
     parts.push(`${v}[vout]`);
 
     if (clipHasSourceAudio(clip)) {
-      let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
+      let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
       if (clip.audioFadeOut > 0)
         a += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
@@ -535,7 +545,7 @@ export function buildSingleClipFilter(
       `color=c=black:s=${targetWidth}x${targetHeight}:d=${duration},format=yuv420p[vout]`,
     );
 
-    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
+    let a = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) a += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       a += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;

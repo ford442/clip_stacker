@@ -7,6 +7,13 @@ import {
   schedulesMatchStructure,
   type AudioScheduleEntry,
 } from './schedule';
+import {
+  collectAutomationBreakpoints,
+  DEFAULT_CLIP_PAN,
+  scheduleAudioParamBreakpoints,
+} from '../utils/clipAutomation';
+import { sampleKeyframes } from '../utils/keyframes';
+import { clampClipVolume } from '../utils/audioVolume';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
 
@@ -42,7 +49,13 @@ type StatusListener = (status: AudioPlaybackStatus) => void;
 interface ActiveSource {
   source: AudioBufferSourceNode;
   gain: GainNode;
+  panner: StereoPannerNode | null;
   entry: AudioScheduleEntry;
+  /** AudioContext time when this source was scheduled to start. */
+  when: number;
+  /** Clip-local elapsed time at schedule start (handles mid-clip seeks). */
+  clipElapsed: number;
+  playDuration: number;
 }
 
 /**
@@ -390,7 +403,7 @@ export class AudioPlaybackManager {
 
   private stopSources(): void {
     this.scheduleGeneration += 1;
-    for (const { source } of this.active) {
+    for (const { source, gain, panner } of this.active) {
       try {
         source.onended = null;
         source.stop();
@@ -399,6 +412,8 @@ export class AudioPlaybackManager {
       }
       try {
         source.disconnect();
+        gain.disconnect();
+        panner?.disconnect();
       } catch {
         // ignore
       }
@@ -419,11 +434,31 @@ export class AudioPlaybackManager {
       );
       if (!updated) continue;
       active.entry = updated;
-      const volume = effectiveEntryVolume(updated, this.schedule);
-      const param = active.gain.gain;
-      param.cancelScheduledValues(now);
-      param.setValueAtTime(param.value, now);
-      param.linearRampToValueAtTime(volume, now + 0.04);
+      const duckedVolume = effectiveEntryVolume(updated, this.schedule);
+      // Remaining play window from now — re-apply envelopes from current local time.
+      const played = Math.max(0, now - active.when);
+      const localNow = active.clipElapsed + played;
+      const remaining = Math.max(0, active.playDuration - played);
+      if (remaining <= 1e-4) continue;
+      applyGainEnvelope(
+        active.gain.gain,
+        { ...updated, volume: duckedVolume },
+        now,
+        remaining,
+        localNow,
+        now,
+      );
+      if (active.panner) {
+        applyPanEnvelope(
+          active.panner.pan,
+          updated.panAutomation,
+          now,
+          remaining,
+          localNow,
+          now,
+          updated.duration,
+        );
+      }
     }
   }
 
@@ -463,18 +498,22 @@ export class AudioPlaybackManager {
       }
 
       const clipElapsed = Math.max(0, globalTime - entry.timelineStart);
-      const remainingDuration = entry.duration - clipElapsed;
-      if (remainingDuration <= 1e-4) continue;
+      const remainingTimeline = entry.duration - clipElapsed;
+      if (remainingTimeline <= 1e-4) continue;
 
-      const bufferOffset = entry.bufferOffset + clipElapsed;
+      const rate =
+        Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
+          ? entry.playbackRate
+          : 1;
+      const bufferOffset = entry.bufferOffset + clipElapsed * rate;
       // Clamp to buffer length so we never schedule past the decoded samples.
       const maxOffset = Math.max(0, buffer.duration - 1e-4);
       if (bufferOffset >= maxOffset) continue;
-      const playDuration = Math.min(
-        remainingDuration,
-        maxOffset - bufferOffset,
-      );
+      const remainingSource = maxOffset - bufferOffset;
+      const maxTimelineFromBuffer = remainingSource / rate;
+      const playDuration = Math.min(remainingTimeline, maxTimelineFromBuffer);
       if (playDuration <= 1e-4) continue;
+      const playDurationSource = playDuration * rate;
 
       const when =
         entry.timelineStart > globalTime
@@ -483,6 +522,7 @@ export class AudioPlaybackManager {
 
       const source = ctx.createBufferSource();
       source.buffer = buffer;
+      source.playbackRate.value = rate;
 
       const gain = ctx.createGain();
       const duckedVolume = effectiveEntryVolume(entry, this.schedule);
@@ -495,21 +535,47 @@ export class AudioPlaybackManager {
         ctx.currentTime,
       );
 
-      source.connect(gain);
-      gain.connect(master);
+      let panner: StereoPannerNode | null = null;
+      if (typeof ctx.createStereoPanner === 'function') {
+        panner = ctx.createStereoPanner();
+        applyPanEnvelope(
+          panner.pan,
+          entry.panAutomation,
+          when,
+          playDuration,
+          clipElapsed,
+          ctx.currentTime,
+          entry.duration,
+        );
+        source.connect(gain);
+        gain.connect(panner);
+        panner.connect(master);
+      } else {
+        source.connect(gain);
+        gain.connect(master);
+      }
 
       try {
-        source.start(when, bufferOffset, playDuration);
+        source.start(when, bufferOffset, playDurationSource);
       } catch {
         continue;
       }
 
-      const active: ActiveSource = { source, gain, entry };
+      const active: ActiveSource = {
+        source,
+        gain,
+        panner,
+        entry,
+        when,
+        clipElapsed,
+        playDuration,
+      };
       source.onended = () => {
         this.active = this.active.filter((item) => item !== active);
         try {
           source.disconnect();
           gain.disconnect();
+          panner?.disconnect();
         } catch {
           // ignore
         }
@@ -533,63 +599,142 @@ function bandEnergy(frequencyDb: Float32Array, start: number, end: number): numb
 }
 
 /**
- * Apply volume + per-clip audio fade envelopes relative to the scheduled
- * start of this source (`when`), accounting for mid-clip seeks via
- * `clipElapsed`.
+ * Apply volume keyframes + per-clip audio fade envelopes relative to the
+ * scheduled start of this source (`when`), accounting for mid-clip seeks via
+ * `clipElapsed`. Automation values are absolute linear gain; fades multiply.
  */
 export function applyGainEnvelope(
   param: AudioParam,
   entry: Pick<
     AudioScheduleEntry,
-    'volume' | 'audioFadeIn' | 'audioFadeOut' | 'duration'
+    'volume' | 'audioFadeIn' | 'audioFadeOut' | 'duration' | 'volumeAutomation'
   >,
   when: number,
   playDuration: number,
   clipElapsed: number,
   earliestTime: number,
 ): void {
-  const volume = entry.volume;
+  const volume = clampClipVolume(entry.volume);
+  const hasAutomation = (entry.volumeAutomation?.length ?? 0) > 0;
   const fadeIn = entry.audioFadeIn;
   const fadeOut = entry.audioFadeOut;
-  const fullDuration = entry.duration;
 
-  // Cancel any prior automation and start from the level at clipElapsed.
-  const startTime = Math.max(when, earliestTime);
-  param.cancelScheduledValues(startTime);
+  // Fast path: constant volume with optional linear fades (legacy behavior).
+  if (!hasAutomation) {
+    const startTime = Math.max(when, earliestTime);
+    param.cancelScheduledValues(startTime);
 
-  const levelAt = (localTime: number): number => {
-    let level = volume;
-    if (fadeIn > 0 && localTime < fadeIn) {
-      level *= localTime / fadeIn;
-    }
-    if (fadeOut > 0 && localTime > fullDuration - fadeOut) {
-      const outProgress = (fullDuration - localTime) / fadeOut;
-      level *= Math.max(0, Math.min(1, outProgress));
-    }
-    return level;
-  };
-
-  param.setValueAtTime(levelAt(clipElapsed), startTime);
-
-  if (fadeIn > 0 && clipElapsed < fadeIn) {
-    const fadeInEnd = when + (fadeIn - clipElapsed);
-    if (fadeInEnd > startTime) {
-      param.linearRampToValueAtTime(volume, fadeInEnd);
-    }
-  }
-
-  if (fadeOut > 0) {
-    const fadeOutStartLocal = fullDuration - fadeOut;
-    const fadeOutStart = when + (fadeOutStartLocal - clipElapsed);
-    const fadeOutEnd = when + playDuration;
-    if (fadeOutEnd > startTime && clipElapsed < fullDuration) {
-      if (fadeOutStart > startTime) {
-        param.setValueAtTime(volume, Math.max(startTime, fadeOutStart));
+    const levelAt = (localTime: number): number => {
+      let level = volume;
+      if (fadeIn > 0 && localTime < fadeIn) {
+        level *= localTime / fadeIn;
       }
-      const endLevel = levelAt(clipElapsed + playDuration);
-      param.linearRampToValueAtTime(endLevel, Math.max(startTime, fadeOutEnd));
+      if (fadeOut > 0 && localTime > entry.duration - fadeOut) {
+        const outProgress = (entry.duration - localTime) / fadeOut;
+        level *= Math.max(0, Math.min(1, outProgress));
+      }
+      return level;
+    };
+
+    param.setValueAtTime(levelAt(clipElapsed), startTime);
+
+    if (fadeIn > 0 && clipElapsed < fadeIn) {
+      const fadeInEnd = when + (fadeIn - clipElapsed);
+      if (fadeInEnd > startTime) {
+        param.linearRampToValueAtTime(volume, fadeInEnd);
+      }
     }
+
+    if (fadeOut > 0) {
+      const fadeOutStartLocal = entry.duration - fadeOut;
+      const fadeOutStart = when + (fadeOutStartLocal - clipElapsed);
+      const fadeOutEnd = when + playDuration;
+      if (fadeOutEnd > startTime && clipElapsed < entry.duration) {
+        if (fadeOutStart > startTime) {
+          param.setValueAtTime(volume, Math.max(startTime, fadeOutStart));
+        }
+        const endLevel = levelAt(clipElapsed + playDuration);
+        param.linearRampToValueAtTime(endLevel, Math.max(startTime, fadeOutEnd));
+      }
+    }
+    return;
   }
+
+  const breakpoints = collectAutomationBreakpoints({
+    duration: entry.duration,
+    clipElapsed,
+    playDuration,
+    keyframes: entry.volumeAutomation,
+    defaultValue: volume,
+    fadeIn,
+    fadeOut,
+  }).map((point) => ({
+    ...point,
+    value: clampClipVolume(point.value),
+  }));
+
+  scheduleAudioParamBreakpoints(
+    param,
+    breakpoints,
+    when,
+    clipElapsed,
+    earliestTime,
+  );
+}
+
+/**
+ * Apply stereo pan automation (−1…+1). Empty keyframes leave the pan centered.
+ */
+export function applyPanEnvelope(
+  param: AudioParam,
+  panAutomation: AudioScheduleEntry['panAutomation'],
+  when: number,
+  playDuration: number,
+  clipElapsed: number,
+  earliestTime: number,
+  fullDuration?: number,
+): void {
+  const hasAutomation = (panAutomation?.length ?? 0) > 0;
+  if (!hasAutomation) {
+    const startTime = Math.max(when, earliestTime);
+    param.cancelScheduledValues(startTime);
+    param.setValueAtTime(DEFAULT_CLIP_PAN, startTime);
+    return;
+  }
+
+  const duration = Math.max(
+    fullDuration ?? 0,
+    clipElapsed + playDuration,
+  );
+  const breakpoints = collectAutomationBreakpoints({
+    duration,
+    clipElapsed,
+    playDuration,
+    keyframes: panAutomation,
+    defaultValue: DEFAULT_CLIP_PAN,
+  }).map((point) => ({
+    ...point,
+    value: Math.max(-1, Math.min(1, point.value)),
+  }));
+
+  scheduleAudioParamBreakpoints(
+    param,
+    breakpoints,
+    when,
+    clipElapsed,
+    earliestTime,
+  );
+}
+
+/** Instantaneous pan at local clip time (for tests / meters). */
+export function samplePanAt(
+  panAutomation: AudioScheduleEntry['panAutomation'],
+  localTime: number,
+): number {
+  return Math.max(
+    -1,
+    Math.min(1, sampleKeyframes(panAutomation, localTime, DEFAULT_CLIP_PAN)),
+  );
 }
 
 /** Singleton used by the timeline preview session. */

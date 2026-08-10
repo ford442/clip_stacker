@@ -2,6 +2,7 @@ import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import type {
   Clip,
+  ClipGroup,
   ExportSettings,
   ClipTransition,
   TextOverlay,
@@ -10,7 +11,16 @@ import type {
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
 import { audioVolumeFilterSegment } from "../utils/audioVolume";
+import {
+  audioTempoFilterSegment,
+  getClipPlaybackRate,
+} from "../utils/playbackRate";
 import { buildTransitionFilterComplex } from "../utils/transitions";
+import {
+  renderTimelineAudioMixWav,
+  timelineHasAudioAutomation,
+} from "../utils/webcodecs-audio";
+import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -64,12 +74,73 @@ import {
   FFMPEG_LOAD_TIMEOUT_MS,
 } from "./core";
 
+const PREMIX_WAV_NAME = "mux_premix.wav";
+
+/**
+ * Replace the audio track on a video already in the FFmpeg VFS with a premixed WAV.
+ * Video stream is copied; audio is AAC-encoded from the offline mix.
+ */
+export async function remuxVideoWithPremixWav(
+  ffmpeg: IFfmpegRuntime,
+  videoVfsName: string,
+  wavBytes: Uint8Array,
+  outputName: string,
+  totalDuration: number,
+  onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
+  progressRange: { start: number; end: number } = { start: 0.91, end: 0.995 },
+): Promise<void> {
+  onStatus("Writing premixed automation audio...");
+  await safeWriteFile(ffmpeg, PREMIX_WAV_NAME, wavBytes, "mux write premix wav");
+
+  onStatus("Muxing premixed audio with video...");
+  await safeExec(
+    ffmpeg,
+    [
+      "-i",
+      videoVfsName,
+      "-i",
+      PREMIX_WAV_NAME,
+      "-map",
+      "0:v",
+      "-map",
+      "1:a",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      outputName,
+    ],
+    {
+      stage: "Muxing premixed audio with video",
+      totalDuration,
+      rangeStart: progressRange.start,
+      rangeEnd: progressRange.end,
+      onProgress,
+    },
+    "Premix WAV + video mux exec",
+  );
+
+  try {
+    await ffmpeg.deleteFile(PREMIX_WAV_NAME);
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function muxVideoWithAudio(
   videoBlob: Blob,
   clips: Clip[],
   settings: ExportSettings,
   onStatus: StatusCallback,
   onProgress?: ProgressCallback,
+  clipGroups: ClipGroup[] = [],
+  transitions: ClipTransition[] = [],
 ): Promise<Blob> {
   if (clips.length === 0)
     throw new Error("No clips provided for audio muxing.");
@@ -85,7 +156,8 @@ export async function muxVideoWithAudio(
       entry.name.startsWith("mux_audio_") ||
       entry.name === "mux_canvas_video.mp4" ||
       entry.name === "mux_canvas_video.webm" ||
-      entry.name === "mux_output.mp4"
+      entry.name === "mux_output.mp4" ||
+      entry.name === PREMIX_WAV_NAME
     ) {
       await ffmpeg.deleteFile(entry.name);
     }
@@ -101,6 +173,55 @@ export async function muxVideoWithAudio(
     new Uint8Array(await videoBlob.arrayBuffer()),
     "mux write canvas video",
   );
+
+  const totalDuration = clips.reduce(
+    (sum, clip) => sum + getClipDuration(clip),
+    0,
+  );
+
+  // Volume/pan automation cannot be expressed as FFmpeg volume filters —
+  // offline-mix in the browser and mux the premixed WAV.
+  if (timelineHasAudioAutomation(clips)) {
+    onStatus("Rendering automated audio mix (OfflineAudioContext)...");
+    emitProgress(onProgress, "Premixing automated audio", 0.88, true);
+    const wavBytes = await renderTimelineAudioMixWav(
+      clips,
+      clipGroups,
+      transitions,
+    );
+    if (!wavBytes) {
+      throw new Error("Automated audio premix produced no audio.");
+    }
+    await remuxVideoWithPremixWav(
+      ffmpeg,
+      videoVfsName,
+      wavBytes,
+      "mux_output.mp4",
+      totalDuration,
+      onStatus,
+      onProgress,
+    );
+
+    const premixOutput = await safeReadFile(
+      ffmpeg,
+      "mux_output.mp4",
+      "mux premix final read",
+    );
+    const premixPlain = new Uint8Array(premixOutput).buffer as ArrayBuffer;
+    try {
+      await ffmpeg.deleteFile(videoVfsName);
+    } catch {
+      /* ignore */
+    }
+    try {
+      await ffmpeg.deleteFile("mux_output.mp4");
+    } catch {
+      /* ignore */
+    }
+    onStatus("Audio mux complete (premix).");
+    emitProgress(onProgress, "Audio mux complete", 1, false);
+    return new Blob([premixPlain], { type: "video/mp4" });
+  }
 
   // Write each clip's source file for audio extraction.
   const audioVfsNames: string[] = [];
@@ -132,8 +253,9 @@ export async function muxVideoWithAudio(
     const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     const duration = getClipDuration(clip);
     const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
+    const atempo = audioTempoFilterSegment(getClipPlaybackRate(clip));
 
-    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo}`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;
@@ -157,10 +279,6 @@ export async function muxVideoWithAudio(
   }
 
   onStatus("Muxing audio with canvas video...");
-  const totalDuration = clips.reduce(
-    (sum, clip) => sum + getClipDuration(clip),
-    0,
-  );
   await safeExec(
     ffmpeg,
     [

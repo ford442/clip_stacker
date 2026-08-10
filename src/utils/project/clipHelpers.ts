@@ -1,6 +1,7 @@
 import type { Clip } from '../../types';
 import { MIN_CLIP_DURATION } from '../media';
 import { clampClipVolume } from '../audioVolume';
+import { clampClipPlaybackRate } from '../playbackRate';
 import {
   clampPixelRectToCanvas,
   isPixelRectOffCanvas,
@@ -15,7 +16,8 @@ import {
 
 export function getClipDuration(clip: Clip): number {
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-  return Math.max(MIN_CLIP_DURATION, end - clip.trimStart);
+  const rate = clampClipPlaybackRate(clip.playbackRate);
+  return Math.max(MIN_CLIP_DURATION, (end - clip.trimStart) / rate);
 }
 
 /**
@@ -53,6 +55,10 @@ export function sanitizeClipAdjustments(clip: Clip): void {
   clip.trimEnd = Number.isFinite(clip.trimEnd)
     ? Math.max(clip.trimStart + MIN_CLIP_DURATION, clip.trimEnd)
     : NaN;
+
+  if (clip.playbackRate != null) {
+    clip.playbackRate = clampClipPlaybackRate(clip.playbackRate);
+  }
 
   const maxFade = Math.max(0, getClipDuration(clip) / 2 - FADE_SAFETY_MARGIN);
   clip.videoFadeIn = Math.min(Math.max(0, clip.videoFadeIn), maxFade);

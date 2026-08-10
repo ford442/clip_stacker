@@ -76,6 +76,14 @@ describe('buildAudioSchedule', () => {
     expect(schedule[0].bufferOffset).toBe(2);
     expect(schedule[0].duration).toBe(5);
     expect(schedule[0].volume).toBe(1.5);
+    expect(schedule[0].playbackRate).toBe(1);
+  });
+
+  it('shortens schedule duration by playbackRate', () => {
+    const clips = [makeClip('a', 10, { playbackRate: 2 })];
+    const schedule = buildAudioSchedule(clips, [], []);
+    expect(schedule[0].duration).toBe(5);
+    expect(schedule[0].playbackRate).toBe(2);
   });
 
   it('clamps volume into 0–200%', () => {

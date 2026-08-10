@@ -44,4 +44,20 @@ describe('beatMarkers', () => {
     const markers = buildBeatMarkerLayouts(layouts);
     expect(markers.map((m) => m.leftPx)).toEqual([100, 300, 500]);
   });
+
+  it('maps source beats through playbackRate onto the output span', () => {
+    const clip = makeClip({
+      duration: 4,
+      trimStart: 0,
+      trimEnd: 4,
+      playbackRate: 2,
+      beatTimestamps: [0, 2, 4],
+    });
+    // Output duration is 2s; layout width still spans the output clip.
+    const layouts: VirtualClipLayout[] = [
+      { clip, index: 0, duration: 2, width: 200, start: 0 },
+    ];
+    const markers = buildBeatMarkerLayouts(layouts);
+    expect(markers.map((m) => m.leftPx)).toEqual([0, 100, 200]);
+  });
 });

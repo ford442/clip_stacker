@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
-import type { Clip, ClipAnimatableProp, ClipKeyframes, ExportSettings } from '../types';
+import type { Clip, ClipAnimatableProp, ClipKeyframes, ClipAutomation, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { resolveClipLocalTimeAtGlobal } from '../utils/previewComposition';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
@@ -20,6 +20,25 @@ import {
 } from '../utils/overlayCoords';
 import { extractWaveformPeaks } from '../utils/waveform';
 import { clampClipVolume } from '../utils/audioVolume';
+import {
+  DEFAULT_CLIP_PAN,
+  MAX_CLIP_PAN,
+  MIN_CLIP_PAN,
+} from '../utils/clipAutomation';
+import {
+  beatsSpannedByDuration,
+  clampClipPlaybackRate,
+  DEFAULT_CLIP_PLAYBACK_RATE,
+  getTrimmedSourceDuration,
+  MIN_CLIP_PLAYBACK_RATE,
+  nudgePlaybackRate,
+  outputDurationForRate,
+  PLAYBACK_RATE_NUDGE_COARSE,
+  PLAYBACK_RATE_NUDGE_FINE,
+  playbackRateForTargetDuration,
+  playbackRateToFitBeats,
+  UI_MAX_CLIP_PLAYBACK_RATE,
+} from '../utils/playbackRate';
 import { clipHasKeyframes } from '../utils/animatedLayout';
 import {
   buildPipRect,
@@ -50,12 +69,14 @@ interface ClipValues {
   height: string;
   opacity: string;
   volume: string;
+  playbackRate: string;
 }
 
 interface Props {
   exportSettings: ExportSettings;
   onChange: (values: ClipValues) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
+  onAutomationChange?: (automation: ClipAutomation | undefined) => void;
   onApplyKenBurns?: () => void;
   onExportSettingsChange: (settings: ExportSettings) => void;
   finishing?: FinishingSettings;
@@ -118,6 +139,7 @@ const DEFAULT_LAYOUT_VALUES = {
   height: 0,
   opacity: 1,
   volume: 1,
+  playbackRate: 1,
 } as const;
 const MIN_INSPECTOR_THUMBNAILS = 4;
 const MAX_INSPECTOR_THUMBNAILS = 8;
@@ -162,6 +184,7 @@ function InspectorImpl({
   exportSettings,
   onChange,
   onKeyframesChange,
+  onAutomationChange,
   onApplyKenBurns,
   onExportSettingsChange,
   finishing,
@@ -187,6 +210,7 @@ function InspectorImpl({
   const inspectorRef = useRef<HTMLDivElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pipCorner, setPipCorner] = useState<PipCorner>('bottom-right');
+  const [fitBeatCount, setFitBeatCount] = useState('8');
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
   const generatingThumbs = useRef<Set<string>>(new Set());
@@ -208,6 +232,7 @@ function InspectorImpl({
     height: '0',
     opacity: '1',
     volume: '1',
+    playbackRate: '1',
   });
 
   const layoutCanvas = useMemo(
@@ -233,6 +258,7 @@ function InspectorImpl({
       height: String(layout.height),
       opacity: String(clip.opacity ?? 1),
       volume: String(clip.volume ?? 1),
+      playbackRate: String(clip.playbackRate ?? 1),
     });
     setAdvancedOpen(
       hasAdvancedLayoutValues({
@@ -393,6 +419,23 @@ function InspectorImpl({
   const currentWave = clip ? waveMap[clip.id] : undefined;
   const volumeValue = clampClipVolume(parseNumber(values.volume, 1));
   const volumePercent = Math.round(volumeValue * 100);
+  const playbackRateValue = clampClipPlaybackRate(
+    parseNumber(values.playbackRate, DEFAULT_CLIP_PLAYBACK_RATE),
+  );
+  const trimmedSourceDuration = clip
+    ? getTrimmedSourceDuration({
+        trimStart,
+        trimEnd,
+        duration: clip.duration,
+      })
+    : MIN_CLIP_DURATION;
+  const outputSpeedDuration = outputDurationForRate(
+    trimmedSourceDuration,
+    playbackRateValue,
+  );
+  const setPlaybackRate = (rate: number) => {
+    update('playbackRate', String(clampClipPlaybackRate(rate)));
+  };
 
   const updateTrimStart = (nextStart: number) => {
     if (!clip) return;
@@ -640,8 +683,230 @@ function InspectorImpl({
           </label>
           <p className="inspector-hint">
             Volume is baked into the final render via FFmpeg and reflected in preview playback.
+            Automation lanes override the scalar level over clip-local time; fades still apply on top.
           </p>
         </div>
+        <div className="inspector-group-label">Speed / time-stretch</div>
+        <div className="inspector-volume-group">
+          <label
+            className="inspector-volume-slider"
+            title="Constant playback speed. Higher = shorter on the timeline. Export audio is pitch-preserving."
+          >
+            Speed {playbackRateValue.toFixed(3)}×
+            <input
+              type="range"
+              min={MIN_CLIP_PLAYBACK_RATE}
+              max={UI_MAX_CLIP_PLAYBACK_RATE}
+              step="0.01"
+              value={playbackRateValue}
+              onChange={(e) => setPlaybackRate(Number(e.target.value))}
+            />
+          </label>
+
+          <div className="inspector-speed-row">
+            <label className="inspector-speed-field" title="Exact playback rate">
+              Rate
+              <input
+                type="number"
+                min={MIN_CLIP_PLAYBACK_RATE}
+                max={UI_MAX_CLIP_PLAYBACK_RATE}
+                step="0.001"
+                value={Number(playbackRateValue.toFixed(3))}
+                onChange={(e) => setPlaybackRate(Number(e.target.value))}
+              />
+            </label>
+            <div className="inspector-speed-nudges" role="group" aria-label="Nudge speed">
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title={`−${PLAYBACK_RATE_NUDGE_COARSE}×`}
+                onClick={() =>
+                  setPlaybackRate(
+                    nudgePlaybackRate(playbackRateValue, -PLAYBACK_RATE_NUDGE_COARSE),
+                  )
+                }
+              >
+                −0.05
+              </button>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title={`−${PLAYBACK_RATE_NUDGE_FINE}×`}
+                onClick={() =>
+                  setPlaybackRate(
+                    nudgePlaybackRate(playbackRateValue, -PLAYBACK_RATE_NUDGE_FINE),
+                  )
+                }
+              >
+                −0.01
+              </button>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title={`+${PLAYBACK_RATE_NUDGE_FINE}×`}
+                onClick={() =>
+                  setPlaybackRate(
+                    nudgePlaybackRate(playbackRateValue, PLAYBACK_RATE_NUDGE_FINE),
+                  )
+                }
+              >
+                +0.01
+              </button>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title={`+${PLAYBACK_RATE_NUDGE_COARSE}×`}
+                onClick={() =>
+                  setPlaybackRate(
+                    nudgePlaybackRate(playbackRateValue, PLAYBACK_RATE_NUDGE_COARSE),
+                  )
+                }
+              >
+                +0.05
+              </button>
+            </div>
+          </div>
+
+          <div className="inspector-speed-row">
+            <label
+              className="inspector-speed-field"
+              title="Set the output timeline length; rate is computed from the trimmed source."
+            >
+              Fit to duration (s)
+              <input
+                type="number"
+                min={MIN_CLIP_DURATION}
+                step="0.01"
+                value={Number(outputSpeedDuration.toFixed(3))}
+                onChange={(e) => {
+                  const target = Number(e.target.value);
+                  if (!Number.isFinite(target) || target <= 0) return;
+                  setPlaybackRate(
+                    playbackRateForTargetDuration(trimmedSourceDuration, target),
+                  );
+                }}
+              />
+            </label>
+            <div className="inspector-speed-meta" aria-live="polite">
+              <span>Source {trimmedSourceDuration.toFixed(2)}s</span>
+              <span>→</span>
+              <span>Out {outputSpeedDuration.toFixed(2)}s</span>
+            </div>
+          </div>
+
+          {clip.bpmEstimate != null && clip.bpmEstimate > 0 && (
+            <div className="inspector-speed-row inspector-speed-beats">
+              <label
+                className="inspector-speed-field"
+                title="Stretch/compress so the clip spans exactly this many beats at the clip BPM."
+              >
+                Fit to beats
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={fitBeatCount}
+                  onChange={(e) => setFitBeatCount(e.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                onClick={() => {
+                  const beats = Math.max(1, Math.round(parseNumber(fitBeatCount, 8)));
+                  const next = playbackRateToFitBeats(
+                    trimmedSourceDuration,
+                    clip.bpmEstimate!,
+                    beats,
+                  );
+                  if (next != null) {
+                    setFitBeatCount(String(beats));
+                    setPlaybackRate(next);
+                  }
+                }}
+              >
+                Apply @ {Math.round(clip.bpmEstimate)} BPM
+              </button>
+              <span className="inspector-speed-meta">
+                Now ≈ {beatsSpannedByDuration(outputSpeedDuration, clip.bpmEstimate).toFixed(2)} beats
+              </span>
+            </div>
+          )}
+
+          <div className="inspector-speed-presets">
+            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className={`btn-secondary kf-btn${
+                  Math.abs(playbackRateValue - preset) < 0.001 ? ' is-active' : ''
+                }`}
+                onClick={() => setPlaybackRate(preset)}
+              >
+                {preset}×
+              </button>
+            ))}
+            <button
+              type="button"
+              className="btn-secondary kf-btn"
+              disabled={Math.abs(playbackRateValue - 1) < 1e-6}
+              onClick={() => setPlaybackRate(1)}
+            >
+              Reset 1×
+            </button>
+          </div>
+          <p className="inspector-hint">
+            Lip-sync tip: set <em>Fit to duration</em> to the music phrase length, then nudge ±0.01
+            while previewing. Export audio keeps pitch (atempo); preview audio may pitch-shift slightly.
+          </p>
+        </div>
+        {onAutomationChange && (
+          <details className="inspector-details" open={(clip.automation?.volume?.length ?? 0) > 0 || (clip.automation?.pan?.length ?? 0) > 0}>
+            <summary className="inspector-group-label">Audio automation</summary>
+            <div className="inspector-fields" style={{ marginTop: '0.5rem' }}>
+              <KeyframeMiniEditor
+                label="Volume"
+                duration={getClipDuration(clip)}
+                currentTime={clipLocalTime}
+                keyframes={clip.automation?.volume}
+                defaultValue={volumeValue}
+                min={0}
+                max={2}
+                step={0.01}
+                onChange={(track) => {
+                  const next: ClipAutomation = { ...(clip.automation ?? {}) };
+                  if (track?.length) next.volume = track;
+                  else delete next.volume;
+                  onAutomationChange(
+                    Object.keys(next).length > 0 ? next : undefined,
+                  );
+                }}
+              />
+              <KeyframeMiniEditor
+                label="Pan"
+                duration={getClipDuration(clip)}
+                currentTime={clipLocalTime}
+                keyframes={clip.automation?.pan}
+                defaultValue={DEFAULT_CLIP_PAN}
+                min={MIN_CLIP_PAN}
+                max={MAX_CLIP_PAN}
+                step={0.01}
+                onChange={(track) => {
+                  const next: ClipAutomation = { ...(clip.automation ?? {}) };
+                  if (track?.length) next.pan = track;
+                  else delete next.pan;
+                  onAutomationChange(
+                    Object.keys(next).length > 0 ? next : undefined,
+                  );
+                }}
+              />
+              <p className="inspector-hint">
+                Keyframe times follow the playhead on this clip. Export uses the same
+                OfflineAudioContext mix as preview when automation is present.
+              </p>
+            </div>
+          </details>
+        )}
         {onExtractAudio && (
           <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Audio extraction</div>
         )}

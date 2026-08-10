@@ -1,7 +1,9 @@
 import { useCallback } from "react";
-import type { Clip, ClipKeyframes, ExportSettings } from "../types";
+import type { Clip, ClipKeyframes, ClipAutomation, ExportSettings } from "../types";
 import { sanitizeClipAdjustments, getClipDuration, ContaboStorageManagerClient } from "../utils/project";
 import { clampClipVolume } from "../utils/audioVolume";
+import { clampClipPlaybackRate } from "../utils/playbackRate";
+import { normalizeClipAutomation } from "../utils/clipAutomation";
 import { clipDisplayPixelsToNormalized } from "../utils/overlayCoords";
 import { parseCanvasSize } from "../utils/pipPreset";
 import { createKenBurnsKeyframes } from "../utils/animatedLayout";
@@ -143,6 +145,9 @@ export function useInspectorActions({
             height: layout.height,
             opacity: Math.min(1, Math.max(0, Number(values.opacity ?? 1))),
             volume: clampClipVolume(Number(values.volume ?? 1)),
+            playbackRate: clampClipPlaybackRate(
+              Number(values.playbackRate ?? 1),
+            ),
           };
           sanitizeClipAdjustments(updated);
           return updated;
@@ -160,6 +165,25 @@ export function useInspectorActions({
         prev.map((clip) =>
           clip.id === selectedClipId ? { ...clip, keyframes } : clip,
         ),
+      );
+    },
+    [selectedClipId, pushHistoryDebounced, setClips],
+  );
+
+  const handleClipAutomationChange = useCallback(
+    (automation: ClipAutomation | undefined) => {
+      if (!selectedClipId) return;
+      pushHistoryDebounced(`automation:${selectedClipId}`);
+      const next = normalizeClipAutomation(automation);
+      setClips((prev) =>
+        prev.map((clip) => {
+          if (clip.id !== selectedClipId) return clip;
+          if (!next) {
+            const { automation: _removed, ...rest } = clip;
+            return rest;
+          }
+          return { ...clip, automation: next };
+        }),
       );
     },
     [selectedClipId, pushHistoryDebounced, setClips],
@@ -278,6 +302,7 @@ export function useInspectorActions({
     handleExtractAudio,
     handleInspectorChange,
     handleClipKeyframesChange,
+    handleClipAutomationChange,
     handleApplyKenBurns,
     handleRife,
   };

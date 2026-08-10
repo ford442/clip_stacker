@@ -7,9 +7,12 @@ import {
   extractPlanarFrame,
   isAudioEncoderAvailable,
   MAX_OFFLINE_AUDIO_SECONDS,
+  timelineHasAudioAutomation,
 } from './webcodecs-audio';
+import { applyGainEnvelope } from '../audio/playbackManager';
+import { buildAudioSchedule } from '../audio/schedule';
 
-function makeClip(id: string, duration: number): Clip {
+function makeClip(id: string, duration: number, overrides: Partial<Clip> = {}): Clip {
   return {
     id,
     file: new File([], `${id}.mp4`),
@@ -23,6 +26,7 @@ function makeClip(id: string, duration: number): Clip {
     videoFadeOut: 0,
     audioFadeIn: 0,
     audioFadeOut: 0,
+    ...overrides,
   };
 }
 
@@ -73,6 +77,68 @@ describe('webcodecs-audio', () => {
       expect(assessWebCodecsAudioMix(clips, [], transitions)).toEqual({
         supported: true,
       });
+    });
+  });
+
+  describe('automation schedule parity', () => {
+    it('includes volume and pan automation on schedule entries', () => {
+      const clips = [
+        makeClip('a', 4, {
+          volume: 0.8,
+          automation: {
+            volume: [
+              { t: 0, value: 1 },
+              { t: 2, value: 0.2 },
+            ],
+            pan: [{ t: 0, value: -1 }, { t: 4, value: 1 }],
+          },
+        }),
+      ];
+      expect(timelineHasAudioAutomation(clips)).toBe(true);
+      const schedule = buildAudioSchedule(clips, [], []);
+      expect(schedule[0].volumeAutomation).toHaveLength(2);
+      expect(schedule[0].panAutomation).toHaveLength(2);
+      expect(schedule[0].volume).toBe(0.8);
+    });
+
+    it('applyGainEnvelope matches schedule automation defaults', () => {
+      class FakeAudioParam {
+        events: Array<{ type: string; value?: number; time: number }> = [];
+        cancelScheduledValues(time: number) {
+          this.events.push({ type: 'cancel', time });
+        }
+        setValueAtTime(value: number, time: number) {
+          this.events.push({ type: 'set', value, time });
+          return this;
+        }
+        linearRampToValueAtTime(value: number, time: number) {
+          this.events.push({ type: 'ramp', value, time });
+          return this;
+        }
+      }
+      const param = new FakeAudioParam();
+      const clips = [
+        makeClip('a', 2, {
+          automation: {
+            volume: [
+              { t: 0, value: 1 },
+              { t: 1, value: 0.25 },
+            ],
+          },
+        }),
+      ];
+      const [entry] = buildAudioSchedule(clips, [], []);
+      applyGainEnvelope(
+        param as unknown as AudioParam,
+        entry,
+        0,
+        entry.duration,
+        0,
+        0,
+      );
+      expect(param.events.some((e) => e.type === 'ramp' && e.value === 0.25)).toBe(
+        true,
+      );
     });
   });
 

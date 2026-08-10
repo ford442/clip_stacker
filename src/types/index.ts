@@ -21,6 +21,16 @@ export type TextAnimatableProp = 'x' | 'y' | 'opacity';
 
 export type TextOverlayKeyframes = Partial<Record<TextAnimatableProp, Keyframe[]>>;
 
+/**
+ * Per-clip parameter automation lanes (Cubase / Ableton style).
+ * Keyframe times are local clip time in seconds (same as layout keyframes).
+ * Constant `clip.playbackRate` is the speed baseline; keyframed rate curves
+ * remain a follow-up.
+ */
+export type ClipAutomationProp = 'volume' | 'pan' | 'playbackRate';
+
+export type ClipAutomation = Partial<Record<ClipAutomationProp, Keyframe[]>>;
+
 export interface Clip {
   id: string;
   file: File;
@@ -82,6 +92,17 @@ export interface Clip {
   opacity?: number;
   /** Per-clip audio volume multiplier (0 = muted, 1 = unchanged, 2 = double). */
   volume?: number;
+  /**
+   * Constant output playback speed (1 = normal). Stretches/compresses how long
+   * the trimmed source occupies on the timeline. Optional for older projects.
+   */
+  playbackRate?: number;
+  /**
+   * Parameter automation lanes (volume / pan / future playbackRate curves).
+   * Volume keyframes are absolute linear gain (0–2); empty lane uses `volume`.
+   * Audio fades and bed ducking still multiply on top of the sampled level.
+   */
+  automation?: ClipAutomation;
   /** Optional per-property keyframe animation (local clip time in seconds). */
   keyframes?: ClipKeyframes;
   /** True when the source is a still image (Ken Burns / UV keyframes). */
@@ -139,6 +160,8 @@ export interface SerializedClip {
   height?: number;
   opacity?: number;
   volume?: number;
+  playbackRate?: number;
+  automation?: ClipAutomation;
   keyframes?: ClipKeyframes;
   stillImage?: boolean;
   /** Beat onset times in seconds (source media), from audio analysis. */

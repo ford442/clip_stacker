@@ -116,7 +116,15 @@ export async function hybridMergeClips(
         }
 
         onStatus('Muxing GPU video with source audio via FFmpeg...');
-        const muxed = await muxVideoWithAudio(blob, clips, settings, onStatus, onProgress);
+        const muxed = await muxVideoWithAudio(
+          blob,
+          clips,
+          settings,
+          onStatus,
+          onProgress,
+          clipGroups,
+          transitions,
+        );
         return { blob: muxed, path: 'webcodecs', renderPlan: effectiveRenderPlan };
       } catch (err) {
         gpuFailure = (err as Error).message;

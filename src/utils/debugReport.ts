@@ -39,6 +39,9 @@ function formatClipSummary(clip: Clip, index: number): string {
   if (clip.volume !== undefined && clip.volume !== 1) {
     effects.push(`vol=${clip.volume}`);
   }
+  if (clip.playbackRate !== undefined && clip.playbackRate !== 1) {
+    effects.push(`speed=${clip.playbackRate}x`);
+  }
   const effectStr = effects.length > 0 ? ` | effects: ${effects.join(', ')}` : '';
   return (
     `${index + 1}. "${clip.title}" (${clip.kind}) ` +

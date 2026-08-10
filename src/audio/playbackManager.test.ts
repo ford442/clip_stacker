@@ -3,6 +3,7 @@ import type { Clip } from '../types';
 import { ClipAudioCache } from './clipAudioCache';
 import {
   applyGainEnvelope,
+  applyPanEnvelope,
   AudioPlaybackManager,
   disposeAudioPlaybackManager,
   getAudioPlaybackManager,
@@ -93,6 +94,87 @@ describe('applyGainEnvelope', () => {
     const setEvent = param.events.find((e) => e.type === 'set');
     expect(setEvent?.value).toBeCloseTo(0.25);
   });
+
+  it('schedules absolute volume automation keyframes', () => {
+    const param = new FakeAudioParam();
+    applyGainEnvelope(
+      param as unknown as AudioParam,
+      {
+        volume: 1,
+        audioFadeIn: 0,
+        audioFadeOut: 0,
+        duration: 4,
+        volumeAutomation: [
+          { t: 0, value: 1 },
+          { t: 1, value: 0.2 },
+          { t: 2, value: 1.5 },
+        ],
+      },
+      0,
+      4,
+      0,
+      0,
+    );
+    expect(param.events.some((e) => e.type === 'set' && e.value === 1)).toBe(true);
+    const dip = param.events.find((e) => e.type === 'ramp' && e.time === 1);
+    expect(dip?.value).toBeCloseTo(0.2);
+    expect(param.events.some((e) => e.type === 'ramp' && e.value === 1.5 && e.time === 2)).toBe(
+      true,
+    );
+  });
+
+  it('multiplies fade envelope on top of volume automation', () => {
+    const param = new FakeAudioParam();
+    applyGainEnvelope(
+      param as unknown as AudioParam,
+      {
+        volume: 1,
+        audioFadeIn: 1,
+        audioFadeOut: 0,
+        duration: 4,
+        volumeAutomation: [
+          { t: 0, value: 1 },
+          { t: 1, value: 1 },
+        ],
+      },
+      0,
+      4,
+      0,
+      0,
+    );
+    const start = param.events.find((e) => e.type === 'set');
+    expect(start?.value).toBeCloseTo(0);
+  });
+});
+
+describe('applyPanEnvelope', () => {
+  it('centers pan when automation is empty', () => {
+    const param = new FakeAudioParam();
+    applyPanEnvelope(param as unknown as AudioParam, undefined, 1, 2, 0, 0, 2);
+    expect(param.events.some((e) => e.type === 'set' && e.value === 0 && e.time === 1)).toBe(
+      true,
+    );
+  });
+
+  it('ramps pan automation across keyframes', () => {
+    const param = new FakeAudioParam();
+    applyPanEnvelope(
+      param as unknown as AudioParam,
+      [
+        { t: 0, value: -1 },
+        { t: 2, value: 1 },
+      ],
+      0,
+      2,
+      0,
+      0,
+      2,
+    );
+    expect(param.events.some((e) => e.type === 'set' && e.value === -1)).toBe(true);
+    expect(param.events.some((e) => e.type === 'ramp' && e.value === 1 && e.time === 2)).toBe(
+      true,
+    );
+  });
 });
 
 describe('ClipAudioCache', () => {
@@ -109,8 +191,6 @@ describe('ClipAudioCache', () => {
       decodeAudioData: decode,
     } as unknown as BaseAudioContext;
 
-    // Patch decode path via fetch mock + decodeAudioData on a real-ish ctx.
-    // ClipAudioCache uses decodeAudioBuffer → fetch + ctx.decodeAudioData.
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({
@@ -190,6 +270,29 @@ describe('AudioPlaybackManager lifecycle', () => {
     const manager = new AudioPlaybackManager();
     await manager.syncTimeline(
       [makeClip('a', 2), makeClip('b', 3, { volume: 0.5 })],
+      [],
+      [],
+    );
+    await manager.dispose();
+  });
+
+  it('syncTimeline accepts clips with volume automation', async () => {
+    const manager = new AudioPlaybackManager();
+    await manager.syncTimeline(
+      [
+        makeClip('a', 2, {
+          automation: {
+            volume: [
+              { t: 0, value: 1 },
+              { t: 1, value: 0.25 },
+            ],
+            pan: [
+              { t: 0, value: -0.5 },
+              { t: 2, value: 0.5 },
+            ],
+          },
+        }),
+      ],
       [],
       [],
     );

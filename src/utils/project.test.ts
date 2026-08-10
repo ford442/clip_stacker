@@ -72,6 +72,16 @@ describe("utils/project", () => {
       const duration = getClipDuration(clip);
       expect(duration).toBe(0.1); // MIN_CLIP_DURATION
     });
+
+    it("should divide trimmed length by playbackRate", () => {
+      const clip = createTestClip("test", 10);
+      clip.trimStart = 0;
+      clip.trimEnd = 10;
+      clip.playbackRate = 2;
+      expect(getClipDuration(clip)).toBe(5);
+      clip.playbackRate = 0.5;
+      expect(getClipDuration(clip)).toBe(20);
+    });
   });
 
   // =========================================================================
@@ -112,6 +122,17 @@ describe("utils/project", () => {
       sanitizeClipAdjustments(clip);
       expect(clip.volume).toBe(0);
     });
+
+    it("should clamp playbackRate to 0.25–4", () => {
+      const clip = createTestClip("test", 5);
+      clip.playbackRate = 0.1;
+      sanitizeClipAdjustments(clip);
+      expect(clip.playbackRate).toBe(0.25);
+
+      clip.playbackRate = 9;
+      sanitizeClipAdjustments(clip);
+      expect(clip.playbackRate).toBe(4);
+    });
   });
 
   // =========================================================================
@@ -149,6 +170,20 @@ describe("utils/project", () => {
       clips[0].volume = 0.75;
       const project = serializeProject(clips, [], [], []);
       expect(project.clips[0].volume).toBe(0.75);
+    });
+
+    it("should serialize non-default playbackRate", () => {
+      const clips = [createTestClip("clip1", 5)];
+      clips[0].playbackRate = 2;
+      const project = serializeProject(clips, [], [], []);
+      expect(project.clips[0].playbackRate).toBe(2);
+    });
+
+    it("should omit default playbackRate from serialization", () => {
+      const clips = [createTestClip("clip1", 5)];
+      clips[0].playbackRate = 1;
+      const project = serializeProject(clips, [], [], []);
+      expect(project.clips[0].playbackRate).toBeUndefined();
     });
 
     it("should serialize transitions", () => {
@@ -255,6 +290,33 @@ describe("utils/project", () => {
       expect(project.clips[0].stillImage).toBe(true);
       expect(project.clips[0].keyframes?.uvScaleX).toHaveLength(2);
       expect(project.clips[0].keyframes?.opacity).toHaveLength(1);
+    });
+
+    it('should serialize volume and pan automation lanes', () => {
+      const clip = createTestClip('clip1', 5);
+      clip.volume = 0.9;
+      clip.automation = {
+        volume: [
+          { t: 0, value: 1 },
+          { t: 2, value: 0.2 },
+          { t: 4, value: 1.5 },
+        ],
+        pan: [
+          { t: 0, value: -1 },
+          { t: 5, value: 1 },
+        ],
+      };
+      const project = serializeProject([clip], [], [], []);
+      expect(project.clips[0].automation?.volume).toHaveLength(3);
+      expect(project.clips[0].automation?.pan?.[0].value).toBe(-1);
+      expect(project.clips[0].volume).toBe(0.9);
+    });
+
+    it('should omit empty automation from serialization', () => {
+      const clip = createTestClip('clip1', 5);
+      clip.automation = { volume: [], pan: [] };
+      const project = serializeProject([clip], [], [], []);
+      expect(project.clips[0].automation).toBeUndefined();
     });
 
     it('should serialize beatTimestamps and bpmEstimate', () => {
@@ -840,6 +902,98 @@ describe("utils/project", () => {
       const result = await applyProjectData(project, sourceClips);
       expect(result.clips[0].stillImage).toBe(true);
       expect(result.clips[0].keyframes?.x).toHaveLength(2);
+    });
+
+    it('should restore playbackRate from saved project', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: sourceClips[0].file.name,
+            playbackRate: 2,
+          },
+        ],
+      };
+
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.clips[0].playbackRate).toBe(2);
+      expect(getClipDuration(result.clips[0])).toBe(2.5);
+    });
+
+    it('should restore automation lanes from saved project', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: sourceClips[0].file.name,
+            volume: 0.75,
+            automation: {
+              volume: [
+                { t: 0, value: 1 },
+                { t: 1, value: 0.2 },
+              ],
+              pan: [{ t: 0, value: 0.5 }],
+            },
+          },
+        ],
+      };
+
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.clips[0].volume).toBe(0.75);
+      expect(result.clips[0].automation?.volume).toEqual([
+        { t: 0, value: 1 },
+        { t: 1, value: 0.2 },
+      ]);
+      expect(result.clips[0].automation?.pan?.[0].value).toBe(0.5);
+    });
+
+    it('should clamp out-of-range automation values on load', async () => {
+      const sourceClips = [createTestClip('source1', 5)];
+      const project: Project = {
+        clips: [
+          {
+            id: 'saved',
+            title: 'Clip',
+            kind: 'video',
+            duration: 5,
+            trimStart: 0,
+            trimEnd: null,
+            videoFadeIn: 0,
+            videoFadeOut: 0,
+            audioFadeIn: 0,
+            audioFadeOut: 0,
+            fileName: sourceClips[0].file.name,
+            automation: {
+              volume: [{ t: 0, value: 9 }],
+              pan: [{ t: 0, value: -3 }],
+            },
+          },
+        ],
+      };
+
+      const result = await applyProjectData(project, sourceClips);
+      expect(result.clips[0].automation?.volume?.[0].value).toBe(2);
+      expect(result.clips[0].automation?.pan?.[0].value).toBe(-1);
     });
 
     it('should restore color grade from saved project', async () => {

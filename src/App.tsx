@@ -354,6 +354,7 @@ export function App() {
       onFinishingChange={setFinishing}
       onInspectorChange={inspectorActions.handleInspectorChange}
       onKeyframesChange={inspectorActions.handleClipKeyframesChange}
+      onAutomationChange={inspectorActions.handleClipAutomationChange}
       onApplyKenBurns={inspectorActions.handleApplyKenBurns}
       onExportSettingsChange={setExportSettings}
       onExtractAudio={inspectorActions.handleExtractAudio}

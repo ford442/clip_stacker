@@ -7,6 +7,9 @@ import { getClipDuration } from '../utils/project';
 import { getTimelineClips } from '../utils/timelineClips';
 import { audioTracks } from '../utils/trackModel';
 import { clampClipVolume } from '../utils/audioVolume';
+import type { Keyframe } from '../utils/keyframes';
+import { normalizeClipAutomation } from '../utils/clipAutomation';
+import { getClipPlaybackRate } from '../utils/playbackRate';
 
 /** One clip's audio placement on the output timeline. */
 export interface AudioScheduleEntry {
@@ -21,6 +24,15 @@ export interface AudioScheduleEntry {
   volume: number;
   audioFadeIn: number;
   audioFadeOut: number;
+  /** Constant source playback speed (1 = normal). */
+  playbackRate: number;
+  /**
+   * Absolute linear-gain keyframes (clip-local seconds). Empty → use `volume`.
+   * Fades and bed ducking still multiply on top of the sampled level.
+   */
+  volumeAutomation?: Keyframe[];
+  /** Stereo pan keyframes (−1 L … +1 R). Empty → centered (0). */
+  panAutomation?: Keyframe[];
   /**
    * Audio-bed / music track clip. When its timeline range overlaps a non-bed
    * (dialogue / base) entry, playback ducks its gain for intelligible speech.
@@ -41,6 +53,7 @@ function entryFromClip(
   duration: number,
   isBed = false,
 ): AudioScheduleEntry {
+  const automation = normalizeClipAutomation(clip.automation);
   return {
     clipId: clip.id,
     objectUrl: clip.objectUrl,
@@ -50,6 +63,11 @@ function entryFromClip(
     volume: clampClipVolume(clip.volume),
     audioFadeIn: Math.max(0, clip.audioFadeIn),
     audioFadeOut: Math.max(0, clip.audioFadeOut),
+    playbackRate: getClipPlaybackRate(clip),
+    ...(automation?.volume?.length
+      ? { volumeAutomation: automation.volume }
+      : {}),
+    ...(automation?.pan?.length ? { panAutomation: automation.pan } : {}),
     ...(isBed ? { isBed: true } : {}),
   };
 }
@@ -150,7 +168,32 @@ export function schedulesMatchStructure(
       left.timelineStart !== right.timelineStart ||
       left.duration !== right.duration ||
       left.bufferOffset !== right.bufferOffset ||
-      Boolean(left.isBed) !== Boolean(right.isBed)
+      left.playbackRate !== right.playbackRate ||
+      Boolean(left.isBed) !== Boolean(right.isBed) ||
+      !keyframesMatch(left.volumeAutomation, right.volumeAutomation) ||
+      !keyframesMatch(left.panAutomation, right.panAutomation)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function keyframesMatch(
+  a: Keyframe[] | undefined,
+  b: Keyframe[] | undefined,
+): boolean {
+  if (!a?.length && !b?.length) return true;
+  if (!a?.length || !b?.length || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (
+      a[i].t !== b[i].t ||
+      a[i].value !== b[i].value ||
+      a[i].easing?.type !== b[i].easing?.type ||
+      a[i].easing?.x1 !== b[i].easing?.x1 ||
+      a[i].easing?.y1 !== b[i].easing?.y1 ||
+      a[i].easing?.x2 !== b[i].easing?.x2 ||
+      a[i].easing?.y2 !== b[i].easing?.y2
     ) {
       return false;
     }
