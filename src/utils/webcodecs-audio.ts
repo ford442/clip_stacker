@@ -11,10 +11,19 @@ import type { Clip, ClipGroup, ClipTransition } from '../types';
 import { ClipAudioCache } from '../audio/clipAudioCache';
 import {
   buildAudioSchedule,
+  effectiveEntryVolume,
   type AudioScheduleEntry,
 } from '../audio/schedule';
 import { computeTotalDuration } from './transitions';
 import { getTimelineClips } from './timelineClips';
+import {
+  applyGainEnvelope,
+  applyPanEnvelope,
+} from '../audio/playbackManager';
+import {
+  audioBufferToWav,
+  timelineHasAudioAutomation,
+} from './clipAutomation';
 
 /** AAC-LC — matches the existing FFmpeg mux path (192 kbps stereo @ 48 kHz). */
 export const AAC_CODEC = 'mp4a.40.2';
@@ -83,12 +92,13 @@ export function assessWebCodecsAudioMix(
 
 /**
  * Render the mixed timeline audio into a single `AudioBuffer`.
- * Volume + per-clip fades follow `AudioScheduleEntry` (matches preview schedule).
+ * Volume keyframes + per-clip fades + stereo pan match preview schedule math.
  */
 export async function renderTimelineAudioMix(
   entries: AudioScheduleEntry[],
   durationSec: number,
   cache: ClipAudioCache = new ClipAudioCache(),
+  fullSchedule: AudioScheduleEntry[] = entries,
 ): Promise<AudioBuffer> {
   if (typeof OfflineAudioContext === 'undefined') {
     throw new Error('OfflineAudioContext unavailable');
@@ -108,26 +118,60 @@ export async function renderTimelineAudioMix(
 
     const gain = offline.createGain();
     const start = entry.timelineStart;
-    const end = start + entry.duration;
+    const duckedVolume = effectiveEntryVolume(entry, fullSchedule);
+    applyGainEnvelope(
+      gain.gain,
+      { ...entry, volume: duckedVolume },
+      start,
+      entry.duration,
+      0,
+      0,
+    );
 
-    gain.gain.setValueAtTime(entry.volume, start);
-    if (entry.audioFadeIn > 0) {
-      gain.gain.setValueAtTime(0, start);
-      gain.gain.linearRampToValueAtTime(entry.volume, start + entry.audioFadeIn);
+    let leaf: AudioNode = gain;
+    if (typeof offline.createStereoPanner === 'function') {
+      const panner = offline.createStereoPanner();
+      applyPanEnvelope(
+        panner.pan,
+        entry.panAutomation,
+        start,
+        entry.duration,
+        0,
+        0,
+        entry.duration,
+      );
+      source.connect(gain);
+      gain.connect(panner);
+      leaf = panner;
+    } else {
+      source.connect(gain);
     }
-    if (entry.audioFadeOut > 0) {
-      const fadeStart = Math.max(start, end - entry.audioFadeOut);
-      gain.gain.setValueAtTime(entry.volume, fadeStart);
-      gain.gain.linearRampToValueAtTime(0, end);
-    }
-
-    source.connect(gain);
-    gain.connect(offline.destination);
+    leaf.connect(offline.destination);
     source.start(start, entry.bufferOffset, entry.duration);
   }
 
   return offline.startRendering();
 }
+
+/**
+ * Offline-mix the timeline and encode as WAV bytes for FFmpeg VFS mux.
+ * Used when volume/pan automation is present (arbitrary curves aren't FFmpeg filters).
+ */
+export async function renderTimelineAudioMixWav(
+  clips: Clip[],
+  groups: ClipGroup[],
+  transitions: ClipTransition[],
+): Promise<Uint8Array | null> {
+  const timelineClips = getTimelineClips(clips, groups);
+  const durationSec = computeTotalDuration(timelineClips, transitions);
+  const schedule = buildAudioSchedule(clips, groups, transitions);
+  if (schedule.length === 0 || durationSec <= 0) return null;
+
+  const mixed = await renderTimelineAudioMix(schedule, durationSec);
+  return new Uint8Array(audioBufferToWav(mixed));
+}
+
+export { timelineHasAudioAutomation };
 
 /** Extract planar f32 channel data for one AAC frame from an `AudioBuffer`. */
 export function extractPlanarFrame(

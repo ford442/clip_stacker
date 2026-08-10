@@ -31,6 +31,7 @@ import {
 } from './remoteLoadProgress';
 import { deserializeTextOverlays, usesPixelLayoutForProject } from './applyTextOverlays';
 import type { AppliedProjectData, ApplyProjectDataOptions } from './types';
+import { normalizeClipAutomation } from '../clipAutomation';
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
@@ -179,6 +180,9 @@ export async function applyProjectData(
     if (savedClip.height != null) liveClip.height = Number(savedClip.height);
     if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
     if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
+    const automation = normalizeClipAutomation(savedClip.automation);
+    if (automation) liveClip.automation = automation;
+    else delete liveClip.automation;
     if (usesPixelLayout && (savedClip.layerIndex ?? 0) > 0) {
       const migrated = migratePixelClipLayout(liveClip, layoutReference);
       liveClip.x = migrated.x;

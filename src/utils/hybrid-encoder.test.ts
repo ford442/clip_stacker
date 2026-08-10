@@ -178,7 +178,15 @@ describe('utils/hybrid-encoder', () => {
         expect.anything(),
         false,
       );
-      expect(muxVideoWithAudio).toHaveBeenCalledWith(videoBlob, testClips, testSettings, mockStatusCallback, mockProgressCallback);
+      expect(muxVideoWithAudio).toHaveBeenCalledWith(
+        videoBlob,
+        testClips,
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        [],
+        [],
+      );
       expect(mergeClips).not.toHaveBeenCalled();
     });
 

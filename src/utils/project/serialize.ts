@@ -16,6 +16,7 @@ import {
   isFinishingActive,
 } from '../finishing';
 import type { FinishingSettings } from '../finishing';
+import { normalizeClipAutomation } from '../clipAutomation';
 export function serializeProject(
   clips: Clip[],
   transitions: ClipTransition[] = [],
@@ -44,7 +45,9 @@ export function serializeProject(
       ? { layoutReferenceResolution }
       : {}),
     ...(serializedTracks.length > 0 ? { tracks: serializedTracks } : {}),
-    clips: clips.map((clip): SerializedClip => ({
+    clips: clips.map((clip): SerializedClip => {
+      const automation = normalizeClipAutomation(clip.automation);
+      return {
       id: clip.id,
       title: clip.title,
       kind: clip.kind,
@@ -58,6 +61,7 @@ export function serializeProject(
       audioFadeIn: clip.audioFadeIn,
       audioFadeOut: clip.audioFadeOut,
       ...(clip.volume != null && clip.volume !== 1 ? { volume: clip.volume } : {}),
+      ...(automation ? { automation } : {}),
       fileName: clip.file.name,
       fileType: clip.file.type || undefined,
       ...(clip.groupId ? { groupId: clip.groupId } : {}),
@@ -93,7 +97,8 @@ export function serializeProject(
         ? { beatTimestamps: clip.beatTimestamps.slice() }
         : {}),
       ...(clip.bpmEstimate != null ? { bpmEstimate: clip.bpmEstimate } : {}),
-    })),
+    };
+    }),
     transitions: transitions.map((t): SerializedTransition => ({
       afterClipIndex: t.afterClipIndex,
       type: t.type,

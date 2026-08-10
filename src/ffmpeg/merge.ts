@@ -25,6 +25,10 @@ import { buildSecondaryColorFfmpegFilters } from "../utils/secondaryColor";
 import { buildSharpenFfmpegFilters } from "../utils/sharpen";
 import { buildGrainFfmpegFilters } from "../utils/grain";
 import {
+  renderTimelineAudioMixWav,
+  timelineHasAudioAutomation,
+} from "../utils/webcodecs-audio";
+import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
   recordFfmpegLog,
@@ -80,6 +84,7 @@ import {
 } from "./core";
 import { mergeClipsWithCompositing } from "./video";
 import { calculateRenderPlan } from "./plan";
+import { remuxVideoWithPremixWav } from "./mux";
 
 export async function mergeClips(
   clips: Clip[],
@@ -369,6 +374,38 @@ export async function mergeClips(
       /* ignore */
     }
     finalFileName = "stacked_final.mp4";
+  }
+
+  // When volume/pan automation is present, replace FFmpeg-filter audio with a
+  // browser OfflineAudioContext premix (curves aren't expressible as filters).
+  if (timelineHasAudioAutomation(workingClips)) {
+    onStatus("Rendering automated audio mix for FFmpeg remux...");
+    emitProgress(onProgress, "Premixing automated audio", 0.97, true);
+    const wavBytes = await renderTimelineAudioMixWav(
+      workingClips,
+      [],
+      transitions,
+    );
+    if (!wavBytes) {
+      throw new Error("Automated audio premix produced no audio.");
+    }
+    const premixOut = "stacked_premix.mp4";
+    await remuxVideoWithPremixWav(
+      ffmpeg,
+      finalFileName,
+      wavBytes,
+      premixOut,
+      totalDuration,
+      onStatus,
+      onProgress,
+      { start: 0.97, end: 0.995 },
+    );
+    try {
+      await ffmpeg.deleteFile(finalFileName);
+    } catch {
+      /* ignore */
+    }
+    finalFileName = premixOut;
   }
 
   const output = await safeReadFile(ffmpeg, finalFileName, "final output read");

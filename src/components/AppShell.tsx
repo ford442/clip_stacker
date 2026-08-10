@@ -109,6 +109,7 @@ export type AppShellProps = {
   onFinishingChange: (settings: FinishingSettings) => void;
   onInspectorChange: (values: ClipValues) => void;
   onKeyframesChange: (keyframes: Clip["keyframes"]) => void;
+  onAutomationChange: (automation: Clip["automation"]) => void;
   onApplyKenBurns: () => void;
   onExportSettingsChange: (settings: ExportSettings) => void;
   onExtractAudio: () => Promise<void>;
@@ -207,6 +208,7 @@ export function AppShell(props: AppShellProps) {
     onFinishingChange,
     onInspectorChange,
     onKeyframesChange,
+    onAutomationChange,
     onApplyKenBurns,
     onExportSettingsChange,
     onExtractAudio,
@@ -335,6 +337,7 @@ export function AppShell(props: AppShellProps) {
           onFinishingChange={onFinishingChange}
           onChange={onInspectorChange}
           onKeyframesChange={onKeyframesChange}
+          onAutomationChange={onAutomationChange}
           onApplyKenBurns={onApplyKenBurns}
           onExportSettingsChange={onExportSettingsChange}
           onExtractAudio={onExtractAudio}

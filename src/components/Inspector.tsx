@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, useMemo, type SyntheticEvent } from 'react';
-import type { Clip, ClipAnimatableProp, ClipKeyframes, ExportSettings } from '../types';
+import type { Clip, ClipAnimatableProp, ClipKeyframes, ClipAutomation, ExportSettings } from '../types';
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { resolveClipLocalTimeAtGlobal } from '../utils/previewComposition';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
@@ -20,6 +20,11 @@ import {
 } from '../utils/overlayCoords';
 import { extractWaveformPeaks } from '../utils/waveform';
 import { clampClipVolume } from '../utils/audioVolume';
+import {
+  DEFAULT_CLIP_PAN,
+  MAX_CLIP_PAN,
+  MIN_CLIP_PAN,
+} from '../utils/clipAutomation';
 import { clipHasKeyframes } from '../utils/animatedLayout';
 import {
   buildPipRect,
@@ -56,6 +61,7 @@ interface Props {
   exportSettings: ExportSettings;
   onChange: (values: ClipValues) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
+  onAutomationChange?: (automation: ClipAutomation | undefined) => void;
   onApplyKenBurns?: () => void;
   onExportSettingsChange: (settings: ExportSettings) => void;
   finishing?: FinishingSettings;
@@ -162,6 +168,7 @@ function InspectorImpl({
   exportSettings,
   onChange,
   onKeyframesChange,
+  onAutomationChange,
   onApplyKenBurns,
   onExportSettingsChange,
   finishing,
@@ -640,8 +647,56 @@ function InspectorImpl({
           </label>
           <p className="inspector-hint">
             Volume is baked into the final render via FFmpeg and reflected in preview playback.
+            Automation lanes override the scalar level over clip-local time; fades still apply on top.
           </p>
         </div>
+        {onAutomationChange && (
+          <details className="inspector-details" open={(clip.automation?.volume?.length ?? 0) > 0 || (clip.automation?.pan?.length ?? 0) > 0}>
+            <summary className="inspector-group-label">Audio automation</summary>
+            <div className="inspector-fields" style={{ marginTop: '0.5rem' }}>
+              <KeyframeMiniEditor
+                label="Volume"
+                duration={getClipDuration(clip)}
+                currentTime={clipLocalTime}
+                keyframes={clip.automation?.volume}
+                defaultValue={volumeValue}
+                min={0}
+                max={2}
+                step={0.01}
+                onChange={(track) => {
+                  const next: ClipAutomation = { ...(clip.automation ?? {}) };
+                  if (track?.length) next.volume = track;
+                  else delete next.volume;
+                  onAutomationChange(
+                    Object.keys(next).length > 0 ? next : undefined,
+                  );
+                }}
+              />
+              <KeyframeMiniEditor
+                label="Pan"
+                duration={getClipDuration(clip)}
+                currentTime={clipLocalTime}
+                keyframes={clip.automation?.pan}
+                defaultValue={DEFAULT_CLIP_PAN}
+                min={MIN_CLIP_PAN}
+                max={MAX_CLIP_PAN}
+                step={0.01}
+                onChange={(track) => {
+                  const next: ClipAutomation = { ...(clip.automation ?? {}) };
+                  if (track?.length) next.pan = track;
+                  else delete next.pan;
+                  onAutomationChange(
+                    Object.keys(next).length > 0 ? next : undefined,
+                  );
+                }}
+              />
+              <p className="inspector-hint">
+                Keyframe times follow the playhead on this clip. Export uses the same
+                OfflineAudioContext mix as preview when automation is present.
+              </p>
+            </div>
+          </details>
+        )}
         {onExtractAudio && (
           <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Audio extraction</div>
         )}
