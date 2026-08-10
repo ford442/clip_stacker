@@ -26,9 +26,18 @@ import {
   MIN_CLIP_PAN,
 } from '../utils/clipAutomation';
 import {
+  beatsSpannedByDuration,
   clampClipPlaybackRate,
   DEFAULT_CLIP_PLAYBACK_RATE,
+  getTrimmedSourceDuration,
   MIN_CLIP_PLAYBACK_RATE,
+  nudgePlaybackRate,
+  outputDurationForRate,
+  PLAYBACK_RATE_NUDGE_COARSE,
+  PLAYBACK_RATE_NUDGE_FINE,
+  playbackRateForTargetDuration,
+  playbackRateToFitBeats,
+  UI_MAX_CLIP_PLAYBACK_RATE,
 } from '../utils/playbackRate';
 import { clipHasKeyframes } from '../utils/animatedLayout';
 import {
@@ -201,6 +210,7 @@ function InspectorImpl({
   const inspectorRef = useRef<HTMLDivElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [pipCorner, setPipCorner] = useState<PipCorner>('bottom-right');
+  const [fitBeatCount, setFitBeatCount] = useState('8');
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
   const generatingThumbs = useRef<Set<string>>(new Set());
@@ -412,6 +422,20 @@ function InspectorImpl({
   const playbackRateValue = clampClipPlaybackRate(
     parseNumber(values.playbackRate, DEFAULT_CLIP_PLAYBACK_RATE),
   );
+  const trimmedSourceDuration = clip
+    ? getTrimmedSourceDuration({
+        trimStart,
+        trimEnd,
+        duration: clip.duration,
+      })
+    : MIN_CLIP_DURATION;
+  const outputSpeedDuration = outputDurationForRate(
+    trimmedSourceDuration,
+    playbackRateValue,
+  );
+  const setPlaybackRate = (rate: number) => {
+    update('playbackRate', String(clampClipPlaybackRate(rate)));
+  };
 
   const updateTrimStart = (nextStart: number) => {
     if (!clip) return;
@@ -662,40 +686,178 @@ function InspectorImpl({
             Automation lanes override the scalar level over clip-local time; fades still apply on top.
           </p>
         </div>
-        <div className="inspector-group-label">Speed</div>
+        <div className="inspector-group-label">Speed / time-stretch</div>
         <div className="inspector-volume-group">
           <label
             className="inspector-volume-slider"
-            title="Constant playback speed. 1× is normal; higher speeds shorten timeline duration."
+            title="Constant playback speed. Higher = shorter on the timeline. Export audio is pitch-preserving."
           >
-            Speed {Number(playbackRateValue).toFixed(2)}×
+            Speed {playbackRateValue.toFixed(3)}×
             <input
               type="range"
               min={MIN_CLIP_PLAYBACK_RATE}
-              max={3}
-              step="0.05"
+              max={UI_MAX_CLIP_PLAYBACK_RATE}
+              step="0.01"
               value={playbackRateValue}
-              onChange={(e) => update('playbackRate', e.target.value)}
+              onChange={(e) => setPlaybackRate(Number(e.target.value))}
             />
           </label>
-          <div className="inspector-speed-presets" style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-            {[0.5, 1, 2].map((preset) => (
+
+          <div className="inspector-speed-row">
+            <label className="inspector-speed-field" title="Exact playback rate">
+              Rate
+              <input
+                type="number"
+                min={MIN_CLIP_PLAYBACK_RATE}
+                max={UI_MAX_CLIP_PLAYBACK_RATE}
+                step="0.001"
+                value={Number(playbackRateValue.toFixed(3))}
+                onChange={(e) => setPlaybackRate(Number(e.target.value))}
+              />
+            </label>
+            <div className="inspector-speed-nudges" role="group" aria-label="Nudge speed">
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title={`−${PLAYBACK_RATE_NUDGE_COARSE}×`}
+                onClick={() =>
+                  setPlaybackRate(
+                    nudgePlaybackRate(playbackRateValue, -PLAYBACK_RATE_NUDGE_COARSE),
+                  )
+                }
+              >
+                −0.05
+              </button>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title={`−${PLAYBACK_RATE_NUDGE_FINE}×`}
+                onClick={() =>
+                  setPlaybackRate(
+                    nudgePlaybackRate(playbackRateValue, -PLAYBACK_RATE_NUDGE_FINE),
+                  )
+                }
+              >
+                −0.01
+              </button>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title={`+${PLAYBACK_RATE_NUDGE_FINE}×`}
+                onClick={() =>
+                  setPlaybackRate(
+                    nudgePlaybackRate(playbackRateValue, PLAYBACK_RATE_NUDGE_FINE),
+                  )
+                }
+              >
+                +0.01
+              </button>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title={`+${PLAYBACK_RATE_NUDGE_COARSE}×`}
+                onClick={() =>
+                  setPlaybackRate(
+                    nudgePlaybackRate(playbackRateValue, PLAYBACK_RATE_NUDGE_COARSE),
+                  )
+                }
+              >
+                +0.05
+              </button>
+            </div>
+          </div>
+
+          <div className="inspector-speed-row">
+            <label
+              className="inspector-speed-field"
+              title="Set the output timeline length; rate is computed from the trimmed source."
+            >
+              Fit to duration (s)
+              <input
+                type="number"
+                min={MIN_CLIP_DURATION}
+                step="0.01"
+                value={Number(outputSpeedDuration.toFixed(3))}
+                onChange={(e) => {
+                  const target = Number(e.target.value);
+                  if (!Number.isFinite(target) || target <= 0) return;
+                  setPlaybackRate(
+                    playbackRateForTargetDuration(trimmedSourceDuration, target),
+                  );
+                }}
+              />
+            </label>
+            <div className="inspector-speed-meta" aria-live="polite">
+              <span>Source {trimmedSourceDuration.toFixed(2)}s</span>
+              <span>→</span>
+              <span>Out {outputSpeedDuration.toFixed(2)}s</span>
+            </div>
+          </div>
+
+          {clip.bpmEstimate != null && clip.bpmEstimate > 0 && (
+            <div className="inspector-speed-row inspector-speed-beats">
+              <label
+                className="inspector-speed-field"
+                title="Stretch/compress so the clip spans exactly this many beats at the clip BPM."
+              >
+                Fit to beats
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  value={fitBeatCount}
+                  onChange={(e) => setFitBeatCount(e.target.value)}
+                />
+              </label>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                onClick={() => {
+                  const beats = Math.max(1, Math.round(parseNumber(fitBeatCount, 8)));
+                  const next = playbackRateToFitBeats(
+                    trimmedSourceDuration,
+                    clip.bpmEstimate!,
+                    beats,
+                  );
+                  if (next != null) {
+                    setFitBeatCount(String(beats));
+                    setPlaybackRate(next);
+                  }
+                }}
+              >
+                Apply @ {Math.round(clip.bpmEstimate)} BPM
+              </button>
+              <span className="inspector-speed-meta">
+                Now ≈ {beatsSpannedByDuration(outputSpeedDuration, clip.bpmEstimate).toFixed(2)} beats
+              </span>
+            </div>
+          )}
+
+          <div className="inspector-speed-presets">
+            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((preset) => (
               <button
                 key={preset}
                 type="button"
-                className="btn-secondary kf-btn"
-                onClick={() => update('playbackRate', String(preset))}
+                className={`btn-secondary kf-btn${
+                  Math.abs(playbackRateValue - preset) < 0.001 ? ' is-active' : ''
+                }`}
+                onClick={() => setPlaybackRate(preset)}
               >
                 {preset}×
               </button>
             ))}
+            <button
+              type="button"
+              className="btn-secondary kf-btn"
+              disabled={Math.abs(playbackRateValue - 1) < 1e-6}
+              onClick={() => setPlaybackRate(1)}
+            >
+              Reset 1×
+            </button>
           </div>
           <p className="inspector-hint">
-            Effective duration {getClipDuration({
-              ...clip,
-              playbackRate: playbackRateValue,
-            }).toFixed(2)}s
-            {' '}(trimmed source ÷ speed). Audio uses pitch-preserving time-stretch on export.
+            Lip-sync tip: set <em>Fit to duration</em> to the music phrase length, then nudge ±0.01
+            while previewing. Export audio keeps pitch (atempo); preview audio may pitch-shift slightly.
           </p>
         </div>
         {onAutomationChange && (
