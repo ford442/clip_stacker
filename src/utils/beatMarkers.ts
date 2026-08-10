@@ -1,6 +1,10 @@
 import type { Clip } from '../types';
 import type { VirtualClipLayout } from '../components/timelineClipTypes';
 import { getClipPlaybackRate } from './playbackRate';
+import {
+  clipHasRateAutomation,
+  outputLocalAtSourceOffset,
+} from './timeRemap';
 
 export interface BeatMarkerLayout {
   clipId: string;
@@ -13,7 +17,8 @@ export interface BeatMarkerLayout {
 /**
  * Map clip beatTimestamps onto timeline ruler pixel positions (read-only overlay).
  * Beats outside the trimmed range are skipped.
- * Source beat times are mapped through playbackRate onto the output clip span.
+ * Source beat times are mapped through constant playbackRate or the variable
+ * rate automation curve onto the output clip span.
  */
 export function buildBeatMarkerLayouts(
   layouts: VirtualClipLayout[],
@@ -26,12 +31,15 @@ export function buildBeatMarkerLayouts(
 
     const trimStart = clip.trimStart;
     const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-    const rate = getClipPlaybackRate(clip);
     const pxPerSec = width / duration;
+    const hasCurve = clipHasRateAutomation(clip);
+    const rate = getClipPlaybackRate(clip);
 
     for (const t of beats) {
       if (!Number.isFinite(t) || t < trimStart || t > trimEnd) continue;
-      const local = (t - trimStart) / rate;
+      const local = hasCurve
+        ? outputLocalAtSourceOffset(clip, t - trimStart)
+        : (t - trimStart) / rate;
       markers.push({
         clipId: clip.id,
         sourceTime: t,

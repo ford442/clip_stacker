@@ -3,6 +3,7 @@
  *
  * Output timeline duration = trimmedSourceDuration / rate.
  * Video uses FFmpeg setpts; audio uses pitch-preserving atempo chains.
+ * Variable rate curves: see `timeRemap.ts` (∫ rate dt).
  */
 
 import type { Clip } from '../types';
@@ -152,7 +153,8 @@ export function videoSetptsFilter(rate: number): string {
   return `setpts=(PTS-STARTPTS)/${formatPlaybackRate(r)}`;
 }
 
-/** Map output-local clip elapsed time → source media time (seconds). */
+/** Map output-local elapsed → source time for **constant** rate only.
+ * Variable curves: use `sourceTimeAtOutputLocal` from `timeRemap.ts`. */
 export function clipSourceTimeAtLocal(
   clip: Pick<Clip, 'trimStart' | 'playbackRate'>,
   localElapsed: number,

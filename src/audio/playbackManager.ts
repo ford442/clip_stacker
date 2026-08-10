@@ -14,6 +14,7 @@ import {
 } from '../utils/clipAutomation';
 import { sampleKeyframes } from '../utils/keyframes';
 import { clampClipVolume } from '../utils/audioVolume';
+import { RemappedAudioCache } from '../utils/remappedAudioCache';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
 
@@ -70,6 +71,7 @@ export class AudioPlaybackManager {
   private masterGain: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
   private readonly cache = new ClipAudioCache();
+  private readonly remapCache = new RemappedAudioCache();
   private schedule: AudioScheduleEntry[] = [];
   private active: ActiveSource[] = [];
   private state: PlaybackState = 'stopped';
@@ -261,6 +263,7 @@ export class AudioPlaybackManager {
     this.schedule = nextSchedule;
     const keepIds = new Set(this.schedule.map((e) => e.clipId));
     this.cache.prune(keepIds);
+    this.remapCache.prune(keepIds);
 
     if (!this.isAvailable) return;
     const ok = await this.ensureContext();
@@ -269,9 +272,7 @@ export class AudioPlaybackManager {
     const generation = ++this.syncGeneration;
     const ctx = this.ctx;
     await Promise.all(
-      this.schedule.map((entry) =>
-        this.cache.get(entry.clipId, entry.objectUrl, ctx),
-      ),
+      this.schedule.map((entry) => this.remapCache.get(entry, this.cache, ctx)),
     );
     if (generation !== this.syncGeneration) return;
 
@@ -361,6 +362,7 @@ export class AudioPlaybackManager {
     this.seekGeneration += 1;
     this.stopSources();
     this.cache.clear();
+    this.remapCache.clear();
     this.schedule = [];
     this.listeners.clear();
     this.state = 'stopped';
@@ -474,7 +476,7 @@ export class AudioPlaybackManager {
     // Prefetch all buffers in parallel so later clips aren't delayed by
     // earlier decodes (keeps multi-clip starts gapless).
     await Promise.all(
-      remaining.map((entry) => this.cache.get(entry.clipId, entry.objectUrl, ctx)),
+      remaining.map((entry) => this.remapCache.get(entry, this.cache, ctx)),
     );
     if (
       generation !== this.scheduleGeneration ||
@@ -487,7 +489,7 @@ export class AudioPlaybackManager {
     for (const entry of remaining) {
       if (generation !== this.scheduleGeneration) return;
 
-      const buffer = await this.cache.get(entry.clipId, entry.objectUrl, ctx);
+      const buffer = await this.remapCache.get(entry, this.cache, ctx);
       if (
         !buffer ||
         this.state !== 'playing' ||
@@ -502,9 +504,11 @@ export class AudioPlaybackManager {
       if (remainingTimeline <= 1e-4) continue;
 
       const rate =
-        Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
-          ? entry.playbackRate
-          : 1;
+        entry.rateRemap
+          ? 1
+          : Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
+            ? entry.playbackRate
+            : 1;
       const bufferOffset = entry.bufferOffset + clipElapsed * rate;
       // Clamp to buffer length so we never schedule past the decoded samples.
       const maxOffset = Math.max(0, buffer.duration - 1e-4);

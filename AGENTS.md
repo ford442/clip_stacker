@@ -94,3 +94,19 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 4. Keep zeros when WASM is unavailable — shaders must remain no-ops (no crash / no visual glitch).
 
 Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approved FFT) inside `native/audio_analysis/`.
+
+## Variable speed remapping (time stretch)
+
+`automation.playbackRate` keyframes (existing `Keyframe` type — output-local seconds) remap timeline time to source time via ∫ rate(τ) dτ (`src/utils/timeRemap.ts`). Preview video samples frames at the remapped `sourceTime`; audio is pitch-preserved with a small WSOLA WASM module (not SoundTouch / LGPL).
+
+### Layout
+
+- `native/time_stretch/` — C++ WSOLA remap; rebuild with `npm run build:time-stretch` (requires `em++`)
+- `public/wasm/time_stretch.{js,wasm}` — committed build artifacts
+- `public/worklets/time-stretch-processor.js` — AudioWorklet for live constant-tempo stretch
+- `src/wasm/timeStretch.ts` + `timeStretchWorklet.ts` — lazy WASM / worklet bindings (JS OLA fallback)
+- `src/utils/remapAudio.ts` + `remappedAudioCache.ts` — curve → remapped `AudioBuffer` for schedule / export premix
+- `src/components/SpeedAutomationLane.tsx` — Cubase-style lane under the selected timeline clip
+- Inspector **Speed (time remap)** `KeyframeMiniEditor` — same lane as volume/pan
+
+When `playbackRate` automation is present, FFmpeg export uses the OfflineAudioContext premix path (same as volume/pan). Constant `clip.playbackRate` without a curve still uses `setpts` + chained `atempo`.

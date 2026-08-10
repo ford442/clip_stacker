@@ -86,6 +86,24 @@ describe('buildAudioSchedule', () => {
     expect(schedule[0].playbackRate).toBe(2);
   });
 
+  it('marks rateRemap and plays remapped buffers at 1×', () => {
+    const clips = [
+      makeClip('a', 10, {
+        automation: {
+          playbackRate: [
+            { t: 0, value: 1 },
+            { t: 2, value: 3 },
+          ],
+        },
+      }),
+    ];
+    const schedule = buildAudioSchedule(clips, [], []);
+    expect(schedule[0].rateRemap).toBe(true);
+    expect(schedule[0].playbackRate).toBe(1);
+    expect(schedule[0].bufferOffset).toBe(0);
+    expect(schedule[0].duration).toBeCloseTo(4 + 2 / 3, 2);
+  });
+
   it('clamps volume into 0–200%', () => {
     const clips = [makeClip('a', 2, { volume: 5 })];
     expect(buildAudioSchedule(clips, [], [])[0].volume).toBe(2);

@@ -10,6 +10,7 @@
     "deploy": "npm run build && python3 deploy.py",
     "deploy:rife-space": "bash scripts/deploy-rife-space.sh",
     "build:audio-analysis": "bash scripts/build-audio-analysis.sh",
+    "build:time-stretch": "bash scripts/build-time-stretch.sh",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",

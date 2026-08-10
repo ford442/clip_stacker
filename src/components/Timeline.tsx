@@ -456,6 +456,7 @@ function TimelineImpl({
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
         onTouchStart={handleTouchStart}
+        showSpeedLane
       />
     );
   };

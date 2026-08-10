@@ -90,14 +90,20 @@ export function clipHasAutomation(
   );
 }
 
-/** Volume or pan lanes that need OfflineAudioContext premix (not FFmpeg filters). */
+/**
+ * Volume / pan / playbackRate lanes that need OfflineAudioContext premix
+ * (arbitrary curves aren't expressible as static FFmpeg filters; rate ramps
+ * also need pitch-preserving WSOLA rather than chained atempo).
+ */
 export function clipHasAudioAutomation(
   clip: Pick<Clip, 'automation'> | null | undefined,
 ): boolean {
   const automation = clip?.automation;
   if (!automation) return false;
   return (
-    (automation.volume?.length ?? 0) > 0 || (automation.pan?.length ?? 0) > 0
+    (automation.volume?.length ?? 0) > 0 ||
+    (automation.pan?.length ?? 0) > 0 ||
+    (automation.playbackRate?.length ?? 0) > 0
   );
 }
 

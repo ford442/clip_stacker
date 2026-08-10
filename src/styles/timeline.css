@@ -153,13 +153,105 @@
   min-width: min-content;
 }
 
+.timeline-track:has(.timeline-speed-lane-wrap) {
+  min-height: 148px;
+  padding-bottom: 8px;
+}
+
 .timeline-clip-wrapper {
   position: absolute;
   top: 4px;
   display: flex;
+  flex-direction: column;
   align-items: stretch;
   min-width: 0;
-  height: calc(100% - 8px);
+  height: auto;
+  min-height: calc(100% - 8px);
+}
+
+.timeline-clip-wrapper .timeline-clip {
+  flex: 1 1 auto;
+  min-height: 70px;
+}
+
+.timeline-speed-lane-wrap {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(6, 10, 18, 0.92);
+  overflow: hidden;
+}
+
+.speed-lane {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.speed-lane-svg {
+  display: block;
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.speed-lane-baseline {
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+}
+
+.speed-lane-curve {
+  stroke: var(--gold, #c9a227);
+  stroke-width: 1.5;
+}
+
+.speed-lane-playhead {
+  stroke: rgba(255, 120, 80, 0.85);
+  stroke-width: 1;
+}
+
+.speed-lane-key {
+  fill: var(--gold, #c9a227);
+  stroke: #0b1018;
+  stroke-width: 1;
+  cursor: grab;
+}
+
+.speed-lane-key:active {
+  cursor: grabbing;
+}
+
+.speed-lane-caption {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.35rem 0.2rem;
+  font-size: 0.65rem;
+  color: var(--muted, #9aa3b5);
+  user-select: none;
+}
+
+.speed-lane-seed {
+  margin-left: auto;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0 0.35rem;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.speed-lane-seed:hover {
+  border-color: var(--gold, #c9a227);
+  color: var(--gold, #c9a227);
+}
+
+.timeline-clip-badge--speed {
+  background: rgba(201, 162, 39, 0.2);
+  color: var(--gold, #c9a227);
 }
 
 .transition-zone--overlay {
