@@ -31,6 +31,7 @@ import {
   DEFAULT_CLIP_PLAYBACK_RATE,
   getTrimmedSourceDuration,
   MIN_CLIP_PLAYBACK_RATE,
+  MAX_CLIP_PLAYBACK_RATE,
   nudgePlaybackRate,
   outputDurationForRate,
   PLAYBACK_RATE_NUDGE_COARSE,
@@ -857,12 +858,14 @@ function InspectorImpl({
           </div>
           <p className="inspector-hint">
             Lip-sync tip: set <em>Fit to duration</em> to the music phrase length, then nudge ±0.01
-            while previewing. Export audio keeps pitch (atempo); preview audio may pitch-shift slightly.
+            while previewing. For cinematic ramps, add a Speed automation curve (Inspector or
+            selected timeline clip). Variable remaps keep pitch via WSOLA; constant rate uses
+            atempo on export.
           </p>
         </div>
         {onAutomationChange && (
-          <details className="inspector-details" open={(clip.automation?.volume?.length ?? 0) > 0 || (clip.automation?.pan?.length ?? 0) > 0}>
-            <summary className="inspector-group-label">Audio automation</summary>
+          <details className="inspector-details" open={(clip.automation?.volume?.length ?? 0) > 0 || (clip.automation?.pan?.length ?? 0) > 0 || (clip.automation?.playbackRate?.length ?? 0) > 0}>
+            <summary className="inspector-group-label">Audio / speed automation</summary>
             <div className="inspector-fields" style={{ marginTop: '0.5rem' }}>
               <KeyframeMiniEditor
                 label="Volume"
@@ -900,9 +903,28 @@ function InspectorImpl({
                   );
                 }}
               />
+              <KeyframeMiniEditor
+                label="Speed (time remap)"
+                duration={getClipDuration(clip)}
+                currentTime={clipLocalTime}
+                keyframes={clip.automation?.playbackRate}
+                defaultValue={playbackRateValue}
+                min={MIN_CLIP_PLAYBACK_RATE}
+                max={MAX_CLIP_PLAYBACK_RATE}
+                step={0.01}
+                onChange={(track) => {
+                  const next: ClipAutomation = { ...(clip.automation ?? {}) };
+                  if (track?.length) next.playbackRate = track;
+                  else delete next.playbackRate;
+                  onAutomationChange(
+                    Object.keys(next).length > 0 ? next : undefined,
+                  );
+                }}
+              />
               <p className="inspector-hint">
-                Keyframe times follow the playhead on this clip. Export uses the same
-                OfflineAudioContext mix as preview when automation is present.
+                Speed keyframe times are output-local clip seconds; source time is the area under
+                the rate curve (∫ rate dt). Export / preview share the same OfflineAudioContext
+                premix when automation is present.
               </p>
             </div>
           </details>

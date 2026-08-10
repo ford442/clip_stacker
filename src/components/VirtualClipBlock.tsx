@@ -1,8 +1,11 @@
 import { memo, useCallback, useRef, type CSSProperties, type DragEvent, type TouchEvent } from 'react';
-import type { ClipTransition } from '../types';
+import type { ClipAutomation, ClipTransition } from '../types';
 import { editorActions, useIsClipSelected } from '../store';
 import { WaveformCanvas } from './WaveformCanvas';
+import { SpeedAutomationLane } from './SpeedAutomationLane';
 import type { VirtualClipLayout } from './timelineClipTypes';
+import { normalizeClipAutomation } from '../utils/clipAutomation';
+import { clipHasRateAutomation } from '../utils/timeRemap';
 
 const TRANSITION_COLORS: Record<string, string> = {
   none: 'var(--border)',
@@ -36,6 +39,8 @@ interface Props {
   onDragEnd: () => void;
   /** Called on long-press to begin full drag-reorder. */
   onTouchStart: (index: number) => void;
+  /** When true, show the Cubase-style speed remapping lane under the clip. */
+  showSpeedLane?: boolean;
 }
 
 function VirtualClipBlockImpl({
@@ -54,6 +59,7 @@ function VirtualClipBlockImpl({
   onDragStart,
   onDragEnd,
   onTouchStart,
+  showSpeedLane = false,
 }: Props) {
   const { clip, index, duration } = layout;
   const isSelected = useIsClipSelected(clip.id);
@@ -61,6 +67,25 @@ function VirtualClipBlockImpl({
   const isLoadingWave = clip.kind === 'audio' && waves === undefined;
   const layerIndex = clip.layerIndex ?? 0;
   const isOverlay = layerIndex > 0;
+  const speedOpen = showSpeedLane && isSelected;
+
+  const handleSpeedChange = useCallback(
+    (automation: ClipAutomation | undefined) => {
+      editorActions.pushHistoryDebounced(`speed-lane:${clip.id}`);
+      const next = normalizeClipAutomation(automation);
+      editorActions.setClips((prev) =>
+        prev.map((c) => {
+          if (c.id !== clip.id) return c;
+          if (!next) {
+            const { automation: _removed, ...rest } = c;
+            return rest;
+          }
+          return { ...c, automation: next };
+        }),
+      );
+    },
+    [clip.id],
+  );
 
   // Touch / swipe-swap state (kept in refs so the memoized component stays pure).
   const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
@@ -244,6 +269,12 @@ function VirtualClipBlockImpl({
               </span>
             )}
 
+            {clipHasRateAutomation(clip) && (
+              <span className="timeline-clip-badge timeline-clip-badge--speed" title="Speed remapping automation">
+                Speed
+              </span>
+            )}
+
             <span className="timeline-clip-label">
               {index + 1}. {clip.title}
             </span>
@@ -279,6 +310,20 @@ function VirtualClipBlockImpl({
             </span>
           </div>
         </div>
+        {speedOpen && (
+          <div
+            className="timeline-speed-lane-wrap"
+            onClick={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+          >
+            <SpeedAutomationLane
+              clip={clip}
+              width={layout.width}
+              durationSec={duration}
+              onChange={handleSpeedChange}
+            />
+          </div>
+        )}
       </div>
     </>
   );

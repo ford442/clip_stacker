@@ -2,6 +2,7 @@ import type { Clip } from '../../types';
 import { MIN_CLIP_DURATION } from '../media';
 import { clampClipVolume } from '../audioVolume';
 import { clampClipPlaybackRate } from '../playbackRate';
+import { remappedClipDuration } from '../timeRemap';
 import {
   clampPixelRectToCanvas,
   isPixelRectOffCanvas,
@@ -15,9 +16,7 @@ import {
 } from './constants';
 
 export function getClipDuration(clip: Clip): number {
-  const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-  const rate = clampClipPlaybackRate(clip.playbackRate);
-  return Math.max(MIN_CLIP_DURATION, (end - clip.trimStart) / rate);
+  return remappedClipDuration(clip);
 }
 
 /**

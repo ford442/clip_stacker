@@ -71,6 +71,18 @@ describe('clipAutomation', () => {
       ),
     ).toBe(true);
     expect(
+      clipHasAudioAutomation(
+        makeClip({
+          automation: {
+            playbackRate: [
+              { t: 0, value: 1 },
+              { t: 1, value: 2 },
+            ],
+          },
+        }),
+      ),
+    ).toBe(true);
+    expect(
       timelineHasAudioAutomation([
         makeClip(),
         makeClip({ automation: { pan: [{ t: 0, value: -0.5 }] } }),

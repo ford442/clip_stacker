@@ -24,8 +24,8 @@ export type TextOverlayKeyframes = Partial<Record<TextAnimatableProp, Keyframe[]
 /**
  * Per-clip parameter automation lanes (Cubase / Ableton style).
  * Keyframe times are local clip time in seconds (same as layout keyframes).
- * Constant `clip.playbackRate` is the speed baseline; keyframed rate curves
- * remain a follow-up.
+ * Constant `clip.playbackRate` is the speed baseline; `automation.playbackRate`
+ * keyframes ramp speed over output-local clip time (see `timeRemap.ts`).
  */
 export type ClipAutomationProp = 'volume' | 'pan' | 'playbackRate';
 
@@ -98,8 +98,9 @@ export interface Clip {
    */
   playbackRate?: number;
   /**
-   * Parameter automation lanes (volume / pan / future playbackRate curves).
+   * Parameter automation lanes (volume / pan / playbackRate).
    * Volume keyframes are absolute linear gain (0–2); empty lane uses `volume`.
+   * `playbackRate` keyframes remap output→source time via ∫ rate dt.
    * Audio fades and bed ducking still multiply on top of the sampled level.
    */
   automation?: ClipAutomation;

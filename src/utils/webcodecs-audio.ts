@@ -24,6 +24,7 @@ import {
   audioBufferToWav,
   timelineHasAudioAutomation,
 } from './clipAutomation';
+import { RemappedAudioCache } from './remappedAudioCache';
 
 /** AAC-LC — matches the existing FFmpeg mux path (192 kbps stereo @ 48 kHz). */
 export const AAC_CODEC = 'mp4a.40.2';
@@ -106,9 +107,10 @@ export async function renderTimelineAudioMix(
 
   const sampleCount = Math.max(1, Math.ceil(durationSec * AAC_SAMPLE_RATE));
   const offline = new OfflineAudioContext(AAC_CHANNELS, sampleCount, AAC_SAMPLE_RATE);
+  const remapCache = new RemappedAudioCache();
 
   for (const entry of entries) {
-    const buffer = await cache.get(entry.clipId, entry.objectUrl, offline);
+    const buffer = await remapCache.get(entry, cache, offline);
     if (!buffer) {
       throw new Error(`Could not decode audio for clip "${entry.clipId}"`);
     }
@@ -149,9 +151,11 @@ export async function renderTimelineAudioMix(
     leaf.connect(offline.destination);
 
     const rate =
-      Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
-        ? entry.playbackRate
-        : 1;
+      entry.rateRemap
+        ? 1
+        : Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
+          ? entry.playbackRate
+          : 1;
     source.playbackRate.value = rate;
     source.start(start, entry.bufferOffset, entry.duration * rate);
   }
@@ -161,7 +165,7 @@ export async function renderTimelineAudioMix(
 
 /**
  * Offline-mix the timeline and encode as WAV bytes for FFmpeg VFS mux.
- * Used when volume/pan automation is present (arbitrary curves aren't FFmpeg filters).
+ * Used when volume/pan/rate automation is present (arbitrary curves aren't FFmpeg filters).
  */
 export async function renderTimelineAudioMixWav(
   clips: Clip[],

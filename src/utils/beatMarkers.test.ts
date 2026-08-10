@@ -60,4 +60,25 @@ describe('beatMarkers', () => {
     const markers = buildBeatMarkerLayouts(layouts);
     expect(markers.map((m) => m.leftPx)).toEqual([0, 100, 200]);
   });
+
+  it('maps source beats through a variable rate curve', () => {
+    const clip = makeClip({
+      duration: 4,
+      trimStart: 0,
+      trimEnd: 4,
+      automation: {
+        playbackRate: [
+          { t: 0, value: 2 },
+          { t: 2, value: 2 },
+        ],
+      },
+      beatTimestamps: [0, 2, 4],
+    });
+    // Constant 2× via automation → same as playbackRate 2
+    const layouts: VirtualClipLayout[] = [
+      { clip, index: 0, duration: 2, width: 200, start: 0 },
+    ];
+    const markers = buildBeatMarkerLayouts(layouts);
+    expect(markers.map((m) => m.leftPx)).toEqual([0, 100, 200]);
+  });
 });

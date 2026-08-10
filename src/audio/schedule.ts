@@ -10,6 +10,7 @@ import { clampClipVolume } from '../utils/audioVolume';
 import type { Keyframe } from '../utils/keyframes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
 import { getClipPlaybackRate } from '../utils/playbackRate';
+import { clipHasRateAutomation } from '../utils/timeRemap';
 
 /** One clip's audio placement on the output timeline. */
 export interface AudioScheduleEntry {
@@ -24,7 +25,7 @@ export interface AudioScheduleEntry {
   volume: number;
   audioFadeIn: number;
   audioFadeOut: number;
-  /** Constant source playback speed (1 = normal). */
+  /** Constant source playback speed (1 = normal). Ignored when `rateRemap` is set. */
   playbackRate: number;
   /**
    * Absolute linear-gain keyframes (clip-local seconds). Empty → use `volume`.
@@ -33,6 +34,16 @@ export interface AudioScheduleEntry {
   volumeAutomation?: Keyframe[];
   /** Stereo pan keyframes (−1 L … +1 R). Empty → centered (0). */
   panAutomation?: Keyframe[];
+  /**
+   * When true, audio is pitch-preserved WSOLA-remapped offline to `duration`
+   * and played at rate 1 from buffer offset 0 (trim already baked in).
+   */
+  rateRemap?: boolean;
+  /** Clip snapshot fields needed to rebuild a remapped buffer. */
+  rateRemapClip?: Pick<
+    Clip,
+    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'
+  >;
   /**
    * Audio-bed / music track clip. When its timeline range overlaps a non-bed
    * (dialogue / base) entry, playback ducks its gain for intelligible speech.
@@ -54,20 +65,34 @@ function entryFromClip(
   isBed = false,
 ): AudioScheduleEntry {
   const automation = normalizeClipAutomation(clip.automation);
+  const rateRemap = clipHasRateAutomation(clip);
   return {
     clipId: clip.id,
     objectUrl: clip.objectUrl,
     timelineStart,
     duration,
-    bufferOffset: Math.max(0, clip.trimStart),
+    // Remapped buffers already start at the trim window.
+    bufferOffset: rateRemap ? 0 : Math.max(0, clip.trimStart),
     volume: clampClipVolume(clip.volume),
     audioFadeIn: Math.max(0, clip.audioFadeIn),
     audioFadeOut: Math.max(0, clip.audioFadeOut),
-    playbackRate: getClipPlaybackRate(clip),
+    playbackRate: rateRemap ? 1 : getClipPlaybackRate(clip),
     ...(automation?.volume?.length
       ? { volumeAutomation: automation.volume }
       : {}),
     ...(automation?.pan?.length ? { panAutomation: automation.pan } : {}),
+    ...(rateRemap
+      ? {
+          rateRemap: true,
+          rateRemapClip: {
+            trimStart: clip.trimStart,
+            trimEnd: clip.trimEnd,
+            duration: clip.duration,
+            playbackRate: clip.playbackRate,
+            automation: clip.automation,
+          },
+        }
+      : {}),
     ...(isBed ? { isBed: true } : {}),
   };
 }
@@ -169,9 +194,14 @@ export function schedulesMatchStructure(
       left.duration !== right.duration ||
       left.bufferOffset !== right.bufferOffset ||
       left.playbackRate !== right.playbackRate ||
+      Boolean(left.rateRemap) !== Boolean(right.rateRemap) ||
       Boolean(left.isBed) !== Boolean(right.isBed) ||
       !keyframesMatch(left.volumeAutomation, right.volumeAutomation) ||
-      !keyframesMatch(left.panAutomation, right.panAutomation)
+      !keyframesMatch(left.panAutomation, right.panAutomation) ||
+      !keyframesMatch(
+        left.rateRemapClip?.automation?.playbackRate,
+        right.rateRemapClip?.automation?.playbackRate,
+      )
     ) {
       return false;
     }
