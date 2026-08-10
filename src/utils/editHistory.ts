@@ -1,4 +1,4 @@
-import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../types';
+import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track } from '../types';
 import { cloneTracks } from './trackModel';
 
 /** Maximum undo snapshots kept in memory. */
@@ -12,6 +12,7 @@ export interface EditSnapshot {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   selectedClipId: string | null;
+  masterAudio: MasterAudio | null;
 }
 
 /** Shallow-clone clip metadata while reusing File / objectUrl references. */
@@ -33,6 +34,9 @@ export function cloneSnapshot(snapshot: EditSnapshot): EditSnapshot {
     transitions: snapshot.transitions.map((transition) => ({ ...transition })),
     textOverlays: snapshot.textOverlays.map((overlay) => ({ ...overlay })),
     selectedClipId: snapshot.selectedClipId,
+    masterAudio: snapshot.masterAudio
+      ? { ...snapshot.masterAudio }
+      : null,
   };
 }
 

@@ -505,3 +505,120 @@
     opacity: 1;
   }
 }
+
+/* ── Speed curve overlay on clips ───────────────────────── */
+.speed-curve-overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 24px;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.speed-curve-overlay-baseline {
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+
+.speed-curve-overlay-path {
+  stroke: #7c4dff;
+  stroke-width: 1.5;
+}
+
+.timeline-video-waveform {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 28px;
+  height: 40px;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+/* ── Master audio sync track ────────────────────────────── */
+.timeline-track-row--master-audio {
+  border-top: 1px solid rgba(201, 162, 39, 0.2);
+  background: rgba(8, 12, 24, 0.55);
+}
+
+.timeline-track--master-audio {
+  min-height: 56px;
+  position: relative;
+}
+
+.master-audio-track-inner {
+  position: relative;
+  min-height: 56px;
+}
+
+.master-audio-block {
+  position: absolute;
+  top: 4px;
+  height: 48px;
+  border: 1px solid rgba(201, 162, 39, 0.35);
+  border-radius: 6px;
+  overflow: hidden;
+  background: rgba(12, 18, 36, 0.9);
+}
+
+.master-audio-waveform {
+  height: 32px;
+}
+
+.master-audio-waveform.is-loading {
+  opacity: 0.5;
+}
+
+.master-audio-footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  height: 16px;
+  font-size: 0.58rem;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.master-audio-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(201, 162, 39, 0.9);
+}
+
+.master-audio-dur {
+  color: rgba(201, 162, 39, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+.master-audio-remove {
+  padding: 0 4px;
+  font-size: 0.75rem;
+  line-height: 1;
+}
+
+.master-audio-add {
+  display: block;
+  width: 100%;
+  margin: 8px 0;
+  padding: 10px;
+  border: 1px dashed rgba(201, 162, 39, 0.35);
+  border-radius: 6px;
+  color: rgba(201, 162, 39, 0.75);
+  background: transparent;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.master-audio-add:hover {
+  border-color: rgba(201, 162, 39, 0.6);
+  color: rgba(201, 162, 39, 1);
+}
+
+.master-audio-hint {
+  font-size: 0.62rem;
+  padding: 0 8px 4px;
+}

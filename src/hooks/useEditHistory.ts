@@ -1,6 +1,6 @@
 import { useStore } from 'zustand';
 import type { Dispatch, SetStateAction } from 'react';
-import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../types';
+import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track } from '../types';
 import type { EditSnapshot } from '../utils/editHistory';
 import { editorStore } from '../store/editorStore';
 
@@ -10,12 +10,14 @@ export interface UseEditHistoryResult {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  masterAudio: MasterAudio | null;
   selectedClipId: string | null;
   setClips: Dispatch<SetStateAction<Clip[]>>;
   setTracks: Dispatch<SetStateAction<Track[]>>;
   setClipGroups: Dispatch<SetStateAction<ClipGroup[]>>;
   setTransitions: Dispatch<SetStateAction<ClipTransition[]>>;
   setTextOverlays: Dispatch<SetStateAction<TextOverlay[]>>;
+  setMasterAudio: Dispatch<SetStateAction<MasterAudio | null>>;
   setSelectedClipId: Dispatch<SetStateAction<string | null>>;
   /** Push the current state onto the undo stack (call before a discrete edit). */
   pushHistory: () => void;
@@ -45,6 +47,7 @@ export function useEditHistory(): UseEditHistoryResult {
   const clipGroups = useStore(editorStore, (s) => s.clipGroups);
   const transitions = useStore(editorStore, (s) => s.transitions);
   const textOverlays = useStore(editorStore, (s) => s.textOverlays);
+  const masterAudio = useStore(editorStore, (s) => s.masterAudio);
   const selectedClipId = useStore(editorStore, (s) => s.selectedClipId);
   const canUndo = useStore(editorStore, (s) => s.undoDepth > 0);
   const canRedo = useStore(editorStore, (s) => s.redoDepth > 0);
@@ -57,6 +60,7 @@ export function useEditHistory(): UseEditHistoryResult {
     setClipGroups,
     setTransitions,
     setTextOverlays,
+    setMasterAudio,
     setSelectedClipId,
     pushHistory,
     pushHistoryDebounced,
@@ -71,12 +75,14 @@ export function useEditHistory(): UseEditHistoryResult {
     clipGroups,
     transitions,
     textOverlays,
+    masterAudio,
     selectedClipId,
     setClips,
     setTracks,
     setClipGroups,
     setTransitions,
     setTextOverlays,
+    setMasterAudio,
     setSelectedClipId,
     pushHistory,
     pushHistoryDebounced,

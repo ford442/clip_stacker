@@ -42,6 +42,7 @@ describe('editHistory', () => {
       transitions: [],
       textOverlays: [],
       selectedClipId: 'a',
+      masterAudio: null,
     });
 
     snapshot.clips[0].title = 'changed';

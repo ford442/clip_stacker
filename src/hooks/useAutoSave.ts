@@ -184,6 +184,7 @@ export function useAutoSave({
         transitions: restoredTransitions,
         textOverlays: restoredOverlays,
         selectedClipId: selectedId,
+        masterAudio: null,
       });
       if (session.exportSettings) {
         setExportSettings(session.exportSettings);

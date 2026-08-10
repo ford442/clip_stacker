@@ -18,6 +18,7 @@ import {
   type RemoteUploadProgressEvent,
   type RemoteUploadErrorEvent,
 } from "../utils/project";
+import { editorStore } from "../store/editorStore";
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length === 0) return "";
@@ -100,6 +101,7 @@ export function useProjectSaveLoad({
         clipGroups,
         { mediaMode: "embed", onEmbedWarning: (message) => embedWarnings.push(message), finishing },
         tracks,
+        editorStore.getState().masterAudio,
       );
       const payload = JSON.stringify(project, null, 2);
       const blob = new Blob([payload], { type: "application/json" });
@@ -130,6 +132,7 @@ export function useProjectSaveLoad({
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
           finishing: loadedFinishing,
+          masterAudio: loadedMasterAudio,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -144,6 +147,7 @@ export function useProjectSaveLoad({
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
           selectedClipId: selectedId,
+          masterAudio: loadedMasterAudio,
         });
         setFinishing(loadedFinishing);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
@@ -291,6 +295,7 @@ export function useProjectSaveLoad({
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
           finishing: loadedFinishing,
+          masterAudio: loadedMasterAudio,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -317,6 +322,7 @@ export function useProjectSaveLoad({
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
           selectedClipId: selectedId,
+          masterAudio: loadedMasterAudio,
         });
         setFinishing(loadedFinishing);
 

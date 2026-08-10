@@ -4,6 +4,7 @@ import type {
   Clip,
   ExportSettings,
   ClipTransition,
+  MasterAudio,
   TextOverlay,
   RenderPlan,
 } from "../types";
@@ -84,7 +85,7 @@ import {
 } from "./core";
 import { mergeClipsWithCompositing } from "./video";
 import { calculateRenderPlan } from "./plan";
-import { remuxVideoWithPremixWav } from "./mux";
+import { remuxVideoWithPremixWav, remuxVideoWithMasterAudio } from "./mux";
 
 export async function mergeClips(
   clips: Clip[],
@@ -95,6 +96,7 @@ export async function mergeClips(
   onProgress?: ProgressCallback,
   forceReencode = false,
   finishing: FinishingSettings = DEFAULT_FINISHING,
+  masterAudio: MasterAudio | null = null,
 ): Promise<Blob> {
   // Fresh diagnostic buffer for this render so failure messages are relevant.
   clearFfmpegLogs();
@@ -406,6 +408,28 @@ export async function mergeClips(
       /* ignore */
     }
     finalFileName = premixOut;
+  }
+
+  if (masterAudio) {
+    onStatus("Muxing master audio reference track...");
+    emitProgress(onProgress, "Muxing master audio", 0.996, true);
+    const masterOut = "stacked_master.mp4";
+    await remuxVideoWithMasterAudio(
+      ffmpeg,
+      finalFileName,
+      masterAudio,
+      masterOut,
+      totalDuration,
+      onStatus,
+      onProgress,
+      { start: 0.996, end: 0.999 },
+    );
+    try {
+      await ffmpeg.deleteFile(finalFileName);
+    } catch {
+      /* ignore */
+    }
+    finalFileName = masterOut;
   }
 
   const output = await safeReadFile(ffmpeg, finalFileName, "final output read");

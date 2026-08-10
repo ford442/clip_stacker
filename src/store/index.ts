@@ -9,6 +9,7 @@ export {
   useEditorTimelineClips,
   useEditorTransitions,
   useEditorTextOverlays,
+  useEditorMasterAudio,
   useSelectedClipId,
   useIsClipSelected,
   type EditorState,

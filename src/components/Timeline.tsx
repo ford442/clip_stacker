@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ClipTransition } from '../types';
-import { useEditorClips, useEditorClipGroups, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedClipId } from '../store';
+import { useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedClipId } from '../store';
 import { editorStore } from '../store/editorStore';
 import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import {
@@ -35,6 +35,8 @@ import {
 import type { VirtualClipLayout } from './timelineClipTypes';
 import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
+import { MasterAudioTrack } from './MasterAudioTrack';
+import { clipHasRateAutomation } from '../utils/timeRemap';
 
 interface Props {
   onMoveUp: (index: number) => void;
@@ -140,6 +142,7 @@ function TimelineImpl({
   const allClips = useEditorClips();
   const clipGroups = useEditorClipGroups();
   const tracks = useEditorTracks();
+  const masterAudio = useEditorMasterAudio();
   const transitions = useEditorTransitions();
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
@@ -226,6 +229,14 @@ function TimelineImpl({
           setThumbMap((prev) => (prev[clip.id] ? prev : { ...prev, [clip.id]: cached }));
         } else {
           requestTimelineThumbnails(clip, onThumbsLoaded);
+        }
+        if (clipHasRateAutomation(clip)) {
+          const cachedWave = getCachedWaveform(clip.id);
+          if (cachedWave) {
+            setWaveMap((prev) => (prev[clip.id] ? prev : { ...prev, [clip.id]: cachedWave }));
+          } else {
+            requestTimelineWaveform(clip, onWavesLoaded, { allowVideo: true });
+          }
         }
       } else if (clip.kind === 'audio') {
         const cached = getCachedWaveform(clip.id);
@@ -457,6 +468,7 @@ function TimelineImpl({
         onDragEnd={handleDragEnd}
         onTouchStart={handleTouchStart}
         showSpeedLane
+        showVideoWaveform={clipHasRateAutomation(clip)}
       />
     );
   };
@@ -705,6 +717,12 @@ function TimelineImpl({
             </div>
           );
         })}
+        <MasterAudioTrack
+          masterAudio={masterAudio}
+          totalDuration={totalDuration}
+          pixelsPerSecond={pixelsPerSecond}
+          contentWidth={contentWidth}
+        />
       </div>
 
       {editingTransition && (

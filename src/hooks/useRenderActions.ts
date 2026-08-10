@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from "react";
-import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from "../types";
+import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay } from "../types";
+import { editorStore } from "../store/editorStore";
 import type { RenderPlan } from "../types";
 import { getTimelineClips } from "../utils/timelineClips";
 import { resolveTargetResolution } from "../utils/resolution";
@@ -160,6 +161,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         plan,
         clipGroups,
         finishing,
+        editorStore.getState().masterAudio,
       );
       const url = URL.createObjectURL(result.blob);
       setOutputUrl(url);
