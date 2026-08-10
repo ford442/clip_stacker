@@ -13,6 +13,7 @@ import {
   DEFAULT_CANVAS_WIDTH,
   getClipDuration,
 } from './project';
+import { clipSourceTimeAtLocal } from './playbackRate';
 import { parseOutputResolution } from './resolution';
 import { computeTotalDuration } from './transitions';
 import {
@@ -547,7 +548,7 @@ function buildScheduledClipLayer(
       segment.scheduleIndex * 10 + (crossfade?.role === 'incoming' ? 1 : 0),
     localElapsed,
     clipDuration: segment.duration,
-    sourceTime: segment.clip.trimStart + localElapsed,
+    sourceTime: clipSourceTimeAtLocal(segment.clip, localElapsed),
     opacity: clipLayerOpacity(segment.clip, localElapsed, segment.duration, crossfade),
     rect,
     crossfade,
@@ -580,7 +581,7 @@ function buildOutgoingCrossfadeLayer(
     zIndex: segment.scheduleIndex * 10,
     localElapsed: outgoingElapsed,
     clipDuration: segment.duration,
-    sourceTime: segment.clip.trimStart + outgoingElapsed,
+    sourceTime: clipSourceTimeAtLocal(segment.clip, outgoingElapsed),
     opacity: clipLayerOpacity(
       segment.clip,
       outgoingElapsed,
@@ -738,7 +739,7 @@ function buildPipLayers(
         zIndex: 1000 + (clip.layerIndex ?? 1) * 100 + timelineIndex,
         localElapsed,
         clipDuration: duration,
-        sourceTime: clip.trimStart + localElapsed,
+        sourceTime: clipSourceTimeAtLocal(clip, localElapsed),
         opacity: clipLayerOpacity(clip, localElapsed, duration, null),
         rect,
         crossfade: null,

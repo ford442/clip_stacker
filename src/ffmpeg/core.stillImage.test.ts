@@ -56,6 +56,25 @@ describe('still image FFmpeg helpers', () => {
     expect(filter).not.toContain('[0:a]');
   });
 
+  it('buildSingleClipFilter applies setpts and atempo for playbackRate', () => {
+    const clip = makeClip({
+      playbackRate: 2,
+      trimStart: 1,
+      trimEnd: 5,
+    });
+    const filter = buildSingleClipFilter(clip);
+    expect(filter).toContain('setpts=(PTS-STARTPTS)/2');
+    expect(filter).toContain('atempo=2');
+    expect(filter).toContain('trim=start=1:end=5');
+  });
+
+  it('buildSingleClipFilter chains atempo for 0.25×', () => {
+    const clip = makeClip({ playbackRate: 0.25 });
+    const filter = buildSingleClipFilter(clip);
+    expect(filter).toContain('setpts=(PTS-STARTPTS)/0.25');
+    expect(filter).toContain('atempo=0.5,atempo=0.5');
+  });
+
   it('buildStillImageFfmpegArgs produces NLE-friendly encode settings', () => {
     const args = buildStillImageFfmpegArgs({
       inputName: 'splash.png',

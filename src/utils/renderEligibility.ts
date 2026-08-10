@@ -1,5 +1,6 @@
 import type { Clip, ClipTransition, TextOverlay } from '../types';
 import { clipHasVolumeAdjustment } from './audioVolume';
+import { clipHasPlaybackRateAdjustment } from './playbackRate';
 import { clipHasKeyframes } from './animatedLayout';
 import { isFinishingActive, type FinishingSettings } from './finishing';
 
@@ -12,7 +13,8 @@ export function clipNeedsEffects(clip: Clip): boolean {
     clip.videoFadeOut > 0 ||
     clip.audioFadeIn > 0 ||
     clip.audioFadeOut > 0 ||
-    clipHasVolumeAdjustment(clip)
+    clipHasVolumeAdjustment(clip) ||
+    clipHasPlaybackRateAdjustment(clip)
   );
 }
 

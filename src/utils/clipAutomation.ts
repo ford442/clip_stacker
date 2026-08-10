@@ -12,15 +12,24 @@ import {
   MAX_CLIP_VOLUME,
   MIN_CLIP_VOLUME,
 } from './audioVolume';
+import {
+  clampClipPlaybackRate,
+  DEFAULT_CLIP_PLAYBACK_RATE,
+  getClipPlaybackRate,
+  MAX_CLIP_PLAYBACK_RATE,
+  MIN_CLIP_PLAYBACK_RATE,
+} from './playbackRate';
 
 export const MIN_CLIP_PAN = -1;
 export const MAX_CLIP_PAN = 1;
 export const DEFAULT_CLIP_PAN = 0;
 
-/** Default when a playbackRate lane is empty (constant-rate baseline TBD). */
-export const DEFAULT_CLIP_PLAYBACK_RATE = 1;
-export const MIN_CLIP_PLAYBACK_RATE = 0.1;
-export const MAX_CLIP_PLAYBACK_RATE = 4;
+export {
+  DEFAULT_CLIP_PLAYBACK_RATE,
+  MIN_CLIP_PLAYBACK_RATE,
+  MAX_CLIP_PLAYBACK_RATE,
+  clampClipPlaybackRate,
+};
 
 export function clampClipPan(pan: number | undefined): number {
   const value = pan ?? DEFAULT_CLIP_PAN;
@@ -28,14 +37,8 @@ export function clampClipPan(pan: number | undefined): number {
   return Math.min(MAX_CLIP_PAN, Math.max(MIN_CLIP_PAN, value));
 }
 
-export function clampClipPlaybackRate(rate: number | undefined): number {
-  const value = rate ?? DEFAULT_CLIP_PLAYBACK_RATE;
-  if (!Number.isFinite(value)) return DEFAULT_CLIP_PLAYBACK_RATE;
-  return Math.min(MAX_CLIP_PLAYBACK_RATE, Math.max(MIN_CLIP_PLAYBACK_RATE, value));
-}
-
 export function defaultAutomationValue(
-  clip: Pick<Clip, 'volume'>,
+  clip: Pick<Clip, 'volume' | 'playbackRate'>,
   prop: ClipAutomationProp,
 ): number {
   switch (prop) {
@@ -44,7 +47,7 @@ export function defaultAutomationValue(
     case 'pan':
       return DEFAULT_CLIP_PAN;
     case 'playbackRate':
-      return DEFAULT_CLIP_PLAYBACK_RATE;
+      return getClipPlaybackRate(clip);
   }
 }
 
@@ -67,7 +70,7 @@ export function clampAutomationValue(
  * Empty / missing lanes return the scalar default for that property.
  */
 export function sampleAutomation(
-  clip: Pick<Clip, 'volume' | 'automation'>,
+  clip: Pick<Clip, 'volume' | 'playbackRate' | 'automation'>,
   prop: ClipAutomationProp,
   localT: number,
 ): number {

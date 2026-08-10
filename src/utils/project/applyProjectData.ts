@@ -180,6 +180,9 @@ export async function applyProjectData(
     if (savedClip.height != null) liveClip.height = Number(savedClip.height);
     if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
     if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
+    if (savedClip.playbackRate != null) {
+      liveClip.playbackRate = Number(savedClip.playbackRate);
+    }
     const automation = normalizeClipAutomation(savedClip.automation);
     if (automation) liveClip.automation = automation;
     else delete liveClip.automation;

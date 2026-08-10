@@ -147,7 +147,13 @@ export async function renderTimelineAudioMix(
       source.connect(gain);
     }
     leaf.connect(offline.destination);
-    source.start(start, entry.bufferOffset, entry.duration);
+
+    const rate =
+      Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
+        ? entry.playbackRate
+        : 1;
+    source.playbackRate.value = rate;
+    source.start(start, entry.bufferOffset, entry.duration * rate);
   }
 
   return offline.startRendering();

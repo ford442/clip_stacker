@@ -61,6 +61,9 @@ export function serializeProject(
       audioFadeIn: clip.audioFadeIn,
       audioFadeOut: clip.audioFadeOut,
       ...(clip.volume != null && clip.volume !== 1 ? { volume: clip.volume } : {}),
+      ...(clip.playbackRate != null && clip.playbackRate !== 1
+        ? { playbackRate: clip.playbackRate }
+        : {}),
       ...(automation ? { automation } : {}),
       fileName: clip.file.name,
       fileType: clip.file.type || undefined,

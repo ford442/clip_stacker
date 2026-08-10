@@ -11,6 +11,10 @@ import type {
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
 import { audioVolumeFilterSegment } from "../utils/audioVolume";
+import {
+  audioTempoFilterSegment,
+  getClipPlaybackRate,
+} from "../utils/playbackRate";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   renderTimelineAudioMixWav,
@@ -249,8 +253,9 @@ export async function muxVideoWithAudio(
     const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     const duration = getClipDuration(clip);
     const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
+    const atempo = audioTempoFilterSegment(getClipPlaybackRate(clip));
 
-    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},asetpts=PTS-STARTPTS`;
+    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo}`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;

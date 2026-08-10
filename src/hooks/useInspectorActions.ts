@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import type { Clip, ClipKeyframes, ClipAutomation, ExportSettings } from "../types";
 import { sanitizeClipAdjustments, getClipDuration, ContaboStorageManagerClient } from "../utils/project";
 import { clampClipVolume } from "../utils/audioVolume";
+import { clampClipPlaybackRate } from "../utils/playbackRate";
 import { normalizeClipAutomation } from "../utils/clipAutomation";
 import { clipDisplayPixelsToNormalized } from "../utils/overlayCoords";
 import { parseCanvasSize } from "../utils/pipPreset";
@@ -144,6 +145,9 @@ export function useInspectorActions({
             height: layout.height,
             opacity: Math.min(1, Math.max(0, Number(values.opacity ?? 1))),
             volume: clampClipVolume(Number(values.volume ?? 1)),
+            playbackRate: clampClipPlaybackRate(
+              Number(values.playbackRate ?? 1),
+            ),
           };
           sanitizeClipAdjustments(updated);
           return updated;

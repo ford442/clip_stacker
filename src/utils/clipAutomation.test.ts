@@ -60,7 +60,7 @@ describe('clipAutomation', () => {
     expect(clampAutomationValue('volume', -1)).toBe(0);
     expect(clampAutomationValue('pan', 2)).toBe(1);
     expect(clampAutomationValue('pan', -2)).toBe(-1);
-    expect(clampAutomationValue('playbackRate', 0)).toBe(0.1);
+    expect(clampAutomationValue('playbackRate', 0.1)).toBe(0.25);
   });
 
   it('detects audio automation presence', () => {

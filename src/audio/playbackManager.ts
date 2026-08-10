@@ -498,18 +498,22 @@ export class AudioPlaybackManager {
       }
 
       const clipElapsed = Math.max(0, globalTime - entry.timelineStart);
-      const remainingDuration = entry.duration - clipElapsed;
-      if (remainingDuration <= 1e-4) continue;
+      const remainingTimeline = entry.duration - clipElapsed;
+      if (remainingTimeline <= 1e-4) continue;
 
-      const bufferOffset = entry.bufferOffset + clipElapsed;
+      const rate =
+        Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
+          ? entry.playbackRate
+          : 1;
+      const bufferOffset = entry.bufferOffset + clipElapsed * rate;
       // Clamp to buffer length so we never schedule past the decoded samples.
       const maxOffset = Math.max(0, buffer.duration - 1e-4);
       if (bufferOffset >= maxOffset) continue;
-      const playDuration = Math.min(
-        remainingDuration,
-        maxOffset - bufferOffset,
-      );
+      const remainingSource = maxOffset - bufferOffset;
+      const maxTimelineFromBuffer = remainingSource / rate;
+      const playDuration = Math.min(remainingTimeline, maxTimelineFromBuffer);
       if (playDuration <= 1e-4) continue;
+      const playDurationSource = playDuration * rate;
 
       const when =
         entry.timelineStart > globalTime
@@ -518,6 +522,7 @@ export class AudioPlaybackManager {
 
       const source = ctx.createBufferSource();
       source.buffer = buffer;
+      source.playbackRate.value = rate;
 
       const gain = ctx.createGain();
       const duckedVolume = effectiveEntryVolume(entry, this.schedule);
@@ -551,7 +556,7 @@ export class AudioPlaybackManager {
       }
 
       try {
-        source.start(when, bufferOffset, playDuration);
+        source.start(when, bufferOffset, playDurationSource);
       } catch {
         continue;
       }

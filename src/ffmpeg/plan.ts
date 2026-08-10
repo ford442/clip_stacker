@@ -133,6 +133,7 @@ function computeRenderPlanPath(
     let audioClipCount = 0;
     let fadeClipCount = 0;
     let volumeClipCount = 0;
+    let speedClipCount = 0;
     let rifeClipCount = 0;
     for (const clip of effectClips) {
       if (clip.kind === "audio") {
@@ -149,6 +150,9 @@ function computeRenderPlanPath(
       if ((clip.volume ?? 1) !== 1) {
         volumeClipCount++;
       }
+      if ((clip.playbackRate ?? 1) !== 1) {
+        speedClipCount++;
+      }
       if (clip.rifeProcessed) {
         rifeClipCount++;
       }
@@ -158,6 +162,7 @@ function computeRenderPlanPath(
     if (audioClipCount > 0) reasonParts.push("are audio-only");
     if (fadeClipCount > 0) reasonParts.push("have fades");
     if (volumeClipCount > 0) reasonParts.push("have volume adjustments");
+    if (speedClipCount > 0) reasonParts.push("have speed adjustments");
     if (rifeClipCount > 0) reasonParts.push("are RIFE-processed");
 
     let reasonDetail = reasonParts.join(" and/or ");

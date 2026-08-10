@@ -9,6 +9,7 @@ import { audioTracks } from '../utils/trackModel';
 import { clampClipVolume } from '../utils/audioVolume';
 import type { Keyframe } from '../utils/keyframes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
+import { getClipPlaybackRate } from '../utils/playbackRate';
 
 /** One clip's audio placement on the output timeline. */
 export interface AudioScheduleEntry {
@@ -23,6 +24,8 @@ export interface AudioScheduleEntry {
   volume: number;
   audioFadeIn: number;
   audioFadeOut: number;
+  /** Constant source playback speed (1 = normal). */
+  playbackRate: number;
   /**
    * Absolute linear-gain keyframes (clip-local seconds). Empty → use `volume`.
    * Fades and bed ducking still multiply on top of the sampled level.
@@ -60,6 +63,7 @@ function entryFromClip(
     volume: clampClipVolume(clip.volume),
     audioFadeIn: Math.max(0, clip.audioFadeIn),
     audioFadeOut: Math.max(0, clip.audioFadeOut),
+    playbackRate: getClipPlaybackRate(clip),
     ...(automation?.volume?.length
       ? { volumeAutomation: automation.volume }
       : {}),
@@ -164,6 +168,7 @@ export function schedulesMatchStructure(
       left.timelineStart !== right.timelineStart ||
       left.duration !== right.duration ||
       left.bufferOffset !== right.bufferOffset ||
+      left.playbackRate !== right.playbackRate ||
       Boolean(left.isBed) !== Boolean(right.isBed) ||
       !keyframesMatch(left.volumeAutomation, right.volumeAutomation) ||
       !keyframesMatch(left.panAutomation, right.panAutomation)

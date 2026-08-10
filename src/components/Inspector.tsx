@@ -25,6 +25,11 @@ import {
   MAX_CLIP_PAN,
   MIN_CLIP_PAN,
 } from '../utils/clipAutomation';
+import {
+  clampClipPlaybackRate,
+  DEFAULT_CLIP_PLAYBACK_RATE,
+  MIN_CLIP_PLAYBACK_RATE,
+} from '../utils/playbackRate';
 import { clipHasKeyframes } from '../utils/animatedLayout';
 import {
   buildPipRect,
@@ -55,6 +60,7 @@ interface ClipValues {
   height: string;
   opacity: string;
   volume: string;
+  playbackRate: string;
 }
 
 interface Props {
@@ -124,6 +130,7 @@ const DEFAULT_LAYOUT_VALUES = {
   height: 0,
   opacity: 1,
   volume: 1,
+  playbackRate: 1,
 } as const;
 const MIN_INSPECTOR_THUMBNAILS = 4;
 const MAX_INSPECTOR_THUMBNAILS = 8;
@@ -215,6 +222,7 @@ function InspectorImpl({
     height: '0',
     opacity: '1',
     volume: '1',
+    playbackRate: '1',
   });
 
   const layoutCanvas = useMemo(
@@ -240,6 +248,7 @@ function InspectorImpl({
       height: String(layout.height),
       opacity: String(clip.opacity ?? 1),
       volume: String(clip.volume ?? 1),
+      playbackRate: String(clip.playbackRate ?? 1),
     });
     setAdvancedOpen(
       hasAdvancedLayoutValues({
@@ -400,6 +409,9 @@ function InspectorImpl({
   const currentWave = clip ? waveMap[clip.id] : undefined;
   const volumeValue = clampClipVolume(parseNumber(values.volume, 1));
   const volumePercent = Math.round(volumeValue * 100);
+  const playbackRateValue = clampClipPlaybackRate(
+    parseNumber(values.playbackRate, DEFAULT_CLIP_PLAYBACK_RATE),
+  );
 
   const updateTrimStart = (nextStart: number) => {
     if (!clip) return;
@@ -648,6 +660,42 @@ function InspectorImpl({
           <p className="inspector-hint">
             Volume is baked into the final render via FFmpeg and reflected in preview playback.
             Automation lanes override the scalar level over clip-local time; fades still apply on top.
+          </p>
+        </div>
+        <div className="inspector-group-label">Speed</div>
+        <div className="inspector-volume-group">
+          <label
+            className="inspector-volume-slider"
+            title="Constant playback speed. 1× is normal; higher speeds shorten timeline duration."
+          >
+            Speed {Number(playbackRateValue).toFixed(2)}×
+            <input
+              type="range"
+              min={MIN_CLIP_PLAYBACK_RATE}
+              max={3}
+              step="0.05"
+              value={playbackRateValue}
+              onChange={(e) => update('playbackRate', e.target.value)}
+            />
+          </label>
+          <div className="inspector-speed-presets" style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+            {[0.5, 1, 2].map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                className="btn-secondary kf-btn"
+                onClick={() => update('playbackRate', String(preset))}
+              >
+                {preset}×
+              </button>
+            ))}
+          </div>
+          <p className="inspector-hint">
+            Effective duration {getClipDuration({
+              ...clip,
+              playbackRate: playbackRateValue,
+            }).toFixed(2)}s
+            {' '}(trimmed source ÷ speed). Audio uses pitch-preserving time-stretch on export.
           </p>
         </div>
         {onAutomationChange && (

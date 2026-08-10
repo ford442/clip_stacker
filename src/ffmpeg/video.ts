@@ -10,6 +10,11 @@ import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration, clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
 import { resolveClipLayoutPixels } from "../utils/overlayCoords";
 import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
+import {
+  audioTempoFilterSegment,
+  getClipPlaybackRate,
+  videoSetptsFilter,
+} from "../utils/playbackRate";
 import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
 import { appendPrimaryColorFilters, type PrimaryColorSettings } from "../utils/primaryColor";
 import {
@@ -99,9 +104,12 @@ export function buildPipFilterComplex(
     const isBase = (clip.layerIndex ?? 0) === 0;
     const safeVOut = Math.max(0, dur - clip.videoFadeOut);
     const safeAOut = Math.max(0, dur - clip.audioFadeOut);
+    const rate = getClipPlaybackRate(clip);
+    const setpts = videoSetptsFilter(rate);
+    const atempo = audioTempoFilterSegment(rate);
 
     if (clip.kind === "video") {
-      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS`;
+      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},${setpts}`;
 
       if (isBase) {
         // Normalise to output canvas size
@@ -141,7 +149,7 @@ export function buildPipFilterComplex(
     }
 
     // Audio — normalize to 44100 Hz stereo so amix / concat always gets matching streams
-    let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
+    let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
