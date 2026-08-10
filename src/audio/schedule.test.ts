@@ -101,7 +101,8 @@ describe('buildAudioSchedule', () => {
     expect(schedule[0].rateRemap).toBe(true);
     expect(schedule[0].playbackRate).toBe(1);
     expect(schedule[0].bufferOffset).toBe(0);
-    expect(schedule[0].duration).toBeCloseTo(4 + 2 / 3, 2);
+    // ∫₀² (1+t)dt = 4; remaining 6s source @ 3× → +2; total out = 4s
+    expect(schedule[0].duration).toBeCloseTo(4, 2);
   });
 
   it('clamps volume into 0–200%', () => {

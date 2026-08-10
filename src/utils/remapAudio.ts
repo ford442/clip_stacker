@@ -37,7 +37,8 @@ function fromPlanar(
 ): AudioBuffer {
   const out = ctx.createBuffer(channels, frames, sampleRate);
   for (let ch = 0; ch < channels; ch++) {
-    out.copyToChannel(planar.subarray(ch * frames, (ch + 1) * frames), ch);
+    const slice = planar.subarray(ch * frames, (ch + 1) * frames);
+    out.copyToChannel(new Float32Array(slice), ch);
   }
   return out;
 }

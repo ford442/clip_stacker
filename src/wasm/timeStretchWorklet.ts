@@ -51,7 +51,8 @@ export async function createTimeStretchNode(
       outputChannelCount: [2],
       processorOptions: { tempo },
     });
-    const rateParam = node.parameters.get('tempo');
+    const params = node.parameters as unknown as Map<string, AudioParam>;
+    const rateParam = params.get('tempo');
     if (rateParam) rateParam.value = tempo;
     return node;
   } catch {
