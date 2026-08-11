@@ -2,8 +2,10 @@ import type {
   Clip,
   ClipGroup,
   ClipTransition,
+  MasterAudio,
   Project,
   SerializedClip,
+  SerializedMasterAudio,
   SerializedTransition,
   TextOverlay,
   SerializedClipGroup,
@@ -25,6 +27,7 @@ export function serializeProject(
   finishing: FinishingSettings = DEFAULT_FINISHING,
   tracks: Track[] = [],
   layoutReferenceResolution?: string,
+  masterAudio: MasterAudio | null = null,
 ): Project {
   const serializedTracks: SerializedTrack[] = tracks.map((track) => ({
     id: track.id,
@@ -128,5 +131,15 @@ export function serializeProject(
     : {}),
     ...(textOverlays.length > 0 ? { textOverlays } : {}),
     ...(isFinishingActive(finishing) ? { finishing } : {}),
+    ...(masterAudio
+      ? {
+          masterAudio: {
+            fileName: masterAudio.fileName,
+            duration: masterAudio.duration,
+            ...(masterAudio.startTime > 0 ? { startTime: masterAudio.startTime } : {}),
+            ...(masterAudio.file.type ? { fileType: masterAudio.file.type } : {}),
+          } satisfies SerializedMasterAudio,
+        }
+      : {}),
   };
 }

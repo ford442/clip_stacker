@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../types';
+import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track } from '../types';
 import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import { createDefaultTracks } from '../utils/trackModel';
 import {
@@ -46,6 +46,7 @@ export interface EditorState {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   selectedClipId: string | null;
+  masterAudio: MasterAudio | null;
   /** Undo/redo depths, published so `canUndo`/`canRedo` re-render on change. */
   undoDepth: number;
   redoDepth: number;
@@ -56,6 +57,7 @@ export interface EditorState {
   setTransitions: (action: StateUpdater<ClipTransition[]>) => void;
   setTextOverlays: (action: StateUpdater<TextOverlay[]>) => void;
   setSelectedClipId: (action: StateUpdater<string | null>) => void;
+  setMasterAudio: (action: StateUpdater<MasterAudio | null>) => void;
 
   /** Push the current state onto the undo stack (call before a discrete edit). */
   pushHistory: () => void;
@@ -91,6 +93,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       transitions: state.transitions,
       textOverlays: state.textOverlays,
       selectedClipId: state.selectedClipId,
+      masterAudio: state.masterAudio,
     };
   };
 
@@ -111,6 +114,9 @@ export const editorStore = createStore<EditorState>()((set, get) => {
         transitions: snapshot.transitions.map((transition) => ({ ...transition })),
         textOverlays: snapshot.textOverlays.map((overlay) => ({ ...overlay })),
         selectedClipId: snapshot.selectedClipId,
+        masterAudio: snapshot.masterAudio
+          ? { ...snapshot.masterAudio, objectUrl: snapshot.masterAudio.objectUrl }
+          : null,
       });
     } finally {
       isRestoring = false;
@@ -132,6 +138,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     transitions: [],
     textOverlays: [],
     selectedClipId: null,
+    masterAudio: null,
     undoDepth: 0,
     redoDepth: 0,
 
@@ -145,6 +152,8 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       set((s) => ({ textOverlays: resolveUpdater(action, s.textOverlays) })),
     setSelectedClipId: (action) =>
       set((s) => ({ selectedClipId: resolveUpdater(action, s.selectedClipId) })),
+    setMasterAudio: (action) =>
+      set((s) => ({ masterAudio: resolveUpdater(action, s.masterAudio) })),
 
     pushHistory,
 
@@ -211,6 +220,7 @@ export const useEditorTransitions = () =>
 export const useEditorTextOverlays = () =>
   useStore(editorStore, useShallow((s) => s.textOverlays));
 export const useSelectedClipId = () => useStore(editorStore, (s) => s.selectedClipId);
+export const useEditorMasterAudio = () => useStore(editorStore, (s) => s.masterAudio);
 
 /** Clips on the timeline (active A/B variant per group, track-aware order). */
 export const useEditorTimelineClips = () =>
@@ -245,6 +255,7 @@ export const editorActions: Pick<
   | 'setTransitions'
   | 'setTextOverlays'
   | 'setSelectedClipId'
+  | 'setMasterAudio'
   | 'pushHistory'
   | 'pushHistoryDebounced'
   | 'undo'
@@ -267,6 +278,7 @@ export function __resetEditorStoreForTests(): void {
     transitions: [],
     textOverlays: [],
     selectedClipId: null,
+    masterAudio: null,
     undoDepth: 0,
     redoDepth: 0,
   });

@@ -1,4 +1,4 @@
-import type { Clip, ClipGroup, ClipTransition, Project, SerializedClip, TextOverlay, Track } from '../../types';
+import type { Clip, ClipGroup, ClipTransition, MasterAudio, Project, SerializedClip, TextOverlay, Track } from '../../types';
 import type { ColorGradeSettings } from '../lut';
 import type { FinishingSettings } from '../finishing';
 import {
@@ -182,6 +182,7 @@ export async function serializeProjectWithMedia(
   clipGroups: ClipGroup[] = [],
   options: SerializeProjectOptions = {},
   tracks: Track[] = [],
+  masterAudio: MasterAudio | null = null,
 ): Promise<Project> {
   const mediaMode = options.mediaMode ?? 'metadata';
   const finishing =
@@ -196,6 +197,8 @@ export async function serializeProjectWithMedia(
     clipGroups,
     finishing,
     tracks,
+    undefined,
+    masterAudio,
   );
   if (mediaMode === 'metadata') return project;
 
@@ -236,5 +239,28 @@ export async function serializeProjectWithMedia(
     enrichedClips.push(updated);
   }
 
-  return { ...project, clips: enrichedClips, mediaMode };
+  let enrichedMaster = project.masterAudio;
+  if (masterAudio && enrichedMaster) {
+    enrichedMaster = { ...enrichedMaster };
+    if (mediaMode === 'embed') {
+      enrichedMaster.sourceMediaDataUrl = await readFileAsDataUrl(masterAudio.file);
+    } else if (mediaMode === 'remote' && options.mediaClient) {
+      try {
+        enrichedMaster.sourceMediaUrl = await options.mediaClient.uploadMedia(
+          `master-${sanitizeUploadFileName(masterAudio.fileName)}`,
+          masterAudio.file,
+          masterAudio.file.type || 'audio/mpeg',
+        );
+      } catch {
+        /* keep metadata-only master audio reference */
+      }
+    }
+  }
+
+  return {
+    ...project,
+    clips: enrichedClips,
+    ...(enrichedMaster ? { masterAudio: enrichedMaster } : {}),
+    mediaMode,
+  };
 }

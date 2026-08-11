@@ -1,4 +1,4 @@
-import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../../types';
+import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track } from '../../types';
 import type { ColorGradeSettings } from '../lut';
 import type { FinishingSettings } from '../finishing';
 
@@ -27,6 +27,7 @@ export interface AppliedProjectData {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  masterAudio: MasterAudio | null;
   colorGrade: ColorGradeSettings;
   finishing: FinishingSettings;
   skippedClipCount: number;

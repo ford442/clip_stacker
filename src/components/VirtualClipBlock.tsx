@@ -1,11 +1,13 @@
-import { memo, useCallback, useRef, type CSSProperties, type DragEvent, type TouchEvent } from 'react';
+import { memo, useCallback, useMemo, useRef, type CSSProperties, type DragEvent, type TouchEvent } from 'react';
 import type { ClipAutomation, ClipTransition } from '../types';
 import { editorActions, useIsClipSelected } from '../store';
 import { WaveformCanvas } from './WaveformCanvas';
 import { SpeedAutomationLane } from './SpeedAutomationLane';
+import { SpeedCurveOverlay } from './SpeedCurveOverlay';
 import type { VirtualClipLayout } from './timelineClipTypes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
-import { clipHasRateAutomation } from '../utils/timeRemap';
+import { remapWaveformPeaks } from '../utils/automation';
+import { clipHasRateAutomation, sampleRemapCurve } from '../utils/timeRemap';
 
 const TRANSITION_COLORS: Record<string, string> = {
   none: 'var(--border)',
@@ -41,6 +43,8 @@ interface Props {
   onTouchStart: (index: number) => void;
   /** When true, show the Cubase-style speed remapping lane under the clip. */
   showSpeedLane?: boolean;
+  /** When true, draw audio waveform on video clips (lip-sync mode). */
+  showVideoWaveform?: boolean;
 }
 
 function VirtualClipBlockImpl({
@@ -60,6 +64,7 @@ function VirtualClipBlockImpl({
   onDragEnd,
   onTouchStart,
   showSpeedLane = false,
+  showVideoWaveform = false,
 }: Props) {
   const { clip, index, duration } = layout;
   const isSelected = useIsClipSelected(clip.id);
@@ -68,6 +73,18 @@ function VirtualClipBlockImpl({
   const layerIndex = clip.layerIndex ?? 0;
   const isOverlay = layerIndex > 0;
   const speedOpen = showSpeedLane && isSelected;
+  const hasRateCurve = clipHasRateAutomation(clip);
+
+  const displayWaves = useMemo(() => {
+    if (!waves) return undefined;
+    if (!hasRateCurve) return waves;
+    return remapWaveformPeaks(waves, clip, waves.length);
+  }, [waves, clip, hasRateCurve]);
+
+  const remapCurve = useMemo(
+    () => (hasRateCurve ? sampleRemapCurve(clip, Math.max(32, Math.floor(layout.width / 4))) : undefined),
+    [clip, hasRateCurve, layout.width],
+  );
 
   const handleSpeedChange = useCallback(
     (automation: ClipAutomation | undefined) => {
@@ -239,13 +256,32 @@ function VirtualClipBlockImpl({
           {clip.kind === 'video' ? (
             <div className={`timeline-thumbs${isLoadingThumbs ? ' is-loading' : ''}`}>
               {thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null}
+              {(showVideoWaveform || hasRateCurve) && displayWaves && (
+                <div className="timeline-video-waveform">
+                  <WaveformCanvas peaks={displayWaves} height={40} remapCurve={remapCurve} />
+                </div>
+              )}
+              {hasRateCurve && (
+                <SpeedCurveOverlay
+                  clip={clip}
+                  width={layout.width}
+                  durationSec={duration}
+                />
+              )}
             </div>
           ) : (
             <div className={`timeline-waveform${isLoadingWave ? ' is-loading' : ''}`}>
-              {waves ? (
-                <WaveformCanvas peaks={waves} height={54} />
+              {displayWaves ? (
+                <WaveformCanvas peaks={displayWaves} height={54} remapCurve={remapCurve} />
               ) : (
                 <span className="waveform-loading-icon">♫</span>
+              )}
+              {hasRateCurve && (
+                <SpeedCurveOverlay
+                  clip={clip}
+                  width={layout.width}
+                  durationSec={duration}
+                />
               )}
             </div>
           )}

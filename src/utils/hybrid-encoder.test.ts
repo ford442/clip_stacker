@@ -529,6 +529,7 @@ describe('utils/hybrid-encoder', () => {
         mockProgressCallback,
         true, // forceReencode passed through
         DEFAULT_FINISHING,
+        null,
       );
     });
   });

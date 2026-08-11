@@ -135,6 +135,7 @@ describe('editorStore', () => {
       transitions: [],
       textOverlays: [],
       selectedClipId: 'z',
+      masterAudio: null,
     });
 
     expect(editorStore.getState().clips.map((c) => c.id)).toEqual(['z']);

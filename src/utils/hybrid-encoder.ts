@@ -12,7 +12,7 @@
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */
 
-import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay, RenderPlan } from '../types';
+import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, RenderPlan } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
@@ -51,6 +51,7 @@ export async function hybridMergeClips(
   renderPlan?: RenderPlan,
   clipGroups: ClipGroup[] = [],
   finishing: FinishingSettings = DEFAULT_FINISHING,
+  masterAudio: MasterAudio | null = null,
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
@@ -161,6 +162,7 @@ export async function hybridMergeClips(
       onProgress,
       forceReencode,
       finishing,
+      masterAudio,
     );
     const ffmpegRenderPlan: RenderPlan =
       shaderOverlays.length > 0

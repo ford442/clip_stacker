@@ -86,8 +86,10 @@ export function requestTimelineThumbnails(
 export function requestTimelineWaveform(
   clip: Clip,
   onComplete: (clipId: string, peaks: Float32Array) => void,
+  options: { allowVideo?: boolean } = {},
 ): void {
-  if (clip.kind !== 'audio') return;
+  const allowVideo = options.allowVideo ?? false;
+  if (clip.kind !== 'audio' && !(allowVideo && clip.kind === 'video')) return;
 
   const cached = waveformCache.get(clip.id);
   if (cached) {

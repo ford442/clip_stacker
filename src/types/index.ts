@@ -400,6 +400,29 @@ export interface SerializedTrack {
   height?: number;
 }
 
+/** External reference music track for lip-sync visual anchoring (serialized). */
+export interface SerializedMasterAudio {
+  fileName: string;
+  duration: number;
+  /** Timeline offset in seconds (default 0). */
+  startTime?: number;
+  fileType?: string;
+  /** Embedded bytes for local project portability. */
+  sourceMediaDataUrl?: string;
+  /** Remote URL for remote project portability. */
+  sourceMediaUrl?: string;
+}
+
+/** Runtime master audio reference (loaded MP3 / WAV for sync UI). */
+export interface MasterAudio {
+  file: File;
+  objectUrl: string;
+  fileName: string;
+  duration: number;
+  /** Timeline offset in seconds. */
+  startTime: number;
+}
+
 export interface Project {
   /** Project schema version. Omitted = legacy (pre-track) format. */
   schemaVersion?: number;
@@ -426,6 +449,8 @@ export interface Project {
    * an earlier save).
    */
   mediaMode?: 'metadata' | 'embed' | 'remote';
+  /** External music reference for lip-sync (visual anchor + export scratch track). */
+  masterAudio?: SerializedMasterAudio;
 }
 
 /**

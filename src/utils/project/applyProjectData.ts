@@ -3,6 +3,7 @@ import type {
   ClipGroup,
   ClipKind,
   ClipTransition,
+  MasterAudio,
   Project,
   SerializedClip,
   SerializedClipGroup,
@@ -39,6 +40,48 @@ function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   if (file.type.startsWith('video/')) return 'video';
   if (/\.(wav|mp3)$/i.test(file.name)) return 'audio';
   return 'video';
+}
+
+async function restoreMasterAudio(
+  project: Project,
+  clips: Clip[],
+): Promise<MasterAudio | null> {
+  const saved = project.masterAudio;
+  if (!saved?.fileName) return null;
+
+  const byName = clips.find((c) => c.file.name === saved.fileName);
+  if (byName) {
+    return {
+      file: byName.file,
+      objectUrl: byName.objectUrl,
+      fileName: saved.fileName,
+      duration: saved.duration,
+      startTime: saved.startTime ?? 0,
+    };
+  }
+
+  const mediaUrl =
+    project.mediaMode === 'remote'
+      ? saved.sourceMediaUrl ?? saved.sourceMediaDataUrl
+      : saved.sourceMediaDataUrl ?? saved.sourceMediaUrl;
+  if (!mediaUrl) return null;
+
+  try {
+    const blob = await downloadRemoteMedia(mediaUrl);
+    const file = new File([blob], saved.fileName, {
+      type: saved.fileType || blob.type || 'audio/mpeg',
+    });
+    const objectUrl = URL.createObjectURL(file);
+    return {
+      file,
+      objectUrl,
+      fileName: saved.fileName,
+      duration: saved.duration,
+      startTime: saved.startTime ?? 0,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function applyProjectData(
@@ -287,12 +330,15 @@ export async function applyProjectData(
   let tracks = resolveProjectTracks(savedTracks, mapped, transitions, clipGroups);
   tracks = syncTracksWithClips(tracks, mapped, clipGroups);
 
+  const masterAudio = await restoreMasterAudio(project, mapped);
+
   return {
     clips: mapped,
     tracks,
     clipGroups,
     transitions,
     textOverlays,
+    masterAudio,
     colorGrade,
     finishing,
     skippedClipCount: skippedCount,

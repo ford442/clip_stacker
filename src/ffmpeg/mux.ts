@@ -21,6 +21,7 @@ import {
   timelineHasAudioAutomation,
 } from "../utils/webcodecs-audio";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
+import type { MasterAudio } from "../types";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -128,6 +129,76 @@ export async function remuxVideoWithPremixWav(
 
   try {
     await ffmpeg.deleteFile(PREMIX_WAV_NAME);
+  } catch {
+    /* ignore */
+  }
+}
+
+const MASTER_AUDIO_VFS = "master_audio_ref";
+
+/**
+ * Replace the video's audio with the external master music track (scratch reference).
+ * Video stream is copied; master audio is trimmed to project duration and AAC-encoded.
+ */
+export async function remuxVideoWithMasterAudio(
+  ffmpeg: IFfmpegRuntime,
+  videoVfsName: string,
+  masterAudio: MasterAudio,
+  outputName: string,
+  totalDuration: number,
+  onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
+  progressRange: { start: number; end: number } = { start: 0.985, end: 0.998 },
+): Promise<void> {
+  const ext = getSafeExtension(masterAudio.fileName, "mp3");
+  onStatus("Writing master audio reference for export...");
+  await safeWriteFile(
+    ffmpeg,
+    `${MASTER_AUDIO_VFS}.${ext}`,
+    await fetchFile(masterAudio.file),
+    "mux write master audio",
+  );
+
+  const audioStart = Math.max(0, masterAudio.startTime);
+  onStatus("Muxing master audio reference with video...");
+  await safeExec(
+    ffmpeg,
+    [
+      "-i",
+      videoVfsName,
+      "-i",
+      `${MASTER_AUDIO_VFS}.${ext}`,
+      "-map",
+      "0:v",
+      "-map",
+      "1:a",
+      "-c:v",
+      "copy",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "192k",
+      "-ss",
+      String(audioStart),
+      "-t",
+      String(totalDuration),
+      "-shortest",
+      "-movflags",
+      "+faststart",
+      outputName,
+    ],
+    {
+      stage: "Muxing master audio reference",
+      totalDuration,
+      rangeStart: progressRange.start,
+      rangeEnd: progressRange.end,
+      onProgress,
+    },
+    "Master audio + video mux exec",
+  );
+
+  try {
+    await ffmpeg.deleteFile(`${MASTER_AUDIO_VFS}.${ext}`);
   } catch {
     /* ignore */
   }
