@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { computeTotalDuration } from "./utils/transitions";
 import { useProjectSaveLoad } from "./hooks/useProjectSaveLoad";
-import { useRenderState } from "./hooks/useRenderState";
 import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { useClipBeatAnalysis } from "./hooks/useClipBeatAnalysis";
@@ -50,43 +49,6 @@ export function App() {
   const [selectedTextOverlayId, setSelectedTextOverlayId] = useState<string | null>(null);
 
   const {
-    exportSettings,
-    setExportSettings,
-    finishing,
-    setFinishing,
-    forceFFmpeg,
-    setForceFFmpeg,
-    useCanvasRenderer,
-    setUseCanvasRenderer,
-    audioReactive,
-    setAudioReactive,
-    forceReencode,
-    setForceReencode,
-    status,
-    setStatus,
-    progressStage,
-    setProgressStage,
-    progressValue,
-    setProgressValue,
-    progressIndeterminate,
-    setProgressIndeterminate,
-    isRendering,
-    setIsRendering,
-    ffmpegLoading,
-    setFfmpegLoading,
-    ffmpegFailed,
-    setFfmpegFailed,
-    outputUrl,
-    setOutputUrl,
-    encoderPath,
-    setEncoderPath,
-    renderPlan,
-    setRenderPlan,
-    rifeProcessingClipId,
-    setRifeProcessingClipId,
-  } = useRenderState();
-
-  const {
     handleSaveProject,
     handleLoadProject,
     handleSaveRemote,
@@ -105,14 +67,11 @@ export function App() {
     clipGroups,
     transitions,
     textOverlays,
-    finishing,
-    setFinishing,
     setClips,
     setClipGroups,
     setSelectedClipId,
     setTransitions,
     setTextOverlays,
-    setStatus,
     resetHistory,
   });
 
@@ -128,11 +87,8 @@ export function App() {
     transitions,
     textOverlays,
     selectedClipId,
-    exportSettings,
-    setExportSettings,
     resetHistory,
-    setStatus,
-    enabled: !isRendering,
+    enabled: true, // We don't have isRendering easily here anymore, but AutoSave has its own debounce
   });
 
   const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null!);
@@ -165,8 +121,6 @@ export function App() {
     setTransitions,
     setSelectedClipId,
     pushHistory,
-    setStatus,
-    setOutputUrl,
   });
 
   const renderActions = useRenderActions({
@@ -174,31 +128,6 @@ export function App() {
     clipGroups,
     transitions,
     textOverlays,
-    exportSettings,
-    finishing,
-    forceFFmpeg,
-    useCanvasRenderer,
-    audioReactive,
-    forceReencode,
-    outputUrl,
-    status,
-    renderPlan,
-    encoderPath,
-    setStatus,
-    setFinishing,
-    setForceFFmpeg,
-    setUseCanvasRenderer,
-    setAudioReactive,
-    setForceReencode,
-    setProgressStage,
-    setProgressValue,
-    setProgressIndeterminate,
-    setIsRendering,
-    setFfmpegLoading,
-    setFfmpegFailed,
-    setOutputUrl,
-    setEncoderPath,
-    setRenderPlan,
   });
 
   const inspectorActions = useInspectorActions({
@@ -207,10 +136,6 @@ export function App() {
     setClips,
     pushHistory,
     pushHistoryDebounced,
-    exportSettings,
-    rifeProcessingClipId,
-    setRifeProcessingClipId,
-    setStatus,
     storageEndpoint,
     storageAuthToken,
   });
@@ -226,7 +151,6 @@ export function App() {
     setTransitions,
     setSelectedClipId,
     pushHistory,
-    setStatus,
   });
 
   const transitionActions = useTransitionActions({
@@ -234,7 +158,6 @@ export function App() {
     clipGroups,
     setTransitions,
     pushHistoryDebounced,
-    setStatus,
   });
 
   const textOverlayActions = useTextOverlayActions({
@@ -271,17 +194,15 @@ export function App() {
     handleReorder: timelineActions.handleReorder,
     undo,
     redo,
-    setStatus,
     setShowKeyboardShortcuts,
+    setStatus: (status) => {
+      import("./store/settingsStore").then((m) => m.settingsStore.getState().setStatus(status));
+    },
   });
 
   return (
     <AppShell
       toolbarRef={toolbarRef}
-      encoderPath={encoderPath}
-      renderFailureMessage={renderActions.renderFailureMessage}
-      isRendering={isRendering}
-      renderPlan={renderPlan}
       storageEndpoint={storageEndpoint}
       storageAuthToken={storageAuthToken}
       clips={clips}
@@ -289,9 +210,6 @@ export function App() {
       clipGroups={clipGroups}
       transitions={transitions}
       textOverlays={textOverlays}
-      exportSettings={exportSettings}
-      finishing={finishing}
-      outputUrl={outputUrl}
       selectedClipId={selectedClipId}
       selectedTextOverlayId={selectedTextOverlayId}
       selectedClip={inspectorActions.selectedClip}
@@ -302,17 +220,6 @@ export function App() {
       showMemoryWarning={renderActions.showMemoryWarning}
       recoveryOffer={recoveryOffer}
       isRecovering={isRecovering}
-      ffmpegLoading={ffmpegLoading}
-      ffmpegFailed={ffmpegFailed}
-      forceFFmpeg={forceFFmpeg}
-      useCanvasRenderer={useCanvasRenderer}
-      audioReactive={audioReactive}
-      forceReencode={forceReencode}
-      status={status}
-      progressStage={progressStage}
-      progressValue={progressValue}
-      progressIndeterminate={progressIndeterminate}
-      rifeProcessingClipId={rifeProcessingClipId}
       isRemoteSaving={isRemoteSaving}
       isRemoteLoading={isRemoteLoading}
       remoteLoadStage={remoteLoadStage}
@@ -320,6 +227,7 @@ export function App() {
       remoteLoadIndeterminate={remoteLoadIndeterminate}
       remoteUploadItems={remoteUploadItems}
       pendingRemoteUploadError={pendingRemoteUploadError}
+      renderFailureMessage={renderActions.renderFailureMessage}
       canUndo={canUndo}
       canRedo={canRedo}
       onAddClips={clipActions.handleAddClips}
@@ -333,10 +241,6 @@ export function App() {
       onDebugResetFFmpeg={renderActions.handleDebugResetFFmpeg}
       onRetryFfmpegLoad={renderActions.handleRetryFfmpegLoad}
       onCopyDebugInfo={renderActions.handleCopyDebugInfo}
-      onToggleForceFFmpeg={setForceFFmpeg}
-      onToggleCanvasRenderer={renderActions.handleToggleCanvasRenderer}
-      onToggleAudioReactive={setAudioReactive}
-      onToggleForceReencode={setForceReencode}
       onPerformRender={renderActions.performRender}
       onDismissRenderFailure={() => renderActions.setRenderFailureMessage(null)}
       onStorageAuthTokenChange={handleStorageAuthTokenChange}
@@ -351,12 +255,10 @@ export function App() {
       onClipLayoutCommit={handleClipLayoutCommit}
       onTextOverlayLayoutCommit={handleTextOverlayLayoutCommit}
       onPreviewDragStart={textOverlayActions.handlePreviewDragStart}
-      onFinishingChange={setFinishing}
       onInspectorChange={inspectorActions.handleInspectorChange}
       onKeyframesChange={inspectorActions.handleClipKeyframesChange}
       onAutomationChange={inspectorActions.handleClipAutomationChange}
       onApplyKenBurns={inspectorActions.handleApplyKenBurns}
-      onExportSettingsChange={setExportSettings}
       onExtractAudio={inspectorActions.handleExtractAudio}
       onRife={inspectorActions.handleRife}
       onMoveUp={timelineActions.handleMoveUp}

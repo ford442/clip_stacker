@@ -134,6 +134,7 @@ describe('editorStore', () => {
       clipGroups: [],
       transitions: [],
       textOverlays: [],
+      masterAudioMarkers: [],
       selectedClipId: 'z',
       masterAudio: null,
     });

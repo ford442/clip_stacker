@@ -17,15 +17,13 @@ import {
 import type { ClipValues } from "../components/Inspector";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
+import { settingsStore } from "../store/settingsStore";
+
 type InspectorActionsDeps = Pick<
   UseEditHistoryResult,
   "selectedClipId" | "setClips" | "pushHistory" | "pushHistoryDebounced"
 > & {
   clips: Clip[];
-  exportSettings: ExportSettings;
-  rifeProcessingClipId: string | null;
-  setRifeProcessingClipId: (id: string | null) => void;
-  setStatus: (status: string) => void;
   storageEndpoint: string;
   storageAuthToken: string;
 };
@@ -36,10 +34,6 @@ export function useInspectorActions({
   setClips,
   pushHistory,
   pushHistoryDebounced,
-  exportSettings,
-  rifeProcessingClipId,
-  setRifeProcessingClipId,
-  setStatus,
   storageEndpoint,
   storageAuthToken,
 }: InspectorActionsDeps) {
@@ -54,6 +48,7 @@ export function useInspectorActions({
     const wavFileName = `${baseName}.wav`;
 
     try {
+      const { setStatus } = settingsStore.getState();
       const wavBlob = await extractAudioToWav(selectedClip, setStatus);
 
       let remoteUrl: string | undefined;
@@ -107,16 +102,16 @@ export function useInspectorActions({
       const recentLogs = getLastFfmpegLogs(20).join("\n");
       if (recentLogs)
         console.error("Last FFmpeg logs for extract:\n" + recentLogs);
-      setStatus(`Audio extraction failed: ${err.message}`);
+      settingsStore.getState().setStatus(`Audio extraction failed: ${err.message}`);
     }
-  }, [selectedClip, storageEndpoint, storageAuthToken, setClips, setStatus]);
+  }, [selectedClip, storageEndpoint, storageAuthToken, setClips]);
 
   const handleInspectorChange = useCallback(
     (values: ClipValues) => {
       if (selectedClipId) {
         pushHistoryDebounced(`inspector:${selectedClipId}`);
       }
-      const layoutCanvas = parseCanvasSize(exportSettings.outputResolution);
+      const layoutCanvas = parseCanvasSize(settingsStore.getState().exportSettings.outputResolution);
       setClips((prev) =>
         prev.map((clip) => {
           if (clip.id !== selectedClipId) return clip;
@@ -154,7 +149,7 @@ export function useInspectorActions({
         }),
       );
     },
-    [selectedClipId, pushHistoryDebounced, exportSettings.outputResolution, setClips],
+    [selectedClipId, pushHistoryDebounced, setClips],
   );
 
   const handleClipKeyframesChange = useCallback(
@@ -201,12 +196,13 @@ export function useInspectorActions({
         };
       }),
     );
-    setStatus("Ken Burns keyframes applied.");
-  }, [selectedClipId, pushHistory, setStatus, setClips]);
+    settingsStore.getState().setStatus("Ken Burns keyframes applied.");
+  }, [selectedClipId, pushHistory, setClips]);
 
   const handleRife = useCallback(
     async (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
+      const { rifeProcessingClipId, setRifeProcessingClipId, setStatus } = settingsStore.getState();
       if (rifeProcessingClipId) return; // Already processing
 
       // Capture the clip's current state (including originalFps if already set)
@@ -281,18 +277,15 @@ export function useInspectorActions({
         setStatus(`✨ RIFE ${modeDisplay} applied to "${clipSnapshot.title}".`);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        setStatus(`RIFE failed: ${message}`);
+        settingsStore.getState().setStatus(`RIFE failed: ${message}`);
         console.error("RIFE processing error:", err);
       } finally {
-        setRifeProcessingClipId(null);
+        settingsStore.getState().setRifeProcessingClipId(null);
       }
     },
     [
       selectedClip,
-      rifeProcessingClipId,
       pushHistory,
-      setRifeProcessingClipId,
-      setStatus,
       setClips,
     ],
   );

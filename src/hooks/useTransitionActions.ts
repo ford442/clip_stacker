@@ -10,16 +10,15 @@ import type { UseEditHistoryResult } from "./useEditHistory";
 type TransitionActionsDeps = Pick<
   UseEditHistoryResult,
   "clips" | "clipGroups" | "setTransitions" | "pushHistoryDebounced"
-> & {
-  setStatus: (status: string) => void;
-};
+> & {};
+
+import { settingsStore } from "../store/settingsStore";
 
 export function useTransitionActions({
   clips,
   clipGroups,
   setTransitions,
   pushHistoryDebounced,
-  setStatus,
 }: TransitionActionsDeps) {
   const [morphProcessingIndex, setMorphProcessingIndex] = useState<number | null>(
     null,
@@ -54,7 +53,7 @@ export function useTransitionActions({
           await requestMorphSegment(
             updated,
             clipsForMorph,
-            setStatus,
+            settingsStore.getState().setStatus,
             (next) => {
               setTransitions((prev) =>
                 prev.map((t) =>
@@ -71,8 +70,6 @@ export function useTransitionActions({
       pushHistoryDebounced,
       morphProcessingIndex,
       clips,
-      clipGroups,
-      setStatus,
       setTransitions,
     ],
   );

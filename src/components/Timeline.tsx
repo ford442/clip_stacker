@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ClipTransition } from '../types';
-import { useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedClipId } from '../store';
+import { useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedClipId, editorActions } from '../store';
 import { editorStore } from '../store/editorStore';
 import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import {
@@ -37,6 +37,9 @@ import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
 import { MasterAudioTrack } from './MasterAudioTrack';
 import { clipHasRateAutomation } from '../utils/timeRemap';
+import SyncMarkerLane from './SyncMarkerLane';
+import MarkerConnectionCanvas from './MarkerConnectionCanvas';
+import { SyncDragProvider } from '../context/SyncDragContext';
 
 interface Props {
   onMoveUp: (index: number) => void;
@@ -144,6 +147,7 @@ function TimelineImpl({
   const tracks = useEditorTracks();
   const masterAudio = useEditorMasterAudio();
   const transitions = useEditorTransitions();
+  const masterAudioMarkers = useEditorMasterAudioMarkers();
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
   const [editingTransition, setEditingTransition] = useState<ClipTransition | null>(null);
@@ -483,8 +487,9 @@ function TimelineImpl({
   }
 
   return (
-    <section className="panel timeline-panel">
-      <TimelineSelectionScroll virtualizerRef={virtualizerRef} />
+    <SyncDragProvider>
+      <section className="panel timeline-panel">
+        <TimelineSelectionScroll virtualizerRef={virtualizerRef} />
       <div className="timeline-header-row">
         <h2>Timeline</h2>
         <span className="timeline-total-dur muted">
@@ -560,11 +565,32 @@ function TimelineImpl({
         ref={scrollRef}
         onDragOver={handleDragOver}
         onDrop={handleDrop}
+        style={{ position: 'relative' }} // Need relative positioning for MarkerConnectionCanvas
       >
+        <MarkerConnectionCanvas 
+          layouts={clipLayouts}
+          masterMarkers={masterAudioMarkers}
+          pixelsPerSecond={pixelsPerSecond}
+          masterAudioLaneY={24} // Based on TimelineRuler height usually
+          getTrackY={(clipId) => {
+            // Rough estimation for prototype, assumes MAIN_VIDEO_TRACK_ID
+            return 48; // Space under ruler + audio lane
+          }}
+        />
+
         <TimelineRuler
           totalDuration={totalDuration}
           pixelsPerSecond={pixelsPerSecond}
           beatMarkers={beatMarkers}
+        />
+        
+        <SyncMarkerLane
+          markers={masterAudioMarkers}
+          duration={totalDuration}
+          width={contentWidth}
+          laneType="audio"
+          clipId={null}
+          onUpdateMarkers={(markers) => editorActions.setMasterAudioMarkers(markers)}
         />
 
         <div
@@ -740,7 +766,8 @@ function TimelineImpl({
           onClose={() => setEditingTransition(null)}
         />
       )}
-    </section>
+      </section>
+    </SyncDragProvider>
   );
 }
 

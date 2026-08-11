@@ -9,7 +9,8 @@ import type {
   Track,
 } from "../types";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
-import type { FinishingSettings } from "../utils/finishing";
+import { settingsStore } from "../store/settingsStore";
+import { useStore } from "zustand";
 import type { ClipValues } from "./Inspector";
 import type { PendingRemoteUploadError } from "../hooks/useProjectSaveLoad";
 import type { AutoSaveOffer } from "../utils/autoSave";
@@ -29,23 +30,9 @@ import { RenderFailurePanel } from "./RenderFailurePanel";
 
 export type AppShellProps = {
   toolbarRef: RefObject<{ triggerLoadDialog: () => void }>;
-  encoderPath: string;
-  renderFailureMessage: string | null;
-  isRendering: boolean;
-  renderPlan: RenderPlan | null;
-  storageEndpoint: string;
-  storageAuthToken: string;
-  clips: Clip[];
-  tracks: Track[];
-  clipGroups: ClipGroup[];
-  transitions: ClipTransition[];
-  textOverlays: TextOverlay[];
-  exportSettings: ExportSettings;
-  finishing: FinishingSettings;
-  outputUrl: string | null;
-  selectedClipId: string | null;
   selectedTextOverlayId: string | null;
   selectedClip: Clip | null;
+  selectedClipId: string | null;
   timelineClips: Clip[];
   previewTotalDuration: number;
   morphProcessingIndex: number | null;
@@ -53,17 +40,14 @@ export type AppShellProps = {
   showMemoryWarning: boolean;
   recoveryOffer: AutoSaveOffer | null;
   isRecovering: boolean;
-  ffmpegLoading: boolean;
-  ffmpegFailed: boolean;
-  forceFFmpeg: boolean;
-  useCanvasRenderer: boolean;
-  audioReactive: boolean;
-  forceReencode: boolean;
-  status: string;
-  progressStage: string;
-  progressValue: number | null;
-  progressIndeterminate: boolean;
-  rifeProcessingClipId: string | null;
+  storageEndpoint: string;
+  storageAuthToken: string;
+  clips: Clip[];
+  tracks: Track[];
+  clipGroups: ClipGroup[];
+  transitions: ClipTransition[];
+  textOverlays: TextOverlay[];
+  renderFailureMessage: string | null;
   isRemoteSaving: boolean;
   isRemoteLoading: boolean;
   remoteLoadStage: string;
@@ -84,10 +68,6 @@ export type AppShellProps = {
   onDebugResetFFmpeg: () => Promise<void>;
   onRetryFfmpegLoad: () => Promise<void>;
   onCopyDebugInfo: () => Promise<void>;
-  onToggleForceFFmpeg: (v: boolean) => void;
-  onToggleCanvasRenderer: (v: boolean) => void;
-  onToggleAudioReactive: (v: boolean) => void;
-  onToggleForceReencode: (v: boolean) => void;
   onPerformRender: () => Promise<void>;
   onDismissRenderFailure: () => void;
   onStorageAuthTokenChange: (value: string) => void;
@@ -106,12 +86,10 @@ export type AppShellProps = {
     editedKeyframe: boolean,
   ) => void;
   onPreviewDragStart: () => void;
-  onFinishingChange: (settings: FinishingSettings) => void;
   onInspectorChange: (values: ClipValues) => void;
   onKeyframesChange: (keyframes: Clip["keyframes"]) => void;
   onAutomationChange: (automation: Clip["automation"]) => void;
   onApplyKenBurns: () => void;
-  onExportSettingsChange: (settings: ExportSettings) => void;
   onExtractAudio: () => Promise<void>;
   onRife: (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => Promise<void>;
   onMoveUp: (index: number) => void;
@@ -132,10 +110,7 @@ export type AppShellProps = {
 export function AppShell(props: AppShellProps) {
   const {
     toolbarRef,
-    encoderPath,
     renderFailureMessage,
-    isRendering,
-    renderPlan,
     storageEndpoint,
     storageAuthToken,
     clips,
@@ -143,12 +118,9 @@ export function AppShell(props: AppShellProps) {
     clipGroups,
     transitions,
     textOverlays,
-    exportSettings,
-    finishing,
-    outputUrl,
-    selectedClipId,
     selectedTextOverlayId,
     selectedClip,
+    selectedClipId,
     timelineClips,
     previewTotalDuration,
     morphProcessingIndex,
@@ -156,17 +128,6 @@ export function AppShell(props: AppShellProps) {
     showMemoryWarning,
     recoveryOffer,
     isRecovering,
-    ffmpegLoading,
-    ffmpegFailed,
-    forceFFmpeg,
-    useCanvasRenderer,
-    audioReactive,
-    forceReencode,
-    status,
-    progressStage,
-    progressValue,
-    progressIndeterminate,
-    rifeProcessingClipId,
     isRemoteSaving,
     isRemoteLoading,
     remoteLoadStage,
@@ -187,10 +148,6 @@ export function AppShell(props: AppShellProps) {
     onDebugResetFFmpeg,
     onRetryFfmpegLoad,
     onCopyDebugInfo,
-    onToggleForceFFmpeg,
-    onToggleCanvasRenderer,
-    onToggleAudioReactive,
-    onToggleForceReencode,
     onPerformRender,
     onDismissRenderFailure,
     onStorageAuthTokenChange,
@@ -205,12 +162,10 @@ export function AppShell(props: AppShellProps) {
     onClipLayoutCommit,
     onTextOverlayLayoutCommit,
     onPreviewDragStart,
-    onFinishingChange,
     onInspectorChange,
     onKeyframesChange,
     onAutomationChange,
     onApplyKenBurns,
-    onExportSettingsChange,
     onExtractAudio,
     onRife,
     onMoveUp,
@@ -227,6 +182,32 @@ export function AppShell(props: AppShellProps) {
     onRecover,
     onDiscardRecovery,
   } = props;
+
+  const {
+    encoderPath,
+    isRendering,
+    renderPlan,
+    exportSettings,
+    finishing,
+    outputUrl,
+    ffmpegLoading,
+    ffmpegFailed,
+    forceFFmpeg,
+    useCanvasRenderer,
+    audioReactive,
+    forceReencode,
+    status,
+    progressStage,
+    progressValue,
+    progressIndeterminate,
+    rifeProcessingClipId,
+    setFinishing,
+    setForceFFmpeg,
+    setUseCanvasRenderer,
+    setAudioReactive,
+    setForceReencode,
+    setExportSettings,
+  } = useStore(settingsStore);
 
   return (
     <main className="app-shell">
@@ -260,13 +241,13 @@ export function AppShell(props: AppShellProps) {
           onCopyDebugInfo={onCopyDebugInfo}
           status={status}
           forceFFmpeg={forceFFmpeg}
-          onToggleForceFFmpeg={onToggleForceFFmpeg}
+          onToggleForceFFmpeg={setForceFFmpeg}
           useCanvasRenderer={useCanvasRenderer}
-          onToggleCanvasRenderer={onToggleCanvasRenderer}
+          onToggleCanvasRenderer={setUseCanvasRenderer}
           audioReactive={audioReactive}
-          onToggleAudioReactive={onToggleAudioReactive}
+          onToggleAudioReactive={setAudioReactive}
           forceReencode={forceReencode}
-          onToggleForceReencode={onToggleForceReencode}
+          onToggleForceReencode={setForceReencode}
           progressStage={progressStage}
           progressValue={progressValue}
           progressIndeterminate={progressIndeterminate}
@@ -334,12 +315,12 @@ export function AppShell(props: AppShellProps) {
         <Inspector
           exportSettings={exportSettings}
           finishing={finishing}
-          onFinishingChange={onFinishingChange}
+          onFinishingChange={setFinishing}
           onChange={onInspectorChange}
           onKeyframesChange={onKeyframesChange}
           onAutomationChange={onAutomationChange}
           onApplyKenBurns={onApplyKenBurns}
-          onExportSettingsChange={onExportSettingsChange}
+          onExportSettingsChange={setExportSettings}
           onExtractAudio={onExtractAudio}
           onRife={onRife}
           rifeProcessing={rifeProcessingClipId !== null}

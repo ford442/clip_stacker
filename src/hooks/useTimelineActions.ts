@@ -21,9 +21,9 @@ type TimelineActionsDeps = Pick<
   | "setTransitions"
   | "setSelectedClipId"
   | "pushHistory"
-> & {
-  setStatus: (status: string) => void;
-};
+> & {};
+
+import { settingsStore } from "../store/settingsStore";
 
 export function useTimelineActions({
   clips,
@@ -36,7 +36,6 @@ export function useTimelineActions({
   setTransitions,
   setSelectedClipId,
   pushHistory,
-  setStatus,
 }: TimelineActionsDeps) {
   const handleMoveUp = useCallback((index: number) => {
     if (index <= 0) return;
@@ -158,7 +157,7 @@ export function useTimelineActions({
         setTransitions((prev) => reindexTransitions(prev, timelineIndex));
       }
 
-      setStatus(`Deleted "${clipTitle}".`);
+      settingsStore.getState().setStatus(`Deleted "${clipTitle}".`);
     },
     [
       clips,
@@ -170,7 +169,6 @@ export function useTimelineActions({
       setClipGroups,
       setTransitions,
       setSelectedClipId,
-      setStatus,
     ],
   );
 

@@ -31,6 +31,13 @@ export type ClipAutomationProp = 'volume' | 'pan' | 'playbackRate';
 
 export type ClipAutomation = Partial<Record<ClipAutomationProp, Keyframe[]>>;
 
+export interface SyncMarker {
+  id: string;
+  time: number;
+  text: string;
+  linkedId?: string;
+}
+
 export interface Clip {
   id: string;
   file: File;
@@ -115,6 +122,8 @@ export interface Clip {
   beatTimestamps?: number[];
   /** Rough BPM estimate from beatTimestamps (when available). */
   bpmEstimate?: number;
+  /** Timing cues (lyrics, transients) used for sync mapping. */
+  syncMarkers?: SyncMarker[];
 }
 
 export interface SerializedClip {
@@ -169,6 +178,7 @@ export interface SerializedClip {
   beatTimestamps?: number[];
   /** Rough BPM estimate from beatTimestamps. */
   bpmEstimate?: number;
+  syncMarkers?: SyncMarker[];
 }
 
 export type TransitionType = 'none' | (string & {});
@@ -451,6 +461,8 @@ export interface Project {
   mediaMode?: 'metadata' | 'embed' | 'remote';
   /** External music reference for lip-sync (visual anchor + export scratch track). */
   masterAudio?: SerializedMasterAudio;
+  /** Global anchor points for text-based sync */
+  masterAudioMarkers?: SyncMarker[];
 }
 
 /**

@@ -10,6 +10,7 @@ export {
   useEditorTransitions,
   useEditorTextOverlays,
   useEditorMasterAudio,
+  useEditorMasterAudioMarkers,
   useSelectedClipId,
   useIsClipSelected,
   type EditorState,

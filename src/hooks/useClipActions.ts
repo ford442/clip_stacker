@@ -15,6 +15,8 @@ import { editorStore, playbackStore, setPlayheadTime } from "../store";
 import { planAddClip } from "../utils/planAddClip";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
+import { settingsStore } from "../store/settingsStore";
+
 type ClipActionsDeps = Pick<
   UseEditHistoryResult,
   | "clips"
@@ -25,10 +27,7 @@ type ClipActionsDeps = Pick<
   | "setTransitions"
   | "setSelectedClipId"
   | "pushHistory"
-> & {
-  setStatus: (status: string) => void;
-  setOutputUrl: (url: string | null) => void;
-};
+>;
 
 export function useClipActions({
   clips,
@@ -39,8 +38,6 @@ export function useClipActions({
   setTransitions,
   setSelectedClipId,
   pushHistory,
-  setStatus,
-  setOutputUrl,
 }: ClipActionsDeps) {
   /** Add a new clip to the state and set up A/B grouping if a matching clip exists. */
   const addClipToState = useCallback((newClip: Clip) => {
@@ -67,6 +64,7 @@ export function useClipActions({
   );
 
   const handleDuplicateClip = useCallback(() => {
+    const { setStatus, setOutputUrl } = settingsStore.getState();
     if (!selectedClipId) {
       setStatus("Select a clip to duplicate.");
       return;
@@ -88,12 +86,12 @@ export function useClipActions({
     selectedClipId,
     pushHistory,
     insertClipAfter,
+    insertClipAfter,
     setSelectedClipId,
-    setStatus,
-    setOutputUrl,
   ]);
 
   const handleSplitClip = useCallback(() => {
+    const { setStatus, setOutputUrl } = settingsStore.getState();
     if (!selectedClipId) {
       setStatus("Select a clip to split.");
       return;
@@ -145,8 +143,6 @@ export function useClipActions({
     pushHistory,
     setClipGroups,
     setSelectedClipId,
-    setStatus,
-    setOutputUrl,
     setClips,
     setTracks,
     setTransitions,
@@ -154,6 +150,7 @@ export function useClipActions({
 
   const handleAddClips = useCallback(
     async (files: File[]) => {
+      const { setStatus, setOutputUrl } = settingsStore.getState();
       setStatus("Importing clips...");
       let added = 0;
       let pushedHistory = false;
@@ -212,11 +209,12 @@ export function useClipActions({
         );
       }
     },
-    [addClipToState, pushHistory, setSelectedClipId, setStatus, setOutputUrl],
+    [addClipToState, pushHistory, setSelectedClipId],
   );
 
   const handleAddLibraryClip = useCallback(
     async (item: MediaLibraryItem) => {
+      const { setStatus, setOutputUrl } = settingsStore.getState();
       setStatus(`Downloading ${item.name} from media library...`);
       try {
         const blob = await downloadRemoteMedia(item.url);
@@ -253,7 +251,7 @@ export function useClipActions({
         );
       }
     },
-    [addClipToState, pushHistory, setSelectedClipId, setStatus, setOutputUrl],
+    [addClipToState, pushHistory, setSelectedClipId],
   );
 
   const handleToggleVariant = useCallback(

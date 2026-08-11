@@ -30,20 +30,19 @@ export type PendingRemoteUploadError = RemoteUploadErrorEvent & {
   resumeCb: (action: "retry" | "skip" | "abort") => void;
 };
 
+import { settingsStore } from "../store/settingsStore";
+
 export function useProjectSaveLoad({
   clips,
   tracks,
   clipGroups,
   transitions,
   textOverlays,
-  finishing,
-  setFinishing,
   setClips,
   setClipGroups,
   setSelectedClipId,
   setTransitions,
   setTextOverlays,
-  setStatus,
   resetHistory,
 }: {
   clips: Clip[];
@@ -51,14 +50,11 @@ export function useProjectSaveLoad({
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
-  finishing: FinishingSettings;
-  setFinishing: (settings: FinishingSettings) => void;
   setClips: (c: Clip[]) => void;
   setClipGroups: (cg: ClipGroup[]) => void;
   setSelectedClipId: (id: string | null) => void;
   setTransitions: (t: ClipTransition[]) => void;
   setTextOverlays: (to: TextOverlay[]) => void;
-  setStatus: (s: string) => void;
   resetHistory: (snapshot: EditSnapshot) => void;
 }) {
   const [isRemoteSaving, setIsRemoteSaving] = useState(false);
@@ -85,6 +81,7 @@ export function useProjectSaveLoad({
   );
 
   const handleSaveProject = useCallback(async () => {
+    const { setStatus, finishing } = settingsStore.getState();
     const summary = summarizeProjectForSave(clips, transitions, textOverlays);
     if (summary.isEmpty) {
       setStatus(EMPTY_PROJECT_SAVE_MESSAGE);
@@ -119,10 +116,11 @@ export function useProjectSaveLoad({
     } catch (error) {
       setStatus(`Could not export project: ${(error as Error).message}`);
     }
-  }, [clips, tracks, clipGroups, transitions, textOverlays, finishing, setStatus]);
+  }, [clips, tracks, clipGroups, transitions, textOverlays]);
 
   const handleLoadProject = useCallback(
     async (file: File) => {
+      const { setFinishing, setStatus } = settingsStore.getState();
       try {
         const parsed = JSON.parse(await file.text());
         const {
@@ -131,6 +129,7 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          masterAudioMarkers: loadedMasterMarkers,
           finishing: loadedFinishing,
           masterAudio: loadedMasterAudio,
           skippedClipCount,
@@ -146,6 +145,7 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          masterAudioMarkers: loadedMasterMarkers,
           selectedClipId: selectedId,
           masterAudio: loadedMasterAudio,
         });
@@ -162,7 +162,7 @@ export function useProjectSaveLoad({
         }
         setStatus(msg);
       } catch (error) {
-        setStatus(`Could not load project: ${(error as Error).message}`);
+        settingsStore.getState().setStatus(`Could not load project: ${(error as Error).message}`);
       }
     },
     [
@@ -172,14 +172,13 @@ export function useProjectSaveLoad({
       setSelectedClipId,
       setTransitions,
       setTextOverlays,
-      setStatus,
       resetHistory,
-      setFinishing,
     ],
   );
 
   const handleSaveRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
+      const { setStatus, finishing } = settingsStore.getState();
       const summary = summarizeProjectForSave(clips, transitions, textOverlays);
       if (summary.isEmpty) {
         setStatus(EMPTY_PROJECT_SAVE_MESSAGE);
@@ -252,7 +251,7 @@ export function useProjectSaveLoad({
                   typeof event.chunkTotal === "number"
                     ? ` · chunk ${event.chunkIndex + 1}/${event.chunkTotal}`
                     : "";
-                setStatus(
+                settingsStore.getState().setStatus(
                   `Uploading clip ${event.index}/${event.total}: ${event.fileName} (${Math.round(event.progress * 100)}%${chunkHint})`,
                 );
               }
@@ -279,11 +278,12 @@ export function useProjectSaveLoad({
         setIsRemoteSaving(false);
       }
     },
-    [clips, tracks, clipGroups, transitions, textOverlays, finishing, setStatus],
+    [clips, tracks, clipGroups, transitions, textOverlays],
   );
 
   const handleLoadRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
+      const { setStatus, setFinishing } = settingsStore.getState();
       try {
         setIsRemoteLoading(true);
         setStatus("Loading project from remote storage...");
@@ -294,6 +294,7 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          masterAudioMarkers: loadedMasterMarkers,
           finishing: loadedFinishing,
           masterAudio: loadedMasterAudio,
           skippedClipCount,
@@ -321,6 +322,7 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          masterAudioMarkers: loadedMasterMarkers,
           selectedClipId: selectedId,
           masterAudio: loadedMasterAudio,
         });
@@ -353,9 +355,7 @@ export function useProjectSaveLoad({
       setSelectedClipId,
       setTransitions,
       setTextOverlays,
-      setStatus,
       resetHistory,
-      setFinishing,
     ],
   );
 

@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track } from '../types';
+import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track, SyncMarker } from '../types';
 import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import { createDefaultTracks } from '../utils/trackModel';
 import {
@@ -45,6 +45,7 @@ export interface EditorState {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
   masterAudio: MasterAudio | null;
   /** Undo/redo depths, published so `canUndo`/`canRedo` re-render on change. */
@@ -56,6 +57,7 @@ export interface EditorState {
   setClipGroups: (action: StateUpdater<ClipGroup[]>) => void;
   setTransitions: (action: StateUpdater<ClipTransition[]>) => void;
   setTextOverlays: (action: StateUpdater<TextOverlay[]>) => void;
+  setMasterAudioMarkers: (action: StateUpdater<SyncMarker[]>) => void;
   setSelectedClipId: (action: StateUpdater<string | null>) => void;
   setMasterAudio: (action: StateUpdater<MasterAudio | null>) => void;
 
@@ -92,6 +94,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       clipGroups: state.clipGroups,
       transitions: state.transitions,
       textOverlays: state.textOverlays,
+      masterAudioMarkers: state.masterAudioMarkers,
       selectedClipId: state.selectedClipId,
       masterAudio: state.masterAudio,
     };
@@ -113,6 +116,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
         clipGroups: syncClipGroups(snapshot.clipGroups, mergedClips),
         transitions: snapshot.transitions.map((transition) => ({ ...transition })),
         textOverlays: snapshot.textOverlays.map((overlay) => ({ ...overlay })),
+        masterAudioMarkers: snapshot.masterAudioMarkers ? snapshot.masterAudioMarkers.map(m => ({...m})) : [],
         selectedClipId: snapshot.selectedClipId,
         masterAudio: snapshot.masterAudio
           ? { ...snapshot.masterAudio, objectUrl: snapshot.masterAudio.objectUrl }
@@ -137,6 +141,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     clipGroups: [],
     transitions: [],
     textOverlays: [],
+    masterAudioMarkers: [],
     selectedClipId: null,
     masterAudio: null,
     undoDepth: 0,
@@ -150,6 +155,8 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       set((s) => ({ transitions: resolveUpdater(action, s.transitions) })),
     setTextOverlays: (action) =>
       set((s) => ({ textOverlays: resolveUpdater(action, s.textOverlays) })),
+    setMasterAudioMarkers: (action) =>
+      set((s) => ({ masterAudioMarkers: resolveUpdater(action, s.masterAudioMarkers) })),
     setSelectedClipId: (action) =>
       set((s) => ({ selectedClipId: resolveUpdater(action, s.selectedClipId) })),
     setMasterAudio: (action) =>
@@ -219,6 +226,8 @@ export const useEditorTransitions = () =>
   useStore(editorStore, useShallow((s) => s.transitions));
 export const useEditorTextOverlays = () =>
   useStore(editorStore, useShallow((s) => s.textOverlays));
+export const useEditorMasterAudioMarkers = () =>
+  useStore(editorStore, useShallow((s) => s.masterAudioMarkers));
 export const useSelectedClipId = () => useStore(editorStore, (s) => s.selectedClipId);
 export const useEditorMasterAudio = () => useStore(editorStore, (s) => s.masterAudio);
 
@@ -254,6 +263,7 @@ export const editorActions: Pick<
   | 'setClipGroups'
   | 'setTransitions'
   | 'setTextOverlays'
+  | 'setMasterAudioMarkers'
   | 'setSelectedClipId'
   | 'setMasterAudio'
   | 'pushHistory'
@@ -277,6 +287,7 @@ export function __resetEditorStoreForTests(): void {
     clipGroups: [],
     transitions: [],
     textOverlays: [],
+    masterAudioMarkers: [],
     selectedClipId: null,
     masterAudio: null,
     undoDepth: 0,

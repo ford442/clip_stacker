@@ -339,6 +339,7 @@ export async function applyProjectData(
     transitions,
     textOverlays,
     masterAudio,
+    masterAudioMarkers: project.masterAudioMarkers ?? [],
     colorGrade,
     finishing,
     skippedClipCount: skippedCount,

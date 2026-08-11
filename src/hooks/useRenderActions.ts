@@ -25,36 +25,13 @@ import {
 import { generateDebugReport } from "../utils/debugReport";
 import type { FinishingSettings } from "../utils/finishing";
 
+import { settingsStore } from "../store/settingsStore";
+
 type RenderActionsDeps = {
   clips: Clip[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
-  exportSettings: ExportSettings;
-  finishing: FinishingSettings;
-  forceFFmpeg: boolean;
-  useCanvasRenderer: boolean;
-  audioReactive: boolean;
-  forceReencode: boolean;
-  outputUrl: string | null;
-  status: string;
-  renderPlan: RenderPlan | null;
-  encoderPath: string;
-  setStatus: (status: string) => void;
-  setFinishing: (settings: FinishingSettings) => void;
-  setForceFFmpeg: (v: boolean) => void;
-  setUseCanvasRenderer: (v: boolean) => void;
-  setAudioReactive: (v: boolean) => void;
-  setForceReencode: (v: boolean) => void;
-  setProgressStage: (stage: string) => void;
-  setProgressValue: (value: number | null) => void;
-  setProgressIndeterminate: (v: boolean) => void;
-  setIsRendering: (v: boolean) => void;
-  setFfmpegLoading: (v: boolean) => void;
-  setFfmpegFailed: (v: boolean) => void;
-  setOutputUrl: (url: string | null) => void;
-  setEncoderPath: (path: string) => void;
-  setRenderPlan: (plan: RenderPlan | null) => void;
 };
 
 export function useRenderActions(deps: RenderActionsDeps) {
@@ -63,28 +40,6 @@ export function useRenderActions(deps: RenderActionsDeps) {
     clipGroups,
     transitions,
     textOverlays,
-    exportSettings,
-    finishing,
-    forceFFmpeg,
-    useCanvasRenderer,
-    audioReactive,
-    forceReencode,
-    outputUrl,
-    status,
-    renderPlan,
-    encoderPath,
-    setStatus,
-    setForceFFmpeg,
-    setUseCanvasRenderer,
-    setProgressStage,
-    setProgressValue,
-    setProgressIndeterminate,
-    setIsRendering,
-    setFfmpegLoading,
-    setFfmpegFailed,
-    setOutputUrl,
-    setEncoderPath,
-    setRenderPlan,
   } = deps;
 
   const [renderFailureMessage, setRenderFailureMessage] = useState<string | null>(
@@ -98,11 +53,31 @@ export function useRenderActions(deps: RenderActionsDeps) {
     // Resolve which clips are on the timeline (active variants for grouped clips)
     const timelineClips = getTimelineClips(clips, clipGroups);
     if (timelineClips.length === 0) {
-      setStatus("Upload clips before rendering.");
+      settingsStore.getState().setStatus("Upload clips before rendering.");
       return;
     }
 
     try {
+      const { 
+        exportSettings, 
+        finishing, 
+        forceFFmpeg, 
+        useCanvasRenderer, 
+        audioReactive, 
+        forceReencode,
+        outputUrl,
+        setStatus,
+        setFfmpegFailed,
+        setEncoderPath,
+        setRenderPlan,
+        setOutputUrl,
+        setIsRendering,
+        setProgressStage,
+        setProgressValue,
+        setProgressIndeterminate,
+        setFfmpegLoading
+      } = settingsStore.getState();
+
       // Reset FFmpeg load-failure state on a new render attempt.
       setFfmpegFailed(false);
 
@@ -134,17 +109,18 @@ export function useRenderActions(deps: RenderActionsDeps) {
       // Track FFmpeg loading phase via the exported helper so we don't couple to
       // status message strings.
       const trackFfmpegLoading = (msg: string) => {
-        setStatus(msg);
-        setFfmpegLoading(isFfmpegLoading());
+        settingsStore.getState().setStatus(msg);
+        settingsStore.getState().setFfmpegLoading(isFfmpegLoading());
       };
 
       const handleProgress = (update: RenderProgressUpdate) => {
-        setProgressStage(update.stage);
-        setProgressIndeterminate(update.indeterminate === true);
+        const actions = settingsStore.getState();
+        actions.setProgressStage(update.stage);
+        actions.setProgressIndeterminate(update.indeterminate === true);
         if (typeof update.progress === "number") {
-          setProgressValue(Math.max(0, Math.min(1, update.progress)));
+          actions.setProgressValue(Math.max(0, Math.min(1, update.progress)));
         } else {
-          setProgressValue(null);
+          actions.setProgressValue(null);
         }
       };
       const result = await hybridMergeClips(
@@ -178,7 +154,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setProgressValue(1);
       setProgressIndeterminate(false);
     } catch (error) {
-      // Fixed "Render failed: undefined" by normalizing worker string errors.
+      const actions = settingsStore.getState();
       const errMsg = normalizeError(error);
       console.error("Render failed (full details):", error);
       const recentLogs = getLastFfmpegLogs(30).join("\n");
@@ -188,17 +164,18 @@ export function useRenderActions(deps: RenderActionsDeps) {
       const message = /FFmpeg failed to/i.test(errMsg)
         ? errMsg
         : `Render failed: ${errMsg}`;
-      setStatus(message);
+      actions.setStatus(message);
       setRenderFailureMessage(message);
       setLastRenderError(error);
       // Surface FFmpeg load failures separately so the retry button appears.
       if (isFfmpegLoadFailed()) {
-        setFfmpegFailed(true);
+        actions.setFfmpegFailed(true);
       }
       // Leave logs in buffer so user can click "Copy Debug Info" to grab them.
     } finally {
-      setFfmpegLoading(false);
-      setIsRendering(false);
+      const actions = settingsStore.getState();
+      actions.setFfmpegLoading(false);
+      actions.setIsRendering(false);
       // Always clean up FFmpeg VFS after each render attempt (success or failure)
       // to prevent memory pressure from accumulated temporary files.
       aggressiveCleanupFFmpegVFS().catch((err) => {
@@ -210,23 +187,6 @@ export function useRenderActions(deps: RenderActionsDeps) {
     clipGroups,
     transitions,
     textOverlays,
-    exportSettings,
-    forceFFmpeg,
-    useCanvasRenderer,
-    audioReactive,
-    forceReencode,
-    outputUrl,
-    finishing,
-    setStatus,
-    setFfmpegFailed,
-    setEncoderPath,
-    setRenderPlan,
-    setOutputUrl,
-    setIsRendering,
-    setProgressStage,
-    setProgressValue,
-    setProgressIndeterminate,
-    setFfmpegLoading,
   ]);
 
   const handleMerge = useCallback(async () => {
@@ -251,12 +211,25 @@ export function useRenderActions(deps: RenderActionsDeps) {
     const timelineClips = getTimelineClips(clips, clipGroups).filter(
       (clip) => clip.kind === "video",
     );
-    if (timelineClips.length === 0) {
-      setStatus("Add at least one video clip before GPU stitching.");
+    if (clips.filter((c) => c.kind === "video").length === 0) {
+      settingsStore.getState().setStatus("Add at least one video clip before GPU stitching.");
       return;
     }
 
     try {
+      const {
+        exportSettings,
+        outputUrl,
+        setStatus,
+        setOutputUrl,
+        setEncoderPath,
+        setRenderPlan,
+        setIsRendering,
+        setProgressIndeterminate,
+        setProgressValue,
+        setProgressStage,
+      } = settingsStore.getState();
+
       if (outputUrl) URL.revokeObjectURL(outputUrl);
       setOutputUrl(null);
       setEncoderPath("");
@@ -302,6 +275,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setProgressValue(1);
       setProgressIndeterminate(false);
     } catch (error) {
+      const { setStatus } = settingsStore.getState();
       const errMsg = normalizeError(error);
       console.error("GPU stitch error:", error);
       const recentLogs = getLastFfmpegLogs(30).join("\n");
@@ -315,6 +289,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setRenderFailureMessage(message);
       setLastRenderError(error);
     } finally {
+      const { setIsRendering, setProgressIndeterminate } = settingsStore.getState();
       setIsRendering(false);
       setProgressIndeterminate(false);
       aggressiveCleanupFFmpegVFS().catch(() => {});
@@ -322,16 +297,6 @@ export function useRenderActions(deps: RenderActionsDeps) {
   }, [
     clips,
     clipGroups,
-    exportSettings,
-    outputUrl,
-    setStatus,
-    setOutputUrl,
-    setEncoderPath,
-    setRenderPlan,
-    setIsRendering,
-    setProgressIndeterminate,
-    setProgressValue,
-    setProgressStage,
   ]);
 
   const handleMemoryWarningConfirm = useCallback(() => {
@@ -345,11 +310,12 @@ export function useRenderActions(deps: RenderActionsDeps) {
   const handleMemoryWarningCancel = useCallback(() => {
     setShowMemoryWarning(false);
     pendingRenderRef.current = null;
-    setStatus("Render cancelled.");
-  }, [setStatus]);
+    settingsStore.getState().setStatus("Render cancelled.");
+  }, []);
 
   /** Copy rich diagnostics (status + render plan + last FFmpeg logs + browser info) to clipboard. */
   const handleCopyDebugInfo = useCallback(async () => {
+    const { status, renderPlan, encoderPath, exportSettings, setStatus } = settingsStore.getState();
     const text = generateDebugReport({
       status,
       renderPlan,
@@ -372,19 +338,15 @@ export function useRenderActions(deps: RenderActionsDeps) {
       );
     }
   }, [
-    status,
-    renderPlan,
-    encoderPath,
     clips,
     clipGroups,
     transitions,
     textOverlays,
-    exportSettings,
     lastRenderError,
-    setStatus,
   ]);
 
   const handleDebugResetFFmpeg = useCallback(async () => {
+    const { setStatus } = settingsStore.getState();
     setStatus("Resetting FFmpeg instance (debug action)...");
     try {
       await resetFFmpegInstance();
@@ -396,19 +358,20 @@ export function useRenderActions(deps: RenderActionsDeps) {
     } catch (err) {
       setStatus(`Error resetting FFmpeg: ${(err as Error).message}`);
     }
-  }, [setStatus]);
+  }, []);
 
   const handleRetryFfmpegLoad = useCallback(async () => {
+    const { setStatus, setFfmpegFailed, setFfmpegLoading, setProgressStage, setProgressIndeterminate } = settingsStore.getState();
     setStatus("Resetting FFmpeg and retrying load...");
     setFfmpegFailed(false);
     setFfmpegLoading(true);
     try {
       await resetFFmpegInstance();
       await ensureFfmpeg(
-        (msg) => setStatus(msg),
+        (msg) => settingsStore.getState().setStatus(msg),
         (update) => {
-          setProgressStage(update.stage);
-          setProgressIndeterminate(update.indeterminate === true);
+          settingsStore.getState().setProgressStage(update.stage);
+          settingsStore.getState().setProgressIndeterminate(update.indeterminate === true);
         },
       );
       setStatus("FFmpeg loaded successfully. Click Render to start.");
@@ -419,18 +382,12 @@ export function useRenderActions(deps: RenderActionsDeps) {
     } finally {
       setFfmpegLoading(false);
     }
-  }, [
-    setStatus,
-    setFfmpegFailed,
-    setFfmpegLoading,
-    setProgressStage,
-    setProgressIndeterminate,
-  ]);
+  }, []);
 
   const handleToggleCanvasRenderer = useCallback((v: boolean) => {
-    setUseCanvasRenderer(v);
-    if (v) setForceFFmpeg(false); // canvas overrides CPU-only mode
-  }, [setUseCanvasRenderer, setForceFFmpeg]);
+    settingsStore.getState().setUseCanvasRenderer(v);
+    if (v) settingsStore.getState().setForceFFmpeg(false); // canvas overrides CPU-only mode
+  }, []);
 
   return {
     renderFailureMessage,

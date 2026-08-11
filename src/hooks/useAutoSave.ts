@@ -23,6 +23,9 @@ import {
   type AutoSaveOffer,
 } from '../utils/autoSave';
 
+import { settingsStore } from '../store/settingsStore';
+import { useStore } from 'zustand';
+
 export function useAutoSave({
   clips,
   tracks,
@@ -30,10 +33,7 @@ export function useAutoSave({
   transitions,
   textOverlays,
   selectedClipId,
-  exportSettings,
-  setExportSettings,
   resetHistory,
-  setStatus,
   enabled = true,
 }: {
   clips: Clip[];
@@ -42,12 +42,10 @@ export function useAutoSave({
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   selectedClipId: string | null;
-  exportSettings: ExportSettings;
-  setExportSettings: (settings: ExportSettings) => void;
   resetHistory: (snapshot: EditSnapshot) => void;
-  setStatus: (message: string) => void;
   enabled?: boolean;
 }) {
+  const exportSettings = useStore(settingsStore, (s) => s.exportSettings);
   const [recoveryOffer, setRecoveryOffer] = useState<AutoSaveOffer | null>(() =>
     readAutoSaveOffer(),
   );
@@ -145,8 +143,8 @@ export function useAutoSave({
     clearAutoSave();
     setRecoveryOffer(null);
     setRecoveryResolved(true);
-    setStatus('Autosave discarded. Starting with an empty project.');
-  }, [setStatus]);
+    settingsStore.getState().setStatus('Autosave discarded. Starting with an empty project.');
+  }, []);
 
   const handleRecover = useCallback(async () => {
     const session = readAutoSaveSession();
@@ -183,9 +181,11 @@ export function useAutoSave({
         clipGroups: restoredGroups,
         transitions: restoredTransitions,
         textOverlays: restoredOverlays,
+        masterAudioMarkers: session.project.masterAudioMarkers ?? [],
         selectedClipId: selectedId,
         masterAudio: null,
       });
+      const { setStatus, setExportSettings } = settingsStore.getState();
       if (session.exportSettings) {
         setExportSettings(session.exportSettings);
       }
@@ -212,12 +212,12 @@ export function useAutoSave({
         session.exportSettings ?? exportSettings,
       );
     } catch (error) {
-      setStatus(`Could not recover autosave: ${(error as Error).message}`);
+      settingsStore.getState().setStatus(`Could not recover autosave: ${(error as Error).message}`);
       handleDiscardRecovery();
     } finally {
       setIsRecovering(false);
     }
-  }, [exportSettings, handleDiscardRecovery, resetHistory, setExportSettings, setStatus]);
+  }, [exportSettings, handleDiscardRecovery, resetHistory]);
 
   return {
     recoveryOffer,

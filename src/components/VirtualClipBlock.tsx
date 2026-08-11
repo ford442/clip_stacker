@@ -4,6 +4,7 @@ import { editorActions, useIsClipSelected } from '../store';
 import { WaveformCanvas } from './WaveformCanvas';
 import { SpeedAutomationLane } from './SpeedAutomationLane';
 import { SpeedCurveOverlay } from './SpeedCurveOverlay';
+import SyncMarkerLane from './SyncMarkerLane';
 import type { VirtualClipLayout } from './timelineClipTypes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
 import { remapWaveformPeaks } from '../utils/automation';
@@ -99,6 +100,16 @@ function VirtualClipBlockImpl({
           }
           return { ...c, automation: next };
         }),
+      );
+    },
+    [clip.id],
+  );
+
+  const handleSyncMarkersChange = useCallback(
+    (markers: import('../types').SyncMarker[]) => {
+      editorActions.pushHistoryDebounced(`sync-markers:${clip.id}`);
+      editorActions.setClips((prev) =>
+        prev.map((c) => (c.id === clip.id ? { ...c, syncMarkers: markers } : c)),
       );
     },
     [clip.id],
@@ -242,6 +253,14 @@ function VirtualClipBlockImpl({
         onTouchEnd={handleTouchEnd}
         onTouchCancel={handleTouchCancel}
       >
+        <SyncMarkerLane
+          markers={clip.syncMarkers ?? []}
+          duration={duration}
+          width={layout.width}
+          laneType="video"
+          clipId={clip.id}
+          onUpdateMarkers={handleSyncMarkersChange}
+        />
         <div
           className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
             isSelected ? ' selected' : ''
