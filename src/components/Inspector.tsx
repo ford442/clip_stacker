@@ -688,83 +688,95 @@ function InspectorImpl({
           </p>
         </div>
         <div className="inspector-group-label">Speed / time-stretch</div>
-        <div className="inspector-volume-group">
-          <label
-            className="inspector-volume-slider"
-            title="Constant playback speed. Higher = shorter on the timeline. Export audio is pitch-preserving."
-          >
-            Speed {playbackRateValue.toFixed(3)}×
-            <input
-              type="range"
-              min={MIN_CLIP_PLAYBACK_RATE}
-              max={UI_MAX_CLIP_PLAYBACK_RATE}
-              step="0.01"
-              value={playbackRateValue}
-              onChange={(e) => setPlaybackRate(Number(e.target.value))}
-            />
-          </label>
-
-          <div className="inspector-speed-row">
-            <label className="inspector-speed-field" title="Exact playback rate">
-              Rate
+        <div className="inspector-speed-panel">
+          <div className="inspector-speed-primary">
+            <label
+              className="inspector-speed-slider"
+              title="Constant playback speed. Higher = shorter on the timeline. Export audio is pitch-preserving."
+            >
+              <span className="inspector-speed-slider-header">
+                <span>Speed</span>
+                <strong className="inspector-speed-live-rate" aria-live="polite">
+                  {playbackRateValue.toFixed(3)}×
+                </strong>
+                <span className="inspector-speed-out-duration" aria-live="polite">
+                  Out {outputSpeedDuration.toFixed(2)}s
+                </span>
+              </span>
               <input
-                type="number"
+                type="range"
                 min={MIN_CLIP_PLAYBACK_RATE}
                 max={UI_MAX_CLIP_PLAYBACK_RATE}
-                step="0.001"
-                value={Number(playbackRateValue.toFixed(3))}
+                step="0.01"
+                value={playbackRateValue}
                 onChange={(e) => setPlaybackRate(Number(e.target.value))}
+                aria-valuetext={`${playbackRateValue.toFixed(3)} times, output duration ${outputSpeedDuration.toFixed(2)} seconds`}
               />
             </label>
-            <div className="inspector-speed-nudges" role="group" aria-label="Nudge speed">
-              <button
-                type="button"
-                className="btn-secondary kf-btn"
-                title={`−${PLAYBACK_RATE_NUDGE_COARSE}×`}
-                onClick={() =>
-                  setPlaybackRate(
-                    nudgePlaybackRate(playbackRateValue, -PLAYBACK_RATE_NUDGE_COARSE),
-                  )
-                }
-              >
-                −0.05
-              </button>
-              <button
-                type="button"
-                className="btn-secondary kf-btn"
-                title={`−${PLAYBACK_RATE_NUDGE_FINE}×`}
-                onClick={() =>
-                  setPlaybackRate(
-                    nudgePlaybackRate(playbackRateValue, -PLAYBACK_RATE_NUDGE_FINE),
-                  )
-                }
-              >
-                −0.01
-              </button>
-              <button
-                type="button"
-                className="btn-secondary kf-btn"
-                title={`+${PLAYBACK_RATE_NUDGE_FINE}×`}
-                onClick={() =>
-                  setPlaybackRate(
-                    nudgePlaybackRate(playbackRateValue, PLAYBACK_RATE_NUDGE_FINE),
-                  )
-                }
-              >
-                +0.01
-              </button>
-              <button
-                type="button"
-                className="btn-secondary kf-btn"
-                title={`+${PLAYBACK_RATE_NUDGE_COARSE}×`}
-                onClick={() =>
-                  setPlaybackRate(
-                    nudgePlaybackRate(playbackRateValue, PLAYBACK_RATE_NUDGE_COARSE),
-                  )
-                }
-              >
-                +0.05
-              </button>
+
+            <div className="inspector-speed-controls" role="group" aria-label="Playback rate controls">
+              <label className="inspector-speed-field" title="Exact playback rate">
+                Rate
+                <input
+                  type="number"
+                  min={MIN_CLIP_PLAYBACK_RATE}
+                  max={UI_MAX_CLIP_PLAYBACK_RATE}
+                  step="0.001"
+                  value={Number(playbackRateValue.toFixed(3))}
+                  onChange={(e) => setPlaybackRate(Number(e.target.value))}
+                  aria-describedby="inspector-speed-out-hint"
+                />
+              </label>
+              <div className="inspector-speed-nudges" role="group" aria-label="Nudge speed">
+                <button
+                  type="button"
+                  className="btn-secondary kf-btn"
+                  title={`−${PLAYBACK_RATE_NUDGE_COARSE}×`}
+                  onClick={() =>
+                    setPlaybackRate(
+                      nudgePlaybackRate(playbackRateValue, -PLAYBACK_RATE_NUDGE_COARSE),
+                    )
+                  }
+                >
+                  −0.05
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary kf-btn"
+                  title={`−${PLAYBACK_RATE_NUDGE_FINE}×`}
+                  onClick={() =>
+                    setPlaybackRate(
+                      nudgePlaybackRate(playbackRateValue, -PLAYBACK_RATE_NUDGE_FINE),
+                    )
+                  }
+                >
+                  −0.01
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary kf-btn"
+                  title={`+${PLAYBACK_RATE_NUDGE_FINE}×`}
+                  onClick={() =>
+                    setPlaybackRate(
+                      nudgePlaybackRate(playbackRateValue, PLAYBACK_RATE_NUDGE_FINE),
+                    )
+                  }
+                >
+                  +0.01
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary kf-btn"
+                  title={`+${PLAYBACK_RATE_NUDGE_COARSE}×`}
+                  onClick={() =>
+                    setPlaybackRate(
+                      nudgePlaybackRate(playbackRateValue, PLAYBACK_RATE_NUDGE_COARSE),
+                    )
+                  }
+                >
+                  +0.05
+                </button>
+              </div>
             </div>
           </div>
 
@@ -788,7 +800,7 @@ function InspectorImpl({
                 }}
               />
             </label>
-            <div className="inspector-speed-meta" aria-live="polite">
+            <div id="inspector-speed-out-hint" className="inspector-speed-meta" aria-live="polite">
               <span>Source {trimmedSourceDuration.toFixed(2)}s</span>
               <span>→</span>
               <span>Out {outputSpeedDuration.toFixed(2)}s</span>

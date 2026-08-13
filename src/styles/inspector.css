@@ -120,6 +120,58 @@
   accent-color: var(--gold);
 }
 
+.inspector-speed-panel {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(6, 9, 15, 0.85);
+}
+
+.inspector-speed-primary {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.inspector-speed-slider {
+  display: grid;
+  gap: 0.3rem;
+  font-size: 0.82rem;
+}
+
+.inspector-speed-slider-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.45rem 0.65rem;
+}
+
+.inspector-speed-live-rate {
+  font-variant-numeric: tabular-nums;
+  color: var(--gold-bright, #e8c84a);
+  font-size: 0.95rem;
+}
+
+.inspector-speed-out-duration {
+  margin-left: auto;
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  color: rgba(232, 236, 244, 0.82);
+}
+
+.inspector-speed-slider input[type="range"] {
+  width: 100%;
+  accent-color: var(--gold);
+}
+
+.inspector-speed-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.45rem;
+}
+
 .inspector-speed-row {
   display: flex;
   flex-wrap: wrap;
