@@ -515,9 +515,13 @@ export function buildSingleClipFilter(
   }
 
   if (clip.kind === "video") {
-    const videoInput = speedFilter ? speedFilter.videoLabel : `[0:v]trim=start=${clip.trimStart}:end=${end},${setpts}`;
-    let v = speedFilter ? `${videoInput}` : videoInput;
-    v += `,scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease`;
+    const videoInput = speedFilter
+      ? speedFilter.videoLabel
+      : `[0:v]trim=start=${clip.trimStart}:end=${end},${setpts}`;
+    let v = videoInput;
+    // Labeled speed-warp outputs (`[vspeed]`) must chain directly into the next
+    // filter — a leading comma would insert an empty filter (`No such filter: ''`).
+    v += `${speedFilter ? "" : ","}scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease`;
     v += `,pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
     if (clip.videoFadeIn > 0) v += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
     if (clip.videoFadeOut > 0)

@@ -75,6 +75,21 @@ describe('still image FFmpeg helpers', () => {
     expect(filter).toContain('atempo=0.5,atempo=0.5');
   });
 
+  it('buildSingleClipFilter chains scale after variable-speed labels without a leading comma', () => {
+    const clip = makeClip({
+      trimEnd: 10,
+      automation: {
+        playbackRate: [
+          { t: 0, value: 1 },
+          { t: 5, value: 2 },
+        ],
+      },
+    });
+    const filter = buildSingleClipFilter(clip);
+    expect(filter).toContain('[vspeed]scale=');
+    expect(filter).not.toMatch(/\[vspeed\],/);
+  });
+
   it('buildStillImageFfmpegArgs produces NLE-friendly encode settings', () => {
     const args = buildStillImageFfmpegArgs({
       inputName: 'splash.png',
