@@ -15,6 +15,7 @@ import type { ClipValues } from "./Inspector";
 import type { PendingRemoteUploadError } from "../hooks/useProjectSaveLoad";
 import type { AutoSaveOffer } from "../utils/autoSave";
 import type { MediaLibraryItem, RemoteUploadProgressEvent } from "../utils/project";
+import type { IntercutGeneratorConfig } from "../ffmpeg/intercutGenerator";
 import { Toolbar } from "./Toolbar";
 import { StorageRow } from "./StorageRow";
 import { MediaLibraryPanel } from "./MediaLibraryPanel";
@@ -77,6 +78,7 @@ export type AppShellProps = {
   onAddLibraryClip: (item: MediaLibraryItem) => Promise<void>;
   onToggleVariant: (groupId: string, variant: "A" | "B") => void;
   onDeleteClip: (clipId: string) => void;
+  onGenerateIntercut: (config: IntercutGeneratorConfig) => Promise<boolean>;
   onSelectClip: (id: string | null) => void;
   onSelectTextOverlay: (id: string | null) => void;
   onClipLayoutCommit: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
@@ -157,6 +159,7 @@ export function AppShell(props: AppShellProps) {
     onAddLibraryClip,
     onToggleVariant,
     onDeleteClip,
+    onGenerateIntercut,
     onSelectClip,
     onSelectTextOverlay,
     onClipLayoutCommit,
@@ -292,6 +295,7 @@ export function AppShell(props: AppShellProps) {
         <ClipLibrary
           onToggleVariant={onToggleVariant}
           onDelete={onDeleteClip}
+          onGenerateIntercut={onGenerateIntercut}
         />
         <Preview
           clip={selectedClip}

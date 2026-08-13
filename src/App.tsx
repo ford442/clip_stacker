@@ -11,6 +11,7 @@ import {
 } from "./utils/storageAuth";
 import { setPlayheadTime } from "./store";
 import { useClipActions } from "./hooks/useClipActions";
+import { useIntercutActions } from "./hooks/useIntercutActions";
 import { useRenderActions } from "./hooks/useRenderActions";
 import { useInspectorActions } from "./hooks/useInspectorActions";
 import { useTimelineActions } from "./hooks/useTimelineActions";
@@ -121,6 +122,11 @@ export function App() {
     setTransitions,
     setSelectedClipId,
     pushHistory,
+  });
+
+  const { handleGenerateIntercut } = useIntercutActions({
+    pushHistory,
+    setSelectedClipId,
   });
 
   const renderActions = useRenderActions({
@@ -250,6 +256,7 @@ export function App() {
       onAddLibraryClip={clipActions.handleAddLibraryClip}
       onToggleVariant={clipActions.handleToggleVariant}
       onDeleteClip={timelineActions.handleDeleteClip}
+      onGenerateIntercut={handleGenerateIntercut}
       onSelectClip={setSelectedClipId}
       onSelectTextOverlay={setSelectedTextOverlayId}
       onClipLayoutCommit={handleClipLayoutCommit}

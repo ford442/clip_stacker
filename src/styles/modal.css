@@ -113,3 +113,65 @@
   color: var(--text);
   font-size: 0.88rem;
 }
+
+.intercut-modal {
+  max-width: 460px;
+}
+
+.intercut-field {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.82rem;
+  margin: 0.65rem 0;
+}
+
+.intercut-field input,
+.intercut-field select {
+  width: 100%;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.5rem;
+}
+
+.intercut-fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.5rem 0.7rem 0.2rem;
+  margin: 0.5rem 0;
+}
+
+.intercut-fieldset legend {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--gold);
+  padding: 0 0.3rem;
+}
+
+.intercut-unit-toggle {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.35rem;
+}
+
+.intercut-unit-toggle button {
+  flex: 1;
+  font-size: 0.75rem;
+  padding: 0.3rem 0.4rem;
+}
+
+.intercut-unit-toggle button.active {
+  border-color: var(--gold);
+  background: var(--gold-dim);
+  color: var(--gold-bright);
+}
+
+.intercut-estimate {
+  margin: 0.75rem 0 0;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.45;
+}

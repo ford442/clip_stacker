@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import type { ClipGroup } from '../types';
 import {
   editorActions,
@@ -8,6 +8,10 @@ import {
   useIsClipSelected,
 } from '../store';
 import { getClipDuration } from '../utils/project';
+import { IntercutModal } from './IntercutModal';
+import { settingsStore } from '../store/settingsStore';
+import { useStore } from 'zustand';
+import type { IntercutGeneratorConfig } from '../ffmpeg/intercutGenerator';
 
 interface ClipLibraryActions {
   onToggleVariant: (groupId: string, variant: 'A' | 'B') => void;
@@ -170,18 +174,33 @@ function ClipGroupBlock({ group, onToggleVariant, onDelete }: ClipGroupBlockProp
 
 const MemoClipGroupBlock = memo(ClipGroupBlock);
 
-interface Props extends ClipLibraryActions {}
+interface Props extends ClipLibraryActions {
+  onGenerateIntercut: (config: IntercutGeneratorConfig) => Promise<boolean>;
+}
 
-function ClipLibraryImpl({ onToggleVariant, onDelete }: Props) {
+function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Props) {
   const clips = useEditorClips();
   const clipGroups = useEditorClipGroups();
+  const [intercutOpen, setIntercutOpen] = useState(false);
+  const intercutProcessing = useStore(settingsStore, (s) => s.intercutProcessing);
 
   const ungroupedClipIds = clips.filter((c) => !c.groupId).map((c) => c.id);
   const activeGroups = clipGroups.filter((g) => g.variants.A || g.variants.B);
+  const videoCount = clips.filter((c) => c.kind === 'video').length;
 
   return (
     <section className="panel library-panel">
       <h2>Library</h2>
+      {videoCount >= 2 && (
+        <button
+          type="button"
+          className="btn-secondary intercut-library-btn"
+          onClick={() => setIntercutOpen(true)}
+          disabled={intercutProcessing}
+        >
+          ✂️ Create Intercut Clip
+        </button>
+      )}
       {clips.length === 0 && activeGroups.length === 0 && (
         <p className="muted">No clips yet. Add clips above.</p>
       )}
@@ -203,6 +222,18 @@ function ClipLibraryImpl({ onToggleVariant, onDelete }: Props) {
           />
         ))}
       </ul>
+      <IntercutModal
+        isOpen={intercutOpen}
+        generating={intercutProcessing}
+        onClose={() => {
+          if (!settingsStore.getState().intercutProcessing) setIntercutOpen(false);
+        }}
+        onGenerate={async (config) => {
+          const ok = await onGenerateIntercut(config);
+          if (ok) setIntercutOpen(false);
+          return ok;
+        }}
+      />
     </section>
   );
 }
