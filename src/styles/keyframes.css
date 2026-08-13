@@ -32,6 +32,11 @@
   background: rgba(0, 0, 0, 0.35);
   border: 1px solid var(--border);
   overflow: visible;
+  outline: none;
+}
+
+.kf-track:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--gold-bright, #e8c84a);
 }
 
 .kf-playhead {
@@ -57,6 +62,55 @@
   background: var(--gold-dim);
   cursor: grab;
   z-index: 2;
+}
+
+.kf-key:focus-visible {
+  outline: 2px solid var(--gold-bright, #e8c84a);
+  outline-offset: 2px;
+}
+
+.kf-key.is-selected {
+  border-radius: 50%;
+  background: var(--gold-bright);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.65);
+}
+
+.kf-editor--large .kf-track {
+  height: 36px;
+}
+
+.kf-key--large {
+  top: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: #d4b84a;
+  border: 2px solid #0b1018;
+  box-shadow: 0 0 0 1px rgba(212, 184, 74, 0.5);
+}
+
+.kf-key--large.is-selected {
+  border-radius: 2px;
+  background: #f0d878;
+  border-color: #fff;
+  box-shadow:
+    0 0 0 2px #0b1018,
+    0 0 0 4px #f0d878;
+}
+
+.kf-key-label {
+  font-size: 0.58rem;
+  font-variant-numeric: tabular-nums;
+  color: #f0e6c8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
 }
 
 .kf-key:active {

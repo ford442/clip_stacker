@@ -924,6 +924,9 @@ function InspectorImpl({
                 min={MIN_CLIP_PLAYBACK_RATE}
                 max={MAX_CLIP_PLAYBACK_RATE}
                 step={0.01}
+                formatValue={(v) => `${v.toFixed(2)}×`}
+                valueFieldLabel="rate"
+                hitSizePx={32}
                 onChange={(track) => {
                   const next: ClipAutomation = { ...(clip.automation ?? {}) };
                   if (track?.length) next.playbackRate = track;
