@@ -34,6 +34,16 @@ export interface FrequencyAutomationConfig {
   easing?: KeyframeEasing;
 }
 
+export interface IntercutBeatSyncConfig {
+  /** Source-media beat times (seconds). Typically `beatsInTrimWindow(clip)`. */
+  beatTimestamps: number[];
+  /**
+   * Fixed beats-per-cut. When omitted, stride is derived from the sampled
+   * frequency vs the median beat interval (1 = cut on every beat).
+   */
+  stride?: number;
+}
+
 export interface BuildIntercutSlicesConfig {
   sourceA: IntercutSourceBounds;
   sourceB: IntercutSourceBounds;
@@ -42,6 +52,8 @@ export interface BuildIntercutSlicesConfig {
   minSliceSec?: number;
   /** First visible slice comes from clip A when true (default). */
   startWithA?: boolean;
+  /** Optional musical cut grid; falls back to raw Hz when beats are too sparse. */
+  beatSync?: IntercutBeatSyncConfig;
 }
 
 /** Minimum slice length (seconds) before stream-copy concat is considered safe. */
@@ -68,6 +80,66 @@ export function frequencyHzAtTime(
   return sampleKeyframes(track, outputTimeSec, startFrequencyHz);
 }
 
+/** Convert cut frequency (Hz) to seconds per cut. */
+export function hzToSecondsPerCut(hz: number): number {
+  return 1 / Math.max(hz, 0.01);
+}
+
+/** Convert seconds per cut to frequency (Hz). */
+export function secondsPerCutToHz(secondsPerCut: number): number {
+  return 1 / Math.max(secondsPerCut, 0.01);
+}
+
+/** Median interval between consecutive beat timestamps, or null. */
+export function medianBeatInterval(beatTimestamps: number[]): number | null {
+  const beats = beatTimestamps.filter((t) => Number.isFinite(t)).sort((a, b) => a - b);
+  if (beats.length < 2) return null;
+  const intervals: number[] = [];
+  for (let i = 1; i < beats.length; i++) {
+    const d = beats[i]! - beats[i - 1]!;
+    if (d > 1e-6) intervals.push(d);
+  }
+  if (intervals.length === 0) return null;
+  intervals.sort((a, b) => a - b);
+  const mid = Math.floor(intervals.length / 2);
+  return intervals.length % 2 === 1
+    ? intervals[mid]!
+    : (intervals[mid - 1]! + intervals[mid]!) / 2;
+}
+
+/**
+ * Beats per cut for a target frequency. `1` means cut on every beat.
+ * When Hz is faster than the beat grid, still returns 1 (caller may use raw Hz).
+ */
+export function beatStrideForFrequency(hz: number, medianIntervalSec: number): number {
+  const beatsPerSec = 1 / Math.max(medianIntervalSec, 1e-6);
+  return Math.max(1, Math.round(beatsPerSec / Math.max(hz, 0.1)));
+}
+
+function sliceDurationAtTime(
+  automation: FrequencyAutomationConfig,
+  outputTimeSec: number,
+  minSliceSec: number,
+  beatSync: IntercutBeatSyncConfig | undefined,
+  beatInterval: number | null,
+): number {
+  const hz = frequencyHzAtTime(automation, outputTimeSec);
+  const safeHz = Math.max(hz, 0.1);
+  let sliceDuration = Math.max(1 / safeHz, minSliceSec);
+
+  if (beatSync && beatInterval != null) {
+    const hzDuration = 1 / safeHz;
+    // Faster than every-beat: keep the Hz strobe so musical mode can still accelerate.
+    if (hzDuration < beatInterval * 0.5) {
+      return sliceDuration;
+    }
+    const stride = beatSync.stride ?? beatStrideForFrequency(safeHz, beatInterval);
+    sliceDuration = Math.max(stride * beatInterval, minSliceSec);
+  }
+
+  return sliceDuration;
+}
+
 /**
  * Build alternating A/B slices for concat demuxer `inpoint` / `outpoint` entries.
  */
@@ -78,7 +150,9 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
     automation,
     minSliceSec = 1 / 60,
     startWithA = true,
+    beatSync,
   } = config;
+  const beatInterval = beatSync ? medianBeatInterval(beatSync.beatTimestamps) : null;
 
   const { totalDurationSec } = automation;
   if (totalDurationSec <= 0) return [];
@@ -90,9 +164,13 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
   let offsetB = sourceB.trimStart;
 
   while (outputTime < totalDurationSec - 1e-9) {
-    const hz = frequencyHzAtTime(automation, outputTime);
-    const safeHz = Math.max(hz, 0.1);
-    let sliceDuration = Math.max(1 / safeHz, minSliceSec);
+    let sliceDuration = sliceDurationAtTime(
+      automation,
+      outputTime,
+      minSliceSec,
+      beatSync,
+      beatInterval,
+    );
 
     const remaining = totalDurationSec - outputTime;
     if (sliceDuration > remaining) {
@@ -154,4 +232,38 @@ export function canUseStreamCopyForIntercut(slices: IntercutSlice[]): boolean {
 /** Sum of slice durations on the output timeline. */
 export function intercutOutputDuration(slices: IntercutSlice[]): number {
   return slices.reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+}
+
+/**
+ * Explain why a planned intercut is shorter than the requested duration, or
+ * `null` when the plan covers the request.
+ */
+export function intercutShortageMessage(
+  slices: IntercutSlice[],
+  requestedSec: number,
+  sourceA: IntercutSourceBounds,
+  sourceB: IntercutSourceBounds,
+): string | null {
+  if (requestedSec <= 0) return 'Intercut duration must be greater than zero.';
+  const actual = intercutOutputDuration(slices);
+  if (slices.length === 0) {
+    return 'Intercut produced zero slices — check clip durations and automation settings.';
+  }
+  if (actual >= requestedSec - 1e-3) return null;
+
+  const usedA = slices
+    .filter((s) => s.slot === 'A')
+    .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+  const usedB = slices
+    .filter((s) => s.slot === 'B')
+    .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+  const availA = Math.max(0, sourceA.trimEnd - sourceA.trimStart);
+  const availB = Math.max(0, sourceB.trimEnd - sourceB.trimStart);
+  const exhausted =
+    usedA >= availA - 1e-3 && availA <= availB ? 'A' : usedB >= availB - 1e-3 ? 'B' : 'A';
+
+  return (
+    `Requested ${requestedSec.toFixed(2)}s intercut but sources only cover ${actual.toFixed(2)}s ` +
+    `(clip ${exhausted} ran out of trimmed material). Shorten the duration or use longer clips.`
+  );
 }

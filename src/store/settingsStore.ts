@@ -23,6 +23,7 @@ export interface SettingsState {
   encoderPath: string;
   renderPlan: RenderPlan | null;
   rifeProcessingClipId: string | null;
+  intercutProcessing: boolean;
 
   setExportSettings: (settings: ExportSettings) => void;
   setFinishing: (settings: FinishingSettings) => void;
@@ -43,6 +44,7 @@ export interface SettingsState {
   setEncoderPath: (path: string) => void;
   setRenderPlan: (plan: RenderPlan | null) => void;
   setRifeProcessingClipId: (id: string | null) => void;
+  setIntercutProcessing: (v: boolean) => void;
 }
 
 export const settingsStore = createStore<SettingsState>()((set) => ({
@@ -65,6 +67,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   encoderPath: '',
   renderPlan: null,
   rifeProcessingClipId: null,
+  intercutProcessing: false,
 
   setExportSettings: (settings) => set({ exportSettings: settings }),
   setFinishing: (settings) => set({ finishing: settings }),
@@ -85,6 +88,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   setEncoderPath: (path) => set({ encoderPath: path }),
   setRenderPlan: (plan) => set({ renderPlan: plan }),
   setRifeProcessingClipId: (id) => set({ rifeProcessingClipId: id }),
+  setIntercutProcessing: (v) => set({ intercutProcessing: v }),
 }));
 
 export const settingsActions = settingsStore.getState();

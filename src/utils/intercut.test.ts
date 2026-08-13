@@ -5,8 +5,11 @@ import {
   buildIntercutSlices,
   canUseStreamCopyForIntercut,
   frequencyHzAtTime,
+  hzToSecondsPerCut,
   intercutOutputDuration,
+  intercutShortageMessage,
   INTERCUT_MIN_STREAM_COPY_SLICE_SEC,
+  secondsPerCutToHz,
 } from './intercut';
 
 describe('intercut', () => {
@@ -117,5 +120,64 @@ describe('intercut', () => {
         { slot: 'A', inpoint: 0, outpoint: INTERCUT_MIN_STREAM_COPY_SLICE_SEC },
       ]),
     ).toBe(true);
+  });
+
+  it('snaps slice duration to beat stride when slower than the beat grid', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 20 },
+      sourceB: { trimStart: 0, trimEnd: 20 },
+      automation: {
+        totalDurationSec: 2,
+        startFrequencyHz: 2,
+        endFrequencyHz: 2,
+      },
+      beatSync: {
+        beatTimestamps: [0, 0.5, 1, 1.5, 2, 2.5, 3],
+        stride: 2,
+      },
+    });
+
+    expect(slices[0]!.outpoint - slices[0]!.inpoint).toBeCloseTo(1, 5);
+    expect(slices[0]).toMatchObject({ slot: 'A', inpoint: 0 });
+    expect(slices[1]).toMatchObject({ slot: 'B', inpoint: 0 });
+  });
+
+  it('falls back to Hz when requested strobe is faster than every beat', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 10 },
+      automation: {
+        totalDurationSec: 0.4,
+        startFrequencyHz: 10,
+        endFrequencyHz: 10,
+      },
+      beatSync: {
+        beatTimestamps: [0, 0.5, 1, 1.5],
+      },
+    });
+
+    expect(slices[0]!.outpoint - slices[0]!.inpoint).toBeCloseTo(0.1, 5);
+  });
+
+  it('reports a shortage when sources cannot cover the requested duration', () => {
+    const sourceA = { trimStart: 0, trimEnd: 0.2 };
+    const sourceB = { trimStart: 0, trimEnd: 10 };
+    const slices = buildIntercutSlices({
+      sourceA,
+      sourceB,
+      automation: {
+        totalDurationSec: 5,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+    });
+    const msg = intercutShortageMessage(slices, 5, sourceA, sourceB);
+    expect(msg).toMatch(/only cover/i);
+    expect(msg).toMatch(/clip A/i);
+  });
+
+  it('converts Hz and seconds-per-cut', () => {
+    expect(hzToSecondsPerCut(0.5)).toBeCloseTo(2, 5);
+    expect(secondsPerCutToHz(2)).toBeCloseTo(0.5, 5);
   });
 });
