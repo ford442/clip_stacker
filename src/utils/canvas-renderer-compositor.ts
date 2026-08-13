@@ -99,8 +99,7 @@ export async function renderTextOverlaysAsync(
 
   // Mixed path: draw solid and shader layers appropriately.
   // We draw box rects (flat) for all, then glyphs via solid or GPU fill.
-  const { sanitizeFfmpegColor } = await import('./color');
-  const { ffmpegColorToCss } = await import('./color');
+  const { sanitizeFfmpegColor, ffmpegColorToCss } = await import('./color');
   const { getBundledFont, resolveScrollingX } = await import('./textOverlay');
 
   const DEFAULT_BOX_COLOR = "black@0.5";
