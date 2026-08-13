@@ -77,8 +77,8 @@ function rateToY(rate: number, height: number): number {
   return (1 - Math.min(1, Math.max(0, u))) * height;
 }
 
-function keyframeTitle(key: Keyframe, duration: number): string {
-  return `Keyframe at ${key.t.toFixed(2)}s, rate ${formatPlaybackRateLabel(key.value)}. Drag to move; double-click or Delete to remove. Hold Alt while dragging to snap to beats or sync markers. Arrow keys nudge time (left/right) and rate (up/down); Shift for fine steps.`;
+function keyframeTitle(key: Keyframe): string {
+  return `Keyframe at ${key.t.toFixed(2)}s, rate ${formatPlaybackRateLabel(key.value)}. Drag to move. Double-click or Enter to commit. Delete or Backspace to remove. Hold Alt while dragging to snap to beats or sync markers. Arrow keys nudge time (left/right) and rate (up/down); Shift for fine steps.`;
 }
 
 export function SpeedAutomationLane({
@@ -172,6 +172,11 @@ export function SpeedAutomationLane({
     [commitTrack, duration, track],
   );
 
+  const commitEdits = useCallback(() => {
+    laneRef.current?.blur();
+    announce('Speed keyframe edits committed');
+  }, [announce]);
+
   const startDrag = (index: number, pointerId: number) => {
     setSelectedIndex(index);
     const onMove = (event: PointerEvent) => {
@@ -179,9 +184,6 @@ export function SpeedAutomationLane({
       const snap = event.altKey;
       const { t, rate } = clientToLocal(event.clientX, event.clientY, snap);
       setDragPreview({ index, t, value: rate });
-      const next = [...track];
-      next[index] = { ...next[index], t, value: rate };
-      commitTrack(sortKeyframes(next));
     };
     const onUp = (event: PointerEvent) => {
       if (event.pointerId !== pointerId) return;
@@ -189,10 +191,16 @@ export function SpeedAutomationLane({
       window.removeEventListener('pointerup', onUp);
       const snap = event.altKey;
       const { t, rate } = clientToLocal(event.clientX, event.clientY, snap);
-      setDragPreview(null);
-      announce(
+      const next = [...track];
+      next[index] = { ...next[index], t, value: rate };
+      const sorted = sortKeyframes(next);
+      commitTrack(
+        sorted,
         `Speed keyframe at ${t.toFixed(2)} seconds, ${formatPlaybackRateAria(rate)}`,
       );
+      const newIndex = sorted.findIndex((k) => Math.abs(k.t - t) < duration * 0.02);
+      setSelectedIndex(newIndex >= 0 ? newIndex : index);
+      setDragPreview(null);
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
@@ -247,8 +255,7 @@ export function SpeedAutomationLane({
         break;
       case 'Enter':
         event.preventDefault();
-        laneRef.current?.blur();
-        announce('Speed keyframe edits committed');
+        commitEdits();
         break;
       default:
         break;
@@ -434,7 +441,7 @@ export function SpeedAutomationLane({
                   width: SPEED_KEYFRAME_HIT_PX,
                   height: SPEED_KEYFRAME_HIT_PX,
                 }}
-                title={keyframeTitle(key, duration)}
+                title={keyframeTitle(key)}
                 aria-label={`Speed keyframe, ${key.t.toFixed(2)} seconds, ${formatPlaybackRateAria(key.value)}`}
                 aria-pressed={selected}
                 onClick={(e) => {
@@ -444,7 +451,7 @@ export function SpeedAutomationLane({
                 onDoubleClick={(event) => {
                   event.preventDefault();
                   event.stopPropagation();
-                  removeAtIndex(index);
+                  commitEdits();
                 }}
                 onPointerDown={(event) => {
                   event.preventDefault();

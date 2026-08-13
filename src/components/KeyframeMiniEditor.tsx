@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { Keyframe, KeyframeEasing } from '../utils/keyframes';
 import {
   DEFAULT_LINEAR_EASING,
@@ -18,6 +18,12 @@ export interface KeyframeMiniEditorProps {
   min?: number;
   max?: number;
   step?: number;
+  /** Format sampled value in the header and keyframe list. */
+  formatValue?: (value: number) => string;
+  /** Column label for the value field (default "v"). */
+  valueFieldLabel?: string;
+  /** Effective pointer target size for keyframe handles (px). */
+  hitSizePx?: number;
   onChange: (keyframes: Keyframe[] | undefined) => void;
 }
 
@@ -27,6 +33,10 @@ const EASING_OPTIONS: Array<{ id: string; label: string; easing: KeyframeEasing 
   { id: 'easeOut', label: 'Ease out', easing: EASING_PRESETS.easeOut },
   { id: 'easeInOut', label: 'Ease in-out', easing: EASING_PRESETS.easeInOut },
 ];
+
+const DEFAULT_HIT_PX = 10;
+const TIME_NUDGE_SEC = 0.05;
+const TIME_NUDGE_FINE_SEC = 0.01;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -45,12 +55,18 @@ export function KeyframeMiniEditor({
   min = -Infinity,
   max = Infinity,
   step = 1,
+  formatValue,
+  valueFieldLabel = 'v',
+  hitSizePx = DEFAULT_HIT_PX,
   onChange,
 }: KeyframeMiniEditorProps) {
   const trackRef = useRef<HTMLDivElement>(null);
+  const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
   const safeDuration = Math.max(duration, 0.1);
   const track = useMemo(() => sortKeyframes(keyframes ?? []), [keyframes]);
   const sampled = sampleKeyframes(keyframes, currentTime, defaultValue);
+  const displayValue = formatValue ? formatValue(sampled) : sampled.toFixed(step < 0.1 ? 2 : 0);
+  const largeTargets = hitSizePx > DEFAULT_HIT_PX;
 
   const timeToX = useCallback(
     (t: number) => `${(clamp(t, 0, safeDuration) / safeDuration) * 100}%`,
@@ -81,6 +97,7 @@ export function KeyframeMiniEditor({
   };
 
   const startDrag = (index: number, pointerId: number) => {
+    setSelectedIndex(index);
     const onMove = (event: PointerEvent) => {
       if (event.pointerId !== pointerId) return;
       const t = clamp(xToTime(event.clientX), 0, safeDuration);
@@ -97,12 +114,55 @@ export function KeyframeMiniEditor({
     window.addEventListener('pointerup', onUp);
   };
 
+  const nudgeSelectedTime = useCallback(
+    (delta: number) => {
+      if (selectedIndex == null || !track[selectedIndex]) return;
+      const key = track[selectedIndex];
+      const t = clamp(key.t + delta, 0, safeDuration);
+      const next = [...track];
+      next[selectedIndex] = { ...next[selectedIndex], t };
+      onChange(sortKeyframes(next));
+    },
+    [onChange, safeDuration, selectedIndex, track],
+  );
+
+  const handleTrackKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (selectedIndex == null) return;
+    const fine = event.shiftKey;
+    switch (event.key) {
+      case 'ArrowLeft':
+        event.preventDefault();
+        nudgeSelectedTime(-(fine ? TIME_NUDGE_FINE_SEC : TIME_NUDGE_SEC));
+        break;
+      case 'ArrowRight':
+        event.preventDefault();
+        nudgeSelectedTime(fine ? TIME_NUDGE_FINE_SEC : TIME_NUDGE_SEC);
+        break;
+      case 'Delete':
+      case 'Backspace': {
+        event.preventDefault();
+        const key = track[selectedIndex];
+        if (!key) return;
+        onChange(removeKeyframeAt(keyframes, key.t));
+        setSelectedIndex(null);
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  const keyTitle = (key: Keyframe) => {
+    const valueText = formatValue ? formatValue(key.value) : String(key.value);
+    return `Keyframe at ${formatTime(key.t)}s, ${valueFieldLabel} ${valueText}. Drag horizontally to move. Arrow keys nudge time; Shift for fine steps. Delete to remove.`;
+  };
+
   return (
-    <div className="kf-editor">
+    <div className={`kf-editor${largeTargets ? ' kf-editor--large' : ''}`}>
       <div className="kf-editor-header">
         <span className="kf-editor-label">{label}</span>
-        <span className="kf-editor-value" title="Sampled value at playhead">
-          {sampled.toFixed(step < 0.1 ? 2 : 0)}
+        <span className="kf-editor-value" title="Sampled value at playhead" aria-live="polite">
+          {displayValue}
         </span>
       </div>
 
@@ -110,29 +170,58 @@ export function KeyframeMiniEditor({
         ref={trackRef}
         className="kf-track"
         role="slider"
+        tabIndex={0}
         aria-label={`${label} keyframe track`}
         aria-valuemin={0}
         aria-valuemax={safeDuration}
         aria-valuenow={currentTime}
+        aria-valuetext={`${formatTime(currentTime)} seconds, value ${displayValue}`}
+        onKeyDown={handleTrackKeyDown}
       >
         <div
           className="kf-playhead"
           style={{ left: timeToX(currentTime) }}
           aria-hidden="true"
         />
-        {track.map((key, index) => (
-          <button
-            key={`${key.t}-${index}`}
-            type="button"
-            className="kf-key"
-            style={{ left: timeToX(key.t) }}
-            title={`t=${formatTime(key.t)} v=${key.value}`}
-            onPointerDown={(event) => {
-              event.preventDefault();
-              startDrag(index, event.pointerId);
-            }}
-          />
-        ))}
+        {track.map((key, index) => {
+          const selected = selectedIndex === index;
+          const valueLabel = formatValue ? formatValue(key.value) : String(key.value);
+          return (
+            <button
+              key={`${key.t}-${index}`}
+              type="button"
+              className={`kf-key${selected ? ' is-selected' : ''}${largeTargets ? ' kf-key--large' : ''}`}
+              style={
+                largeTargets
+                  ? {
+                      left: timeToX(key.t),
+                      width: hitSizePx,
+                      height: hitSizePx,
+                      marginLeft: -(hitSizePx / 2),
+                      marginTop: -(hitSizePx / 2),
+                    }
+                  : { left: timeToX(key.t) }
+              }
+              title={keyTitle(key)}
+              aria-label={`${label} keyframe at ${formatTime(key.t)} seconds, ${valueFieldLabel} ${valueLabel}`}
+              aria-pressed={selected}
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedIndex(index);
+              }}
+              onPointerDown={(event) => {
+                event.preventDefault();
+                startDrag(index, event.pointerId);
+              }}
+            >
+              {largeTargets && (
+                <span className="kf-key-label" aria-hidden="true">
+                  {valueLabel}
+                </span>
+              )}
+            </button>
+          );
+        })}
       </div>
 
       <div className="kf-editor-actions">
@@ -170,7 +259,7 @@ export function KeyframeMiniEditor({
                 />
               </label>
               <label className="kf-key-field">
-                v
+                {valueFieldLabel}
                 <input
                   type="number"
                   step={step}
@@ -183,6 +272,7 @@ export function KeyframeMiniEditor({
                     next[index] = { ...next[index], value };
                     onChange(sortKeyframes(next));
                   }}
+                  aria-label={`${valueFieldLabel} at ${formatTime(key.t)} seconds`}
                 />
               </label>
               <label className="kf-key-field kf-easing-field">
