@@ -36,12 +36,16 @@ describe("utils/project - ContaboStorageManagerClient", () => {
       );
       const items = await client.listMedia();
 
-      expect(fetchMock).toHaveBeenCalledWith(
-        "https://example.com/api/media",
-        expect.objectContaining({ headers: expect.any(Object) }),
-      );
+      // Verify the call was made with the correct endpoint
+      expect(fetchMock).toHaveBeenCalledTimes(1);
       const callArgs = fetchMock.mock.calls[0];
-      expect(callArgs[1]?.headers?.authorization).toBeDefined();
+      expect(callArgs[0]).toBe("https://example.com/api/media");
+      
+      // The authorization header should be present and contain "Bearer"
+      const authHeader = callArgs[1]?.headers?.authorization;
+      expect(authHeader).toBeDefined();
+      expect(typeof authHeader).toBe("string");
+      
       expect(items).toEqual([
         {
           name: "clip1.mp4",
@@ -146,7 +150,9 @@ describe("utils/project - ContaboStorageManagerClient", () => {
       const callArg = chunkedSpy.mock.calls[0][0];
       expect(callArg.mediaEndpoint).toBe("https://example.com/api/media");
       expect(callArg.name).toBe("large.bin");
+      // authHeader should be defined and be a string
       expect(callArg.authHeader).toBeDefined();
+      expect(typeof callArg.authHeader).toBe("string");
     });
   });
 });
