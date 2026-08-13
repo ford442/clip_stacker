@@ -154,7 +154,7 @@
 }
 
 .timeline-track:has(.timeline-speed-lane-wrap) {
-  min-height: 148px;
+  min-height: 160px;
   padding-bottom: 8px;
 }
 
@@ -188,65 +188,214 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  outline: none;
 }
 
-.speed-lane-svg {
-  display: block;
+.speed-lane:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--gold-bright, #e8c84a);
+  border-radius: var(--radius-sm);
+}
+
+.speed-lane-body {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.speed-lane-scale-gutter {
+  position: relative;
+  flex: 0 0 30px;
+  font-size: 0.58rem;
+  color: rgba(232, 236, 244, 0.72);
+  user-select: none;
+  pointer-events: none;
+}
+
+.speed-lane-scale-label {
+  position: absolute;
+  right: 4px;
+  transform: translateY(-50%);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.speed-lane-graph-area {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
   cursor: crosshair;
   touch-action: none;
 }
 
+.speed-lane-svg {
+  display: block;
+  pointer-events: none;
+}
+
+.speed-lane-gradient {
+  pointer-events: none;
+}
+
+.speed-lane-tick {
+  stroke: rgba(255, 255, 255, 0.1);
+  stroke-width: 1;
+}
+
+.speed-lane-tick--baseline {
+  stroke: rgba(255, 255, 255, 0.28);
+  stroke-dasharray: 4 3;
+}
+
+.speed-lane-source-region {
+  fill: rgba(100, 180, 255, 0.08);
+  pointer-events: none;
+}
+
 .speed-lane-baseline {
-  stroke: rgba(255, 255, 255, 0.18);
+  stroke: rgba(255, 255, 255, 0.32);
   stroke-width: 1;
   stroke-dasharray: 4 3;
 }
 
 .speed-lane-curve {
-  stroke: var(--gold, #c9a227);
-  stroke-width: 1.5;
+  stroke: #d4b84a;
+  stroke-width: 2;
 }
 
 .speed-lane-playhead {
-  stroke: rgba(255, 120, 80, 0.85);
-  stroke-width: 1;
+  stroke: #ff9a6e;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 2px rgba(255, 120, 80, 0.65));
 }
 
-.speed-lane-key {
-  fill: var(--gold, #c9a227);
-  stroke: #0b1018;
-  stroke-width: 1;
+.speed-lane-key-btn {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
   cursor: grab;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
 }
 
-.speed-lane-key:active {
+.speed-lane-key-btn:focus-visible {
+  outline: 2px solid var(--gold-bright, #e8c84a);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.speed-lane-key-btn:active {
   cursor: grabbing;
+}
+
+.speed-lane-key-shape {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #d4b84a;
+  border: 2px solid #0b1018;
+  box-shadow: 0 0 0 1px rgba(212, 184, 74, 0.5);
+}
+
+.speed-lane-key-btn.is-selected .speed-lane-key-shape {
+  border-radius: 2px;
+  background: #f0d878;
+  border-color: #fff;
+  box-shadow:
+    0 0 0 2px #0b1018,
+    0 0 0 4px #f0d878;
+}
+
+.speed-lane-key-label {
+  font-size: 0.62rem;
+  font-variant-numeric: tabular-nums;
+  color: #f0e6c8;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+  line-height: 1;
+  pointer-events: none;
+  white-space: nowrap;
 }
 
 .speed-lane-caption {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
-  padding: 0 0.35rem 0.2rem;
+  gap: 0.5rem;
+  padding: 0.15rem 0.35rem 0.25rem;
   font-size: 0.65rem;
-  color: var(--muted, #9aa3b5);
+  color: rgba(232, 236, 244, 0.78);
   user-select: none;
+  min-height: 1.4rem;
+}
+
+.speed-lane-rate-live {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.speed-lane-rate-live.is-active .speed-lane-rate-value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #f0d878;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75);
+}
+
+.speed-lane-rate-meta {
+  font-size: 0.62rem;
+  color: rgba(232, 236, 244, 0.72);
+}
+
+.speed-lane-source-at {
+  opacity: 0.9;
+}
+
+.speed-lane-seed-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  margin-left: auto;
 }
 
 .speed-lane-seed {
-  margin-left: auto;
-  border: 1px solid var(--border);
+  border: 1px solid rgba(255, 255, 255, 0.22);
   background: transparent;
   color: inherit;
   font: inherit;
-  padding: 0 0.35rem;
+  padding: 0.1rem 0.35rem;
   border-radius: 2px;
   cursor: pointer;
+  font-size: 0.62rem;
 }
 
 .speed-lane-seed:hover {
-  border-color: var(--gold, #c9a227);
-  color: var(--gold, #c9a227);
+  border-color: #d4b84a;
+  color: #f0d878;
+}
+
+.speed-lane-seed:focus-visible {
+  outline: 2px solid var(--gold-bright, #e8c84a);
+  outline-offset: 1px;
+}
+
+.speed-lane-sr-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }
 
 .timeline-clip-badge--speed {

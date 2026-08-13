@@ -1,6 +1,15 @@
 import { memo, useCallback, useMemo, useRef, type CSSProperties, type DragEvent, type TouchEvent } from 'react';
 import type { ClipAutomation, ClipTransition } from '../types';
-import { editorActions, useIsClipSelected } from '../store';
+import {
+  editorActions,
+  useEditorClipGroups,
+  useEditorClips,
+  useEditorMasterAudioMarkers,
+  useEditorTransitions,
+  useIsClipSelected,
+} from '../store';
+import { usePlayheadTime } from '../hooks/usePlayheadTime';
+import { resolveClipLocalTimeAtGlobal } from '../utils/previewComposition';
 import { WaveformCanvas } from './WaveformCanvas';
 import { SpeedAutomationLane } from './SpeedAutomationLane';
 import { SpeedCurveOverlay } from './SpeedCurveOverlay';
@@ -67,8 +76,24 @@ function VirtualClipBlockImpl({
   showSpeedLane = false,
   showVideoWaveform = false,
 }: Props) {
-  const { clip, index, duration } = layout;
+  const { clip, index, duration, start: clipOutputStart } = layout;
   const isSelected = useIsClipSelected(clip.id);
+  const playheadTime = usePlayheadTime();
+  const clips = useEditorClips();
+  const clipGroups = useEditorClipGroups();
+  const transitions = useEditorTransitions();
+  const masterAudioMarkers = useEditorMasterAudioMarkers();
+  const playheadLocal = useMemo(() => {
+    if (!isSelected || playheadTime === null) return null;
+    const resolved = resolveClipLocalTimeAtGlobal(
+      clips,
+      clipGroups,
+      transitions,
+      clip.id,
+      playheadTime,
+    );
+    return resolved?.localTime ?? null;
+  }, [clip.id, clipGroups, clips, isSelected, playheadTime, transitions]);
   const isLoadingThumbs = clip.kind === 'video' && thumbs === undefined;
   const isLoadingWave = clip.kind === 'audio' && waves === undefined;
   const layerIndex = clip.layerIndex ?? 0;
@@ -375,6 +400,9 @@ function VirtualClipBlockImpl({
               clip={clip}
               width={layout.width}
               durationSec={duration}
+              playheadLocal={playheadLocal}
+              clipOutputStart={clipOutputStart}
+              masterMarkers={masterAudioMarkers}
               onChange={handleSpeedChange}
             />
           </div>
