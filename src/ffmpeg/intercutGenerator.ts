@@ -16,7 +16,9 @@ import {
   canUseStreamCopyForIntercut,
   intercutOutputDuration,
   intercutShortageMessage,
+  requestedIntercutDuration,
   type FrequencyAutomationConfig,
+  type IntercutFinalClip,
   type IntercutSlice,
 } from '../utils/intercut';
 import { beatsInTrimWindow } from '../utils/beatMarkers';
@@ -44,9 +46,13 @@ export interface IntercutGeneratorConfig {
   beatReference?: 'A' | 'B';
   /**
    * When true (default), throw if planned output is shorter than
-   * `automation.totalDurationSec`.
+   * `automation.totalDurationSec` plus `tailDurationSec`.
    */
   requireFullDuration?: boolean;
+  /** Last swapping-phase slice. Default `auto` keeps A/B alternation. */
+  forceFinalClip?: IntercutFinalClip;
+  /** Extra seconds of the landing clip after the swapping phase. */
+  tailDurationSec?: number;
 }
 
 export interface IntercutGeneratorResult {
@@ -94,6 +100,8 @@ export function planIntercutSlices(config: IntercutGeneratorConfig): IntercutSli
     sourceB: sourceBounds(config.clipB),
     automation: config.automation,
     beatSync: beatSyncForConfig(config),
+    forceFinalClip: config.forceFinalClip,
+    tailDurationSec: config.tailDurationSec,
   });
 }
 
@@ -129,7 +137,7 @@ export function estimateIntercut(config: IntercutGeneratorConfig): IntercutEstim
   const slices = planIntercutSlices(config);
   const shortageMessage = intercutShortageMessage(
     slices,
-    config.automation.totalDurationSec,
+    requestedIntercutDuration(config.automation, config.tailDurationSec),
     sourceBounds(config.clipA),
     sourceBounds(config.clipB),
   );
@@ -350,7 +358,7 @@ export async function generateIntercutFromVfs(
   const requireFull = config.requireFullDuration !== false;
   const shortage = intercutShortageMessage(
     slices,
-    config.automation.totalDurationSec,
+    requestedIntercutDuration(config.automation, config.tailDurationSec),
     boundsA,
     boundsB,
   );

@@ -162,4 +162,21 @@ describe('intercutGenerator helpers', () => {
     });
     expect(short.shortageMessage).toMatch(/only cover/i);
   });
+
+  it('estimate includes tail duration and honors forced landing clip', () => {
+    const withTail = estimateIntercut({
+      clipA: makeClip({ duration: 30, trimEnd: 30 }),
+      clipB: makeClip({ id: 'b', duration: 30, trimEnd: 30, file: new File([], 'b.mp4') }),
+      automation: {
+        totalDurationSec: 0.4,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      forceFinalClip: 'B',
+      tailDurationSec: 2,
+    });
+    expect(withTail.shortageMessage).toBeNull();
+    expect(withTail.outputDurationSec).toBeCloseTo(2.4, 5);
+    expect(withTail.slices[withTail.slices.length - 1]!.slot).toBe('B');
+  });
 });

@@ -180,4 +180,95 @@ describe('intercut', () => {
     expect(hzToSecondsPerCut(0.5)).toBeCloseTo(2, 5);
     expect(secondsPerCutToHz(2)).toBeCloseTo(0.5, 5);
   });
+
+  it('lands on clip B when forceFinalClip is B even if the last turn would be A', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 10 },
+      automation: {
+        totalDurationSec: 0.6,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      forceFinalClip: 'B',
+    });
+
+    // 0.2s slices → 3 slices; without force the last would be A.
+    expect(slices).toHaveLength(3);
+    expect(slices[0]!.slot).toBe('A');
+    expect(slices[1]!.slot).toBe('B');
+    expect(slices[2]!.slot).toBe('B');
+    expect(slices[2]!.inpoint).toBeCloseTo(0.2, 5);
+    expect(slices[2]!.outpoint).toBeCloseTo(0.4, 5);
+    expect(slices[1]).toMatchObject({ inpoint: 0, outpoint: 0.2 });
+  });
+
+  it('extends the last slice when tail stays on the same landing clip', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 10 },
+      automation: {
+        totalDurationSec: 0.4,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      forceFinalClip: 'B',
+      tailDurationSec: 2,
+    });
+
+    expect(slices).toHaveLength(2);
+    expect(slices[0]).toMatchObject({ slot: 'A', inpoint: 0, outpoint: 0.2 });
+    expect(slices[1]).toMatchObject({ slot: 'B', inpoint: 0, outpoint: 2.2 });
+    expect(intercutOutputDuration(slices)).toBeCloseTo(2.4, 5);
+  });
+
+  it('extends clip A when auto landing plus tail follows an A-ending swap', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 10 },
+      automation: {
+        totalDurationSec: 0.2,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      forceFinalClip: 'auto',
+      tailDurationSec: 1,
+    });
+
+    expect(slices).toHaveLength(1);
+    expect(slices[0]).toMatchObject({ slot: 'A', inpoint: 0, outpoint: 1.2 });
+  });
+
+  it('appends a landing-clip tail when there is no swapping phase', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 1, trimEnd: 6 },
+      automation: {
+        totalDurationSec: 0,
+        startFrequencyHz: 1,
+        endFrequencyHz: 1,
+      },
+      forceFinalClip: 'B',
+      tailDurationSec: 2,
+    });
+
+    expect(slices).toEqual([{ slot: 'B', inpoint: 1, outpoint: 3 }]);
+  });
+
+  it('clamps tail to remaining landing-clip material', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 0.5 },
+      automation: {
+        totalDurationSec: 0.4,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      forceFinalClip: 'B',
+      tailDurationSec: 4,
+    });
+
+    expect(slices[slices.length - 1]).toMatchObject({ slot: 'B', inpoint: 0, outpoint: 0.5 });
+    expect(intercutOutputDuration(slices)).toBeCloseTo(0.7, 5);
+  });
 });

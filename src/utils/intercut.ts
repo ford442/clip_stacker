@@ -44,6 +44,8 @@ export interface IntercutBeatSyncConfig {
   stride?: number;
 }
 
+export type IntercutFinalClip = IntercutSlot | 'auto';
+
 export interface BuildIntercutSlicesConfig {
   sourceA: IntercutSourceBounds;
   sourceB: IntercutSourceBounds;
@@ -54,6 +56,17 @@ export interface BuildIntercutSlicesConfig {
   startWithA?: boolean;
   /** Optional musical cut grid; falls back to raw Hz when beats are too sparse. */
   beatSync?: IntercutBeatSyncConfig;
+  /**
+   * Last slice of the swapping phase. `auto` (default) keeps strict A/B
+   * alternation; `A`/`B` override that last slot when the source still has
+   * trimmed material.
+   */
+  forceFinalClip?: IntercutFinalClip;
+  /**
+   * Extra output seconds after the swapping phase, played only from the
+   * landing clip (forced slot, else the last alternating slice).
+   */
+  tailDurationSec?: number;
 }
 
 /** Minimum slice length (seconds) before stream-copy concat is considered safe. */
@@ -116,6 +129,32 @@ export function beatStrideForFrequency(hz: number, medianIntervalSec: number): n
   return Math.max(1, Math.round(beatsPerSec / Math.max(hz, 0.1)));
 }
 
+function remainingOn(source: IntercutSourceBounds, offset: number): number {
+  return Math.max(0, source.trimEnd - offset);
+}
+
+function takeSlice(
+  slot: IntercutSlot,
+  sliceDuration: number,
+  offsetA: number,
+  offsetB: number,
+  sourceA: IntercutSourceBounds,
+  sourceB: IntercutSourceBounds,
+): { slice: IntercutSlice; actual: number; offsetA: number; offsetB: number } | null {
+  if (slot === 'A') {
+    const inpoint = offsetA;
+    const outpoint = Math.min(offsetA + sliceDuration, sourceA.trimEnd);
+    const actual = outpoint - inpoint;
+    if (actual <= 1e-9) return null;
+    return { slice: { slot, inpoint, outpoint }, actual, offsetA: outpoint, offsetB };
+  }
+  const inpoint = offsetB;
+  const outpoint = Math.min(offsetB + sliceDuration, sourceB.trimEnd);
+  const actual = outpoint - inpoint;
+  if (actual <= 1e-9) return null;
+  return { slice: { slot, inpoint, outpoint }, actual, offsetA, offsetB: outpoint };
+}
+
 function sliceDurationAtTime(
   automation: FrequencyAutomationConfig,
   outputTimeSec: number,
@@ -151,11 +190,13 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
     minSliceSec = 1 / 60,
     startWithA = true,
     beatSync,
+    forceFinalClip = 'auto',
+    tailDurationSec = 0,
   } = config;
   const beatInterval = beatSync ? medianBeatInterval(beatSync.beatTimestamps) : null;
 
   const { totalDurationSec } = automation;
-  if (totalDurationSec <= 0) return [];
+  if (totalDurationSec <= 0 && tailDurationSec <= 0) return [];
 
   const slices: IntercutSlice[] = [];
   let outputTime = 0;
@@ -178,25 +219,50 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
     }
     if (sliceDuration <= 1e-9) break;
 
-    if (useA) {
-      const inpoint = offsetA;
-      const outpoint = Math.min(offsetA + sliceDuration, sourceA.trimEnd);
-      const actual = outpoint - inpoint;
-      if (actual <= 1e-9) break;
-      slices.push({ slot: 'A', inpoint, outpoint });
-      offsetA = outpoint;
-      outputTime += actual;
-    } else {
-      const inpoint = offsetB;
-      const outpoint = Math.min(offsetB + sliceDuration, sourceB.trimEnd);
-      const actual = outpoint - inpoint;
-      if (actual <= 1e-9) break;
-      slices.push({ slot: 'B', inpoint, outpoint });
-      offsetB = outpoint;
-      outputTime += actual;
-    }
+    const isLastIntercutSlice = remaining - sliceDuration <= 1e-9;
+    let slot: IntercutSlot =
+      isLastIntercutSlice && forceFinalClip !== 'auto'
+        ? forceFinalClip
+        : useA
+          ? 'A'
+          : 'B';
 
+    let taken = takeSlice(slot, sliceDuration, offsetA, offsetB, sourceA, sourceB);
+    if (!taken && isLastIntercutSlice && forceFinalClip !== 'auto') {
+      // Forced landing clip is exhausted — fill remaining swap time from the other.
+      slot = slot === 'A' ? 'B' : 'A';
+      taken = takeSlice(slot, sliceDuration, offsetA, offsetB, sourceA, sourceB);
+    }
+    if (!taken) break;
+
+    slices.push(taken.slice);
+    offsetA = taken.offsetA;
+    offsetB = taken.offsetB;
+    outputTime += taken.actual;
     useA = !useA;
+  }
+
+  const landing: IntercutSlot =
+    forceFinalClip !== 'auto'
+      ? forceFinalClip
+      : slices.length > 0
+        ? slices[slices.length - 1]!.slot
+        : startWithA
+          ? 'A'
+          : 'B';
+
+  if (tailDurationSec > 1e-9) {
+    const rem = landing === 'A' ? remainingOn(sourceA, offsetA) : remainingOn(sourceB, offsetB);
+    const tail = Math.min(tailDurationSec, rem);
+    if (tail > 1e-9) {
+      const last = slices[slices.length - 1];
+      if (last && last.slot === landing) {
+        last.outpoint += tail;
+      } else {
+        const taken = takeSlice(landing, tail, offsetA, offsetB, sourceA, sourceB);
+        if (taken) slices.push(taken.slice);
+      }
+    }
   }
 
   return slices;
@@ -238,6 +304,14 @@ export function intercutOutputDuration(slices: IntercutSlice[]): number {
  * Explain why a planned intercut is shorter than the requested duration, or
  * `null` when the plan covers the request.
  */
+/** Swapping-phase duration plus optional post-strobe tail. */
+export function requestedIntercutDuration(
+  automation: Pick<FrequencyAutomationConfig, 'totalDurationSec'>,
+  tailDurationSec = 0,
+): number {
+  return Math.max(0, automation.totalDurationSec) + Math.max(0, tailDurationSec);
+}
+
 export function intercutShortageMessage(
   slices: IntercutSlice[],
   requestedSec: number,

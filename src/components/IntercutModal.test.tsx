@@ -63,10 +63,88 @@ describe('IntercutModal', () => {
       </StrictMode>,
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    const text = container.textContent ?? '';
+    const deadline = Date.now() + 1000;
+    let text = '';
+    while (Date.now() < deadline) {
+      text = container.textContent ?? '';
+      if (/\d+ slices/.test(text)) break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
     expect(text).toContain('Create Intercut Clip');
+    expect(text).toContain('Land on');
+    expect(text).toContain('Tail after last cut');
     expect(text).toMatch(/\d+ slices/);
     expect(text).toMatch(/stream copy|re-encode/);
+  });
+
+  it('passes landing clip and tail duration to onGenerate', async () => {
+    const a = makeClip('alpha', { duration: 20, trimEnd: 20 });
+    const b = makeClip('bravo', { duration: 20, trimEnd: 20 });
+    editorStore.setState({ clips: [a, b], selectedClipId: a.id });
+
+    const generated: unknown[] = [];
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    root.render(
+      <StrictMode>
+        <IntercutModal
+          isOpen
+          generating={false}
+          onClose={() => undefined}
+          onGenerate={async (config) => {
+            generated.push(config);
+            return true;
+          }}
+        />
+      </StrictMode>,
+    );
+
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline && !container.querySelector('.intercut-estimate')) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const landing = container.querySelector('select')
+      ? Array.from(container.querySelectorAll('select')).find((el) =>
+          Array.from(el.options).some((opt) => opt.value === 'auto'),
+        )
+      : undefined;
+    const tail = Array.from(container.querySelectorAll('input[type="number"]')).find((el) => {
+      const label = el.closest('label')?.textContent ?? '';
+      return label.includes('Tail after last cut');
+    }) as HTMLInputElement | undefined;
+
+    expect(landing).toBeTruthy();
+    expect(tail).toBeTruthy();
+    landing!.value = 'A';
+    landing!.dispatchEvent(new Event('change', { bubbles: true }));
+    const setInputValue = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      'value',
+    )?.set;
+    setInputValue?.call(tail, '3');
+    tail!.dispatchEvent(new Event('input', { bubbles: true }));
+    tail!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const create = Array.from(container.querySelectorAll('button')).find((btn) =>
+      (btn.textContent ?? '').includes('Create intercut'),
+    );
+    expect(create).toBeTruthy();
+    create!.click();
+
+    const waitGen = Date.now() + 1000;
+    while (Date.now() < waitGen && generated.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(generated).toHaveLength(1);
+    const config = generated[0] as {
+      forceFinalClip: string;
+      tailDurationSec: number;
+    };
+    expect(config.forceFinalClip).toBe('A');
+    expect(config.tailDurationSec).toBe(3);
   });
 });

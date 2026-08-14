@@ -6,7 +6,11 @@ import {
   type IntercutAudioPolicy,
   type IntercutGeneratorConfig,
 } from '../ffmpeg/intercutGenerator';
-import { hzToSecondsPerCut, secondsPerCutToHz } from '../utils/intercut';
+import {
+  hzToSecondsPerCut,
+  secondsPerCutToHz,
+  type IntercutFinalClip,
+} from '../utils/intercut';
 import { defaultIntercutPair } from '../utils/intercutPair';
 import {
   useEditorClipGroups,
@@ -54,6 +58,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
   const [easingName, setEasingName] = useState<EasingName>('easeIn');
   const [audioPolicy, setAudioPolicy] = useState<IntercutAudioPolicy>('both');
   const [snapCutsToBeats, setSnapCutsToBeats] = useState(false);
+  const [forceFinalClip, setForceFinalClip] = useState<IntercutFinalClip>('B');
+  const [tailDurationSec, setTailDurationSec] = useState(0);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -78,6 +84,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
       },
       audioPolicy,
       snapCutsToBeats,
+      forceFinalClip,
+      tailDurationSec,
     });
   }, [
     clipA,
@@ -88,6 +96,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     easingName,
     audioPolicy,
     snapCutsToBeats,
+    forceFinalClip,
+    tailDurationSec,
   ]);
 
   const beatRef: Clip | null = clipA?.beatTimestamps?.length
@@ -144,8 +154,10 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
         </div>
         <div className="modal-body">
           <p className="inspector-hint">
-            Alternate two clips at a rising cut rate (slow swaps → strobe). The
-            result is a new MP4 in the library — no timeline slicing.
+            Alternate two clips at a changing cut rate. Each source keeps its
+            own playhead (A and B never pause — you only switch which one is
+            visible). The result is a new MP4 in the library — no timeline
+            slicing.
           </p>
 
           <label className="intercut-field">
@@ -181,7 +193,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
           </label>
 
           <label className="intercut-field">
-            Total duration (seconds)
+            Swap duration (seconds)
             <input
               type="number"
               min={0.2}
@@ -191,6 +203,10 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
               disabled={generating}
             />
           </label>
+          <p className="inspector-hint">
+            Length of the A/B swapping phase. Add a tail below if the landing
+            clip should keep playing after the last cut.
+          </p>
 
           <fieldset className="intercut-fieldset">
             <legend>Cut frequency</legend>
@@ -250,6 +266,42 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
               ))}
             </select>
           </label>
+          <p className="inspector-hint">
+            Easing shapes how frequency moves from start Hz to end Hz — it does
+            not peak in the middle. Ease in stays near the start rate, then
+            ramps hard. Ease out leaves the start rate quickly, then settles
+            into the end rate. For a strobe that calms down, set start Hz high
+            and end Hz low.
+          </p>
+
+          <label className="intercut-field">
+            Land on
+            <select
+              value={forceFinalClip}
+              onChange={(e) => setForceFinalClip(e.target.value as IntercutFinalClip)}
+              disabled={generating}
+            >
+              <option value="B">Clip B (resolve on B)</option>
+              <option value="A">Clip A (resolve on A)</option>
+              <option value="auto">Natural (odd slices → A, even → B)</option>
+            </select>
+          </label>
+
+          <label className="intercut-field">
+            Tail after last cut (seconds)
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              value={tailDurationSec}
+              onChange={(e) => setTailDurationSec(Math.max(0, Number(e.target.value)))}
+              disabled={generating}
+            />
+          </label>
+          <p className="inspector-hint">
+            Extra hold on the landing clip after the swapping phase. Output
+            length is swap duration + tail (if both sources still have material).
+          </p>
 
           <label className="intercut-field">
             Audio
@@ -317,6 +369,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 },
                 audioPolicy,
                 snapCutsToBeats,
+                forceFinalClip,
+                tailDurationSec,
               });
             }}
           >
