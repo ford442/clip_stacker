@@ -23,9 +23,11 @@ type EasingName = 'linear' | keyof typeof EASING_PRESETS;
 
 const EASING_OPTIONS: { id: EasingName; label: string }[] = [
   { id: 'linear', label: 'Linear' },
-  { id: 'easeIn', label: 'Ease in' },
-  { id: 'easeOut', label: 'Ease out' },
-  { id: 'easeInOut', label: 'Ease in-out' },
+  { id: 'easeIn', label: 'Ease in (ramp up)' },
+  { id: 'easeOut', label: 'Ease out (ramp down)' },
+  { id: 'easeInOut', label: 'Ease in-out (S-curve)' },
+  { id: 'bellCurveSmooth', label: 'Bell curve: Smooth (sine ramp up & down)' },
+  { id: 'bellCurveSharp', label: 'Bell curve: Sharp (exponential peak)' },
 ];
 
 function easingFromName(name: EasingName): KeyframeEasing | undefined {
@@ -106,6 +108,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
       ? clipB
       : null;
   const beatCount = beatRef?.beatTimestamps?.length ?? 0;
+
+  const isBellCurve = easingName === 'bellCurveSmooth' || easingName === 'bellCurveSharp';
 
   if (!isOpen) return null;
 
@@ -229,7 +233,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
               </button>
             </div>
             <label className="intercut-field">
-              Start {frequencyUnit === 'hz' ? '(Hz)' : '(sec/cut)'}
+              {isBellCurve ? 'Base (start & end)' : 'Start'} {frequencyUnit === 'hz' ? '(Hz)' : '(sec/cut)'}
               <input
                 type="number"
                 min={0.1}
@@ -240,7 +244,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
               />
             </label>
             <label className="intercut-field">
-              End {frequencyUnit === 'hz' ? '(Hz)' : '(sec/cut)'}
+              {isBellCurve ? 'Peak (midpoint)' : 'End'} {frequencyUnit === 'hz' ? '(Hz)' : '(sec/cut)'}
               <input
                 type="number"
                 min={0.1}
@@ -267,11 +271,9 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
             </select>
           </label>
           <p className="inspector-hint">
-            Easing shapes how frequency moves from start Hz to end Hz — it does
-            not peak in the middle. Ease in stays near the start rate, then
-            ramps hard. Ease out leaves the start rate quickly, then settles
-            into the end rate. For a strobe that calms down, set start Hz high
-            and end Hz low.
+            {isBellCurve
+              ? 'Bell curve ramps frequency from the base rate up to a peak strobe at the midpoint, then decelerates back down to the base rate.'
+              : 'Easing shapes how frequency moves from start rate to end rate. Ease in stays near the start rate then ramps hard. Ease out leaves quickly and settles into the end rate. For a strobe that calms down, set start rate high and end rate low.'}
           </p>
 
           <label className="intercut-field">

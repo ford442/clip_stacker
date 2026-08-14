@@ -198,7 +198,7 @@ export function collectAutomationBreakpoints(
     const easing = a.easing;
     const needsDense =
       easing &&
-      easing.type === 'bezier' &&
+      easing.type !== 'linear' &&
       b.t > a.t &&
       b.t >= clipElapsed &&
       a.t <= endLocal;

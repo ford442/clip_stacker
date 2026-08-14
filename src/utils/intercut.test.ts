@@ -83,6 +83,42 @@ describe('intercut', () => {
     expect(slices.length).toBeGreaterThan(10);
   });
 
+  it('ramps up to peak and decelerates back down with bell-curve easing', () => {
+    const automation = {
+      totalDurationSec: 6,
+      startFrequencyHz: 0.5, // 2s per cut
+      endFrequencyHz: 10,   // 0.1s per cut at peak
+      easing: EASING_PRESETS.bellCurveSmooth,
+    };
+
+    // Frequency starts at base Hz, peaks at midpoint, and decelerates back to base Hz
+    expect(frequencyHzAtTime(automation, 0)).toBeCloseTo(0.5, 3);
+    expect(frequencyHzAtTime(automation, 3)).toBeCloseTo(10, 3);
+    expect(frequencyHzAtTime(automation, 6)).toBeCloseTo(0.5, 3);
+
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 30 },
+      sourceB: { trimStart: 0, trimEnd: 30 },
+      automation,
+      forceFinalClip: 'B',
+      tailDurationSec: 2,
+    });
+
+    const firstDur = slices[0]!.outpoint - slices[0]!.inpoint;
+    const lastSlice = slices[slices.length - 1]!;
+    const lastDur = lastSlice.outpoint - lastSlice.inpoint;
+
+    // First slice should be slow (start frequency 0.5 Hz -> 2s duration)
+    expect(firstDur).toBeCloseTo(2.0, 1);
+    // Last slice lands on B and includes the 2s tail duration
+    expect(lastSlice.slot).toBe('B');
+    expect(lastDur).toBeGreaterThanOrEqual(2.0);
+
+    // Peak strobe slices around midpoint are fast (< 0.2s)
+    const minDur = Math.min(...slices.map((s) => s.outpoint - s.inpoint));
+    expect(minDur).toBeLessThan(0.2);
+  });
+
   it('frequencyHzAtTime honors explicit frequency keyframes', () => {
     const hz = frequencyHzAtTime(
       {

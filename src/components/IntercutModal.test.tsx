@@ -147,4 +147,66 @@ describe('IntercutModal', () => {
     expect(config.forceFinalClip).toBe('A');
     expect(config.tailDurationSec).toBe(3);
   });
+
+  it('supports selecting bell-curve easing and adapts field labels', async () => {
+    const a = makeClip('alpha', { duration: 20, trimEnd: 20 });
+    const b = makeClip('bravo', { duration: 20, trimEnd: 20 });
+    editorStore.setState({ clips: [a, b], selectedClipId: a.id });
+
+    const generated: unknown[] = [];
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    root.render(
+      <StrictMode>
+        <IntercutModal
+          isOpen
+          generating={false}
+          onClose={() => undefined}
+          onGenerate={async (config) => {
+            generated.push(config);
+            return true;
+          }}
+        />
+      </StrictMode>,
+    );
+
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline && !container.querySelector('.intercut-estimate')) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const easingSelect = Array.from(container.querySelectorAll('select')).find((el) =>
+      Array.from(el.options).some((opt) => opt.value === 'bellCurveSmooth'),
+    );
+    expect(easingSelect).toBeTruthy();
+
+    easingSelect!.value = 'bellCurveSmooth';
+    easingSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(container.textContent).toContain('Base (start & end)');
+    expect(container.textContent).toContain('Peak (midpoint)');
+    expect(container.textContent).toContain('Bell curve ramps frequency from the base rate up to a peak strobe');
+
+    const create = Array.from(container.querySelectorAll('button')).find((btn) =>
+      (btn.textContent ?? '').includes('Create intercut'),
+    );
+    expect(create).toBeTruthy();
+    create!.click();
+
+    const waitGen = Date.now() + 1000;
+    while (Date.now() < waitGen && generated.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(generated).toHaveLength(1);
+    const config = generated[0] as {
+      automation: {
+        easing?: { type: string };
+      };
+    };
+    expect(config.automation.easing).toEqual({ type: 'bellCurveSmooth' });
+  });
 });

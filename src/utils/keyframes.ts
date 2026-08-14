@@ -3,7 +3,7 @@
  */
 
 export interface KeyframeEasing {
-  type: 'linear' | 'bezier';
+  type: 'linear' | 'bezier' | 'bellCurveSmooth' | 'bellCurveSharp';
   /** Cubic-bezier control points (0–1) used when type is 'bezier'. */
   x1?: number;
   y1?: number;
@@ -21,11 +21,13 @@ export interface Keyframe {
 
 export const DEFAULT_LINEAR_EASING: KeyframeEasing = { type: 'linear' };
 
-/** Preset bezier curves (CSS-compatible control points). */
+/** Preset bezier and bell-curve functions. */
 export const EASING_PRESETS = {
   easeIn: { type: 'bezier' as const, x1: 0.42, y1: 0, x2: 1, y2: 1 },
   easeOut: { type: 'bezier' as const, x1: 0, y1: 0, x2: 0.58, y2: 1 },
   easeInOut: { type: 'bezier' as const, x1: 0.42, y1: 0, x2: 0.58, y2: 1 },
+  bellCurveSmooth: { type: 'bellCurveSmooth' as const },
+  bellCurveSharp: { type: 'bellCurveSharp' as const },
 };
 
 export function sortKeyframes(keyframes: Keyframe[]): Keyframe[] {
@@ -44,8 +46,6 @@ export function sampleKeyframes(
   if (track.length === 1) return track[0].value;
 
   if (t <= track[0].t) return track[0].value;
-  const last = track[track.length - 1];
-  if (t >= last.t) return last.value;
 
   for (let i = 0; i < track.length - 1; i++) {
     const a = track[i];
@@ -59,13 +59,23 @@ export function sampleKeyframes(
     }
   }
 
-  return last.value;
+  const lastSegment = track[track.length - 2];
+  const lastKey = track[track.length - 1];
+  const endEasedU = applyEasing(1, lastSegment.easing);
+  return lastSegment.value + (lastKey.value - lastSegment.value) * endEasedU;
 }
 
 export function applyEasing(u: number, easing: KeyframeEasing | undefined): number {
   const clamped = Math.max(0, Math.min(1, u));
   const e = easing ?? DEFAULT_LINEAR_EASING;
   if (e.type === 'linear') return clamped;
+  if (e.type === 'bellCurveSmooth') {
+    return Math.sin(clamped * Math.PI);
+  }
+  if (e.type === 'bellCurveSharp') {
+    const fold = clamped < 0.5 ? 2 * clamped : 2 * (1 - clamped);
+    return fold === 0 ? 0 : Math.pow(2, 10 * fold - 10);
+  }
   return cubicBezier(clamped, e.x1 ?? 0, e.y1 ?? 0, e.x2 ?? 1, e.y2 ?? 1);
 }
 
