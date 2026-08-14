@@ -335,9 +335,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
             <p className="intercut-estimate">
               {estimate.sliceCount} slice{estimate.sliceCount === 1 ? '' : 's'} ·{' '}
               {estimate.outputDurationSec.toFixed(2)}s ·{' '}
-              {estimate.usedStreamCopy
-                ? 'stream copy (slices ≥ 0.5s)'
-                : 're-encode (strobe / short slices)'}
+              re-encode
               {estimate.needsNormalization ? ' · sources will be normalized' : ''}
             </p>
           )}

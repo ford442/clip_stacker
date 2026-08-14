@@ -8,6 +8,7 @@ import {
   hzToSecondsPerCut,
   intercutOutputDuration,
   intercutShortageMessage,
+  remapIntercutSlicesToTrimOrigin,
   INTERCUT_MIN_STREAM_COPY_SLICE_SEC,
   secondsPerCutToHz,
 } from './intercut';
@@ -120,6 +121,22 @@ describe('intercut', () => {
         { slot: 'A', inpoint: 0, outpoint: INTERCUT_MIN_STREAM_COPY_SLICE_SEC },
       ]),
     ).toBe(true);
+  });
+
+  it('remapIntercutSlicesToTrimOrigin shifts A/B inpoints independently', () => {
+    const remapped = remapIntercutSlicesToTrimOrigin(
+      [
+        { slot: 'A', inpoint: 2, outpoint: 2.5 },
+        { slot: 'B', inpoint: 5, outpoint: 5.2 },
+      ],
+      2,
+      4,
+    );
+    expect(remapped).toHaveLength(2);
+    expect(remapped[0]).toMatchObject({ slot: 'A', inpoint: 0, outpoint: 0.5 });
+    expect(remapped[1]!.slot).toBe('B');
+    expect(remapped[1]!.inpoint).toBeCloseTo(1, 5);
+    expect(remapped[1]!.outpoint).toBeCloseTo(1.2, 5);
   });
 
   it('snaps slice duration to beat stride when slower than the beat grid', () => {

@@ -287,12 +287,33 @@ export function buildConcatPlaylist(
   return `${lines.join('\n')}\n`;
 }
 
-/** True when every slice is long enough for keyframe-safe stream copy. */
+/**
+ * True when every slice is long enough that stream-copy *might* be keyframe-safe.
+ * Intercut generation still re-encodes: alternating multi-source `inpoint` cuts
+ * are almost never on keyframes, and stream-copy outputs often fail to load in
+ * browsers ("Could not load media duration").
+ */
 export function canUseStreamCopyForIntercut(slices: IntercutSlice[]): boolean {
   if (slices.length === 0) return false;
   return slices.every(
     (s) => s.outpoint - s.inpoint >= INTERCUT_MIN_STREAM_COPY_SLICE_SEC,
   );
+}
+
+/** Shift slice times so 0 is each source's trimStart (after trim-window normalize). */
+export function remapIntercutSlicesToTrimOrigin(
+  slices: IntercutSlice[],
+  trimStartA: number,
+  trimStartB: number,
+): IntercutSlice[] {
+  return slices.map((slice) => {
+    const base = slice.slot === 'A' ? trimStartA : trimStartB;
+    return {
+      slot: slice.slot,
+      inpoint: Math.max(0, slice.inpoint - base),
+      outpoint: Math.max(0, slice.outpoint - base),
+    };
+  });
 }
 
 /** Sum of slice durations on the output timeline. */

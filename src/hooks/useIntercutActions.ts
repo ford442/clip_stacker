@@ -59,7 +59,36 @@ export function useIntercutActions({
           `intercut-${titleA}-x-${titleB}.mp4`,
           { type: 'video/mp4' },
         );
-        const { duration, objectUrl, videoWidth, videoHeight, hasAudio } = await getMediaInfo(file);
+        if (file.size < 32) {
+          throw new Error(
+            `Intercut output is empty (${file.size} bytes). FFmpeg may have aborted mid-encode.`,
+          );
+        }
+
+        let duration = result.outputDurationSec;
+        let objectUrl = URL.createObjectURL(file);
+        let videoWidth = config.clipA.videoWidth ?? config.clipB.videoWidth;
+        let videoHeight = config.clipA.videoHeight ?? config.clipB.videoHeight;
+        let hasAudio: boolean | undefined =
+          config.audioPolicy === 'silent' ? false : undefined;
+
+        try {
+          const info = await getMediaInfo(file);
+          URL.revokeObjectURL(objectUrl);
+          duration = info.duration;
+          objectUrl = info.objectUrl;
+          videoWidth = info.videoWidth ?? videoWidth;
+          videoHeight = info.videoHeight ?? videoHeight;
+          if (info.hasAudio !== undefined) hasAudio = info.hasAudio;
+        } catch (probeErr) {
+          // Planned duration + source dimensions keep the clip usable when the
+          // browser probe is flaky; still surface a console warning.
+          console.warn(
+            'Intercut: browser could not probe output metadata; using planned duration.',
+            probeErr,
+          );
+        }
+
         const newClip: Clip = {
           id: createClipId(),
           file,

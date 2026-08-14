@@ -61,12 +61,14 @@ describe('intercutGenerator helpers', () => {
     const args = buildIntercutConcatArgs('list.txt', 'out.mp4', true, 'silent');
     expect(args).toContain('-an');
     expect(args).not.toContain('-c:a');
+    expect(args).toContain('+genpts');
   });
 
   it('re-encode concat args include aac unless silent', () => {
     const both = buildIntercutConcatArgs('list.txt', 'out.mp4', false, 'both');
     expect(both).toContain('libx264');
     expect(both).toContain('aac');
+    expect(both).toContain('+genpts');
 
     const silent = buildIntercutConcatArgs('list.txt', 'out.mp4', false, 'silent');
     expect(silent).toContain('-an');
@@ -79,6 +81,18 @@ describe('intercutGenerator helpers', () => {
     expect(filter).toContain('scale=1280:720');
     expect(filter).toContain('fps=30');
     expect(filter).toContain('[0:a]aresample=44100');
+  });
+
+  it('normalize args can seek/trim to a source window', () => {
+    const clip = makeClip();
+    const args = buildNormalizeIntercutArgs(clip, 'in.mp4', 'norm.mp4', 1280, 720, {
+      seekSec: 1.5,
+      durationSec: 4,
+    });
+    expect(args.indexOf('-ss')).toBeLessThan(args.indexOf('-i'));
+    expect(args[args.indexOf('-ss') + 1]).toBe('1.5');
+    expect(args).toContain('-t');
+    expect(args[args.indexOf('-t') + 1]).toBe('4');
   });
 
   it('normalize args synthesize silent audio for video-only clips', () => {
@@ -126,7 +140,7 @@ describe('intercutGenerator helpers', () => {
     expect(args).toContain('4');
   });
 
-  it('estimate flags shortage and stream-copy vs re-encode', () => {
+  it('estimate flags shortage and always reports re-encode', () => {
     const long = estimateIntercut({
       clipA: makeClip({ duration: 30, trimEnd: 30 }),
       clipB: makeClip({ id: 'b', duration: 30, trimEnd: 30, file: new File([], 'b.mp4') }),
@@ -137,7 +151,8 @@ describe('intercutGenerator helpers', () => {
       },
     });
     expect(long.shortageMessage).toBeNull();
-    expect(long.usedStreamCopy).toBe(true);
+    // Generation always re-encodes (stream-copy is unsafe for alternating inpoints).
+    expect(long.usedStreamCopy).toBe(false);
     expect(long.sliceCount).toBeGreaterThan(0);
 
     const strobe = estimateIntercut({
