@@ -349,6 +349,7 @@ export function isStillImageClip(
 export function clipHasSourceAudio(clip: Clip): boolean {
   if (clip.kind === "audio") return true;
   if (isStillImageClip(clip)) return false;
+  if (clip.hasAudio === false) return false;
   return true;
 }
 

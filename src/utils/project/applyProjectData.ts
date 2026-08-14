@@ -164,7 +164,7 @@ export async function applyProjectData(
         });
         const fileType = blob.type || savedClip.fileType || 'application/octet-stream';
         const file = new File([blob], savedClip.fileName, { type: fileType });
-        const { duration, objectUrl, videoWidth, videoHeight } = await getMediaInfo(file);
+        const { duration, objectUrl, videoWidth, videoHeight, hasAudio } = await getMediaInfo(file);
         const restoredDuration = Number(savedClip.duration);
         const effectiveDuration = Number.isFinite(restoredDuration) ? restoredDuration : duration;
         liveClip = {
@@ -176,6 +176,11 @@ export async function applyProjectData(
           duration: Math.max(MIN_CLIP_DURATION, effectiveDuration),
           videoWidth: savedClip.videoWidth ?? videoWidth,
           videoHeight: savedClip.videoHeight ?? videoHeight,
+          ...(savedClip.hasAudio === false || savedClip.hasAudio === true
+            ? { hasAudio: savedClip.hasAudio }
+            : hasAudio !== undefined
+              ? { hasAudio }
+              : {}),
           trimStart: 0,
           trimEnd: NaN,
           videoFadeIn: 0,
@@ -242,6 +247,9 @@ export async function applyProjectData(
         : savedClip.keyframes;
     }
     if (savedClip.stillImage) liveClip.stillImage = savedClip.stillImage;
+    if (savedClip.hasAudio === false || savedClip.hasAudio === true) {
+      liveClip.hasAudio = savedClip.hasAudio;
+    }
     if (Array.isArray(savedClip.beatTimestamps) && savedClip.beatTimestamps.length > 0) {
       liveClip.beatTimestamps = savedClip.beatTimestamps
         .map((t) => Number(t))

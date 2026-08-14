@@ -57,6 +57,9 @@ export function serializeProject(
       duration: clip.duration,
       ...(clip.videoWidth ? { videoWidth: clip.videoWidth } : {}),
       ...(clip.videoHeight ? { videoHeight: clip.videoHeight } : {}),
+      ...(clip.hasAudio === false || clip.hasAudio === true
+        ? { hasAudio: clip.hasAudio }
+        : {}),
       trimStart: clip.trimStart,
       trimEnd: Number.isFinite(clip.trimEnd) ? clip.trimEnd : null,
       videoFadeIn: clip.videoFadeIn,

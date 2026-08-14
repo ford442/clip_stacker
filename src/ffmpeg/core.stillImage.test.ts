@@ -40,6 +40,9 @@ describe('still image FFmpeg helpers', () => {
       file: new File([], 'frame.png', { type: 'image/png' }),
     });
     expect(clipHasSourceAudio(still)).toBe(false);
+    expect(clipHasSourceAudio(makeClip({ hasAudio: false }))).toBe(false);
+    expect(clipHasSourceAudio(makeClip())).toBe(true);
+    expect(clipHasSourceAudio(makeClip({ kind: 'audio' }))).toBe(true);
     expect(clipNeedsLoopInput(still)).toBe(true);
     expect(buildClipInputArgs(still)).toEqual(['-loop', '1', '-i', 'input-0.png']);
   });

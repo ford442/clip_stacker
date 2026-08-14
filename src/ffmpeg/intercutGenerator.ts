@@ -4,6 +4,7 @@ import {
   clipHasSourceAudio,
   ensureFfmpeg,
   getSafeExtension,
+  isNoAudioStreamError,
   isStillImageClip,
   safeExec,
   safeReadFile,
@@ -118,6 +119,9 @@ export function intercutNeedsNormalization(clipA: Clip, clipB: Clip): boolean {
   const typeB = clipB.file.type;
   if (typeA && typeB && typeA !== typeB) return true;
 
+  // Concat requires a matching stream layout — video-only + A/V fails.
+  if (clipHasSourceAudio(clipA) !== clipHasSourceAudio(clipB)) return true;
+
   return false;
 }
 
@@ -192,6 +196,7 @@ export function buildNormalizeIntercutArgs(
   outputName: string,
   width: number,
   height: number,
+  options?: { hasAudio?: boolean },
 ): string[] {
   const vf =
     `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
@@ -208,8 +213,9 @@ export function buildNormalizeIntercutArgs(
     'yuv420p',
   ];
   const encodeAudio = ['-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '192k'];
+  const hasAudio = options?.hasAudio ?? clipHasSourceAudio(clip);
 
-  if (clipHasSourceAudio(clip) && !isStillImageClip(clip)) {
+  if (hasAudio) {
     return [
       ...prefix,
       '-i',
@@ -228,6 +234,7 @@ export function buildNormalizeIntercutArgs(
     ];
   }
 
+  // Video-only / still: synthesize stereo silence so concat stream layouts match.
   return [
     ...prefix,
     '-i',
@@ -310,16 +317,15 @@ async function normalizeSourceIfNeeded(
   try {
     await safeExec(ffmpeg, args, null, `intercut normalize "${clip.title}"`);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (!/Stream map.*matches no streams|does not contain any stream/i.test(message)) {
-      throw err;
-    }
+    if (!isNoAudioStreamError(err)) throw err;
+    onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
     const silentArgs = buildNormalizeIntercutArgs(
-      { ...clip, kind: 'video', stillImage: true },
+      clip,
       inputName,
       outputName,
       width,
       height,
+      { hasAudio: false },
     );
     await safeExec(ffmpeg, silentArgs, null, `intercut normalize "${clip.title}" (silent)`);
   }
@@ -356,12 +362,11 @@ export async function generateIntercutFromVfs(
   }
 
   const audioPolicy: IntercutAudioPolicy = config.audioPolicy ?? 'both';
-  const needsNorm = intercutNeedsNormalization(config.clipA, config.clipB);
   let workA = vfsNameA;
   let workB = vfsNameB;
   let didNormalize = false;
 
-  if (needsNorm) {
+  const normalizeBoth = async () => {
     didNormalize = true;
     const { width, height } = resolveTargetResolution(
       [config.clipA, config.clipB],
@@ -389,32 +394,49 @@ export async function generateIntercutFromVfs(
       height,
       onStatus,
     );
+  };
+
+  if (intercutNeedsNormalization(config.clipA, config.clipB)) {
+    await normalizeBoth();
   }
 
   const useCopy = !config.forceReencode && canUseStreamCopyForIntercut(slices);
   const playlistName = 'intercut_playlist.txt';
-  const playlist = buildConcatPlaylist(slices, workA, workB);
   const concatName = audioPolicy === 'aOnly' ? 'intercut_concat.mp4' : outputName;
-
-  await safeWriteFile(ffmpeg, playlistName, playlist, 'intercut concat playlist');
-  onStatus(
-    `Intercut: stitching ${slices.length} slice${slices.length === 1 ? '' : 's'} (${useCopy ? 'stream copy' : 're-encode'})…`,
-  );
-  emitProgress(onProgress, 'Intercut concat', 0.35, false);
-
   const outputDurationSec = intercutOutputDuration(slices);
-  await safeExec(
-    ffmpeg,
-    buildIntercutConcatArgs(playlistName, concatName, useCopy, audioPolicy),
-    {
-      stage: 'Intercut concat',
-      totalDuration: outputDurationSec,
-      rangeStart: 0.35,
-      rangeEnd: audioPolicy === 'aOnly' ? 0.8 : 0.95,
-      onProgress,
-    },
-    `intercut generate (${slices.length} slices)`,
-  );
+
+  const runConcat = async () => {
+    const playlist = buildConcatPlaylist(slices, workA, workB);
+    await safeWriteFile(ffmpeg, playlistName, playlist, 'intercut concat playlist');
+    onStatus(
+      `Intercut: stitching ${slices.length} slice${slices.length === 1 ? '' : 's'} (${useCopy ? 'stream copy' : 're-encode'})…`,
+    );
+    emitProgress(onProgress, 'Intercut concat', 0.35, false);
+    await safeExec(
+      ffmpeg,
+      buildIntercutConcatArgs(playlistName, concatName, useCopy, audioPolicy),
+      {
+        stage: 'Intercut concat',
+        totalDuration: outputDurationSec,
+        rangeStart: 0.35,
+        rangeEnd: audioPolicy === 'aOnly' ? 0.8 : 0.95,
+        onProgress,
+      },
+      `intercut generate (${slices.length} slices)`,
+    );
+  };
+
+  try {
+    await runConcat();
+  } catch (err) {
+    // Same-res video-only + A/V (or unknown hasAudio) can skip the first
+    // normalize pass and then fail concat. Rebuild both sources with a
+    // shared layout (including synthetic silence) and retry once.
+    if (didNormalize) throw err;
+    onStatus('Intercut: concat stream layout mismatch — normalizing sources…');
+    await normalizeBoth();
+    await runConcat();
+  }
 
   if (audioPolicy === 'aOnly') {
     onStatus('Intercut: keeping audio from clip A…');
@@ -433,8 +455,7 @@ export async function generateIntercutFromVfs(
         'intercut replace audio from A',
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      if (!/Stream map|does not contain any stream/i.test(message)) throw err;
+      if (!isNoAudioStreamError(err)) throw err;
       onStatus('Intercut: clip A has no audio — writing silent output…');
       await safeExec(
         ffmpeg,

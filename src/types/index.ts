@@ -49,6 +49,12 @@ export interface Clip {
   videoWidth?: number;
   /** Native video height in pixels (video clips only). */
   videoHeight?: number;
+  /**
+   * Whether the source file has an audio stream.
+   * `false` for video-only / silent media. Omitted when unknown (treated as
+   * having audio until FFmpeg proves otherwise).
+   */
+  hasAudio?: boolean;
   trimStart: number;
   trimEnd: number; // NaN means "use full duration"
   videoFadeIn: number;
@@ -133,6 +139,8 @@ export interface SerializedClip {
   duration: number;
   videoWidth?: number;
   videoHeight?: number;
+  /** Whether the source file has an audio stream (omitted when unknown). */
+  hasAudio?: boolean;
   trimStart: number;
   trimEnd: number | null;
   videoFadeIn: number;

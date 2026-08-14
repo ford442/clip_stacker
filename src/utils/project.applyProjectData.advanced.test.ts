@@ -38,6 +38,31 @@ describe("utils/project - applyProjectData (advanced)", () => {
     expect(result.clips[0].keyframes?.x).toHaveLength(2);
   });
 
+  it("should restore hasAudio from saved project", async () => {
+    const sourceClips = [createTestClip("source1", 5)];
+    const project: Project = {
+      clips: [
+        {
+          id: "saved",
+          title: "Clip",
+          kind: "video",
+          duration: 5,
+          trimStart: 0,
+          trimEnd: null,
+          videoFadeIn: 0,
+          videoFadeOut: 0,
+          audioFadeIn: 0,
+          audioFadeOut: 0,
+          fileName: sourceClips[0].file.name,
+          hasAudio: false,
+        },
+      ],
+    };
+
+    const result = await applyProjectData(project, sourceClips);
+    expect(result.clips[0].hasAudio).toBe(false);
+  });
+
   it("should restore playbackRate from saved project", async () => {
     const sourceClips = [createTestClip("source1", 5)];
     const project: Project = {

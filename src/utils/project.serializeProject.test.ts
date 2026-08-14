@@ -184,6 +184,19 @@ describe("utils/project - serializeProject", () => {
     expect(project.clips[0].automation).toBeUndefined();
   });
 
+  it("should serialize hasAudio when known", () => {
+    const silent = createTestClip("clip1", 5);
+    silent.hasAudio = false;
+    expect(serializeProject([silent], [], [], []).clips[0].hasAudio).toBe(false);
+
+    const withAudio = createTestClip("clip2", 5);
+    withAudio.hasAudio = true;
+    expect(serializeProject([withAudio], [], [], []).clips[0].hasAudio).toBe(true);
+
+    const unknown = createTestClip("clip3", 5);
+    expect(serializeProject([unknown], [], [], []).clips[0].hasAudio).toBeUndefined();
+  });
+
   it("should serialize beatTimestamps and bpmEstimate", () => {
     const clip = createTestClip("clip1", 5);
     clip.beatTimestamps = [0.5, 1.0, 1.5];

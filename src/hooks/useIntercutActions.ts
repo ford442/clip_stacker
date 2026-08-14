@@ -59,7 +59,7 @@ export function useIntercutActions({
           `intercut-${titleA}-x-${titleB}.mp4`,
           { type: 'video/mp4' },
         );
-        const { duration, objectUrl, videoWidth, videoHeight } = await getMediaInfo(file);
+        const { duration, objectUrl, videoWidth, videoHeight, hasAudio } = await getMediaInfo(file);
         const newClip: Clip = {
           id: createClipId(),
           file,
@@ -69,6 +69,9 @@ export function useIntercutActions({
           duration: Math.max(MIN_CLIP_DURATION, duration || result.outputDurationSec),
           videoWidth,
           videoHeight,
+          ...(hasAudio !== undefined
+            ? { hasAudio }
+            : { hasAudio: config.audioPolicy !== 'silent' }),
           trimStart: 0,
           trimEnd: NaN,
           videoFadeIn: 0,

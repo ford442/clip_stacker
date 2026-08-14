@@ -167,7 +167,7 @@ export function useClipActions({
         if (!isVideo && !isAudio && !isImage) continue;
 
         try {
-          const { duration, objectUrl, videoWidth, videoHeight } =
+          const { duration, objectUrl, videoWidth, videoHeight, hasAudio } =
             await getMediaInfo(file);
           const newClip: Clip = {
             id: createClipId(),
@@ -178,6 +178,7 @@ export function useClipActions({
             duration: Math.max(MIN_CLIP_DURATION, duration),
             videoWidth,
             videoHeight,
+            ...(hasAudio !== undefined ? { hasAudio } : {}),
             trimStart: 0,
             trimEnd: NaN,
             videoFadeIn: 0,
@@ -221,7 +222,7 @@ export function useClipActions({
         const file = new File([blob], item.name, { type: blob.type });
         const isAudio =
           file.type.startsWith("audio/") || /\.(wav|mp3)$/i.test(file.name);
-        const { duration, objectUrl, videoWidth, videoHeight } =
+        const { duration, objectUrl, videoWidth, videoHeight, hasAudio } =
           await getMediaInfo(file);
         const newClip: Clip = {
           id: createClipId(),
@@ -232,6 +233,7 @@ export function useClipActions({
           duration: Math.max(MIN_CLIP_DURATION, duration),
           videoWidth,
           videoHeight,
+          ...(hasAudio !== undefined ? { hasAudio } : {}),
           trimStart: 0,
           trimEnd: NaN,
           videoFadeIn: 0,

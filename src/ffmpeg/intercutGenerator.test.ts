@@ -78,6 +78,38 @@ describe('intercutGenerator helpers', () => {
     const filter = args[args.indexOf('-filter_complex') + 1];
     expect(filter).toContain('scale=1280:720');
     expect(filter).toContain('fps=30');
+    expect(filter).toContain('[0:a]aresample=44100');
+  });
+
+  it('normalize args synthesize silent audio for video-only clips', () => {
+    const clip = makeClip({ hasAudio: false });
+    const args = buildNormalizeIntercutArgs(clip, 'intercut-a.mp4', 'norm.mp4', 1280, 720);
+    const filter = args[args.indexOf('-filter_complex') + 1];
+    expect(filter).toContain('[0:v]');
+    expect(filter).not.toContain('[0:a]');
+    expect(args).toContain('anullsrc=r=44100:cl=stereo');
+    expect(args).toContain('-shortest');
+    expect(args).toContain('1:a');
+  });
+
+  it('normalize args can force silent audio even when clip metadata is unknown', () => {
+    const clip = makeClip();
+    const args = buildNormalizeIntercutArgs(clip, 'in.mp4', 'norm.mp4', 1280, 720, {
+      hasAudio: false,
+    });
+    expect(args.join(' ')).not.toContain('[0:a]');
+    expect(args).toContain('anullsrc=r=44100:cl=stereo');
+  });
+
+  it('detects audio-stream mismatch as needing normalization', () => {
+    const withAudio = makeClip();
+    const silent = makeClip({
+      id: 'clip-b',
+      hasAudio: false,
+      file: new File([], 'b.mp4', { type: 'video/mp4' }),
+    });
+    expect(intercutNeedsNormalization(withAudio, silent)).toBe(true);
+    expect(intercutNeedsNormalization(withAudio, makeClip({ id: 'clip-b2' }))).toBe(false);
   });
 
   it('replace-audio args map video from concat and audio from A', () => {

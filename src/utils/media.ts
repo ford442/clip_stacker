@@ -12,6 +12,29 @@ export interface MediaInfo {
   objectUrl: string;
   videoWidth?: number;
   videoHeight?: number;
+  /** Present only when detection is conclusive. */
+  hasAudio?: boolean;
+}
+
+/**
+ * Conservative audio-stream detection from an HTML media element.
+ * Returns `undefined` when the browser cannot tell (do not treat as silent).
+ */
+export function detectMediaElementHasAudio(
+  el: HTMLMediaElement,
+): boolean | undefined {
+  if (el instanceof HTMLAudioElement) return true;
+  const withTracks = el as HTMLVideoElement & {
+    audioTracks?: { length: number };
+    mozHasAudio?: boolean;
+  };
+  if (withTracks.audioTracks && typeof withTracks.audioTracks.length === 'number') {
+    return withTracks.audioTracks.length > 0;
+  }
+  if (typeof withTracks.mozHasAudio === 'boolean') {
+    return withTracks.mozHasAudio;
+  }
+  return undefined;
 }
 
 function loadMediaInfo(file: File, includeUrl: true): Promise<MediaInfo>;
@@ -48,9 +71,18 @@ function loadMediaInfo(
         mediaElement instanceof HTMLVideoElement && mediaElement.videoHeight > 0
           ? mediaElement.videoHeight
           : undefined;
+      const hasAudio = file.type.startsWith('audio/')
+        ? true
+        : detectMediaElementHasAudio(mediaElement);
       cleanup();
       if (includeUrl) {
-        resolve({ duration, objectUrl, videoWidth, videoHeight });
+        resolve({
+          duration,
+          objectUrl,
+          videoWidth,
+          videoHeight,
+          ...(hasAudio !== undefined ? { hasAudio } : {}),
+        });
       } else {
         URL.revokeObjectURL(objectUrl);
         resolve(duration);
@@ -96,6 +128,7 @@ function loadImageInfo(file: File): Promise<MediaInfo> {
         objectUrl,
         videoWidth: img.naturalWidth,
         videoHeight: img.naturalHeight,
+        hasAudio: false,
       });
     };
     const onError = () => {
