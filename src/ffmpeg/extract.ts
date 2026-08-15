@@ -36,6 +36,7 @@ import {
   buildSingleClipFilter,
   buildStillImageFfmpegArgsForClip,
   isStillImageClip,
+  ensureSilentAacUnit,
   getFfmpegEnvironmentDiagnostics,
   toBlobURLWithRetry,
   toBlobURLWithFallback,
@@ -104,6 +105,7 @@ export async function extractTrimmedVideoClip(
 
     const args: string[] = [];
     if (isStillImageClip(clip)) {
+      await ensureSilentAacUnit(ffmpeg, onStatus);
       args.push(
         ...buildStillImageFfmpegArgsForClip(
           clip,

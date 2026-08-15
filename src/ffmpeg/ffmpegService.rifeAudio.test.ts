@@ -144,10 +144,10 @@ describe("muxProcessedVideoWithSourceAudio", () => {
     expect(instance.exec).toHaveBeenCalledWith([
       "-i",
       "processed-video.mp4",
-      "-f",
-      "lavfi",
+      "-stream_loop",
+      "-1",
       "-i",
-      "anullsrc=channel_layout=stereo:sample_rate=44100:d=3",
+      "silent_unit.m4a",
       "-map",
       "0:v:0",
       "-map",
@@ -155,9 +155,7 @@ describe("muxProcessedVideoWithSourceAudio", () => {
       "-c:v",
       "copy",
       "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
+      "copy",
       "-movflags",
       "+faststart",
       "-t",
@@ -166,7 +164,7 @@ describe("muxProcessedVideoWithSourceAudio", () => {
     ]);
     expect(mocked.fetchFile).not.toHaveBeenCalled();
     expect(onStatus).toHaveBeenCalledWith(
-      'Clip "Clip 1" has no audio — adding silence...',
+      'Clip "Clip 1" has no audio — muxing silent track (stream copy)…',
     );
   });
 });

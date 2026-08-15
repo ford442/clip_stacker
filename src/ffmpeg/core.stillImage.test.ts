@@ -109,7 +109,11 @@ describe('still image FFmpeg helpers', () => {
     expect(args).toContain('-vsync');
     expect(args).toContain('cfr');
     expect(args.join(' ')).toContain(`fps=${STILL_IMAGE_OUTPUT_FPS}`);
-    expect(args.join(' ')).toContain('anullsrc=channel_layout=stereo:sample_rate=44100:d=5');
+    expect(args).toContain('-stream_loop');
+    expect(args).toContain('silent_unit.m4a');
+    expect(args).toContain('-c:a');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
+    expect(args).not.toContain('anullsrc');
     expect(args).not.toContain('-shortest');
   });
 

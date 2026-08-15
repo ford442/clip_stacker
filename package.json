@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/utf16-dual-encode.mjs",
+    "build:utf16": "node scripts/utf16-dual-encode.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && python3 deploy.py",
     "deploy:rife-space": "bash scripts/deploy-rife-space.sh",

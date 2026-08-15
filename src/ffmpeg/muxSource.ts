@@ -47,6 +47,8 @@ import {
   processClipPass1,
   mergeClipsPass2,
   mergeClipsWithTransitions,
+  ensureSilentAacUnit,
+  buildSilentAacLoopInputArgs,
   DEFAULT_VIDEO_SIZE,
   OUTPUT_WIDTH,
   OUTPUT_HEIGHT,
@@ -106,16 +108,16 @@ export async function muxProcessedVideoWithSourceAudio(
     const duration = end - clip.trimStart;
 
     if (!clipHasSourceAudio(clip)) {
-      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      onStatus(
+        `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
+      );
+      await ensureSilentAacUnit(ffmpeg, onStatus);
       await safeExec(
         ffmpeg,
         [
           "-i",
           videoInputName,
-          "-f",
-          "lavfi",
-          "-i",
-          `anullsrc=channel_layout=stereo:sample_rate=44100:d=${duration}`,
+          ...buildSilentAacLoopInputArgs(),
           "-map",
           "0:v:0",
           "-map",
@@ -123,9 +125,7 @@ export async function muxProcessedVideoWithSourceAudio(
           "-c:v",
           "copy",
           "-c:a",
-          "aac",
-          "-b:a",
-          "192k",
+          "copy",
           "-movflags",
           "+faststart",
           "-t",

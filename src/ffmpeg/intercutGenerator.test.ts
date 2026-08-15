@@ -101,9 +101,12 @@ describe('intercutGenerator helpers', () => {
     const filter = args[args.indexOf('-filter_complex') + 1];
     expect(filter).toContain('[0:v]');
     expect(filter).not.toContain('[0:a]');
-    expect(args).toContain('anullsrc=r=44100:cl=stereo');
+    expect(args).toContain('-stream_loop');
+    expect(args).toContain('silent_unit.m4a');
     expect(args).toContain('-shortest');
     expect(args).toContain('1:a');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
+    expect(args).not.toContain('anullsrc=r=44100:cl=stereo');
   });
 
   it('normalize args can force silent audio even when clip metadata is unknown', () => {
@@ -112,7 +115,9 @@ describe('intercutGenerator helpers', () => {
       hasAudio: false,
     });
     expect(args.join(' ')).not.toContain('[0:a]');
-    expect(args).toContain('anullsrc=r=44100:cl=stereo');
+    expect(args).toContain('-stream_loop');
+    expect(args).toContain('silent_unit.m4a');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
   });
 
   it('detects audio-stream mismatch as needing normalization', () => {

@@ -1,8 +1,10 @@
 import { fetchFile } from '@ffmpeg/util';
 import { DEFAULT_EXPORT_SETTINGS, type Clip } from '../types';
 import {
+  buildSilentAacLoopInputArgs,
   clipHasSourceAudio,
   ensureFfmpeg,
+  ensureSilentAacUnit,
   getSafeExtension,
   isNoAudioStreamError,
   isStillImageClip,
@@ -274,17 +276,14 @@ export function buildNormalizeIntercutArgs(
     ];
   }
 
-  // Video-only / still: synthesize stereo silence so concat stream layouts match.
+  // Video-only / still: loop pre-encoded silent AAC (caller must ensureSilentAacUnit).
   return [
     ...seekArgs,
     ...prefix,
     '-i',
     inputName,
     ...durationArgs,
-    '-f',
-    'lavfi',
-    '-i',
-    'anullsrc=r=44100:cl=stereo',
+    ...buildSilentAacLoopInputArgs(),
     '-filter_complex',
     `[0:v]${vf}[vout]`,
     '-map',
@@ -293,7 +292,8 @@ export function buildNormalizeIntercutArgs(
     '1:a',
     '-shortest',
     ...encodeVideo,
-    ...encodeAudio,
+    '-c:a',
+    'copy',
     '-movflags',
     '+faststart',
     outputName,
@@ -370,6 +370,10 @@ async function normalizeSourceIfNeeded(
   const windowOpts: NormalizeIntercutOptions | undefined = window
     ? { seekSec: window.seekSec, durationSec: window.durationSec }
     : undefined;
+  const knownSilent = !clipHasSourceAudio(clip);
+  if (knownSilent) {
+    await ensureSilentAacUnit(ffmpeg, onStatus);
+  }
   const args = buildNormalizeIntercutArgs(
     clip,
     inputName,
@@ -382,7 +386,10 @@ async function normalizeSourceIfNeeded(
     await safeExec(ffmpeg, args, null, `intercut normalize "${clip.title}"`);
   } catch (err) {
     if (!isNoAudioStreamError(err)) throw err;
-    onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+    onStatus(
+      `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
+    );
+    await ensureSilentAacUnit(ffmpeg, onStatus);
     const silentArgs = buildNormalizeIntercutArgs(
       clip,
       inputName,

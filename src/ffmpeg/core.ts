@@ -82,8 +82,18 @@ import {
   MAX_LOG_BUFFER,
   setFfmpegManagerForTesting,
 } from "./ffmpegManager";
+import {
+  buildSilentAacLoopInputArgs,
+  ensureSilentAacUnit,
+  SILENT_AAC_UNIT_NAME,
+} from "./silentAudio";
 
 export { buildDrawtextFilter } from "../utils/textOverlay";
+export {
+  buildSilentAacLoopInputArgs,
+  ensureSilentAacUnit,
+  SILENT_AAC_UNIT_NAME,
+} from "./silentAudio";
 export type {
   FfmpegLogProgressContext,
   ProgressCallback,
@@ -392,11 +402,14 @@ export interface StillImageEncodeOptions {
   durationSec: number;
   width: number;
   height: number;
+  /** Pre-encoded silent AAC unit (see `ensureSilentAacUnit`). Defaults to SILENT_AAC_UNIT_NAME. */
+  silentUnitName?: string;
 }
 
 /**
  * FFmpeg CLI args that turn a still image into an H.264+AAC MP4 hold clip.
  * Uses CFR, regular keyframes, and faststart for broad NLE compatibility.
+ * Audio is stream-copied from a looped silent AAC unit (caller must ensure unit is on VFS).
  */
 export function buildStillImageFfmpegArgs(
   options: StillImageEncodeOptions,
@@ -405,6 +418,7 @@ export function buildStillImageFfmpegArgs(
   const durationSec = Math.max(0.1, options.durationSec);
   const gop = STILL_IMAGE_OUTPUT_FPS;
   const vf = buildStillImageVideoFilter(width, height);
+  const silentUnit = options.silentUnitName ?? SILENT_AAC_UNIT_NAME;
 
   return [
     "-loop",
@@ -413,10 +427,7 @@ export function buildStillImageFfmpegArgs(
     String(durationSec),
     "-i",
     inputName,
-    "-f",
-    "lavfi",
-    "-i",
-    `anullsrc=channel_layout=stereo:sample_rate=44100:d=${durationSec}`,
+    ...buildSilentAacLoopInputArgs(silentUnit),
     "-vf",
     vf,
     "-map",
@@ -446,11 +457,7 @@ export function buildStillImageFfmpegArgs(
     "-vsync",
     "cfr",
     "-c:a",
-    "aac",
-    "-b:a",
-    "192k",
-    "-ar",
-    "44100",
+    "copy",
     "-movflags",
     "+faststart",
     "-t",
@@ -686,6 +693,7 @@ export async function mergeClipsLossless(
     // MP4, which breaks concat with H.264 neighbours and fails in most NLEs.
     if (isStillImageClip(clip)) {
       onStatus(`Encoding still image "${clip.title}" to H.264…`);
+      await ensureSilentAacUnit(ffmpeg, onStatus);
       await safeExec(
         ffmpeg,
         buildStillImageFfmpegArgsForClip(
@@ -703,6 +711,10 @@ export async function mergeClipsLossless(
 
     let primaryArgs: string[];
     let silentAudioArgs: string[];
+    const silentDurationArgs: string[] = [
+      "-t",
+      String(Math.max(0.01, clipDuration)),
+    ];
 
     if (clip.trimStart > 0) {
       // `-ss` before `-i` combined with `-c:v copy` can't cut mid-GOP: ffmpeg
@@ -716,7 +728,7 @@ export async function mergeClipsLossless(
       // streams start exactly at trimStart.
       const videoFilter = `[0:v]trim=start=${clip.trimStart}:end=${end},setpts=PTS-STARTPTS[vout]`;
       const audioFilter = `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo[aout]`;
-      const encodeTail: string[] = [
+      const videoEncodeTail: string[] = [
         "-c:v",
         "libx264",
         "-crf",
@@ -725,6 +737,8 @@ export async function mergeClipsLossless(
         "veryfast",
         "-pix_fmt",
         "yuv420p",
+      ];
+      const aacEncodeTail: string[] = [
         "-c:a",
         "aac",
         "-ar",
@@ -743,29 +757,32 @@ export async function mergeClipsLossless(
         "[vout]",
         "-map",
         "[aout]",
-        ...encodeTail,
+        ...videoEncodeTail,
+        ...aacEncodeTail,
       ];
+      // Stream-copy pre-encoded silent AAC (loop unit) instead of encoding anullsrc.
       silentAudioArgs = [
         ...buildClipInputArgs(clip),
-        "-f",
-        "lavfi",
-        "-i",
-        "anullsrc=r=44100:cl=stereo",
+        ...buildSilentAacLoopInputArgs(),
         "-filter_complex",
         videoFilter,
         "-map",
         "[vout]",
         "-map",
         "1:a",
-        "-t",
-        String(clipDuration),
-        ...encodeTail,
+        ...silentDurationArgs,
+        ...videoEncodeTail,
+        "-c:a",
+        "copy",
+        outName,
       ];
     } else {
       const durationArgs: string[] = Number.isFinite(clip.trimEnd)
         ? ["-t", String(clipDuration)]
         : [];
-      const codecTail: string[] = [
+      primaryArgs = [
+        ...buildClipInputArgs(clip),
+        ...durationArgs,
         "-c:v",
         "copy",
         "-c:a",
@@ -780,24 +797,29 @@ export async function mergeClipsLossless(
         "make_zero",
         outName,
       ];
-      primaryArgs = [...buildClipInputArgs(clip), ...durationArgs, ...codecTail];
       silentAudioArgs = [
         ...buildClipInputArgs(clip),
-        "-f",
-        "lavfi",
-        "-i",
-        "anullsrc=r=44100:cl=stereo",
+        ...buildSilentAacLoopInputArgs(),
         "-map",
         "0:v",
         "-map",
         "1:a",
-        ...durationArgs,
-        ...codecTail,
+        ...silentDurationArgs,
+        "-c:v",
+        "copy",
+        "-c:a",
+        "copy",
+        "-avoid_negative_ts",
+        "make_zero",
+        outName,
       ];
     }
 
     if (!clipHasSourceAudio(clip)) {
-      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      onStatus(
+        `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
+      );
+      await ensureSilentAacUnit(ffmpeg, onStatus);
       await safeExec(
         ffmpeg,
         silentAudioArgs,
@@ -813,12 +835,14 @@ export async function mergeClipsLossless(
           `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}"`,
         );
       } catch (err) {
-        // Retry without source audio if the clip has no audio stream.  Add an
-        // anullsrc generator as a second input so the intermediate still carries
-        // a silent AAC track — necessary for a consistent stream layout when the
-        // final concat step combines clips with and without original audio.
+        // Retry without source audio if the clip has no audio stream.  Loop a
+        // pre-encoded silent AAC unit so the intermediate still carries a silent
+        // track for concat layout consistency — without re-encoding silence.
         if (!isNoAudioStreamError(err)) throw err;
-        onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+        onStatus(
+          `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
+        );
+        await ensureSilentAacUnit(ffmpeg, onStatus);
         await safeExec(
           ffmpeg,
           silentAudioArgs,
@@ -1096,14 +1120,28 @@ export async function processClipPass1(
     };
 
     const encodeWithSilentAudio = async () => {
+      await ensureSilentAacUnit(ffmpeg, onStatus);
+      // Video still re-encodes; audio is stream-copied from the looped silent unit.
+      const silentEncodeTail = [
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-crf",
+        String(settings.crf),
+        "-preset",
+        settings.preset,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "copy",
+        outName,
+      ];
       await safeExec(
         ffmpeg,
         [
           ...buildClipInputArgs(clip),
-          "-f",
-          "lavfi",
-          "-i",
-          "anullsrc=r=44100:cl=stereo",
+          ...buildSilentAacLoopInputArgs(),
           "-filter_complex",
           videoFilter,
           "-map",
@@ -1112,7 +1150,7 @@ export async function processClipPass1(
           "1:a",
           "-t",
           String(clipDuration),
-          ...encodeTail,
+          ...silentEncodeTail,
         ],
         progressCtx,
         `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}" (silent audio)`,
@@ -1120,7 +1158,9 @@ export async function processClipPass1(
     };
 
     if (!clipHasSourceAudio(clip)) {
-      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      onStatus(
+        `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
+      );
       await encodeWithSilentAudio();
       return outName;
     }
@@ -1145,7 +1185,9 @@ export async function processClipPass1(
       // Clip has no audio stream — add a silent AAC track so all intermediates
       // share an identical stream layout for concat.
       if (!isNoAudioStreamError(err)) throw err;
-      onStatus(`Clip "${clip.title}" has no audio — adding silence...`);
+      onStatus(
+        `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
+      );
       await encodeWithSilentAudio();
     }
     return outName;
