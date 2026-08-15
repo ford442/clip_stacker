@@ -52,20 +52,50 @@ def app():
 
 
 def make_video(path, width=1920, height=1080, fps=30, seconds=1,
-               vcodec="libx264", acodec="aac"):
+               vcodec="libx264", acodec="aac", bf=None, pix_fmt="yuv420p",
+               sample_rate=44100):
     cmd = [
         "ffmpeg", "-v", "error",
         "-f", "lavfi", "-i", f"testsrc=size={width}x{height}:rate={fps}:duration={seconds}",
         "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
-        "-c:v", vcodec, "-pix_fmt", "yuv420p",
+        "-c:v", vcodec, "-pix_fmt", pix_fmt,
     ]
+    if bf is not None:
+        cmd += ["-bf", str(bf)]
     if acodec is None:
         cmd += ["-an"]
     else:
-        cmd += ["-c:a", acodec, "-ar", "44100"]
+        cmd += ["-c:a", acodec, "-ar", str(sample_rate), "-ac", "2"]
     cmd += ["-shortest", "-y", str(path)]
     subprocess.run(cmd, check=True, capture_output=True)
     return str(path)
+
+
+def moov_before_mdat(path):
+    """True when the moov atom appears before mdat (faststart)."""
+    moov = mdat = None
+    with open(path, "rb") as handle:
+        offset = 0
+        while True:
+            header = handle.read(8)
+            if len(header) < 8:
+                break
+            size = int.from_bytes(header[:4], "big")
+            typ = header[4:8].decode("latin1")
+            if size == 1:
+                wide = handle.read(8)
+                if len(wide) < 8:
+                    break
+                size = int.from_bytes(wide, "big")
+            if typ == "moov":
+                moov = offset
+            elif typ == "mdat":
+                mdat = offset
+            if size < 8:
+                break
+            offset += size
+            handle.seek(offset)
+    return moov is not None and (mdat is None or moov < mdat)
 
 
 def make_still_image(path, width=1920, height=1080):
@@ -200,16 +230,46 @@ def test_probe_returns_none_for_a_non_video(app, tmp_path):
 
 
 def test_conforming_clip_is_recognised(app, tmp_path):
-    path = make_video(tmp_path / "ok.mp4", 1920, 1080, 30)
+    path = make_video(tmp_path / "ok.mp4", 1920, 1080, 30, bf=0)
     assert app.clip_already_conforms(path, "1920", "1080") is True
 
 
 def test_ntsc_frame_rate_still_conforms(app, tmp_path):
     """29.97 is within tolerance; resampling it would be wasted work."""
-    path = make_video(tmp_path / "ntsc.mp4", 1920, 1080, "30000/1001")
+    path = make_video(tmp_path / "ntsc.mp4", 1920, 1080, "30000/1001", bf=0)
     info = app.probe_video_stream(path)
     assert info["fps"] == pytest.approx(29.97, abs=0.01)
     assert app.clip_already_conforms(path, "1920", "1080") is True
+
+
+def test_b_frame_clip_does_not_conform(app, tmp_path):
+    """Default libx264 B-frames write edit lists that Cubase rejects."""
+    path = make_video(tmp_path / "bframes.mp4", 1920, 1080, 30, bf=2)
+    assert app.clip_already_conforms(path, "1920", "1080") is False
+
+
+def test_yuv444_clip_does_not_conform(app, tmp_path):
+    path = make_video(
+        tmp_path / "444.mp4", 1920, 1080, 30, bf=0, pix_fmt="yuv444p")
+    assert app.clip_already_conforms(path, "1920", "1080") is False
+
+
+def test_non_44100_aac_does_not_conform(app, tmp_path):
+    path = make_video(tmp_path / "48k.mp4", 1920, 1080, 30, bf=0, sample_rate=48000)
+    assert app.clip_already_conforms(path, "1920", "1080") is False
+
+
+def test_mono_aac_does_not_conform(app, tmp_path):
+    path = tmp_path / "mono.mp4"
+    subprocess.run([
+        "ffmpeg", "-v", "error",
+        "-f", "lavfi", "-i", "testsrc=size=1920x1080:rate=30:duration=1",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-bf", "0",
+        "-c:a", "aac", "-ar", "44100", "-ac", "1",
+        "-shortest", "-y", str(path),
+    ], check=True, capture_output=True)
+    assert app.clip_already_conforms(str(path), "1920", "1080") is False
 
 
 def test_wrong_resolution_does_not_conform(app, tmp_path):
@@ -241,6 +301,30 @@ def test_non_aac_audio_does_not_conform(app, tmp_path):
 def test_unreadable_file_does_not_conform(app, tmp_path):
     path = tmp_path / "missing.mp4"
     assert app.clip_already_conforms(str(path), "1920", "1080") is False
+
+
+def test_stitched_video_only_clip_gets_silent_aac_and_faststart(app, tmp_path):
+    """A 1080p30 H.264 clip without audio must leave the Space Cubase-ready."""
+    silent = make_video(tmp_path / "silent.mp4", 1920, 1080, 30, bf=2, acodec=None)
+    out = app.stitch_videos([silent], "1920x1080")
+    assert app.probe_audio_codec(out) == "aac"
+    layout = app.probe_audio_layout(out)
+    assert layout["sample_rate"] == 44100
+    assert layout["channels"] == 2
+    nle = app.probe_nle_video_fields(out)
+    assert nle["pix_fmt"] == "yuv420p"
+    assert nle["has_b_frames"] == 0
+    assert nle["r_fps"] == pytest.approx(app.STITCH_FPS, abs=0.2)
+    assert moov_before_mdat(out)
+
+
+def test_stitched_b_frame_source_is_reencoded(app, tmp_path):
+    source = make_video(tmp_path / "src.mp4", 1920, 1080, 30, bf=3)
+    assert app.clip_already_conforms(source, "1920", "1080") is False
+    out = app.stitch_videos([source], "1920x1080")
+    assert app.probe_nle_video_fields(out)["has_b_frames"] == 0
+    assert app.probe_audio_codec(out) == "aac"
+    assert moov_before_mdat(out)
 
 
 def test_stream_copy_preserves_the_bitstream(app, tmp_path):

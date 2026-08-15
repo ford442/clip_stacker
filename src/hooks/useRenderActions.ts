@@ -16,6 +16,7 @@ import {
   isFfmpegLoading,
   ensureFfmpeg,
   normalizeError,
+  remuxStitchedMp4ForNle,
 } from "../ffmpeg/ffmpegService";
 import type { RenderProgressUpdate } from "../ffmpeg/ffmpegService";
 import {
@@ -265,7 +266,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
         (event) => setStatus(event.message ?? `GPU stitch: ${event.stage}…`),
       );
 
-      const url = URL.createObjectURL(blob);
+      const nleBlob = await remuxStitchedMp4ForNle(blob, setStatus);
+      const url = URL.createObjectURL(nleBlob);
       setOutputUrl(url);
       setEncoderPath("gpu-stitch");
       setStatus(

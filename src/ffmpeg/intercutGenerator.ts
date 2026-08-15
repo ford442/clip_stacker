@@ -12,6 +12,7 @@ import {
   safeReadFile,
   safeWriteFile,
 } from './core';
+import { buildSilentAudioNleRemuxArgs } from './nleRemux';
 import {
   buildConcatPlaylist,
   buildIntercutSlices,
@@ -171,11 +172,37 @@ export function buildIntercutConcatArgs(
     '-i',
     playlistName,
   ];
+  if (audioPolicy === 'silent') {
+    args.push(...buildSilentAacLoopInputArgs());
+  }
   if (useCopy) {
     if (audioPolicy === 'silent') {
-      args.push('-c:v', 'copy', '-an', '-avoid_negative_ts', 'make_zero', outputName);
+      args.push(
+        '-map',
+        '0:v:0',
+        '-map',
+        '1:a:0',
+        '-c:v',
+        'copy',
+        '-c:a',
+        'copy',
+        '-shortest',
+        '-avoid_negative_ts',
+        'make_zero',
+        '-movflags',
+        '+faststart',
+        outputName,
+      );
     } else {
-      args.push('-c', 'copy', '-avoid_negative_ts', 'make_zero', outputName);
+      args.push(
+        '-c',
+        'copy',
+        '-avoid_negative_ts',
+        'make_zero',
+        '-movflags',
+        '+faststart',
+        outputName,
+      );
     }
     return args;
   }
@@ -189,9 +216,26 @@ export function buildIntercutConcatArgs(
     '18',
     '-pix_fmt',
     'yuv420p',
+    '-r',
+    '30',
+    '-vsync',
+    'cfr',
+    '-bf',
+    '0',
   );
   if (audioPolicy === 'silent') {
-    args.push('-an', '-movflags', '+faststart', outputName);
+    args.push(
+      '-map',
+      '0:v:0',
+      '-map',
+      '1:a:0',
+      '-c:a',
+      'copy',
+      '-shortest',
+      '-movflags',
+      '+faststart',
+      outputName,
+    );
   } else {
     args.push(
       '-c:a',
@@ -433,6 +477,9 @@ export async function generateIntercutFromVfs(
   }
 
   const audioPolicy: IntercutAudioPolicy = config.audioPolicy ?? 'both';
+  if (audioPolicy === 'silent') {
+    await ensureSilentAacUnit(ffmpeg, onStatus);
+  }
   let workA = vfsNameA;
   let workB = vfsNameB;
   let didNormalize = false;
@@ -549,10 +596,11 @@ export async function generateIntercutFromVfs(
       );
     } catch (err) {
       if (!isNoAudioStreamError(err)) throw err;
-      onStatus('Intercut: clip A has no audio — writing silent output…');
+      onStatus('Intercut: clip A has no audio — muxing a silent AAC track…');
+      await ensureSilentAacUnit(ffmpeg, onStatus);
       await safeExec(
         ffmpeg,
-        ['-i', concatName, '-c:v', 'copy', '-an', '-movflags', '+faststart', outputName],
+        buildSilentAudioNleRemuxArgs(concatName, outputName),
         null,
         'intercut silent fallback',
       );

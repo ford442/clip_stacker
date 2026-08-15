@@ -57,21 +57,31 @@ describe('intercutGenerator helpers', () => {
     expect(intercutNeedsNormalization(a, webm)).toBe(true);
   });
 
-  it('stream-copy concat args omit audio when silent', () => {
+  it('stream-copy concat args mux silent AAC instead of dropping audio', () => {
     const args = buildIntercutConcatArgs('list.txt', 'out.mp4', true, 'silent');
-    expect(args).toContain('-an');
-    expect(args).not.toContain('-c:a');
+    expect(args).not.toContain('-an');
+    expect(args).toContain('silent_unit.m4a');
+    expect(args).toContain('-stream_loop');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
+    expect(args).toContain('+faststart');
     expect(args).toContain('+genpts');
   });
 
-  it('re-encode concat args include aac unless silent', () => {
+  it('re-encode concat args keep AAC and force CFR without B-frames', () => {
     const both = buildIntercutConcatArgs('list.txt', 'out.mp4', false, 'both');
     expect(both).toContain('libx264');
     expect(both).toContain('aac');
     expect(both).toContain('+genpts');
+    expect(both[both.indexOf('-r') + 1]).toBe('30');
+    expect(both[both.indexOf('-vsync') + 1]).toBe('cfr');
+    expect(both[both.indexOf('-bf') + 1]).toBe('0');
 
     const silent = buildIntercutConcatArgs('list.txt', 'out.mp4', false, 'silent');
-    expect(silent).toContain('-an');
+    expect(silent).not.toContain('-an');
+    expect(silent).toContain('silent_unit.m4a');
+    expect(silent[silent.indexOf('-c:a') + 1]).toBe('copy');
+    expect(silent[silent.indexOf('-r') + 1]).toBe('30');
+    expect(silent[silent.indexOf('-bf') + 1]).toBe('0');
   });
 
   it('normalize args scale/pad and force 30fps', () => {

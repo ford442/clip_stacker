@@ -285,36 +285,204 @@ def probe_video_stream(video_path):
 
 def probe_audio_codec(video_path):
     """Codec name of the first audio stream, '' when there is none."""
+    layout = probe_audio_layout(video_path)
+    return layout['codec'] if layout else ''
+
+
+def _parse_ffprobe_fields(stdout):
+    fields = {}
+    for line in stdout.strip().splitlines():
+        if '=' in line:
+            key, _, value = line.partition('=')
+            fields[key] = value
+    return fields
+
+
+def _parse_frame_rate(rate):
+    if not rate or rate in ('0/0', 'N/A'):
+        return 0.0
+    if '/' in rate:
+        num, den = rate.split('/', 1)
+        try:
+            den_f = float(den)
+            return float(num) / den_f if den_f else 0.0
+        except ValueError:
+            return 0.0
+    try:
+        return float(rate)
+    except ValueError:
+        return 0.0
+
+
+def probe_nle_video_fields(video_path):
+    """pix_fmt, B-frame flag, and declared vs average rate of the first video stream."""
+    try:
+        cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+               '-show_entries',
+               'stream=pix_fmt,has_b_frames,avg_frame_rate,r_frame_rate,width,height',
+               '-of', 'default=noprint_wrappers=1', video_path]
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        fields = _parse_ffprobe_fields(result.stdout)
+        return {
+            'pix_fmt': fields.get('pix_fmt', ''),
+            'has_b_frames': int(fields.get('has_b_frames') or 0),
+            'avg_fps': _parse_frame_rate(fields.get('avg_frame_rate', '0/0')),
+            'r_fps': _parse_frame_rate(fields.get('r_frame_rate', '0/0')),
+            'width': int(fields['width']) if fields.get('width') else 0,
+            'height': int(fields['height']) if fields.get('height') else 0,
+        }
+    except Exception as e:
+        print(f"NLE video probe failed for {video_path}: {e}")
+        return None
+
+
+def probe_audio_layout(video_path):
+    """codec / sample_rate / channels of the first audio stream, or None."""
     try:
         cmd = ['ffprobe', '-v', 'error', '-select_streams', 'a:0',
-               '-show_entries', 'stream=codec_name',
-               '-of', 'default=noprint_wrappers=1:nokey=1', video_path]
+               '-show_entries', 'stream=codec_name,sample_rate,channels',
+               '-of', 'default=noprint_wrappers=1', video_path]
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return result.stdout.strip()
+        fields = _parse_ffprobe_fields(result.stdout)
+        codec = (fields.get('codec_name') or '').strip()
+        if not codec:
+            return None
+        return {
+            'codec': codec,
+            'sample_rate': int(float(fields.get('sample_rate') or 0)),
+            'channels': int(float(fields.get('channels') or 0)),
+        }
     except Exception:
-        return ''
+        return None
+
+
+def is_constant_frame_rate(fields, target_fps=STITCH_FPS):
+    """True when declared and average rates agree and sit on the stitch fps."""
+    if not fields:
+        return False
+    avg_fps = fields['avg_fps']
+    r_fps = fields['r_fps']
+    if avg_fps <= 0 or r_fps <= 0:
+        return False
+    if abs(avg_fps - r_fps) > FPS_TOLERANCE:
+        return False
+    return abs(avg_fps - target_fps) <= FPS_TOLERANCE
 
 
 def clip_already_conforms(video_path, target_w, target_h, target_fps=STITCH_FPS):
     """True when a clip can go into the concat list without re-encoding.
 
     The concat demuxer needs every input to share codec, resolution and time
-    base, so this insists on an exact match rather than a close one. Anything
-    that fails goes down the normalization path unchanged.
+    base, so this insists on an exact match rather than a close one. Steinberg
+    NLEs also reject B-frames (edit lists), 4:4:4, video-only files, and
+    non-stereo AAC — those take the normalize path.
     """
     info = probe_video_stream(video_path)
     if info is None:
         return False
     if info['codec'] != 'h264':
         return False
-    if info['width'] != int(target_w) or info['height'] != int(target_h):
+    width, height = int(target_w), int(target_h)
+    if info['width'] != width or info['height'] != height:
+        return False
+    if width % 2 or height % 2:
         return False
     if abs(info['fps'] - target_fps) > FPS_TOLERANCE:
         return False
-    # A missing audio track would desync the concat against clips that have
-    # one, and a non-AAC track would not concat cleanly with the re-encoded
-    # AAC of its neighbours.
-    return probe_audio_codec(video_path) == 'aac'
+    nle = probe_nle_video_fields(video_path)
+    if nle is None:
+        return False
+    if nle['pix_fmt'] != 'yuv420p':
+        return False
+    if nle['has_b_frames'] != 0:
+        return False
+    if not is_constant_frame_rate(nle, target_fps):
+        return False
+    audio = probe_audio_layout(video_path)
+    if audio is None or audio['codec'] != 'aac':
+        return False
+    if audio['sample_rate'] != 44100 or audio['channels'] != 2:
+        return False
+    return True
+
+
+def video_needs_nle_reencode(video_path):
+    """True when a stream-copy remux would leave a Cubase-hostile video track."""
+    nle = probe_nle_video_fields(video_path)
+    if nle is None:
+        return True
+    if nle['pix_fmt'] != 'yuv420p':
+        return True
+    if nle['has_b_frames'] != 0:
+        return True
+    if nle['width'] % 2 or nle['height'] % 2:
+        return True
+    if not is_constant_frame_rate(nle):
+        return True
+    return False
+
+
+def finalize_nle_mp4(src, dest):
+    """Last-gate remux/re-encode: leading moov, stereo AAC, no B-frames, CFR."""
+    has_audio = probe_audio_codec(src) != ''
+    needs_reencode = video_needs_nle_reencode(src)
+    duration = max(0.1, get_duration(src) or STILL_IMAGE_DEFAULT_DURATION)
+
+    if needs_reencode:
+        vf = f'fps={STITCH_FPS},format=yuv420p'
+        if has_audio:
+            cmd = [
+                'ffmpeg', '-i', src, '-vf', vf,
+                *nle_friendly_h264_video_args(),
+                *nle_friendly_aac_audio_args(),
+                '-movflags', '+faststart',
+                '-y', dest,
+            ]
+        else:
+            cmd = [
+                'ffmpeg', '-i', src,
+                '-f', 'lavfi', '-i',
+                f'anullsrc=channel_layout=stereo:sample_rate=44100:d={duration}',
+                '-vf', vf,
+                '-map', '0:v:0', '-map', '1:a:0',
+                *nle_friendly_h264_video_args(),
+                *nle_friendly_aac_audio_args(),
+                '-movflags', '+faststart',
+                '-t', str(duration),
+                '-y', dest,
+            ]
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return dest
+
+    if has_audio:
+        cmd = [
+            'ffmpeg', '-i', src,
+            '-map', '0:v:0', '-map', '0:a:0',
+            '-c:v', 'copy',
+            *nle_friendly_aac_audio_args(),
+            '-shortest',
+            '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
+            '-muxpreload', '0', '-muxdelay', '0',
+            '-movflags', '+faststart',
+            '-y', dest,
+        ]
+    else:
+        cmd = [
+            'ffmpeg', '-i', src,
+            '-f', 'lavfi', '-i',
+            f'anullsrc=channel_layout=stereo:sample_rate=44100:d={duration}',
+            '-map', '0:v:0', '-map', '1:a:0',
+            '-c:v', 'copy',
+            *nle_friendly_aac_audio_args(),
+            '-shortest',
+            '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
+            '-muxpreload', '0', '-muxdelay', '0',
+            '-movflags', '+faststart',
+            '-t', str(duration),
+            '-y', dest,
+        ]
+    subprocess.run(cmd, check=True, capture_output=True, text=True)
+    return dest
 
 
 def still_image_duration(path):
@@ -628,9 +796,11 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
     progress(0.95, desc="Finalizing stitched output")
 
     # ── Step 3: Audio handling — VIDEO length ALWAYS wins ───────────
+    staged = concat_video
     if audio_mode == "Replace with uploaded audio" and audio_file and os.path.exists(audio_file):
         # Replace audio + force full video duration (this fixes the cut-off)
         duration = get_duration(concat_video)
+        staged = os.path.join(WORKSPACE_DIR, f"staged_{session_id}.mp4")
         cmd = [
             'ffmpeg', '-i', concat_video, '-i', audio_file,
             '-filter_complex', '[1:a]apad[a]',
@@ -639,17 +809,19 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
             '-c:a', 'aac', '-b:a', '320k', '-ar', '44100', '-ac', '2',
             '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
             '-movflags', '+faststart',
-            '-y', output_final
+            '-y', staged
         ]
         if duration:
             # Insert -t right before -y
             cmd.insert(-1, str(duration))
             cmd.insert(-1, '-t')
+        subprocess.run(cmd, check=True)
 
     elif audio_mode == "Overlay/Mix uploaded audio on top" and audio_file and os.path.exists(audio_file):
         # Mix mode (already correct)
         vol = float(overlay_vol)
         filter_complex = f"[1:a]volume={vol}[a1];[0:a][a1]amix=inputs=2:duration=first:dropout_transition=3[a]"
+        staged = os.path.join(WORKSPACE_DIR, f"staged_{session_id}.mp4")
         cmd = [
             'ffmpeg', '-i', concat_video, '-i', audio_file,
             '-filter_complex', filter_complex,
@@ -657,22 +829,16 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
             '-c:v', 'copy',
             '-c:a', 'aac', '-b:a', '320k', '-ar', '44100', '-ac', '2',
             '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
-            '-shortest', '-movflags', '+faststart', '-y', output_final
+            '-shortest', '-movflags', '+faststart', '-y', staged
         ]
-    else:
-        # Keep original audio — remux with faststart for broad player/NLE compatibility.
-        cmd = [
-            'ffmpeg', '-i', concat_video, '-c', 'copy',
-            '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
-            '-movflags', '+faststart', '-y', output_final,
-        ]
+        subprocess.run(cmd, check=True)
 
-    subprocess.run(cmd, check=True)
+    finalize_nle_mp4(staged, output_final)
 
     # Cleanup
     shutil.rmtree(temp_dir, ignore_errors=True)
-    for p in [concat_video, list_path]:
-        if os.path.exists(p):
+    for p in [concat_video, list_path, staged]:
+        if p != output_final and os.path.exists(p):
             os.remove(p)
 
     return output_final
