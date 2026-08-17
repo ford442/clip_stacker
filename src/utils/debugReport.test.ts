@@ -80,6 +80,8 @@ describe('generateDebugReport', () => {
     expect(report).toContain('test error');
     expect(report).toContain('## FFmpeg Logs');
     expect(report).toContain('[info] test log line');
+    expect(report).toContain('## gpu-chores');
+    expect(report).toContain('gpuComputeAvailable');
     expect(report).toContain('## WebGPU Errors (last 0)');
     expect(report).toContain('(none captured)');
 

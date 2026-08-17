@@ -58,7 +58,9 @@ function encodePosterJpeg(pixels: Uint8ClampedArray, width: number, height: numb
   canvas.height = height;
   const ctx = canvas.getContext('2d');
   if (!ctx) return undefined;
-  const imageData = new ImageData(pixels, width, height);
+  const data = new Uint8ClampedArray(pixels.length);
+  data.set(pixels);
+  const imageData = new ImageData(data, width, height);
   ctx.putImageData(imageData, 0, 0);
   try {
     return canvas.toDataURL('image/jpeg', 0.5);

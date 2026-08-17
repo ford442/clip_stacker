@@ -64,7 +64,7 @@ function createSrcTexture(
   }
   device.queue.writeTexture(
     { texture },
-    job.pixels,
+    new Uint8Array(job.pixels),
     { bytesPerRow: job.width * 4 },
     { width: job.width, height: job.height },
   );
