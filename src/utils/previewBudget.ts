@@ -71,8 +71,9 @@ export interface PreviewBudgetResult {
 
 /**
  * Decide whether the preview is running in a degraded mode and build a concise
- * message for the user. Covers resolution capping and WebGPU→Canvas2D fallback
- * caused by exceeding the layer budget.
+ * message for the user. Covers resolution capping and Canvas2D used as a
+ * performance compositor when the WebGPU layer budget is exceeded (not a GPU
+ * substitute).
  */
 export function evaluatePreviewBudget(
   input: PreviewBudgetInput,
@@ -87,7 +88,7 @@ export function evaluatePreviewBudget(
 
   if (input.backend === "canvas2d" && input.layerCount > WEBGPU_LAYER_BUDGET) {
     parts.push(
-      `compositing ${input.layerCount} layers on Canvas2D (over the ${WEBGPU_LAYER_BUDGET}-layer WebGPU budget)`,
+      `compositing ${input.layerCount} layers on Canvas2D (over the ${WEBGPU_LAYER_BUDGET}-layer WebGPU budget; not a GPU fallback)`,
     );
   }
 

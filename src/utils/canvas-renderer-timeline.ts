@@ -1,6 +1,7 @@
 /**
- * Canvas2D timeline preview compositor — the fallback used when WebGPU is
- * unavailable or over the layer budget. Supports arbitrary `globalTime` seeks.
+ * Canvas2D timeline compositor — used only when WebGPU probed OK but the
+ * layer budget is exceeded (performance). Not a GPU fallback when WebGPU
+ * adapter/device probe fails.
  */
 
 import type { Clip } from "../types";

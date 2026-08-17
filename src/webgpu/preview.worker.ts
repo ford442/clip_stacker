@@ -10,6 +10,7 @@
  *
  * Startup is two-phase: probe GPU first (no canvas), then accept the
  * transferred OffscreenCanvas only after main sees webgpuAvailable: true.
+ * A failed probe never starts a Canvas2D compositor as if GPU succeeded.
  */
 
 import type { Clip } from '../types';
@@ -20,8 +21,12 @@ import {
   type PreviewClipLayer,
   type PreviewCompositionPlan,
 } from '../utils/previewComposition';
-import { acquireGpuContext } from './gpuDevice';
+import { peekGpuDevice } from './gpuDevice';
+import { probeWebGpu } from './webgpuProbe';
 import { adoptGpuDevice } from '../gpu-chores/device';
+import { runJob } from '../gpu-chores/runJob';
+import { closeBitmap } from '../gpu-chores/rasterize';
+import type { GpuChoreResult } from '../gpu-chores/types';
 import { WorkerTimelineRenderer, type CapturedFrameEntry } from './timelinePreview';
 import type { PreviewWorkerInbound, PreviewWorkerOutbound, FrameRequest } from './previewWorkerProtocol';
 
@@ -34,26 +39,28 @@ interface PendingRender {
 const pendingRenders = new Map<number, PendingRender>();
 const cancelledIds = new Set<number>();
 
-function post(msg: PreviewWorkerOutbound): void {
-  self.postMessage(msg);
+function post(msg: PreviewWorkerOutbound, transfer: Transferable[] = []): void {
+  (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
 }
 
-/** Probe WebGPU without touching the display canvas. */
-async function probeWebGpu(): Promise<boolean> {
-  if (!('gpu' in navigator)) return false;
-  try {
-    const ctx = await acquireGpuContext();
-    adoptGpuDevice(ctx.device);
-    return !!ctx.device;
-  } catch {
-    return false;
+function choreTransferList(results: GpuChoreResult[]): Transferable[] {
+  const transfer: Transferable[] = [];
+  for (const result of results) {
+    if (result.histogram) transfer.push(result.histogram.buffer);
+    if (result.pixels) transfer.push(result.pixels.buffer);
   }
+  return transfer;
 }
 
 // Phase-1 probe as soon as the worker module loads — before main transfers
 // the canvas — so a failed probe never neuters the DOM canvas.
-void probeWebGpu().then((webgpuAvailable) => {
-  post({ type: 'ready', webgpuAvailable });
+void probeWebGpu().then((webgpuProbe) => {
+  console.info('[webgpuProbe]', webgpuProbe);
+  if (webgpuProbe.ok) {
+    const device = peekGpuDevice();
+    if (device) adoptGpuDevice(device);
+  }
+  post({ type: 'ready', webgpuAvailable: webgpuProbe.ok, webgpuProbe });
 });
 
 self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
@@ -193,6 +200,34 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
 
     case 'reset-finishing': {
       renderer?.resetFinishingTemporal();
+      break;
+    }
+
+    case 'chore-jobs': {
+      try {
+        const results: GpuChoreResult[] = [];
+        for (const spec of msg.jobs) {
+          results.push(
+            await runJob({
+              ...spec,
+              source: msg.source,
+            }),
+          );
+        }
+        if (msg.source) closeBitmap(msg.source);
+        post(
+          { type: 'chore-jobs-result', id: msg.id, ok: true, results },
+          choreTransferList(results),
+        );
+      } catch (err) {
+        if (msg.source) closeBitmap(msg.source);
+        post({
+          type: 'chore-jobs-result',
+          id: msg.id,
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
       break;
     }
 

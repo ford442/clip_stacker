@@ -29,6 +29,12 @@ import {
 import { PreviewEngine } from "../webgpu/previewEngine";
 import { onGpuDeviceLost } from "../webgpu/gpuDevice";
 import {
+  getPublishedWebGpuProbe,
+  probeWebGpu,
+  publishWebGpuProbe,
+  type WebGpuProbeResult,
+} from "../webgpu/webgpuProbe";
+import {
   shouldUseTimelinePreview,
   TimelinePreviewEngine,
 } from "../webgpu/timelinePreview";
@@ -48,6 +54,30 @@ import {
 } from "../utils/feature-detector";
 import { evaluatePreviewBudget } from "../utils/previewBudget";
 import { shouldResetFinishingTemporal } from "../utils/noiseReduction";
+
+function displayedWebGpuProbe(): WebGpuProbeResult | undefined {
+  const published = getPublishedWebGpuProbe();
+  return published.worker ?? published.main;
+}
+
+function WebGpuHardFailBanner({ probe }: { probe?: WebGpuProbeResult }) {
+  const json = JSON.stringify(
+    probe ?? { ok: false, browser: 'unknown', reason: 'WebGPU probe failed', adapter: null },
+    null,
+    2,
+  );
+  return (
+    <div className="preview-webgpu-hard-fail" role="alert">
+      <p className="preview-webgpu-hard-fail-title">GPU preview unavailable</p>
+      <p>
+        WebGPU is required for this preview session. Canvas2D is not a GPU
+        fallback. Adapter/device probe failed — compare Chrome vs Edge using
+        the JSON below (also on <code>window.webgpuProbe</code>).
+      </p>
+      <pre className="preview-webgpu-probe-json">{json}</pre>
+    </div>
+  );
+}
 import { previewMetrics } from "../utils/previewMetrics";
 import { parseOutputResolution } from "../utils/resolution";
 import { createRenderScheduler } from "../utils/seekCoalescer";
@@ -247,6 +277,7 @@ function TimelineCompositorPreview({
   const skipPreviewWorkerRef = useRef(false);
   const [canvasGeneration, setCanvasGeneration] = useState(0);
   const [backend, setBackend] = useState<PreviewBackend>("unavailable");
+  const [gpuProbe, setGpuProbe] = useState<WebGpuProbeResult | undefined>();
   const [isPlaying, setIsPlaying] = useState(false);
   const [audioClockActive, setAudioClockActive] = useState(false);
   const [degradationMessage, setDegradationMessage] = useState<string | null>(
@@ -374,10 +405,10 @@ function TimelineCompositorPreview({
       try {
         if (chosen === "webgpu") {
           // Prefer the OffscreenCanvas worker. Probe runs before transfer so a
-          // failed probe leaves this canvas usable. A rare post-transfer init
-          // failure neuters the element — remount via canvasGeneration and
-          // fall back to main-thread WebGPU on the next effect pass.
-          if (!skipPreviewWorkerRef.current) {
+          // failed probe never neuters this canvas. Post-transfer init failure
+          // remounts via canvasGeneration and uses main-thread WebGPU only when
+          // the worker probe already succeeded.
+          if (!skipPreviewWorkerRef.current && caps.offscreenCanvas) {
             engine = await PreviewWorkerAdapter.create(canvas, timelineClips);
           }
           if (!engine) {
@@ -386,7 +417,15 @@ function TimelineCompositorPreview({
               setCanvasGeneration((generation) => generation + 1);
               return;
             }
-            engine = await TimelinePreviewEngine.create(canvas, timelineClips);
+            const workerProbe = getPublishedWebGpuProbe().worker;
+            const workerFailed = workerProbe ? !workerProbe.ok : false;
+            const allowMainGpu =
+              caps.webgpu &&
+              !workerFailed &&
+              (skipPreviewWorkerRef.current || !caps.offscreenCanvas);
+            if (allowMainGpu) {
+              engine = await TimelinePreviewEngine.create(canvas, timelineClips);
+            }
           }
         } else if (chosen === "canvas2d") {
           engine = TimelineCanvas2DRenderer.create(canvas, timelineClips);
@@ -401,6 +440,7 @@ function TimelineCompositorPreview({
       }
       if (!engine) {
         engineRef.current = null;
+        setGpuProbe(displayedWebGpuProbe());
         setBackend("unavailable");
         return;
       }
@@ -550,10 +590,7 @@ function TimelineCompositorPreview({
 
   return (
     <div ref={wrapperRef} className="preview-video-wrapper">
-      <div
-        className="preview-canvas-stack"
-        style={previewActive ? undefined : { display: "none" }}
-      >
+      <div className="preview-canvas-stack">
         <canvas
           key={canvasGeneration}
           ref={canvasRef}
@@ -575,7 +612,8 @@ function TimelineCompositorPreview({
           onPreviewDragStart &&
           onSelectClip &&
           onSelectTextOverlay &&
-          previewSize && (
+          previewSize &&
+          previewActive && (
             <PreviewOverlayManipulator
               timelineClips={timelineClips}
               clipGroups={clipGroups}
@@ -594,13 +632,8 @@ function TimelineCompositorPreview({
               onDragStart={onPreviewDragStart}
             />
           )}
+        {!previewActive && <WebGpuHardFailBanner probe={gpuProbe} />}
       </div>
-      {!previewActive && (
-        <div className="muted" style={{ fontSize: "0.82rem" }}>
-          Timeline preview unavailable — this browser supports neither WebGPU nor
-          a 2D canvas context.
-        </div>
-      )}
       {degradationMessage && (
         <p className="preview-degradation-notice" role="status">
           {degradationMessage}
@@ -649,7 +682,7 @@ function TimelineCompositorPreview({
             title={
               backend === "webgpu"
                 ? "Rendering timeline composition with WebGPU"
-                : "Rendering timeline composition with Canvas2D (WebGPU fallback)"
+                : "Canvas2D compositor because the timeline exceeds the WebGPU layer budget (not a GPU fallback)"
             }
           >
             {previewBackendLabel(backend)}
@@ -816,7 +849,15 @@ function WebGPUVideoPreview({
     async function init() {
       const canvas = canvasRef.current;
       const video = videoRef.current;
-      if (!canvas || !video || !webGpuAvailable) return;
+      if (!canvas || !video) return;
+
+      const probe = await probeWebGpu();
+      publishWebGpuProbe('main', probe);
+      if (!alive) return;
+      if (!probe.ok) {
+        setGpuFallback(true);
+        return;
+      }
 
       try {
         engine = await PreviewEngine.create(canvas);
@@ -852,11 +893,10 @@ function WebGPUVideoPreview({
   // An unexpected device loss (GPU process crash, driver reset) leaves any
   // live `PreviewEngine` holding a dead device — its draw calls silently
   // no-op rather than throwing, so without this the preview would freeze on
-  // the last frame with no visible error. Tear it down immediately and fall
-  // back to Canvas2D instead of waiting on the existing 30-consecutive-
-  // frame-failure detector (which a lost device may never trip). The shared
-  // registry recreates a fresh device automatically, so the next preview
-  // session (new clip, remount) picks it up transparently.
+  // the last frame with no visible error. Tear it down immediately and hard-fail
+  // GPU preview instead of waiting on the 30-consecutive-frame-failure
+  // detector (which a lost device may never trip). Do not switch to Canvas2D.
+  // The shared registry may recreate a device; a later remount can pick it up.
   useEffect(() => {
     return onGpuDeviceLost(() => {
       engineRef.current?.destroy();
@@ -924,8 +964,8 @@ function WebGPUVideoPreview({
         <video
           ref={videoRef}
           src={clip.objectUrl}
-          controls={gpuFallback}
-          style={gpuFallback ? undefined : HIDDEN_VIDEO_STYLE}
+          controls={false}
+          style={HIDDEN_VIDEO_STYLE}
           aria-label={`Preview of ${clip.title} video. Press space to play/pause.`}
           crossOrigin="anonymous"
           playsInline
@@ -947,6 +987,7 @@ function WebGPUVideoPreview({
             v.paused ? v.play() : v.pause();
           }}
         />
+        {gpuFallback && <WebGpuHardFailBanner probe={displayedWebGpuProbe()} />}
       </div>
       {gpuActive && (
         <div className="preview-gpu-controls">

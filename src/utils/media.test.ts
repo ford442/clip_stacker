@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detectMediaElementHasAudio } from './media';
+import { detectMediaElementHasAudio, isImageFile } from './media';
 
 function fakeVideo(
   extras: { audioTracks?: { length: number }; mozHasAudio?: boolean } = {},
@@ -26,5 +26,13 @@ describe('detectMediaElementHasAudio', () => {
 
   it('returns undefined when the browser cannot tell', () => {
     expect(detectMediaElementHasAudio(fakeVideo())).toBeUndefined();
+  });
+});
+
+describe('isImageFile', () => {
+  it('matches image MIME types and still extensions', () => {
+    expect(isImageFile({ type: 'image/png', name: 'x.bin' })).toBe(true);
+    expect(isImageFile({ type: '', name: 'still.JPEG' })).toBe(true);
+    expect(isImageFile({ type: 'video/mp4', name: 'clip.mp4' })).toBe(false);
   });
 });

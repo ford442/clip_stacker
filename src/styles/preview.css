@@ -36,6 +36,7 @@ audio {
 .preview-canvas-stack {
   position: relative;
   line-height: 0;
+  min-height: 8rem;
 }
 
 .preview-timeline-canvas {
@@ -68,7 +69,7 @@ audio {
 }
 
 /* Text overlays are drawn on a transparent 2D canvas stacked over the video
-   composite (the final compositing pass for both WebGPU and Canvas2D). */
+   composite. That 2D layer is overlay-only — not a GPU preview fallback. */
 .preview-text-overlay-canvas {
   position: absolute;
   inset: 0;
@@ -205,9 +206,44 @@ audio {
   accent-color: var(--gold);
 }
 
-.preview-degradation-notice {
+.preview-webgpu-hard-fail {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 1rem 1.1rem;
+  background: rgb(0 0 0 / 0.92);
+  color: #eee;
+  text-align: left;
+  z-index: 2;
+  overflow: auto;
+}
+
+.preview-webgpu-hard-fail-title {
   margin: 0;
-  font-size: 0.75rem;
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--gold-bright);
+}
+
+.preview-webgpu-hard-fail p {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
   color: var(--muted);
+}
+
+.preview-webgpu-probe-json {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.68rem;
   line-height: 1.35;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: rgb(255 255 255 / 0.06);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-sm);
+  color: #ddd;
 }

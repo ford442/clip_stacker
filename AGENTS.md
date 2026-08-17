@@ -103,9 +103,9 @@ TypedArray image chores for clip import and library UX — luminance histogram, 
 
 - `src/gpu-chores/` — local stub of the shared `runJob({ op, prefer: 'auto' })` API
 - Kernels: `luma_histogram_bt709` (256-bin Rec.709, Chromashift-compatible), `downsample_2d` (bilinear thumbs), `separable_blur` (UI soft masks)
-- Backend order: adopt the **existing** preview `GPUDevice` (never `requestDevice()` from chores) → chores Worker (TS golden) → main-thread TS. WebGL2 is not used (one GPU API per working set).
+- Backend order: adopt the **existing** preview `GPUDevice` (never `requestDevice()` from chores). If that device lives in the OffscreenCanvas preview worker, main thread posts an `ImageBitmap` (`chore-jobs`) and reads back aggregates only. Then chores Worker (TS golden) → main-thread TS. WebGL2 is not used (one GPU API per working set).
 - Break-even: GPU only at ≥ 1 megapixel (`prefer: 'auto'`). Small stills stay CPU. Kill switch: `?no_gpu_compute`.
-- Diagnostics: `gpuComputeAvailable()` / `formatGpuChoreDiagnostics()` (inspector + Copy Debug). Preview stays Canvas2D when WebGPU is missing.
+- Diagnostics: `gpuComputeAvailable()` / `formatGpuChoreDiagnostics()` (inspector + Copy Debug). **WebGPU is required for GPU preview**; a failed adapter/device probe hard-fails the preview pane (Canvas2D is not the GPU fallback). Chores never `requestDevice()` after a failed probe.
 
 Do not keep a second WebGL context for histograms. Keep COOP/COEP and the production CSP unchanged (workers already allowed via `worker-src 'self' blob:`).
 

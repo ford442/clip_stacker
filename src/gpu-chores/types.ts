@@ -45,6 +45,12 @@ export interface GpuChoreJob {
   radius?: number;
 }
 
+/** Job fields that can be posted to the preview worker (bitmap transferred separately). */
+export type GpuChoreJobSpec = Pick<
+  GpuChoreJob,
+  'op' | 'prefer' | 'width' | 'height' | 'outWidth' | 'outHeight' | 'radius'
+>;
+
 export interface GpuChoreResult {
   backend: GpuChoreBackend;
   reason: string;

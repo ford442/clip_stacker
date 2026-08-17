@@ -60,7 +60,7 @@ describe('evaluatePreviewBudget', () => {
     expect(result.message).toContain('reduced to 720p (from 2160p)');
   });
 
-  it('reports Canvas2D fallback when over the WebGPU layer budget', () => {
+  it('reports Canvas2D when over the WebGPU layer budget (performance compositor)', () => {
     const result = evaluatePreviewBudget({
       backend: 'canvas2d',
       capped: false,

@@ -3,7 +3,7 @@
  *
  * Public barrel re-export of canvas-rendering modules:
  * - Audio-reactive analysis helpers
- * - Canvas2D compositor functions
+ * - Canvas2D compositor functions (layer-budget / overlay helpers — not a GPU fallback)
  * - Clip and timeline renderers
  */
 

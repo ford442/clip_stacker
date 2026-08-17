@@ -14,6 +14,12 @@ import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan, TimelineCompositor, TimelineRenderOptions } from '../utils/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
 import { previewMetrics } from '../utils/previewMetrics';
+import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
+import {
+  clearPreviewWorkerChoresRunner,
+  setPreviewWorkerChoresRunner,
+  type PreviewWorkerChoresRunner,
+} from '../gpu-chores/previewWorkerBridge';
 import {
   groupFrameRequestsByMedia,
   PREVIEW_WORKER_INIT_TIMEOUT_MS,
@@ -24,6 +30,7 @@ import {
   type PreviewWorkerOutbound,
   type WorkerClip,
 } from './previewWorkerProtocol';
+import { publishWebGpuProbe, type WebGpuProbeResult } from './webgpuProbe';
 
 export type { FrameRequest, CapturedFrame };
 
@@ -32,7 +39,7 @@ export function isCanvasTransferred(canvas: HTMLCanvasElement): boolean {
   try {
     // Re-assigning width is a no-op on a live canvas but throws InvalidStateError
     // once control has been transferred. Avoid getContext() here — that would
-    // lock an unused canvas into a 2D context and block WebGPU fallback.
+    // lock an unused canvas into a 2D context and block a later WebGPU bind.
     const { width } = canvas;
     canvas.width = width;
     return false;
@@ -43,7 +50,7 @@ export function isCanvasTransferred(canvas: HTMLCanvasElement): boolean {
 
 /**
  * Replace a neutered (transferred) canvas with a fresh element that can host
- * WebGPU / Canvas2D for the main-thread fallback path.
+ * WebGPU (or a labeled layer-budget Canvas2D compositor — not a GPU fallback).
  */
 export function replaceTransferredCanvas(oldCanvas: HTMLCanvasElement): HTMLCanvasElement {
   const next = document.createElement('canvas');
@@ -107,12 +114,20 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
   });
 }
 
+interface PendingChore {
+  resolve: (results: GpuChoreResult[]) => void;
+  reject: (err: Error) => void;
+}
+
 export class PreviewWorkerRuntime {
   private readonly worker: Worker;
   private nextRenderId = 0;
+  private nextChoreId = 0;
   private readonly pendingRenders = new Map<number, PendingRender>();
+  private readonly pendingChores = new Map<number, PendingChore>();
   private lastRenderId = -1;
   private destroyed = false;
+  private choresRunner: PreviewWorkerChoresRunner | null = null;
 
   private constructor(worker: Worker) {
     this.worker = worker;
@@ -122,19 +137,21 @@ export class PreviewWorkerRuntime {
       const err = new Error(event.message ?? 'PreviewWorker error');
       for (const pending of this.pendingRenders.values()) pending.reject(err);
       this.pendingRenders.clear();
+      for (const pending of this.pendingChores.values()) pending.reject(err);
+      this.pendingChores.clear();
     };
   }
 
   /**
    * Create the runtime by probing the worker for WebGPU, then transferring
    * canvas control only when the probe succeeds. Returns null if OffscreenCanvas
-   * or WebGPU is unavailable — the caller's canvas is left usable for
-   * main-thread fallback.
+   * is missing or the worker probe failed — the canvas is not transferred.
+   * A failed GPU probe is a hard-fail (no Canvas2D stand-in).
    *
    * If the GPU probe succeeds but compositor init fails after the canvas has
    * already been transferred, returns null and the canvas is neutered. Callers
    * should detect that with `isCanvasTransferred` and swap in a fresh element
-   * before attempting the main-thread compositor.
+   * before attempting main-thread WebGPU (only when the worker probe was ok).
    */
   static async create(canvas: HTMLCanvasElement): Promise<PreviewWorkerRuntime | null> {
     if (
@@ -152,12 +169,12 @@ export class PreviewWorkerRuntime {
     const runtime = new PreviewWorkerRuntime(worker);
 
     try {
-      const webgpuAvailable = await withTimeout(
-        new Promise<boolean>((resolve, reject) => {
+      const webgpuProbe = await withTimeout(
+        new Promise<WebGpuProbeResult>((resolve, reject) => {
           const onMessage = (event: MessageEvent<PreviewWorkerOutbound>) => {
             if (event.data.type === 'ready') {
               worker.removeEventListener('message', onMessage);
-              resolve(event.data.webgpuAvailable);
+              resolve(event.data.webgpuProbe);
             }
           };
           worker.addEventListener('message', onMessage);
@@ -174,7 +191,9 @@ export class PreviewWorkerRuntime {
         'Preview worker GPU probe',
       );
 
-      if (!webgpuAvailable) {
+      publishWebGpuProbe('worker', webgpuProbe);
+
+      if (!webgpuProbe.ok) {
         worker.terminate();
         return null;
       }
@@ -208,11 +227,20 @@ export class PreviewWorkerRuntime {
         'Preview worker canvas init',
       );
 
+      runtime.registerChoresRunner();
       return runtime;
     } catch {
       worker.terminate();
       return null;
     }
+  }
+
+  private registerChoresRunner(): void {
+    const runner: PreviewWorkerChoresRunner = {
+      runJobs: (jobs, source) => this.runChoreJobs(jobs, source),
+    };
+    this.choresRunner = runner;
+    setPreviewWorkerChoresRunner(runner);
   }
 
   private handleMessage(msg: PreviewWorkerOutbound): void {
@@ -267,11 +295,22 @@ export class PreviewWorkerRuntime {
         break;
       }
 
+      case 'chore-jobs-result': {
+        const pending = this.pendingChores.get(msg.id);
+        this.pendingChores.delete(msg.id);
+        if (!pending) break;
+        if (msg.ok) pending.resolve(msg.results);
+        else pending.reject(new Error(msg.message));
+        break;
+      }
+
       case 'error': {
         console.error('[PreviewWorker]', msg.message);
         const err = new Error(msg.message);
         for (const pending of this.pendingRenders.values()) pending.reject(err);
         this.pendingRenders.clear();
+        for (const pending of this.pendingChores.values()) pending.reject(err);
+        this.pendingChores.clear();
         break;
       }
     }
@@ -310,6 +349,20 @@ export class PreviewWorkerRuntime {
         finishing: resolveTimelineFinishing(params),
       };
       this.worker.postMessage(renderMsg);
+    });
+  }
+
+  /**
+   * Run gpu-chores kernels on the preview worker's adopted GPUDevice.
+   * Transfers `source`. Independent of the per-frame render queue.
+   */
+  runChoreJobs(jobs: GpuChoreJobSpec[], source: ImageBitmap): Promise<GpuChoreResult[]> {
+    if (this.destroyed) return Promise.reject(new Error('PreviewWorkerRuntime destroyed'));
+    const id = ++this.nextChoreId;
+    return new Promise((resolve, reject) => {
+      this.pendingChores.set(id, { resolve, reject });
+      const msg: PreviewWorkerInbound = { type: 'chore-jobs', id, jobs, source };
+      this.worker.postMessage(msg, [source]);
     });
   }
 
@@ -355,6 +408,12 @@ export class PreviewWorkerRuntime {
     const err = new Error('PreviewWorkerRuntime destroyed');
     for (const pending of this.pendingRenders.values()) pending.reject(err);
     this.pendingRenders.clear();
+    for (const pending of this.pendingChores.values()) pending.reject(err);
+    this.pendingChores.clear();
+    if (this.choresRunner) {
+      clearPreviewWorkerChoresRunner(this.choresRunner);
+      this.choresRunner = null;
+    }
   }
 }
 
@@ -410,7 +469,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   /**
    * Create a worker-backed compositor.  Transfers canvas control to the worker
    * only after a successful GPU probe. Returns null if OffscreenCanvas or
-   * WebGPU is unavailable — the canvas remains usable for main-thread fallback.
+   * WebGPU is unavailable — canvas is not transferred.
    */
   static async create(
     canvas: HTMLCanvasElement,

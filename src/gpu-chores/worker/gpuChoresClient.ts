@@ -1,8 +1,8 @@
-import type { GpuChoreJob, GpuChoreResult } from '../types';
+import type { GpuChoreJob, GpuChoreJobSpec, GpuChoreResult } from '../types';
 import type { ChoresWorkerRequest, ChoresWorkerResponse } from './gpuChores.worker';
 
 type Pending = {
-  resolve: (result: GpuChoreResult) => void;
+  resolve: (result: GpuChoreResult | GpuChoreResult[]) => void;
   reject: (err: Error) => void;
 };
 
@@ -18,6 +18,8 @@ export function isChoresWorkerAvailable(): boolean {
   } catch {
     /* not bundled */
   }
+  // Already inside a worker (preview / chores) — don't nest another Worker.
+  if (typeof window === 'undefined') return false;
   if (worker) return true;
   return typeof Worker !== 'undefined';
 }
@@ -36,8 +38,13 @@ function ensureWorker(): Worker | null {
       const p = pending.get(msg.id);
       if (!p) return;
       pending.delete(msg.id);
-      if (msg.ok) p.resolve(msg.result);
-      else p.reject(new Error(msg.message));
+      if (!msg.ok) {
+        p.reject(new Error(msg.message));
+        return;
+      }
+      if ('results' in msg && msg.results) p.resolve(msg.results);
+      else if ('result' in msg) p.resolve(msg.result);
+      else p.reject(new Error('gpu-chores worker returned no result'));
     };
     worker.onerror = () => {
       failed = true;
@@ -65,13 +72,40 @@ export async function runWorkerJob(job: GpuChoreJob, reason: string): Promise<Gp
   };
   return new Promise((resolve, reject) => {
     pending.set(id, {
-      resolve: (result) => resolve({ ...result, backend: 'wasm', reason }),
+      resolve: (result) => {
+        const one = Array.isArray(result) ? result[0] : result;
+        if (!one) {
+          reject(new Error('gpu-chores worker returned empty result'));
+          return;
+        }
+        resolve({ ...one, backend: 'wasm', reason });
+      },
       reject,
     });
     const req: ChoresWorkerRequest = { id, job: payload };
     const transfer: Transferable[] = [];
     if (payload.pixels) transfer.push(payload.pixels.buffer);
     w.postMessage(req, transfer);
+  });
+}
+
+/** Rasterize an ImageBitmap off the main thread, then run CPU-golden specs. Transfers `bitmap`. */
+export async function runWorkerAnalyzeStill(
+  bitmap: ImageBitmap,
+  specs: GpuChoreJobSpec[],
+): Promise<GpuChoreResult[]> {
+  const w = ensureWorker();
+  if (!w) throw new Error('gpu-chores worker unavailable');
+  const id = nextId++;
+  return new Promise((resolve, reject) => {
+    pending.set(id, {
+      resolve: (result) => {
+        resolve(Array.isArray(result) ? result : [result]);
+      },
+      reject,
+    });
+    const req: ChoresWorkerRequest = { id, analyzeStill: true, specs, bitmap };
+    w.postMessage(req, [bitmap]);
   });
 }
 

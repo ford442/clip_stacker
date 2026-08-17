@@ -1,6 +1,21 @@
 import { LIBRARY_THUMB_HEIGHT, LIBRARY_THUMB_WIDTH } from '../utils/media';
+import { GPU_MIN_PIXELS, pixelCount, WORKER_MIN_PIXELS } from './breakEven';
+import { gpuComputeAvailable } from './diagnostics';
+import { peekChoresGpuDevice } from './device';
+import {
+  isPreviewWorkerChoresAvailable,
+  runPreviewWorkerJobs,
+} from './previewWorkerBridge';
+import {
+  bitmapDimensions,
+  closeBitmap,
+  isImageBitmapSource,
+  rasterizeBitmapToRgba,
+  type StillBitmapSource,
+} from './rasterize';
 import { runJob } from './runJob';
-import type { GpuChoreBackend, LumaLevels } from './types';
+import type { GpuChoreBackend, GpuChoreJobSpec, GpuChoreResult, LumaLevels } from './types';
+import { isChoresWorkerAvailable, runWorkerAnalyzeStill } from './worker/gpuChoresClient';
 
 export interface StillImportChoreResult {
   lumaHistogram: number[];
@@ -10,29 +25,12 @@ export interface StillImportChoreResult {
   gpuChoreReason: string;
 }
 
+export { bitmapDimensions, rasterizeBitmapToRgba };
+
 export async function pixelsFromBitmap(
-  bitmap: ImageBitmap | HTMLImageElement | HTMLCanvasElement | HTMLVideoElement,
+  bitmap: StillBitmapSource,
 ): Promise<{ pixels: Uint8ClampedArray; width: number; height: number }> {
-  const width =
-    'naturalWidth' in bitmap && bitmap.naturalWidth
-      ? bitmap.naturalWidth
-      : 'videoWidth' in bitmap && bitmap.videoWidth
-        ? bitmap.videoWidth
-        : bitmap.width;
-  const height =
-    'naturalHeight' in bitmap && bitmap.naturalHeight
-      ? bitmap.naturalHeight
-      : 'videoHeight' in bitmap && bitmap.videoHeight
-        ? bitmap.videoHeight
-        : bitmap.height;
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('Could not create 2D context to read still pixels');
-  ctx.drawImage(bitmap, 0, 0);
-  const imageData = ctx.getImageData(0, 0, width, height);
-  return { pixels: imageData.data, width, height };
+  return rasterizeBitmapToRgba(bitmap);
 }
 
 export async function decodeStillBitmap(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
@@ -69,34 +67,26 @@ function encodePosterJpeg(pixels: Uint8ClampedArray, width: number, height: numb
   }
 }
 
-/**
- * Histogram + library poster for an imported still. Uses `prefer: 'auto'`
- * so small assets stay on CPU/Worker and large frames can use adopted WebGPU.
- */
-export async function analyzeImportedStillPixels(
-  pixels: Uint8ClampedArray | Uint8Array,
-  width: number,
-  height: number,
-  source?: GpuChoreJobSource,
-): Promise<StillImportChoreResult> {
-  const histJob = await runJob({
-    op: 'luma_histogram_bt709',
-    prefer: 'auto',
-    pixels,
-    width,
-    height,
-    source,
-  });
-  const thumb = await runJob({
-    op: 'downsample_2d',
-    prefer: 'auto',
-    pixels,
-    width,
-    height,
-    source,
-    outWidth: LIBRARY_THUMB_WIDTH,
-    outHeight: LIBRARY_THUMB_HEIGHT,
-  });
+function stillJobSpecs(width: number, height: number): { hist: GpuChoreJobSpec; thumb: GpuChoreJobSpec } {
+  return {
+    hist: {
+      op: 'luma_histogram_bt709',
+      prefer: 'auto',
+      width,
+      height,
+    },
+    thumb: {
+      op: 'downsample_2d',
+      prefer: 'auto',
+      width,
+      height,
+      outWidth: LIBRARY_THUMB_WIDTH,
+      outHeight: LIBRARY_THUMB_HEIGHT,
+    },
+  };
+}
+
+function packStillResults(histJob: GpuChoreResult, thumb: GpuChoreResult): StillImportChoreResult {
   const posterUrl =
     thumb.pixels && thumb.width && thumb.height
       ? encodePosterJpeg(thumb.pixels, thumb.width, thumb.height)
@@ -110,17 +100,84 @@ export async function analyzeImportedStillPixels(
   };
 }
 
-type GpuChoreJobSource = NonNullable<import('./types').GpuChoreJob['source']>;
+/**
+ * Histogram + library poster for an imported still. Uses `prefer: 'auto'`
+ * so small assets stay on CPU/Worker and large frames can use adopted WebGPU.
+ * Avoids main-thread `getImageData` when GPU (local or preview worker) or the
+ * chores Worker can ingest an ImageBitmap.
+ */
+export async function analyzeImportedStillPixels(
+  pixels: Uint8ClampedArray | Uint8Array,
+  width: number,
+  height: number,
+  source?: import('./types').GpuChoreJob['source'],
+): Promise<StillImportChoreResult> {
+  const specs = stillJobSpecs(width, height);
+  const histJob = await runJob({ ...specs.hist, pixels, source });
+  const thumb = await runJob({ ...specs.thumb, pixels, source });
+  return packStillResults(histJob, thumb);
+}
+
+async function analyzeOnLocalGpu(source: StillBitmapSource, width: number, height: number): Promise<StillImportChoreResult> {
+  const specs = stillJobSpecs(width, height);
+  const histJob = await runJob({ ...specs.hist, source });
+  const thumb = await runJob({ ...specs.thumb, source });
+  return packStillResults(histJob, thumb);
+}
+
+async function analyzeViaPreviewWorker(
+  bitmap: ImageBitmap,
+  width: number,
+  height: number,
+): Promise<StillImportChoreResult> {
+  const specs = stillJobSpecs(width, height);
+  const copy =
+    typeof createImageBitmap === 'function' ? await createImageBitmap(bitmap) : bitmap;
+  const [histJob, thumb] = await runPreviewWorkerJobs([specs.hist, specs.thumb], copy);
+  if (!histJob || !thumb) throw new Error('preview worker returned incomplete chore results');
+  return packStillResults(histJob, thumb);
+}
 
 export async function analyzeImportedStillFile(file: Blob): Promise<StillImportChoreResult> {
-  const bitmap = await decodeStillBitmap(file);
-  try {
-    const { pixels, width, height } = await pixelsFromBitmap(bitmap);
-    const source = bitmap as GpuChoreJobSource;
-    return await analyzeImportedStillPixels(pixels, width, height, source);
-  } finally {
-    if ('close' in bitmap && typeof bitmap.close === 'function') {
-      bitmap.close();
+  let bitmap = await decodeStillBitmap(file);
+  const { width, height } = bitmapDimensions(bitmap);
+  const pixels = pixelCount(width, height);
+  const gpu = gpuComputeAvailable();
+  const wantGpu = gpu.available && pixels >= GPU_MIN_PIXELS;
+
+  const runWithBitmap = async (src: ImageBitmap | HTMLImageElement): Promise<StillImportChoreResult> => {
+    if (wantGpu && peekChoresGpuDevice()) {
+      return analyzeOnLocalGpu(src, width, height);
     }
+    if (wantGpu && isPreviewWorkerChoresAvailable() && isImageBitmapSource(src)) {
+      try {
+        return await analyzeViaPreviewWorker(src, width, height);
+      } catch {
+        /* chores Worker / CPU */
+      }
+    }
+    if (
+      isChoresWorkerAvailable() &&
+      pixels >= WORKER_MIN_PIXELS &&
+      isImageBitmapSource(src)
+    ) {
+      const specs = stillJobSpecs(width, height);
+      const [histJob, thumb] = await runWorkerAnalyzeStill(src, [specs.hist, specs.thumb]);
+      if (!histJob || !thumb) throw new Error('chores worker returned incomplete still results');
+      return packStillResults(histJob, thumb);
+    }
+    const raster = rasterizeBitmapToRgba(src);
+    return analyzeImportedStillPixels(raster.pixels, raster.width, raster.height);
+  };
+
+  try {
+    return await runWithBitmap(bitmap);
+  } catch {
+    closeBitmap(bitmap);
+    bitmap = await decodeStillBitmap(file);
+    const raster = rasterizeBitmapToRgba(bitmap);
+    return analyzeImportedStillPixels(raster.pixels, raster.width, raster.height);
+  } finally {
+    closeBitmap(bitmap);
   }
 }

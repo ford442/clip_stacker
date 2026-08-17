@@ -109,7 +109,7 @@ function loadMediaInfo(
   });
 }
 
-function isImageFile(file: File): boolean {
+export function isImageFile(file: { type: string; name: string }): boolean {
   return (
     file.type.startsWith('image/') ||
     /\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name)

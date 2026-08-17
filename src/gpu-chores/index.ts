@@ -2,6 +2,7 @@ export type {
   GpuChoreBackend,
   GpuChoreBreadcrumb,
   GpuChoreJob,
+  GpuChoreJobSpec,
   GpuChoreOp,
   GpuChorePrefer,
   GpuChoreResult,
@@ -11,6 +12,11 @@ export type {
 
 export { GPU_MIN_PIXELS, WORKER_MIN_PIXELS, selectBackend } from './breakEven';
 export { adoptGpuDevice, peekChoresGpuDevice, releaseAdoptedGpuDevice } from './device';
+export {
+  isPreviewWorkerChoresAvailable,
+  setPreviewWorkerChoresRunner,
+} from './previewWorkerBridge';
+export { bitmapDimensions } from './rasterize';
 export {
   formatGpuChoreDiagnostics,
   getLastGpuChoreBreadcrumb,

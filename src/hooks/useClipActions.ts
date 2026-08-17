@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { Clip } from "../types";
-import { getMediaInfo, createClipId, MIN_CLIP_DURATION } from "../utils/media";
+import { getMediaInfo, createClipId, isImageFile, MIN_CLIP_DURATION } from "../utils/media";
 import { duplicateClip, splitClipAt } from "../utils/clipOperations";
 import { snapSplitTimeToBeat } from "../utils/beatSnap";
 import {
@@ -161,9 +161,7 @@ export function useClipActions({
           file.name.toLowerCase().endsWith(".mp4");
         const isAudio =
           file.type.startsWith("audio/") || /\.(wav|mp3)$/i.test(file.name);
-        const isImage =
-          file.type.startsWith("image/") ||
-          /\.(jpe?g|png|webp|gif|bmp)$/i.test(file.name);
+        const isImage = isImageFile(file);
         if (!isVideo && !isAudio && !isImage) continue;
 
         try {
@@ -222,6 +220,7 @@ export function useClipActions({
         const file = new File([blob], item.name, { type: blob.type });
         const isAudio =
           file.type.startsWith("audio/") || /\.(wav|mp3)$/i.test(file.name);
+        const isImage = isImageFile(file);
         const { duration, objectUrl, videoWidth, videoHeight, hasAudio } =
           await getMediaInfo(file);
         const newClip: Clip = {
@@ -241,6 +240,7 @@ export function useClipActions({
           audioFadeIn: 0,
           audioFadeOut: 0,
           remoteSourceUrl: item.url,
+          ...(isImage ? { stillImage: true } : {}),
         };
         pushHistory();
         addClipToState(newClip);

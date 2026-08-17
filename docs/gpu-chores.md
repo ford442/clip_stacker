@@ -22,9 +22,10 @@ Workgroups: `@workgroup_size(8, 8)`.
 
 ## Backends
 
-1. **WebGPU** — only if a `GPUDevice` was already acquired in this JS realm (`acquireGpuContext` / preview engine / preview worker). Chores call `adoptGpuDevice` / `peekGpuDevice` and **never** `requestDevice()`.
-2. **Worker** (`backend: 'wasm'`) — same TS math off the main thread. No extra image-FFT WASM; audio kissfft stays source of truth for beats.
-3. **Main-thread TS** — last resort / small images / Vitest.
+1. **WebGPU** — only if a `GPUDevice` was already acquired (`acquireGpuContext` / preview engine / preview worker). Chores call `adoptGpuDevice` / `peekGpuDevice` and **never** `requestDevice()`. After a failed WebGPU probe, GPU preview hard-fails (Canvas2D is not a GPU fallback) and chores stay on Worker/TS.
+2. When live preview owns the device in the **OffscreenCanvas worker**, main-thread import posts an `ImageBitmap` on `chore-jobs` and gets back aggregates (256×u32 histogram + 96×54 RGBA). The main thread does not `getImageData` the full still.
+3. **Worker** (`backend: 'wasm'`) — rasterize the bitmap off-thread, then the same TS golden math. No extra image-FFT WASM; audio kissfft stays source of truth for beats.
+4. **Main-thread TS** — last resort / tiny images (&lt; 256²) / Vitest.
 
 WebGL2 is deferred on purpose: do not dual-hot GL + WebGPU on the same clip pixels.
 

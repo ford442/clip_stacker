@@ -61,6 +61,22 @@ describe('previewWorkerProtocol', () => {
   it('exports a finite worker init timeout', () => {
     expect(PREVIEW_WORKER_INIT_TIMEOUT_MS).toBeGreaterThan(0);
   });
+
+  it('ready payload includes structured webgpuProbe plus webgpuAvailable', () => {
+    const webgpuProbe = {
+      ok: false,
+      browser: 'Edge',
+      reason: 'requestAdapter returned null',
+      adapter: null,
+    };
+    const ready = {
+      type: 'ready' as const,
+      webgpuAvailable: webgpuProbe.ok,
+      webgpuProbe,
+    };
+    expect(ready.webgpuAvailable).toBe(false);
+    expect(ready.webgpuProbe.browser).toBe('Edge');
+  });
 });
 
 describe('isCanvasTransferred', () => {

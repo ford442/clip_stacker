@@ -2,16 +2,16 @@
  * Typed message protocol for the off-thread WebGPU preview worker.
  *
  * Startup (two-phase so the display canvas is never transferred unless the
- * worker can actually run WebGPU — otherwise main-thread fallback would find
- * a neutered canvas):
+ * worker can actually run WebGPU):
  *   1. Worker boots and posts `ready` after a GPU probe (no canvas yet).
  *   2. Main transfers OffscreenCanvas only when `webgpuAvailable: true`.
  *   3. Worker posts `initialized` once the real compositor is up.
+ * A failed probe is a hard-fail for GPU preview — not a Canvas2D stand-in.
  *
  * Main → Worker: init, render, frames-ready, cancel, resize, sync-clips,
- *                pause-decoders, reset-finishing, destroy
+ *                pause-decoders, reset-finishing, chore-jobs, destroy
  * Worker → Main: ready, initialized, need-frames, render-complete,
- *                render-cancelled, error
+ *                render-cancelled, chore-jobs-result, error
  */
 
 import type {
@@ -24,6 +24,8 @@ import type {
 import type { FinishingSettings } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan } from '../utils/previewComposition';
+import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
+import type { WebGpuProbeResult } from './webgpuProbe';
 
 /**
  * Clip descriptor sent to the worker — identical to Clip but without the
@@ -159,6 +161,12 @@ export type PreviewWorkerInbound =
     }
   | { type: 'pause-decoders' }
   | { type: 'reset-finishing' }
+  | {
+      type: 'chore-jobs';
+      id: number;
+      jobs: GpuChoreJobSpec[];
+      source?: ImageBitmap;
+    }
   | { type: 'destroy' };
 
 // --------------------------------------------------------------------------
@@ -170,6 +178,7 @@ export type PreviewWorkerOutbound =
       /** GPU probe result — posted before any canvas is transferred. */
       type: 'ready';
       webgpuAvailable: boolean;
+      webgpuProbe: WebGpuProbeResult;
     }
   | {
       /** Real compositor is bound to the transferred OffscreenCanvas. */
@@ -188,6 +197,18 @@ export type PreviewWorkerOutbound =
   | {
       type: 'render-cancelled';
       renderId: number;
+    }
+  | {
+      type: 'chore-jobs-result';
+      id: number;
+      ok: true;
+      results: GpuChoreResult[];
+    }
+  | {
+      type: 'chore-jobs-result';
+      id: number;
+      ok: false;
+      message: string;
     }
   | {
       type: 'error';

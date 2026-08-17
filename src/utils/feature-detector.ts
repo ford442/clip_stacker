@@ -1,4 +1,4 @@
-import { acquireGpuContext } from '../webgpu/gpuDevice';
+import { probeWebGpu, publishWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
 
 export interface BrowserCapabilities {
@@ -50,16 +50,12 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
     typeof VideoFrame !== "undefined";
 
   let webgpu = false;
-  if ("gpu" in navigator) {
-    try {
-      // Acquire the shared context (rather than a throwaway adapter/device)
-      // so this probe doesn't leave an orphan device behind and doesn't race
-      // whichever subsystem initializes WebGPU for real right after.
-      const ctx = await acquireGpuContext();
-      webgpu = !!ctx.device;
-    } catch {
-      // navigator.gpu exists but adapter/device creation failed
-    }
+  try {
+    const probe = await probeWebGpu();
+    publishWebGpuProbe('main', probe);
+    webgpu = probe.ok;
+  } catch {
+    webgpu = false;
   }
 
   const offscreenCanvas =
@@ -112,17 +108,17 @@ export type PreviewBackend = "webgpu" | "canvas2d" | "unavailable";
 
 /**
  * Max simultaneous layers the WebGPU preview path is budgeted for. Beyond this
- * the Canvas2D fallback (which composites layers with plain drawImage calls and
- * has no per-layer bind-group/uniform-buffer cost) is used instead.
+ * a labeled Canvas2D compositor is used (performance only — not a GPU fallback).
  */
 export const WEBGPU_LAYER_BUDGET = 16;
 
 /**
  * Choose the preview compositor backend.
  *
- * WebGPU is preferred when available and within the layer budget; otherwise the
- * Canvas2D fallback is used. `unavailable` is only returned when even a 2D
- * context cannot be created (the caller should then show a degraded message).
+ * WebGPU is required for the GPU preview session. A failed adapter/device
+ * probe is `unavailable` (hard-fail) — Canvas2D is not a GPU fallback.
+ * Canvas2D is used only when WebGPU probed OK but the layer budget is exceeded
+ * (performance compositor, labeled as such).
  */
 export function selectPreviewBackend(
   caps: Pick<BrowserCapabilities, "webgpu">,
@@ -130,7 +126,7 @@ export function selectPreviewBackend(
   canvas2dAvailable = true,
 ): PreviewBackend {
   if (caps.webgpu && layerCount <= WEBGPU_LAYER_BUDGET) return "webgpu";
-  if (canvas2dAvailable) return "canvas2d";
+  if (caps.webgpu && canvas2dAvailable) return "canvas2d";
   return "unavailable";
 }
 
@@ -140,9 +136,9 @@ export function previewBackendLabel(backend: PreviewBackend): string {
     case "webgpu":
       return "WebGPU Worker";
     case "canvas2d":
-      return "Canvas2D Timeline";
+      return "Canvas2D (layer budget)";
     default:
-      return "Preview unavailable";
+      return "GPU preview unavailable";
   }
 }
 

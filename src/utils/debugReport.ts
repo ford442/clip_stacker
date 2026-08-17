@@ -14,6 +14,7 @@ import {
   getFfmpegEnvironmentDiagnostics,
 } from '../ffmpeg/ffmpegService';
 import { getGpuErrorLog } from '../webgpu/gpuDevice';
+import { getPublishedWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
 
 export interface DebugReportContext {
@@ -210,6 +211,12 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   lines.push('');
 
   const gpuErrors = getGpuErrorLog();
+  lines.push('## WebGPU probe');
+  lines.push('```json');
+  lines.push(JSON.stringify(getPublishedWebGpuProbe(), null, 2));
+  lines.push('```');
+  lines.push('');
+
   lines.push(`## WebGPU Errors (last ${gpuErrors.length})`);
   if (gpuErrors.length === 0) {
     lines.push('(none captured)');

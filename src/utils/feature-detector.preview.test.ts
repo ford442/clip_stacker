@@ -19,21 +19,24 @@ describe('selectPreviewBackend', () => {
     ).toBe('canvas2d');
   });
 
-  it('falls back to Canvas2D when WebGPU is unavailable', () => {
-    expect(selectPreviewBackend({ webgpu: false })).toBe('canvas2d');
+  it('hard-fails when WebGPU is unavailable (Canvas2D is not a GPU fallback)', () => {
+    expect(selectPreviewBackend({ webgpu: false })).toBe('unavailable');
   });
 
-  it('reports unavailable only when neither backend can run', () => {
+  it('reports unavailable only when WebGPU cannot run (or 2D is missing over budget)', () => {
     expect(selectPreviewBackend({ webgpu: false }, 0, false)).toBe(
       'unavailable',
     );
+    expect(
+      selectPreviewBackend({ webgpu: true }, WEBGPU_LAYER_BUDGET + 1, false),
+    ).toBe('unavailable');
   });
 });
 
 describe('previewBackendLabel', () => {
   it('maps each backend to a UI badge label', () => {
     expect(previewBackendLabel('webgpu')).toBe('WebGPU Worker');
-    expect(previewBackendLabel('canvas2d')).toBe('Canvas2D Timeline');
-    expect(previewBackendLabel('unavailable')).toBe('Preview unavailable');
+    expect(previewBackendLabel('canvas2d')).toBe('Canvas2D (layer budget)');
+    expect(previewBackendLabel('unavailable')).toBe('GPU preview unavailable');
   });
 });

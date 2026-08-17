@@ -10,6 +10,11 @@ import {
   __resetGpuChoreDiagnosticsForTests,
   __setGpuComputeKillSwitchForTests,
 } from './diagnostics';
+import {
+  __resetPreviewWorkerChoresForTests,
+  setPreviewWorkerChoresRunner,
+} from './previewWorkerBridge';
+import { bitmapDimensions } from './rasterize';
 import { runJob } from './runJob';
 import { analyzeImportedStillPixels } from './stillImport';
 
@@ -116,6 +121,20 @@ describe('selectBackend prefer:auto break-even', () => {
     expect(sel.backend).toBe('cpu');
   });
 
+  it('selects WebGPU for large downsample to a library thumb', () => {
+    const sel = selectBackend({
+      op: 'downsample_2d',
+      prefer: 'auto',
+      width: 1920,
+      height: 1080,
+      outWidth: 96,
+      outHeight: 54,
+      gpuAvailable: true,
+      workerAvailable: true,
+    });
+    expect(sel.backend).toBe('webgpu');
+  });
+
   it('uses worker when GPU is missing and the still is medium+', () => {
     const sel = selectBackend({
       op: 'luma_histogram_bt709',
@@ -133,6 +152,7 @@ describe('gpuComputeAvailable + kill switch', () => {
   afterEach(() => {
     __resetGpuChoreDiagnosticsForTests();
     __resetGpuChoresDeviceForTests();
+    __resetPreviewWorkerChoresForTests();
   });
 
   it('reports no device without adoption', () => {
@@ -141,9 +161,21 @@ describe('gpuComputeAvailable + kill switch', () => {
     expect(avail.reason).toMatch(/no GPUDevice/i);
   });
 
+  it('reports preview worker GPU when the compositor worker is registered', () => {
+    setPreviewWorkerChoresRunner({
+      runJobs: async () => [],
+    });
+    const avail = gpuComputeAvailable();
+    expect(avail.available).toBe(true);
+    expect(avail.reason).toMatch(/preview worker GPU/i);
+  });
+
   it('honors ?no_gpu_compute even if a device is adopted', () => {
     __setGpuComputeKillSwitchForTests(true);
     adoptGpuDevice({} as GPUDevice);
+    setPreviewWorkerChoresRunner({
+      runJobs: async () => [],
+    });
     const avail = gpuComputeAvailable();
     expect(avail.available).toBe(false);
     expect(avail.reason).toMatch(/no_gpu_compute/);
@@ -155,6 +187,7 @@ describe('runJob CPU fallback', () => {
   afterEach(() => {
     __resetGpuChoreDiagnosticsForTests();
     __resetGpuChoresDeviceForTests();
+    __resetPreviewWorkerChoresForTests();
   });
 
   it('runs histogram on CPU when prefer is cpu', async () => {
@@ -198,6 +231,60 @@ describe('runJob CPU fallback', () => {
     expect(result.pixels).toHaveLength(2 * 2 * 4);
     expect(result.reason).toMatch(/CPU|failed|vanished/i);
   });
+
+  it('runs histogram from an ImageBitmap source without a pixel buffer', async () => {
+    if (typeof createImageBitmap !== 'function') return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 2;
+    canvas.height = 2;
+    const bitmap = await createImageBitmap(canvas);
+    const result = await runJob({
+      op: 'luma_histogram_bt709',
+      prefer: 'cpu',
+      source: bitmap,
+      width: 2,
+      height: 2,
+    });
+    expect(result.backend).toBe('cpu');
+    expect(result.histogram).toHaveLength(256);
+    expect(result.histogram!.reduce((a, b) => a + b, 0)).toBe(4);
+    bitmap.close();
+  });
+
+  it('hops ImageBitmap jobs to the preview worker GPU when registered', async () => {
+    if (typeof createImageBitmap !== 'function') return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 4;
+    canvas.height = 4;
+    const bitmap = await createImageBitmap(canvas);
+    const hist = new Uint32Array(256);
+    hist[0] = 16;
+    setPreviewWorkerChoresRunner({
+      runJobs: async (jobs, source) => {
+        expect(jobs).toHaveLength(1);
+        expect(jobs[0]?.op).toBe('luma_histogram_bt709');
+        expect(source).toBeInstanceOf(ImageBitmap);
+        return [
+          {
+            backend: 'webgpu',
+            reason: 'preview worker GPU',
+            histogram: hist,
+            levels: { black: 0, white: 0, mean: 0 },
+          },
+        ];
+      },
+    });
+    const result = await runJob({
+      op: 'luma_histogram_bt709',
+      prefer: 'webgpu',
+      source: bitmap,
+      width: 4,
+      height: 4,
+    });
+    expect(result.backend).toBe('webgpu');
+    expect(result.histogram![0]).toBe(16);
+    bitmap.close();
+  });
 });
 
 describe('analyzeImportedStillPixels', () => {
@@ -206,5 +293,14 @@ describe('analyzeImportedStillPixels', () => {
     expect(stats.lumaHistogram).toHaveLength(256);
     expect(stats.lumaLevels.white).toBeGreaterThanOrEqual(stats.lumaLevels.black);
     expect(stats.gpuChoreBackend).toBe('cpu');
+  });
+});
+
+describe('bitmapDimensions', () => {
+  it('reads width/height from a canvas without getImageData', () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 48;
+    canvas.height = 27;
+    expect(bitmapDimensions(canvas)).toEqual({ width: 48, height: 27 });
   });
 });
