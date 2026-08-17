@@ -159,8 +159,12 @@ export function createClipId(): string {
   );
 }
 
-const THUMB_W = 96;
-const THUMB_H = 54;
+/** Library / inspector / timeline poster size (matches downsample_2d dest). */
+export const LIBRARY_THUMB_WIDTH = 96;
+export const LIBRARY_THUMB_HEIGHT = 54;
+
+const THUMB_W = LIBRARY_THUMB_WIDTH;
+const THUMB_H = LIBRARY_THUMB_HEIGHT;
 
 export interface ExtractThumbnailsOptions {
   signal?: AbortSignal;

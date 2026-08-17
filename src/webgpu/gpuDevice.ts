@@ -197,6 +197,14 @@ export function hasGpuContext(): boolean {
   return current !== null;
 }
 
+/**
+ * Return the shared `GPUDevice` if this JS realm already acquired one.
+ * Never calls `requestAdapter` / `requestDevice`.
+ */
+export function peekGpuDevice(): GPUDevice | null {
+  return current?.device ?? null;
+}
+
 /** Test/dev-only: force the singleton to forget its current device. */
 export function __resetGpuContextForTests(): void {
   current = null;

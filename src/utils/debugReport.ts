@@ -14,6 +14,7 @@ import {
   getFfmpegEnvironmentDiagnostics,
 } from '../ffmpeg/ffmpegService';
 import { getGpuErrorLog } from '../webgpu/gpuDevice';
+import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
 
 export interface DebugReportContext {
   status: string;
@@ -194,6 +195,18 @@ export function generateDebugReport(ctx: DebugReportContext): string {
 
   lines.push('## FFmpeg Environment Diagnostics');
   getFfmpegEnvironmentDiagnostics().forEach((d) => lines.push(`- ${d}`));
+  lines.push('');
+
+  lines.push('## gpu-chores');
+  lines.push(`- ${formatGpuChoreDiagnostics()}`);
+  const choreClips = ctx.clips.filter((c) => c.gpuChoreBackend || c.lumaHistogram);
+  if (choreClips.length > 0) {
+    choreClips.forEach((clip) => {
+      lines.push(
+        `- "${clip.title}": ${clip.gpuChoreBackend ?? 'n/a'} — ${clip.gpuChoreReason ?? 'no reason'}`,
+      );
+    });
+  }
   lines.push('');
 
   const gpuErrors = getGpuErrorLog();

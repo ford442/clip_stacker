@@ -12,6 +12,7 @@ import {
 } from '../store';
 import { sanitizeFilename } from '../utils/filename';
 import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
+import { formatGpuChoreDiagnostics, gpuComputeAvailable } from '../gpu-chores/diagnostics';
 import { getClipDuration, isOverlayOffCanvas } from '../utils/project';
 import {
   clipLayoutToDisplayPixels,
@@ -181,6 +182,42 @@ function findMatchingPreset(settings: ExportSettings): string {
   )?.name || 'custom';
 }
 
+function GpuChoreLevelsPanel({ clip }: { clip: Clip }) {
+  const bins = clip.lumaHistogram;
+  const max = bins && bins.length ? Math.max(...bins, 1) : 1;
+  const avail = gpuComputeAvailable();
+  return (
+    <div className="inspector-gpu-chores">
+      <div className="inspector-group-label">Levels (Rec.709 luma)</div>
+      {bins && bins.length === 256 ? (
+        <div className="luma-histogram" role="img" aria-label="Luminance histogram">
+          {bins.map((count, i) => (
+            <span
+              key={i}
+              className="luma-histogram-bar"
+              style={{ height: `${Math.max(2, (count / max) * 100)}%` }}
+            />
+          ))}
+        </div>
+      ) : (
+        <p className="inspector-hint">Analyzing still with gpu-chores…</p>
+      )}
+      {clip.lumaLevels && (
+        <p className="inspector-hint">
+          Black {clip.lumaLevels.black} · mean {clip.lumaLevels.mean.toFixed(1)} · white {clip.lumaLevels.white}
+        </p>
+      )}
+      <p className="inspector-hint inspector-gpu-chore-crumb">
+        {clip.gpuChoreBackend
+          ? `chores: ${clip.gpuChoreBackend} — ${clip.gpuChoreReason}`
+          : formatGpuChoreDiagnostics()}
+        {' · '}
+        gpuComputeAvailable: {avail.available ? 'yes' : 'no'} ({avail.reason})
+      </p>
+    </div>
+  );
+}
+
 function InspectorImpl({
   exportSettings,
   onChange,
@@ -276,19 +313,29 @@ function InspectorImpl({
   useEffect(() => {
     if (!clip) return;
     if (clip.kind === 'video') {
-      if (completedThumbs.current.has(clip.id) || generatingThumbs.current.has(clip.id)) return;
-      generatingThumbs.current.add(clip.id);
-      const count = Math.max(
-        MIN_INSPECTOR_THUMBNAILS,
-        Math.min(MAX_INSPECTOR_THUMBNAILS, Math.ceil(clip.duration / SECONDS_PER_INSPECTOR_THUMBNAIL)),
-      );
-      extractThumbnails(clip.objectUrl, clip.duration, 0, clip.duration, count).then((thumbs) => {
-        generatingThumbs.current.delete(clip.id);
-        completedThumbs.current.add(clip.id);
-        setThumbMap((prev) => ({ ...prev, [clip.id]: thumbs }));
-      });
+      if (clip.stillImage) {
+        if (clip.posterUrl) {
+          setThumbMap((prev) => ({ ...prev, [clip.id]: [clip.posterUrl!] }));
+          completedThumbs.current.add(clip.id);
+        }
+      } else if (
+        !completedThumbs.current.has(clip.id) &&
+        !generatingThumbs.current.has(clip.id)
+      ) {
+        generatingThumbs.current.add(clip.id);
+        const count = Math.max(
+          MIN_INSPECTOR_THUMBNAILS,
+          Math.min(MAX_INSPECTOR_THUMBNAILS, Math.ceil(clip.duration / SECONDS_PER_INSPECTOR_THUMBNAIL)),
+        );
+        extractThumbnails(clip.objectUrl, clip.duration, 0, clip.duration, count).then((thumbs) => {
+          generatingThumbs.current.delete(clip.id);
+          completedThumbs.current.add(clip.id);
+          setThumbMap((prev) => ({ ...prev, [clip.id]: thumbs }));
+        });
+      }
     }
 
+    if (clip.stillImage && clip.hasAudio === false) return;
     if (completedWaves.current.has(clip.id) || generatingWaves.current.has(clip.id)) return;
     generatingWaves.current.add(clip.id);
     extractWaveformPeaks(clip.objectUrl, INSPECTOR_WAVEFORM_SAMPLES).then(
@@ -507,6 +554,9 @@ function InspectorImpl({
             Drag the trim sliders to align with the preview strip for precise trimming.
           </p>
         </div>
+        {(clip.lumaHistogram || clip.stillImage) && (
+          <GpuChoreLevelsPanel clip={clip} />
+        )}
         <label>
           Trim start (s)
           <input

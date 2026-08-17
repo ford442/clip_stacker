@@ -35,6 +35,7 @@ The app shows you the plan and reason before rendering starts, so you understand
 - React 18 + TypeScript
 - Vite 5 (bundler and dev server)
 - FFmpeg WebAssembly (`@ffmpeg/ffmpeg`)
+- WebGPU preview compositor (shared device) + **gpu-chores** for import histogram / library thumbs (CPU/Worker fallback; never a second `GPUDevice`)
 
 ## Local Development
 
@@ -114,6 +115,7 @@ clip_stacker/
 │   ├── main.tsx           # React app bootstrap
 │   ├── App.tsx            # Root component, app-level state
 │   ├── index.css          # Global styles
+│   ├── gpu-chores/        # Import histogram / thumbs (adopt preview GPUDevice)
 │   ├── types/
 │   │   └── index.ts       # Shared TypeScript types (Clip, Project, etc.)
 │   ├── ffmpeg/

@@ -4,6 +4,7 @@ import {
   clearGpuErrorLog,
   getGpuErrorLog,
   hasGpuContext,
+  peekGpuDevice,
   onGpuDeviceLost,
   onGpuDeviceRecovered,
   __resetGpuContextForTests,
@@ -78,6 +79,7 @@ describe('gpuDevice registry', () => {
     expect(requestAdapter).toHaveBeenCalledTimes(1);
     expect(adapter.requestDevice).toHaveBeenCalledTimes(1);
     expect(hasGpuContext()).toBe(true);
+    expect(peekGpuDevice()).toBe(device);
   });
 
   it('shares one in-flight acquisition across concurrent callers', async () => {

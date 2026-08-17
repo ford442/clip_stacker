@@ -8,6 +8,7 @@ import {
 } from "./transitions/transitionPass";
 import type { TransitionRenderParams } from "./transitions/types";
 import { FinishingPassChain } from "./finishingPassChain";
+import { adoptGpuDevice } from "../gpu-chores/device";
 import type { ColorGradeSettings } from "../utils/lut";
 import { isColorGradeActive } from "../utils/lut";
 import type { FinishingSettings } from "../utils/finishing";
@@ -196,6 +197,7 @@ export class PreviewEngine {
       format,
     );
     engine.canvas = canvas;
+    adoptGpuDevice(device);
     return engine;
   }
 

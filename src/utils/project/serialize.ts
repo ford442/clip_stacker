@@ -106,6 +106,10 @@ export function serializeProject(
         ? { beatTimestamps: clip.beatTimestamps.slice() }
         : {}),
       ...(clip.bpmEstimate != null ? { bpmEstimate: clip.bpmEstimate } : {}),
+      ...(clip.lumaHistogram && clip.lumaHistogram.length === 256
+        ? { lumaHistogram: clip.lumaHistogram.slice() }
+        : {}),
+      ...(clip.lumaLevels ? { lumaLevels: { ...clip.lumaLevels } } : {}),
     };
     }),
     transitions: transitions.map((t): SerializedTransition => ({

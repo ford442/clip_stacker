@@ -7,6 +7,7 @@
 
 import { PreviewEngine } from './previewEngine';
 import { acquireGpuContext } from './gpuDevice';
+import { adoptGpuDevice } from '../gpu-chores/device';
 import type { TransitionRenderParams } from './transitions/types';
 
 export interface LetterboxUv {
@@ -157,6 +158,7 @@ export async function isWebGpuExportAvailable(): Promise<boolean> {
     // one device the rest of the app uses, instead of requesting its own
     // adapter that would otherwise sit unused.
     const ctx = await acquireGpuContext();
+    adoptGpuDevice(ctx.device);
     return !!ctx.adapter;
   } catch {
     return false;
