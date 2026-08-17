@@ -324,4 +324,96 @@ describe('intercut', () => {
     expect(slices[slices.length - 1]).toMatchObject({ slot: 'B', inpoint: 0, outpoint: 0.5 });
     expect(intercutOutputDuration(slices)).toBeCloseTo(0.7, 5);
   });
+
+  it('entireSources mode uses all of A and all of B (output ≈ A + B)', () => {
+    const sourceA = { trimStart: 0, trimEnd: 1.0 };
+    const sourceB = { trimStart: 0, trimEnd: 0.6 };
+    const slices = buildIntercutSlices({
+      sourceA,
+      sourceB,
+      automation: {
+        totalDurationSec: 0, // ignored for swap length
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      consumeMode: 'entireSources',
+    });
+
+    const usedA = slices
+      .filter((s) => s.slot === 'A')
+      .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+    const usedB = slices
+      .filter((s) => s.slot === 'B')
+      .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+
+    expect(usedA).toBeCloseTo(1.0, 5);
+    expect(usedB).toBeCloseTo(0.6, 5);
+    expect(intercutOutputDuration(slices)).toBeCloseTo(1.6, 5);
+
+    // Hidden freezes: A resumes where it left off (no parallel wall-clock skip).
+    const aSlices = slices.filter((s) => s.slot === 'A');
+    for (let i = 1; i < aSlices.length; i++) {
+      expect(aSlices[i]!.inpoint).toBeCloseTo(aSlices[i - 1]!.outpoint, 5);
+    }
+  });
+
+  it('entireSources drains the longer clip after the shorter is empty', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 0.2 },
+      sourceB: { trimStart: 0, trimEnd: 1.0 },
+      automation: {
+        totalDurationSec: 99,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      consumeMode: 'entireSources',
+    });
+
+    const usedA = slices
+      .filter((s) => s.slot === 'A')
+      .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+    const usedB = slices
+      .filter((s) => s.slot === 'B')
+      .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+    expect(usedA).toBeCloseTo(0.2, 5);
+    expect(usedB).toBeCloseTo(1.0, 5);
+  });
+
+  it('parallel clock advances the hidden source with wall time', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 10 },
+      automation: {
+        totalDurationSec: 0.6,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      sourceClock: 'parallel',
+    });
+
+    // A 0–0.2, B 0.2–0.4 (not 0–0.2), A 0.4–0.6
+    expect(slices[0]).toMatchObject({ slot: 'A', inpoint: 0, outpoint: 0.2 });
+    expect(slices[1]).toMatchObject({ slot: 'B', inpoint: 0.2, outpoint: 0.4 });
+    expect(slices[2]).toMatchObject({ slot: 'A', inpoint: 0.4, outpoint: 0.6 });
+  });
+
+  it('parallel entireSources spans max(A, B) wall time', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 0.4 },
+      sourceB: { trimStart: 0, trimEnd: 1.0 },
+      automation: {
+        totalDurationSec: 0,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      consumeMode: 'entireSources',
+      sourceClock: 'parallel',
+    });
+
+    expect(intercutOutputDuration(slices)).toBeCloseTo(1.0, 5);
+    // After A’s wall span ends, remaining wall time is filled from B.
+    const last = slices[slices.length - 1]!;
+    expect(last.slot).toBe('B');
+    expect(last.outpoint).toBeCloseTo(1.0, 5);
+  });
 });

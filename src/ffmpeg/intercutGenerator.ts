@@ -21,8 +21,10 @@ import {
   remapIntercutSlicesToTrimOrigin,
   requestedIntercutDuration,
   type FrequencyAutomationConfig,
+  type IntercutConsumeMode,
   type IntercutFinalClip,
   type IntercutSlice,
+  type IntercutSourceClock,
 } from '../utils/intercut';
 import { beatsInTrimWindow } from '../utils/beatMarkers';
 import { resolveTargetResolution } from '../utils/resolution';
@@ -56,6 +58,16 @@ export interface IntercutGeneratorConfig {
   forceFinalClip?: IntercutFinalClip;
   /** Extra seconds of the landing clip after the swapping phase. */
   tailDurationSec?: number;
+  /**
+   * `targetDuration` (default) fills the swap duration; `entireSources`
+   * keeps cutting until the material budget for `sourceClock` is drained.
+   */
+  consumeMode?: IntercutConsumeMode;
+  /**
+   * `freezeHidden` (default) pauses the offscreen clip; `parallel` advances
+   * both playheads with output wall time.
+   */
+  sourceClock?: IntercutSourceClock;
 }
 
 export interface IntercutGeneratorResult {
@@ -105,6 +117,8 @@ export function planIntercutSlices(config: IntercutGeneratorConfig): IntercutSli
     beatSync: beatSyncForConfig(config),
     forceFinalClip: config.forceFinalClip,
     tailDurationSec: config.tailDurationSec,
+    consumeMode: config.consumeMode,
+    sourceClock: config.sourceClock,
   });
 }
 
@@ -138,11 +152,22 @@ export function intercutNeedsNormalization(clipA: Clip, clipB: Clip): boolean {
 
 export function estimateIntercut(config: IntercutGeneratorConfig): IntercutEstimate {
   const slices = planIntercutSlices(config);
+  const boundsA = sourceBounds(config.clipA);
+  const boundsB = sourceBounds(config.clipB);
+  const consumeMode = config.consumeMode ?? 'targetDuration';
+  const sourceClock = config.sourceClock ?? 'freezeHidden';
   const shortageMessage = intercutShortageMessage(
     slices,
-    requestedIntercutDuration(config.automation, config.tailDurationSec),
-    sourceBounds(config.clipA),
-    sourceBounds(config.clipB),
+    requestedIntercutDuration(config.automation, config.tailDurationSec, {
+      consumeMode,
+      sourceClock,
+      sourceA: boundsA,
+      sourceB: boundsB,
+    }),
+    boundsA,
+    boundsB,
+    consumeMode,
+    sourceClock,
   );
   return {
     slices,
@@ -462,12 +487,21 @@ export async function generateIntercutFromVfs(
   const slices = planIntercutSlices(config);
   const boundsA = sourceBounds(config.clipA);
   const boundsB = sourceBounds(config.clipB);
+  const consumeMode = config.consumeMode ?? 'targetDuration';
+  const sourceClock = config.sourceClock ?? 'freezeHidden';
   const requireFull = config.requireFullDuration !== false;
   const shortage = intercutShortageMessage(
     slices,
-    requestedIntercutDuration(config.automation, config.tailDurationSec),
+    requestedIntercutDuration(config.automation, config.tailDurationSec, {
+      consumeMode,
+      sourceClock,
+      sourceA: boundsA,
+      sourceB: boundsB,
+    }),
     boundsA,
     boundsB,
+    consumeMode,
+    sourceClock,
   );
   if (slices.length === 0) {
     throw new Error(shortage ?? 'Intercut produced zero slices.');

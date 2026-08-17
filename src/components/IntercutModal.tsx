@@ -9,7 +9,9 @@ import {
 import {
   hzToSecondsPerCut,
   secondsPerCutToHz,
+  type IntercutConsumeMode,
   type IntercutFinalClip,
+  type IntercutSourceClock,
 } from '../utils/intercut';
 import { defaultIntercutPair } from '../utils/intercutPair';
 import {
@@ -62,6 +64,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
   const [snapCutsToBeats, setSnapCutsToBeats] = useState(false);
   const [forceFinalClip, setForceFinalClip] = useState<IntercutFinalClip>('B');
   const [tailDurationSec, setTailDurationSec] = useState(0);
+  const [consumeMode, setConsumeMode] = useState<IntercutConsumeMode>('targetDuration');
+  const [sourceClock, setSourceClock] = useState<IntercutSourceClock>('freezeHidden');
 
   useEffect(() => {
     if (!isOpen) return;
@@ -88,6 +92,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
       snapCutsToBeats,
       forceFinalClip,
       tailDurationSec,
+      consumeMode,
+      sourceClock,
     });
   }, [
     clipA,
@@ -100,6 +106,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     snapCutsToBeats,
     forceFinalClip,
     tailDurationSec,
+    consumeMode,
+    sourceClock,
   ]);
 
   const beatRef: Clip | null = clipA?.beatTimestamps?.length
@@ -129,7 +137,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     !!clipA &&
     !!clipB &&
     clipA.id !== clipB.id &&
-    totalDurationSec > 0 &&
+    (consumeMode === 'entireSources' || totalDurationSec > 0) &&
     !generating &&
     !estimate?.shortageMessage;
 
@@ -158,10 +166,48 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
         </div>
         <div className="modal-body">
           <p className="inspector-hint">
-            Alternate two clips at a changing cut rate. Each source keeps its
-            own playhead (A and B never pause — you only switch which one is
-            visible). The result is a new MP4 in the library — no timeline
-            slicing.
+            Alternate two clips at a changing cut rate. Result is a new MP4 in
+            the library (no timeline slicing).
+          </p>
+
+          <label className="intercut-field">
+            Source clocks
+            <select
+              value={sourceClock}
+              onChange={(e) => setSourceClock(e.target.value as IntercutSourceClock)}
+              disabled={generating}
+            >
+              <option value="freezeHidden">Freeze hidden (keep all frames)</option>
+              <option value="parallel">Parallel (both run in real time)</option>
+            </select>
+          </label>
+          <p className="inspector-hint">
+            {sourceClock === 'parallel'
+              ? 'Both playheads track output time. When you cut to B at 1.2s you see B at 1.2s — offscreen frames are skipped so both sides stay “live.”'
+              : 'Only the visible source advances; the other freezes and resumes. Every shown frame of A and B is contiguous when you stitch that source’s slices.'}
+          </p>
+
+          <label className="intercut-field">
+            Material
+            <select
+              value={consumeMode}
+              onChange={(e) => setConsumeMode(e.target.value as IntercutConsumeMode)}
+              disabled={generating}
+            >
+              <option value="targetDuration">Swap for a set duration</option>
+              <option value="entireSources">
+                {sourceClock === 'parallel'
+                  ? 'Run full dual-clock span'
+                  : 'Use all of both clips'}
+              </option>
+            </select>
+          </label>
+          <p className="inspector-hint">
+            {consumeMode === 'entireSources'
+              ? sourceClock === 'parallel'
+                ? 'Keeps cutting until wall time reaches the longer clip (length ≈ max(A, B)). Frequency ramp spans that window.'
+                : 'Keeps cutting until every trimmed second of A and B is in the output (length ≈ A + B). Frequency ramp spans that full material budget.'
+              : 'Stops after the swap duration below (or when a source runs out of usable material).'}
           </p>
 
           <label className="intercut-field">
@@ -196,21 +242,25 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
             </select>
           </label>
 
-          <label className="intercut-field">
-            Swap duration (seconds)
-            <input
-              type="number"
-              min={0.2}
-              step={0.1}
-              value={totalDurationSec}
-              onChange={(e) => setTotalDurationSec(Number(e.target.value))}
-              disabled={generating}
-            />
-          </label>
-          <p className="inspector-hint">
-            Length of the A/B swapping phase. Add a tail below if the landing
-            clip should keep playing after the last cut.
-          </p>
+          {consumeMode === 'targetDuration' && (
+            <>
+              <label className="intercut-field">
+                Swap duration (seconds)
+                <input
+                  type="number"
+                  min={0.2}
+                  step={0.1}
+                  value={totalDurationSec}
+                  onChange={(e) => setTotalDurationSec(Number(e.target.value))}
+                  disabled={generating}
+                />
+              </label>
+              <p className="inspector-hint">
+                Length of the A/B swapping phase. Add a tail below if the landing
+                clip should keep playing after the last cut.
+              </p>
+            </>
+          )}
 
           <fieldset className="intercut-fieldset">
             <legend>Cut frequency</legend>
@@ -276,34 +326,38 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
               : 'Easing shapes how frequency moves from start rate to end rate. Ease in stays near the start rate then ramps hard. Ease out leaves quickly and settles into the end rate. For a strobe that calms down, set start rate high and end rate low.'}
           </p>
 
-          <label className="intercut-field">
-            Land on
-            <select
-              value={forceFinalClip}
-              onChange={(e) => setForceFinalClip(e.target.value as IntercutFinalClip)}
-              disabled={generating}
-            >
-              <option value="B">Clip B (resolve on B)</option>
-              <option value="A">Clip A (resolve on A)</option>
-              <option value="auto">Natural (odd slices → A, even → B)</option>
-            </select>
-          </label>
+          {consumeMode === 'targetDuration' && (
+            <>
+              <label className="intercut-field">
+                Land on
+                <select
+                  value={forceFinalClip}
+                  onChange={(e) => setForceFinalClip(e.target.value as IntercutFinalClip)}
+                  disabled={generating}
+                >
+                  <option value="B">Clip B (resolve on B)</option>
+                  <option value="A">Clip A (resolve on A)</option>
+                  <option value="auto">Natural (odd slices → A, even → B)</option>
+                </select>
+              </label>
 
-          <label className="intercut-field">
-            Tail after last cut (seconds)
-            <input
-              type="number"
-              min={0}
-              step={0.1}
-              value={tailDurationSec}
-              onChange={(e) => setTailDurationSec(Math.max(0, Number(e.target.value)))}
-              disabled={generating}
-            />
-          </label>
-          <p className="inspector-hint">
-            Extra hold on the landing clip after the swapping phase. Output
-            length is swap duration + tail (if both sources still have material).
-          </p>
+              <label className="intercut-field">
+                Tail after last cut (seconds)
+                <input
+                  type="number"
+                  min={0}
+                  step={0.1}
+                  value={tailDurationSec}
+                  onChange={(e) => setTailDurationSec(Math.max(0, Number(e.target.value)))}
+                  disabled={generating}
+                />
+              </label>
+              <p className="inspector-hint">
+                Extra hold on the landing clip after the swapping phase. Output
+                length is swap duration + tail (if both sources still have material).
+              </p>
+            </>
+          )}
 
           <label className="intercut-field">
             Audio
@@ -362,7 +416,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 clipA,
                 clipB,
                 automation: {
-                  totalDurationSec,
+                  totalDurationSec:
+                    consumeMode === 'entireSources' ? 0 : totalDurationSec,
                   startFrequencyHz,
                   endFrequencyHz,
                   easing: easingFromName(easingName),
@@ -370,7 +425,9 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 audioPolicy,
                 snapCutsToBeats,
                 forceFinalClip,
-                tailDurationSec,
+                tailDurationSec: consumeMode === 'entireSources' ? 0 : tailDurationSec,
+                consumeMode,
+                sourceClock,
               });
             }}
           >
