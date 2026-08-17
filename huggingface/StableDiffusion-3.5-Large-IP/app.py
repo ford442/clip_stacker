@@ -22,6 +22,8 @@ from pipeline_stable_diffusion_3_ipa import StableDiffusion3Pipeline
 from image_gen_aux import UpscaleWithModel
 from huggingface_hub import hf_hub_download
 
+from ip_combine import SIGLIP_IMAGE_ENCODER
+
 FTP_HOST = '1ink.us'
 FTP_USER = 'ford442'
 FTP_PASS = os.getenv("FTP_PASS")
@@ -40,6 +42,9 @@ hftoken = os.getenv("HF_TOKEN")
 
 ipadapter_path = hf_hub_download(repo_id="InstantX/SD3.5-Large-IP-Adapter", filename="ip-adapter.bin")
 model_path = 'ford442/stable-diffusion-3.5-large-bf16'
+ULTRAREAL_LORA_REPO = "ford442/sdxl-vae-bf16"
+ULTRAREAL_LORA_WEIGHT = "LoRA/UltraReal.safetensors"
+_ultrareal_loaded = False
 
 def upload_to_ftp(filename):
     try:
@@ -108,23 +113,45 @@ def infer(
     latent_file_4 = gr.File(),  # Add latents file input
     latent_file_5 = gr.File(),  # Add latents file input
     text_scale: float = 1.0,
-    ip_scale: float = 1.0,
+    ip_scale: float = 0.5,
     latent_file_1_scale: float = 1.0,
     latent_file_2_scale: float = 1.0,
     latent_file_3_scale: float = 1.0,
     latent_file_4_scale: float = 1.0,
     latent_file_5_scale: float = 1.0,
     image_encoder_path=None,
+    combine_mode: str = "concat",
+    lora_scale: float = 1.0,
     progress=gr.Progress(track_tqdm=True),
 ):
+    global _ultrareal_loaded
     pipe.text_encoder=text_encoder
     pipe.text_encoder_2=text_encoder_2
     pipe.text_encoder_3=text_encoder_3
-    pipe.init_ipadapter(
-        ip_adapter_path=ipadapter_path, 
-        image_encoder_path=image_encoder_path, 
-        nb_token=64, 
+    # Load InstantX processors once. Re-running every request rebuilt the
+    # attention processors and (if LoRA is on) wasted the ZeroGPU window.
+    pipe.ensure_ipadapter(
+        ip_adapter_path=ipadapter_path,
+        image_encoder_path=image_encoder_path or SIGLIP_IMAGE_ENCODER,
+        nb_token=64,
     )
+    # UltraReal lives on the same Attention linears the IP processor still
+    # calls (to_q/to_k/to_v/to_out). IP-only layers (to_k_ip/to_v_ip) stay
+    # un-adapted. Load after the IP processors exist; PEFT wraps the linears.
+    if not _ultrareal_loaded:
+        try:
+            pipe.load_lora_weights(ULTRAREAL_LORA_REPO, weight_name=ULTRAREAL_LORA_WEIGHT)
+            _ultrareal_loaded = True
+            print("-- loaded UltraReal LoRA --")
+        except Exception as e:
+            print(f"-- UltraReal LoRA not loaded: {e} --")
+    if _ultrareal_loaded:
+        # Strength is applied per step via joint_attention_kwargs["scale"]
+        # (PEFT). Do not also set_adapters(weight=...) or the two multiply.
+        if lora_scale and lora_scale > 0:
+            pipe.enable_lora()
+        else:
+            pipe.disable_lora()
     upscaler_2.to(torch.device('cpu'))
     gc.collect()
     torch.cuda.empty_cache()
@@ -133,38 +160,23 @@ def infer(
     seed = random.randint(0, MAX_SEED)
     generator = torch.Generator(device='cuda').manual_seed(seed)
     enhanced_prompt = prompt
-    enhanced_prompt_2 = prompt
     if latent_file:
         sd_image_a = Image.open(latent_file.name).convert('RGB')
-        print("-- using image file and loading ip-adapter --")
-        #sd_image_a.resize((height,width), Image.LANCZOS)
-        sd_image_a.resize((width,height), Image.LANCZOS)
-        if latent_file_2 is not None:  # Check if a latent file is provided
-            sd_image_b = Image.open(latent_file_2.name).convert('RGB')
-            sd_image_b.resize((width,height), Image.LANCZOS)
-        else:
-            sd_image_b = None
-        if latent_file_3 is not None:  # Check if a latent file is provided
-            sd_image_c = Image.open(latent_file_3.name).convert('RGB')
-            sd_image_c.resize((width,height), Image.LANCZOS)
-        else:
-            sd_image_c = None
-        if latent_file_4 is not None:  # Check if a latent file is provided
-            sd_image_d = Image.open(latent_file_4.name).convert('RGB')
-            sd_image_d.resize((width,height), Image.LANCZOS)
-        else:
-            sd_image_d = None
-        if latent_file_5 is not None:  # Check if a latent file is provided
-            sd_image_e = Image.open(latent_file_5.name).convert('RGB')
-            sd_image_e.resize((width,height), Image.LANCZOS)
-        else:
-            sd_image_e = None
+        print("-- using image file --")
+        sd_image_b = Image.open(latent_file_2.name).convert('RGB') if latent_file_2 is not None else None
+        sd_image_c = Image.open(latent_file_3.name).convert('RGB') if latent_file_3 is not None else None
+        sd_image_d = Image.open(latent_file_4.name).convert('RGB') if latent_file_4 is not None else None
+        sd_image_e = Image.open(latent_file_5.name).convert('RGB') if latent_file_5 is not None else None
         print('-- generating image --')
         sd_image = pipe(
             width=width,
             height=height,
             prompt=enhanced_prompt,
+            prompt_2=enhanced_prompt,
+            prompt_3=enhanced_prompt,
             negative_prompt=negative_prompt_1,
+            negative_prompt_2=negative_prompt_2,
+            negative_prompt_3=negative_prompt_3,
             num_inference_steps=num_inference_steps,
             guidance_scale=guidance_scale,
             generator=generator,
@@ -181,6 +193,8 @@ def infer(
             scale_3=latent_file_3_scale,
             scale_4=latent_file_4_scale,
             scale_5=latent_file_5_scale,
+            combine_mode=combine_mode,
+            lora_scale=lora_scale if _ultrareal_loaded else 0.0,
         ).images[0]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         rv_path = f"sd35IP_{timestamp}.png"
@@ -198,7 +212,7 @@ def infer(
         downscale2.save(upscale_path,optimize=False,compress_level=0)
         upload_to_ftp(upscale_path)
     else:
-        print('-- at least one input image required --')
+        raise gr.Error("At least one input image is required.")
     return sd_image, enhanced_prompt
 
 examples = [
@@ -219,7 +233,7 @@ body{
 
 with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
     with gr.Column(elem_id="col-container"):
-        gr.Markdown(" # StableDiffusion 3.5 Large with IP Adapter")
+        gr.Markdown(" # StableDiffusion 3.5 Large — IP-Adapter + UltraReal LoRA")
         expanded_prompt_output = gr.Textbox(label="Prompt", lines=5) 
         with gr.Row():
             prompt = gr.Text(
@@ -232,7 +246,7 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
             text_strength =  gr.Slider(
                 label="Text Scale",
                 minimum=0.0,
-                maximum=16.0,
+                maximum=4.0,
                 step=0.01,
                 value=1.0,
             ) 
@@ -281,15 +295,28 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
                     value=1.0,
                 )
                 image_encoder_path = gr.Dropdown(
-                    ["google/siglip-so400m-patch14-384", "jancuhel/google-siglip-so400m-patch14-384-img-text-relevancy", "laion/CLIP-ViT-H-14-laion2B-s32B-b79K"], 
-                    label="CLIP Model", 
+                    [SIGLIP_IMAGE_ENCODER, "jancuhel/google-siglip-so400m-patch14-384-img-text-relevancy"],
+                    value=SIGLIP_IMAGE_ENCODER,
+                    label="SigLIP encoder (InstantX was trained on google/siglip-so400m-patch14-384)",
+                )
+                combine_mode = gr.Dropdown(
+                    ["concat", "mean"],
+                    value="concat",
+                    label="Multi-image combine (concat = keep each image's tokens; mean = blend moods)",
                 )
                 ip_scale = gr.Slider(
                     label="Overall Image Scale",
                     minimum=0.0,
                     maximum=2.0,
                     step=0.01,
-                    value=1.0,
+                    value=0.5,
+                )
+                lora_scale = gr.Slider(
+                    label="UltraReal LoRA scale (0 = off)",
+                    minimum=0.0,
+                    maximum=1.5,
+                    step=0.01,
+                    value=0.8,
                 )            
                 negative_prompt_1 = gr.Text(
                     label="Negative prompt 1",
@@ -367,6 +394,8 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
             file_4_strength,
             file_5_strength,
             image_encoder_path,
+            combine_mode,
+            lora_scale,
         ],
         outputs=[result, expanded_prompt_output],
         )

@@ -10,7 +10,7 @@ models:
 sdk_version: 5.46.1
 app_file: app.py
 pinned: false
-short_description: StableDiffusion-3.5-Large with image input.
+short_description: SD3.5 Large IP-Adapter + UltraReal LoRA
 ---
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference

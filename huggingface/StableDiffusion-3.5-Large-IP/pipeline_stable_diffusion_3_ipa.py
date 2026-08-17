@@ -47,6 +47,13 @@ from models.transformer_sd3 import SD3Transformer2DModel
 from diffusers.models.normalization import RMSNorm
 from einops import rearrange
 
+from ip_combine import (
+    COMBINE_MODES,
+    SIGLIP_IMAGE_ENCODER,
+    collect_slots,
+    plan_image_embeds,
+)
+
 
 if is_torch_xla_available():
     import torch_xla.core.xla_model as xm
@@ -866,6 +873,14 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
     @torch.inference_mode()
     def init_ipadapter(self, ip_adapter_path, image_encoder_path, nb_token, output_dim=2432):
         from transformers import SiglipVisionModel, SiglipImageProcessor
+        if image_encoder_path is None:
+            image_encoder_path = SIGLIP_IMAGE_ENCODER
+        # InstantX trained TimeResampler.proj_in on SigLIP-so400m (1152-d).
+        # CLIP-ViT-H is 1024-d and will not load into those weights.
+        if "siglip" not in image_encoder_path.lower():
+            raise ValueError(
+                f"InstantX SD3.5 IP-Adapter requires a SigLIP encoder, got {image_encoder_path!r}"
+            )
         state_dict = torch.load(ip_adapter_path, map_location="cpu")
 
         device, dtype = self.transformer.device, self.transformer.dtype
@@ -919,28 +934,60 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
 
         key_name = tmp_ip_layers.load_state_dict(state_dict["ip_adapter"], strict=False)
         print(f"=> loading ip_adapter: {key_name}")
+        self._ip_encoder_path = image_encoder_path
+        self._ip_adapter_ready = True
 
-    # <<< START OF ADDED METHOD >>>
+    def ensure_ipadapter(self, ip_adapter_path, image_encoder_path=None, nb_token=64):
+        """Load the InstantX weights once. Re-init only if the encoder changes.
+
+        `set_attn_processor` replaces processors, not the PEFT-wrapped `to_q` /
+        `to_k` / `to_v` / `to_out` linears, so UltraReal LoRA survives a reload.
+        """
+        image_encoder_path = image_encoder_path or SIGLIP_IMAGE_ENCODER
+        if getattr(self, "_ip_adapter_ready", False) and getattr(self, "_ip_encoder_path", None) == image_encoder_path:
+            return
+        self.init_ipadapter(
+            ip_adapter_path=ip_adapter_path,
+            image_encoder_path=image_encoder_path,
+            nb_token=nb_token,
+        )
+
     @torch.inference_mode()
     def _encode_clip_image_emb(self, clip_image: Image.Image, device, dtype) -> torch.FloatTensor:
-        """
-        Helper method to encode a single PIL image into CLIP embeddings.
-        Resizes the image and returns the hidden states from the penultimate layer.
+        """Encode one PIL image with the InstantX SigLIP processor.
+
+        Do not stretch to square first — SigLIP's processor already resizes and
+        center-crops to 384. Stretching faces/bodies is a distortion source.
         """
         if not isinstance(clip_image, Image.Image):
             raise TypeError("clip_image must be a PIL.Image.Image")
-            
-        # Resize image
-        clip_image = clip_image.resize((max(clip_image.size), max(clip_image.size)))
-        
-        # Process and encode
+
         clip_image_tensor = self.clip_image_processor(images=[clip_image], return_tensors="pt").pixel_values
         clip_image_tensor = clip_image_tensor.to(device, dtype=dtype)
         clip_image_embeds = self.image_encoder(clip_image_tensor, output_hidden_states=True).hidden_states[-2]
-        
-        # Returns shape [1, seq_len, embed_dim]
         return clip_image_embeds
-    # <<< END OF ADDED METHOD >>>
+
+    def _project_ip_slots(self, slots, timestep, latents_dtype, do_cfg=True):
+        """Run TimeResampler on each planned slot and concat the token sets.
+
+        Each slot is CFG-batched as [uncond zeros; cond] so the two branches
+        keep matching shape. Slot weights scale tokens *after* the resampler
+        LayerNorm; they already average 1.0 so total magnitude stays in-family.
+        """
+        projected = []
+        timestep_emb = None
+        for clip_embeds, slot_weight in slots:
+            if do_cfg:
+                cfg_embeds = torch.cat([torch.zeros_like(clip_embeds), clip_embeds], dim=0)
+            else:
+                cfg_embeds = clip_embeds
+            image_prompt_embeds, timestep_emb = self.image_proj_model(
+                cfg_embeds,
+                timestep.to(dtype=latents_dtype),
+                need_temb=True,
+            )
+            projected.append(image_prompt_embeds * slot_weight)
+        return torch.cat(projected, dim=1), timestep_emb
 
     @torch.no_grad()
     @replace_example_docstring(EXAMPLE_DOC_STRING)
@@ -979,12 +1026,14 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
         clip_image_4=None,
         clip_image_5=None,
         text_scale=1.0,
-        ipadapter_scale=1.0,
+        ipadapter_scale=0.5,
         scale_1=1.0,
         scale_2=1.0,
         scale_3=1.0,
         scale_4=1.0,
         scale_5=1.0,
+        combine_mode="concat",
+        lora_scale=1.0,
     ):
         r"""
         Function invoked when calling the pipeline for generation.
@@ -1120,7 +1169,10 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
         device = self._execution_device
         dtype = self.transformer.dtype
 
-        lora_scale = (
+        if combine_mode not in COMBINE_MODES:
+            raise ValueError(f"combine_mode must be one of {COMBINE_MODES}, got {combine_mode!r}")
+
+        lora_scale = lora_scale if lora_scale is not None else (
             self.joint_attention_kwargs.get("scale", None) if self.joint_attention_kwargs is not None else None
         )
         (
@@ -1148,66 +1200,26 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
         )
 
         if self.do_classifier_free_guidance:
-            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds], dim=0)
+            # Scale only the positive branch. Multiplying the CFG-concatenated
+            # tensor used to blow up the uncond half the same way, which just
+            # rescales the whole noise prediction instead of changing text vs image.
+            prompt_embeds = torch.cat([negative_prompt_embeds, prompt_embeds * text_scale], dim=0)
             pooled_prompt_embeds = torch.cat([negative_pooled_prompt_embeds, pooled_prompt_embeds], dim=0)
-            
-        prompt_embeds = prompt_embeds * text_scale
-        
-        # <<< START OF MODIFIED SECTION >>>
-        # 3. prepare clip emb
-        image_embeds_list = []
-        scales_list = []
-
-        # Collect all provided image embeddings and their scales
-        if clip_image is not None:
-            print("Processing primary image.")
-            image_embeds_list.append(self._encode_clip_image_emb(clip_image, device, dtype))
-            scales_list.append(scale_1)
-        if clip_image_2 is not None:
-            print("Processing secondary image.")
-            image_embeds_list.append(self._encode_clip_image_emb(clip_image_2, device, dtype))
-            scales_list.append(scale_2)
-        if clip_image_3 is not None:
-            print("Processing tertiary image.")
-            image_embeds_list.append(self._encode_clip_image_emb(clip_image_3, device, dtype))
-            scales_list.append(scale_3)
-        if clip_image_4 is not None:
-            print("Processing quaternary image.")
-            image_embeds_list.append(self._encode_clip_image_emb(clip_image_4, device, dtype))
-            scales_list.append(scale_4)
-        if clip_image_5 is not None:
-            print("Processing quinary image.")
-            image_embeds_list.append(self._encode_clip_image_emb(clip_image_5, device, dtype))
-            scales_list.append(scale_5)
-
-        if not image_embeds_list:
-            # If no images provided, create a zero tensor.
-            # We need the expected shape. We'll encode a dummy image to get it.
-            print("No IP-Adapter image provided, using zeros.")
-            dummy_image = Image.new('RGB', (256, 256), (0, 0, 0))
-            cond_image_embeds = self._encode_clip_image_emb(dummy_image, device, dtype)
-            cond_image_embeds = torch.zeros_like(cond_image_embeds)
         else:
-            # Stack all embeddings. Shape: [Num_Images, 1, Seq_Len, Embed_Dim]
-            all_embeds = torch.stack(image_embeds_list, dim=0)
-            
-            # Create scales tensor. Shape: [Num_Images]
-            scales = torch.tensor(scales_list, device=device, dtype=dtype)
-            # Reshape scales for broadcasting: [Num_Images, 1, 1, 1]
-            scales = scales.view(-1, 1, 1, 1)
-            
-            # Apply scales and then average along the Num_Images dimension
-            scaled_embeds = all_embeds * scales
-            cond_image_embeds = torch.mean(scaled_embeds, dim=0) # Shape: [1, Seq_Len, Embed_Dim]
+            prompt_embeds = prompt_embeds * text_scale
 
-        # Create unconditional image embeds (zeros)
-        uncond_image_embeds = torch.zeros_like(cond_image_embeds)
-        
-        # Stack for Classifier-Free Guidance. Shape: [2, Seq_Len, Embed_Dim]
-        clip_image_embeds = torch.cat([uncond_image_embeds, cond_image_embeds], dim=0)
-        
-        print(f"Final combined image embeds shape: {clip_image_embeds.shape}")
-        # <<< END OF MODIFIED SECTION >>>
+        # 3. prepare clip emb — encode each image, plan mean vs concat slots.
+        # TimeResampler is timestep-dependent, so projection happens in the loop.
+        images, scales_list = collect_slots([
+            (clip_image, scale_1),
+            (clip_image_2, scale_2),
+            (clip_image_3, scale_3),
+            (clip_image_4, scale_4),
+            (clip_image_5, scale_5),
+        ])
+        image_embeds_list = [self._encode_clip_image_emb(image, device, dtype) for image in images]
+        ip_slots = plan_image_embeds(image_embeds_list, scales_list, combine_mode=combine_mode)
+        print(f"IP combine_mode={combine_mode} slots={len(ip_slots)} images={len(images)}")
 
         # 4. Prepare timesteps
         timesteps, num_inference_steps = retrieve_timesteps(self.scheduler, num_inference_steps, device, timesteps)
@@ -1238,18 +1250,17 @@ class StableDiffusion3Pipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromSingle
                 # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
                 timestep = t.expand(latent_model_input.shape[0])
 
-                # This is now correct:
-                # clip_image_embeds has shape [2, Seq, Dim]
-                # timestep has shape [2]
-                # This returns image_prompt_embeds with shape [2, N_Queries, Proj_Dim]
-                image_prompt_embeds, timestep_emb = self.image_proj_model(
-                    clip_image_embeds, 
-                    timestep.to(dtype=latents.dtype), 
-                    need_temb=True
+                # Project each planned slot at this timestep, then concat tokens.
+                image_prompt_embeds, timestep_emb = self._project_ip_slots(
+                    ip_slots, timestep, latents.dtype,
+                    do_cfg=self.do_classifier_free_guidance,
                 )
 
-                # This is also correct. The processor will get the CFG-batched image embeds.
+                # `scale` at the top level is the PEFT LoRA scale (popped by the
+                # transformer). IP strength lives in emb_dict so the two knobs
+                # do not overwrite each other.
                 joint_attention_kwargs = dict(
+                    scale=lora_scale if lora_scale is not None else 1.0,
                     emb_dict=dict(
                         ip_hidden_states=image_prompt_embeds,
                         temb=timestep_emb,

@@ -16,5 +16,6 @@ numpy
 opencv-python
 git+https://github.com/asomoza/image_gen_aux.git
 diffusers
+peft
 #git+https://github.com/huggingface/diffusers.git
 #git+https://github.com/ford442/diffusers.git@pre_upcast_offload
