@@ -258,6 +258,16 @@ export async function applyProjectData(
     if (savedClip.bpmEstimate != null && Number.isFinite(Number(savedClip.bpmEstimate))) {
       liveClip.bpmEstimate = Number(savedClip.bpmEstimate);
     }
+    if (Array.isArray(savedClip.lumaHistogram) && savedClip.lumaHistogram.length === 256) {
+      liveClip.lumaHistogram = savedClip.lumaHistogram.map((n) => Number(n) || 0);
+    }
+    if (savedClip.lumaLevels) {
+      liveClip.lumaLevels = {
+        black: Number(savedClip.lumaLevels.black) || 0,
+        white: Number(savedClip.lumaLevels.white) || 255,
+        mean: Number(savedClip.lumaLevels.mean) || 0,
+      };
+    }
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
   }

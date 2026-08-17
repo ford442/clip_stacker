@@ -130,6 +130,14 @@ export interface Clip {
   bpmEstimate?: number;
   /** Timing cues (lyrics, transients) used for sync mapping. */
   syncMarkers?: SyncMarker[];
+  /** 256-bin Rec.709 luma histogram from gpu-chores (import analysis). */
+  lumaHistogram?: number[];
+  lumaLevels?: { black: number; white: number; mean: number };
+  /** Small library/scrubber poster (data URL). */
+  posterUrl?: string;
+  /** Last gpu-chores backend used for import analysis. */
+  gpuChoreBackend?: 'webgpu' | 'wasm' | 'cpu';
+  gpuChoreReason?: string;
 }
 
 export interface SerializedClip {
@@ -187,6 +195,8 @@ export interface SerializedClip {
   /** Rough BPM estimate from beatTimestamps. */
   bpmEstimate?: number;
   syncMarkers?: SyncMarker[];
+  lumaHistogram?: number[];
+  lumaLevels?: { black: number; white: number; mean: number };
 }
 
 export type TransitionType = 'none' | (string & {});

@@ -42,6 +42,15 @@
   max-width: 160px;
 }
 
+.clip-library-poster {
+  width: 48px;
+  height: 27px;
+  object-fit: cover;
+  border-radius: 3px;
+  flex-shrink: 0;
+  background: #000;
+}
+
 /* A/B group styles */
 .clip-group {
   border: 1px solid var(--tz-dissolve);

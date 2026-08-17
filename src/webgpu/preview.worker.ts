@@ -21,6 +21,7 @@ import {
   type PreviewCompositionPlan,
 } from '../utils/previewComposition';
 import { acquireGpuContext } from './gpuDevice';
+import { adoptGpuDevice } from '../gpu-chores/device';
 import { WorkerTimelineRenderer, type CapturedFrameEntry } from './timelinePreview';
 import type { PreviewWorkerInbound, PreviewWorkerOutbound, FrameRequest } from './previewWorkerProtocol';
 
@@ -42,6 +43,7 @@ async function probeWebGpu(): Promise<boolean> {
   if (!('gpu' in navigator)) return false;
   try {
     const ctx = await acquireGpuContext();
+    adoptGpuDevice(ctx.device);
     return !!ctx.device;
   } catch {
     return false;

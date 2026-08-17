@@ -157,6 +157,16 @@ describe("utils/project - serializeProject", () => {
     expect(project.clips[0].keyframes?.opacity).toHaveLength(1);
   });
 
+  it("should serialize gpu-chores luma histogram metadata", () => {
+    const clip = createTestClip("clip1", 5);
+    clip.stillImage = true;
+    clip.lumaHistogram = Array.from({ length: 256 }, (_, i) => i);
+    clip.lumaLevels = { black: 8, white: 240, mean: 110 };
+    const project = serializeProject([clip], [], [], []);
+    expect(project.clips[0].lumaHistogram).toHaveLength(256);
+    expect(project.clips[0].lumaLevels?.black).toBe(8);
+  });
+
   it("should serialize volume and pan automation lanes", () => {
     const clip = createTestClip("clip1", 5);
     clip.volume = 0.9;

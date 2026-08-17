@@ -428,3 +428,31 @@
   background: var(--gold-dim);
   color: var(--gold-bright);
 }
+
+.inspector-gpu-chores {
+  margin: 0.35rem 0 0.5rem;
+}
+
+.luma-histogram {
+  display: flex;
+  align-items: flex-end;
+  height: 48px;
+  gap: 0;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  padding: 0 1px;
+}
+
+.luma-histogram-bar {
+  flex: 1;
+  min-width: 0;
+  background: var(--gold);
+  opacity: 0.85;
+}
+
+.inspector-gpu-chore-crumb {
+  font-size: 0.68rem;
+  word-break: break-word;
+}

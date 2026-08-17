@@ -1,5 +1,6 @@
 import type { Clip } from '../types';
 import { extractThumbnails } from './media';
+import { analyzeImportedStillFile } from '../gpu-chores/stillImport';
 import { extractWaveformPeaks } from './waveform';
 
 const thumbnailCache = new Map<string, string[]>();
@@ -43,6 +44,12 @@ export function requestTimelineThumbnails(
 ): void {
   if (clip.kind !== 'video') return;
 
+  if (clip.stillImage && clip.posterUrl) {
+    thumbnailCache.set(clip.id, [clip.posterUrl]);
+    onComplete(clip.id, [clip.posterUrl]);
+    return;
+  }
+
   const cached = thumbnailCache.get(clip.id);
   if (cached) {
     onComplete(clip.id, cached);
@@ -54,17 +61,20 @@ export function requestTimelineThumbnails(
   const controller = new AbortController();
   thumbControllers.set(clip.id, controller);
 
-  const dur = effectiveDur(clip);
-  const count = Math.max(2, Math.min(8, Math.ceil(dur / 3)));
+  const work = clip.stillImage
+    ? analyzeImportedStillFile(clip.file).then((stats) =>
+        stats.posterUrl ? [stats.posterUrl] : [],
+      )
+    : extractThumbnails(
+        clip.objectUrl,
+        clip.duration,
+        clip.trimStart,
+        clip.trimEnd,
+        Math.max(2, Math.min(8, Math.ceil(effectiveDur(clip) / 3))),
+        { signal: controller.signal },
+      );
 
-  extractThumbnails(
-    clip.objectUrl,
-    clip.duration,
-    clip.trimStart,
-    clip.trimEnd,
-    count,
-    { signal: controller.signal },
-  )
+  work
     .then((thumbs) => {
       if (controller.signal.aborted) return;
       thumbnailCache.set(clip.id, thumbs);

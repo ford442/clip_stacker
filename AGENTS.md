@@ -95,6 +95,20 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 
 Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approved FFT) inside `native/audio_analysis/`.
 
+## gpu-chores (import / library pixel work)
+
+TypedArray image chores for clip import and library UX — luminance histogram, downsample-for-thumbs, optional blur. This is **not** FFmpeg encode/decode, **not** kissfft audio analysis, and **not** the WebGPU preview compositor (#114 / #118 / #187).
+
+### Layout
+
+- `src/gpu-chores/` — local stub of the shared `runJob({ op, prefer: 'auto' })` API
+- Kernels: `luma_histogram_bt709` (256-bin Rec.709, Chromashift-compatible), `downsample_2d` (bilinear thumbs), `separable_blur` (UI soft masks)
+- Backend order: adopt the **existing** preview `GPUDevice` (never `requestDevice()` from chores) → chores Worker (TS golden) → main-thread TS. WebGL2 is not used (one GPU API per working set).
+- Break-even: GPU only at ≥ 1 megapixel (`prefer: 'auto'`). Small stills stay CPU. Kill switch: `?no_gpu_compute`.
+- Diagnostics: `gpuComputeAvailable()` / `formatGpuChoreDiagnostics()` (inspector + Copy Debug). Preview stays Canvas2D when WebGPU is missing.
+
+Do not keep a second WebGL context for histograms. Keep COOP/COEP and the production CSP unchanged (workers already allowed via `worker-src 'self' blob:`).
+
 ## Variable speed remapping (time stretch)
 
 `automation.playbackRate` keyframes (existing `Keyframe` type — output-local seconds) remap timeline time to source time via ∫ rate(τ) dτ (`src/utils/timeRemap.ts`). Preview video samples frames at the remapped `sourceTime`; audio is pitch-preserved with a small WSOLA WASM module (not SoundTouch / LGPL).

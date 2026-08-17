@@ -42,6 +42,9 @@ function ClipLibraryItem({ clipId, onToggleVariant: _onToggleVariant, onDelete }
       tabIndex={0}
     >
       <div className="row">
+        {clip.posterUrl && (
+          <img className="clip-library-poster" src={clip.posterUrl} alt="" />
+        )}
         <strong className="clip-title">{clip.title}</strong>
         <span className="muted">{clip.kind.toUpperCase()}</span>
         <button
@@ -98,6 +101,9 @@ function VariantRow({ group, slot, onToggleVariant, onDelete }: VariantRowProps)
     >
       <div className="row">
         <span className="variant-badge">{slot}</span>
+        {clip.posterUrl && (
+          <img className="clip-library-poster" src={clip.posterUrl} alt="" />
+        )}
         <strong className="clip-title">{clip.title}</strong>
         <button
           type="button"

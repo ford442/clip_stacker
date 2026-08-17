@@ -23,6 +23,8 @@ describe("utils/project - applyProjectData (advanced)", () => {
           audioFadeOut: 0,
           fileName: "photo.jpg",
           stillImage: true,
+          lumaHistogram: Array.from({ length: 256 }, (_, i) => (i === 10 ? 4 : 0)),
+          lumaLevels: { black: 10, white: 10, mean: 10 },
           keyframes: {
             x: [
               { t: 0, value: 10 },
@@ -35,6 +37,8 @@ describe("utils/project - applyProjectData (advanced)", () => {
 
     const result = await applyProjectData(project, sourceClips);
     expect(result.clips[0].stillImage).toBe(true);
+    expect(result.clips[0].lumaHistogram?.[10]).toBe(4);
+    expect(result.clips[0].lumaLevels?.mean).toBe(10);
     expect(result.clips[0].keyframes?.x).toHaveLength(2);
   });
 
