@@ -71,6 +71,10 @@ describe('IntercutModal', () => {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     expect(text).toContain('Create Intercut Clip');
+    expect(text).toContain('Source clocks');
+    expect(text).toContain('Freeze hidden');
+    expect(text).toContain('Parallel');
+    expect(text).toContain('Material');
     expect(text).toContain('Land on');
     expect(text).toContain('Tail after last cut');
     expect(text).toMatch(/\d+ slices/);

@@ -170,45 +170,63 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
             the library (no timeline slicing).
           </p>
 
-          <label className="intercut-field">
-            Source clocks
-            <select
-              value={sourceClock}
-              onChange={(e) => setSourceClock(e.target.value as IntercutSourceClock)}
-              disabled={generating}
-            >
-              <option value="freezeHidden">Freeze hidden (keep all frames)</option>
-              <option value="parallel">Parallel (both run in real time)</option>
-            </select>
-          </label>
-          <p className="inspector-hint">
-            {sourceClock === 'parallel'
-              ? 'Both playheads track output time. When you cut to B at 1.2s you see B at 1.2s — offscreen frames are skipped so both sides stay “live.”'
-              : 'Only the visible source advances; the other freezes and resumes. Every shown frame of A and B is contiguous when you stitch that source’s slices.'}
-          </p>
+          <fieldset className="intercut-fieldset">
+            <legend>Source clocks</legend>
+            <div className="intercut-unit-toggle" role="group" aria-label="Source clock mode">
+              <button
+                type="button"
+                className={sourceClock === 'freezeHidden' ? 'active' : ''}
+                onClick={() => setSourceClock('freezeHidden')}
+                disabled={generating}
+                title="Hidden clip freezes; keeps all frames of both"
+              >
+                Freeze hidden
+              </button>
+              <button
+                type="button"
+                className={sourceClock === 'parallel' ? 'active' : ''}
+                onClick={() => setSourceClock('parallel')}
+                disabled={generating}
+                title="Both clips advance with output time; offscreen frames skipped"
+              >
+                Parallel
+              </button>
+            </div>
+            <p className="inspector-hint">
+              {sourceClock === 'parallel'
+                ? 'Both playheads track output time. Cut to B at 1.2s → see B at 1.2s (offscreen frames skipped).'
+                : 'Only the visible source advances; the other freezes and resumes (keeps all frames).'}
+            </p>
+          </fieldset>
 
-          <label className="intercut-field">
-            Material
-            <select
-              value={consumeMode}
-              onChange={(e) => setConsumeMode(e.target.value as IntercutConsumeMode)}
-              disabled={generating}
-            >
-              <option value="targetDuration">Swap for a set duration</option>
-              <option value="entireSources">
-                {sourceClock === 'parallel'
-                  ? 'Run full dual-clock span'
-                  : 'Use all of both clips'}
-              </option>
-            </select>
-          </label>
-          <p className="inspector-hint">
-            {consumeMode === 'entireSources'
-              ? sourceClock === 'parallel'
-                ? 'Keeps cutting until wall time reaches the longer clip (length ≈ max(A, B)). Frequency ramp spans that window.'
-                : 'Keeps cutting until every trimmed second of A and B is in the output (length ≈ A + B). Frequency ramp spans that full material budget.'
-              : 'Stops after the swap duration below (or when a source runs out of usable material).'}
-          </p>
+          <fieldset className="intercut-fieldset">
+            <legend>Material</legend>
+            <div className="intercut-unit-toggle" role="group" aria-label="Material budget">
+              <button
+                type="button"
+                className={consumeMode === 'targetDuration' ? 'active' : ''}
+                onClick={() => setConsumeMode('targetDuration')}
+                disabled={generating}
+              >
+                Set duration
+              </button>
+              <button
+                type="button"
+                className={consumeMode === 'entireSources' ? 'active' : ''}
+                onClick={() => setConsumeMode('entireSources')}
+                disabled={generating}
+              >
+                {sourceClock === 'parallel' ? 'Full span' : 'All of both'}
+              </button>
+            </div>
+            <p className="inspector-hint">
+              {consumeMode === 'entireSources'
+                ? sourceClock === 'parallel'
+                  ? 'Cut until wall time reaches the longer clip (≈ max(A, B)).'
+                  : 'Cut until every trimmed second of A and B is used (≈ A + B).'
+                : 'Stop after the swap duration below (or when a source runs out).'}
+            </p>
+          </fieldset>
 
           <label className="intercut-field">
             Clip A
