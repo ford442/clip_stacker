@@ -1,7 +1,7 @@
 /**
  * Intercut (strobe / flash-cut) slice planning for FFmpeg concat demuxer.
  *
- * Each slice references a source inpoint/outpoint on clip A or B.
+ * Each slice references a source inpoint/outpoint on clip A, B, or optional C.
  *
  * `sourceClock`:
  * - `freezeHidden` (default) — only the visible source advances; the hidden
@@ -19,7 +19,7 @@
 import type { Keyframe, KeyframeEasing } from './keyframes';
 import { sampleKeyframes } from './keyframes';
 
-export type IntercutSlot = 'A' | 'B';
+export type IntercutSlot = 'A' | 'B' | 'C';
 
 export interface IntercutSourceBounds {
   /** Source media time where readable content starts (seconds). */
@@ -74,6 +74,8 @@ export type IntercutSourceClock = 'freezeHidden' | 'parallel';
 export interface BuildIntercutSlicesConfig {
   sourceA: IntercutSourceBounds;
   sourceB: IntercutSourceBounds;
+  /** Optional third source; when set, slices cycle A → B → C. */
+  sourceC?: IntercutSourceBounds;
   automation: FrequencyAutomationConfig;
   /** Floor on slice length; caps max Hz. Default one 60 fps frame. */
   minSliceSec?: number;
@@ -82,8 +84,8 @@ export interface BuildIntercutSlicesConfig {
   /** Optional musical cut grid; falls back to raw Hz when beats are too sparse. */
   beatSync?: IntercutBeatSyncConfig;
   /**
-   * Last slice of the swapping phase. `auto` (default) keeps strict A/B
-   * alternation; `A`/`B` override that last slot when the source still has
+   * Last slice of the swapping phase. `auto` (default) keeps strict A/B/C
+   * cycling; `A`/`B`/`C` override that last slot when the source still has
    * trimmed material.
    */
   forceFinalClip?: IntercutFinalClip;
@@ -166,44 +168,35 @@ function remainingOn(source: IntercutSourceBounds, offset: number): number {
   return Math.max(0, source.trimEnd - offset);
 }
 
+type SlotOffsets = Partial<Record<IntercutSlot, number>>;
+type SlotSources = Partial<Record<IntercutSlot, IntercutSourceBounds>>;
+
 function takeSlice(
   slot: IntercutSlot,
   sliceDuration: number,
-  offsetA: number,
-  offsetB: number,
-  sourceA: IntercutSourceBounds,
-  sourceB: IntercutSourceBounds,
+  offsets: SlotOffsets,
+  sources: SlotSources,
+  slots: IntercutSlot[],
   sourceClock: IntercutSourceClock,
-): { slice: IntercutSlice; actual: number; offsetA: number; offsetB: number } | null {
-  if (slot === 'A') {
-    const inpoint = offsetA;
-    const outpoint = Math.min(offsetA + sliceDuration, sourceA.trimEnd);
-    const actual = outpoint - inpoint;
-    if (actual <= 1e-9) return null;
-    if (sourceClock === 'parallel') {
-      // Both clocks advance with wall time; B skips the same interval.
-      return {
-        slice: { slot, inpoint, outpoint },
-        actual,
-        offsetA: outpoint,
-        offsetB: Math.min(offsetB + actual, sourceB.trimEnd),
-      };
-    }
-    return { slice: { slot, inpoint, outpoint }, actual, offsetA: outpoint, offsetB };
-  }
-  const inpoint = offsetB;
-  const outpoint = Math.min(offsetB + sliceDuration, sourceB.trimEnd);
+): { slice: IntercutSlice; actual: number; offsets: SlotOffsets } | null {
+  const source = sources[slot];
+  const offset = offsets[slot];
+  if (!source || offset == null) return null;
+  const inpoint = offset;
+  const outpoint = Math.min(offset + sliceDuration, source.trimEnd);
   const actual = outpoint - inpoint;
   if (actual <= 1e-9) return null;
+  const next: SlotOffsets = { ...offsets };
   if (sourceClock === 'parallel') {
-    return {
-      slice: { slot, inpoint, outpoint },
-      actual,
-      offsetA: Math.min(offsetA + actual, sourceA.trimEnd),
-      offsetB: outpoint,
-    };
+    for (const s of slots) {
+      const src = sources[s];
+      const off = offsets[s];
+      if (!src || off == null) continue;
+      next[s] = Math.min(off + actual, src.trimEnd);
+    }
   }
-  return { slice: { slot, inpoint, outpoint }, actual, offsetA, offsetB: outpoint };
+  next[slot] = outpoint;
+  return { slice: { slot, inpoint, outpoint }, actual, offsets: next };
 }
 
 /** Remaining media on a source for the given clock policy. */
@@ -249,16 +242,59 @@ export function sourceAvailableSec(source: IntercutSourceBounds): number {
   return Math.max(0, source.trimEnd - source.trimStart);
 }
 
+function remainingBySlot(
+  slots: IntercutSlot[],
+  sources: SlotSources,
+  offsets: SlotOffsets,
+  sourceClock: IntercutSourceClock,
+  wallTimeSec: number,
+): Record<IntercutSlot, number> {
+  const rem = { A: 0, B: 0, C: 0 };
+  for (const slot of slots) {
+    const source = sources[slot];
+    const offset = offsets[slot];
+    if (!source || offset == null) continue;
+    rem[slot] = remainingForClock(source, offset, sourceClock, wallTimeSec);
+  }
+  return rem;
+}
+
+function pickSlotWithMaterial(
+  prefer: IntercutSlot,
+  slots: IntercutSlot[],
+  rem: Record<IntercutSlot, number>,
+  maySteal: boolean,
+): IntercutSlot | null {
+  if (rem[prefer] > 1e-9) return prefer;
+  if (!maySteal) return null;
+  const start = slots.indexOf(prefer);
+  for (let i = 1; i < slots.length; i++) {
+    const slot = slots[(start + i) % slots.length]!;
+    if (rem[slot] > 1e-9) return slot;
+  }
+  return null;
+}
+
+function entireMaterialBudget(
+  slots: IntercutSlot[],
+  sources: SlotSources,
+  sourceClock: IntercutSourceClock,
+): number {
+  const avails = slots.map((slot) => sourceAvailableSec(sources[slot]!));
+  return sourceClock === 'parallel' ? Math.max(0, ...avails) : avails.reduce((s, v) => s + v, 0);
+}
+
 /**
- * Build alternating A/B slices for concat demuxer `inpoint` / `outpoint` entries.
+ * Build alternating A/B (or A/B/C) slices for concat demuxer `inpoint` / `outpoint`.
  *
- * `sourceClock` controls whether the offscreen clip freezes (`freezeHidden`) or
- * both playheads track output wall time (`parallel`).
+ * `sourceClock` controls whether offscreen clips freeze (`freezeHidden`) or
+ * all playheads track output wall time (`parallel`).
  */
 export function buildIntercutSlices(config: BuildIntercutSlicesConfig): IntercutSlice[] {
   const {
     sourceA,
     sourceB,
+    sourceC,
     automation,
     minSliceSec = 1 / 60,
     startWithA = true,
@@ -270,11 +306,11 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
   } = config;
   const beatInterval = beatSync ? medianBeatInterval(beatSync.beatTimestamps) : null;
 
-  const availA = sourceAvailableSec(sourceA);
-  const availB = sourceAvailableSec(sourceB);
-  // freeze: all frames of both can appear → sum. parallel: shared wall clock → max.
-  const entireBudget =
-    sourceClock === 'parallel' ? Math.max(availA, availB) : availA + availB;
+  const slots: IntercutSlot[] = sourceC ? ['A', 'B', 'C'] : ['A', 'B'];
+  const sources: SlotSources = { A: sourceA, B: sourceB };
+  if (sourceC) sources.C = sourceC;
+
+  const entireBudget = entireMaterialBudget(slots, sources, sourceClock);
 
   const swapBudgetSec =
     consumeMode === 'entireSources'
@@ -290,15 +326,16 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
 
   const slices: IntercutSlice[] = [];
   let outputTime = 0;
-  let useA = startWithA;
-  let offsetA = sourceA.trimStart;
-  let offsetB = sourceB.trimStart;
+  let rotation = startWithA ? 0 : 1 % slots.length;
+  let offsets: SlotOffsets = {};
+  for (const slot of slots) {
+    offsets[slot] = sources[slot]!.trimStart;
+  }
 
   while (outputTime < swapBudgetSec - 1e-9) {
-    const remA = remainingForClock(sourceA, offsetA, sourceClock, outputTime);
-    const remB = remainingForClock(sourceB, offsetB, sourceClock, outputTime);
+    const rem = remainingBySlot(slots, sources, offsets, sourceClock, outputTime);
 
-    if (consumeMode === 'entireSources' && remA <= 1e-9 && remB <= 1e-9) {
+    if (consumeMode === 'entireSources' && slots.every((s) => rem[s] <= 1e-9)) {
       break;
     }
 
@@ -318,98 +355,76 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
     }
     if (sliceDuration <= 1e-9) break;
 
-    let prefer: IntercutSlot = useA ? 'A' : 'B';
+    let prefer: IntercutSlot = slots[rotation]!;
     const remainingSwap = swapBudgetSec - outputTime;
     const isLastIntercutSlice =
       consumeMode === 'targetDuration' && remainingSwap - sliceDuration <= 1e-9;
 
     if (isLastIntercutSlice && forceFinalClip !== 'auto') {
-      prefer = forceFinalClip;
+      if (!slots.includes(forceFinalClip)) {
+        // Forced C with only A/B sources — fall back to B (previous default landing).
+        prefer = slots[slots.length - 1]!;
+      } else {
+        prefer = forceFinalClip;
+      }
     }
 
-    let slot: IntercutSlot = prefer;
-    // Steal when preferred is empty: always in parallel (fill wall time), when
-    // draining full sources, or on a forced last landing.
     const maySteal =
       sourceClock === 'parallel' ||
       consumeMode === 'entireSources' ||
       (isLastIntercutSlice && forceFinalClip !== 'auto');
 
-    if (slot === 'A' && remA <= 1e-9 && remB > 1e-9) {
-      if (maySteal) slot = 'B';
-      else break;
-    } else if (slot === 'B' && remB <= 1e-9 && remA > 1e-9) {
-      if (maySteal) slot = 'A';
-      else break;
-    }
+    const slot = pickSlotWithMaterial(prefer, slots, rem, maySteal);
+    if (!slot) break;
 
-    let taken = takeSlice(
-      slot,
-      sliceDuration,
-      offsetA,
-      offsetB,
-      sourceA,
-      sourceB,
-      sourceClock,
-    );
+    let taken = takeSlice(slot, sliceDuration, offsets, sources, slots, sourceClock);
     if (!taken && isLastIntercutSlice && forceFinalClip !== 'auto') {
-      slot = slot === 'A' ? 'B' : 'A';
-      taken = takeSlice(
-        slot,
-        sliceDuration,
-        offsetA,
-        offsetB,
-        sourceA,
-        sourceB,
-        sourceClock,
-      );
+      for (const fallback of slots) {
+        if (fallback === slot) continue;
+        taken = takeSlice(fallback, sliceDuration, offsets, sources, slots, sourceClock);
+        if (taken) break;
+      }
     }
     if (!taken) break;
 
     slices.push(taken.slice);
-    offsetA = taken.offsetA;
-    offsetB = taken.offsetB;
+    offsets = taken.offsets;
     outputTime += taken.actual;
-    useA = !useA;
+    rotation = (rotation + 1) % slots.length;
   }
 
   const landing: IntercutSlot =
-    forceFinalClip !== 'auto'
+    forceFinalClip !== 'auto' && slots.includes(forceFinalClip)
       ? forceFinalClip
       : slices.length > 0
         ? slices[slices.length - 1]!.slot
         : startWithA
           ? 'A'
-          : 'B';
+          : slots[1] ?? 'B';
 
   if (tailDurationSec > 1e-9) {
+    const landingSource = sources[landing];
+    const landingOffset = offsets[landing];
     const rem =
-      landing === 'A'
-        ? remainingForClock(sourceA, offsetA, sourceClock, outputTime)
-        : remainingForClock(sourceB, offsetB, sourceClock, outputTime);
+      landingSource && landingOffset != null
+        ? remainingForClock(landingSource, landingOffset, sourceClock, outputTime)
+        : 0;
     const tail = Math.min(tailDurationSec, rem);
     if (tail > 1e-9) {
       const last = slices[slices.length - 1];
       if (last && last.slot === landing && sourceClock === 'freezeHidden') {
-        // Contiguous resume on the same source — extend the last slice.
         last.outpoint += tail;
-        if (landing === 'A') offsetA += tail;
-        else offsetB += tail;
+        offsets[landing] = (offsets[landing] ?? 0) + tail;
       } else if (last && last.slot === landing && sourceClock === 'parallel') {
-        // Parallel: extend only if the landing source still has wall-time media.
         last.outpoint += tail;
-        offsetA = Math.min(offsetA + tail, sourceA.trimEnd);
-        offsetB = Math.min(offsetB + tail, sourceB.trimEnd);
+        for (const s of slots) {
+          const src = sources[s];
+          const off = offsets[s];
+          if (!src || off == null) continue;
+          offsets[s] = Math.min(off + tail, src.trimEnd);
+        }
       } else {
-        const taken = takeSlice(
-          landing,
-          tail,
-          offsetA,
-          offsetB,
-          sourceA,
-          sourceB,
-          sourceClock,
-        );
+        const taken = takeSlice(landing, tail, offsets, sources, slots, sourceClock);
         if (taken) slices.push(taken.slice);
       }
     }
@@ -425,10 +440,19 @@ export function buildConcatPlaylist(
   slices: IntercutSlice[],
   fileA: string,
   fileB: string,
+  fileC?: string,
 ): string {
+  const files: Record<IntercutSlot, string | undefined> = {
+    A: fileA,
+    B: fileB,
+    C: fileC,
+  };
   const lines: string[] = [];
   for (const slice of slices) {
-    const file = slice.slot === 'A' ? fileA : fileB;
+    const file = files[slice.slot];
+    if (!file) {
+      throw new Error(`Intercut playlist is missing a file for clip ${slice.slot}.`);
+    }
     const escaped = file.replace(/'/g, "'\\''");
     lines.push(`file '${escaped}'`);
     lines.push(`inpoint ${slice.inpoint.toFixed(6)}`);
@@ -455,9 +479,11 @@ export function remapIntercutSlicesToTrimOrigin(
   slices: IntercutSlice[],
   trimStartA: number,
   trimStartB: number,
+  trimStartC = 0,
 ): IntercutSlice[] {
   return slices.map((slice) => {
-    const base = slice.slot === 'A' ? trimStartA : trimStartB;
+    const base =
+      slice.slot === 'A' ? trimStartA : slice.slot === 'C' ? trimStartC : trimStartB;
     return {
       slot: slice.slot,
       inpoint: Math.max(0, slice.inpoint - base),
@@ -484,15 +510,19 @@ export function requestedIntercutDuration(
     sourceClock?: IntercutSourceClock;
     sourceA?: IntercutSourceBounds;
     sourceB?: IntercutSourceBounds;
+    sourceC?: IntercutSourceBounds;
   },
 ): number {
   const consumeMode = options?.consumeMode ?? 'targetDuration';
   const sourceClock = options?.sourceClock ?? 'freezeHidden';
   if (consumeMode === 'entireSources' && options?.sourceA && options?.sourceB) {
-    const availA = sourceAvailableSec(options.sourceA);
-    const availB = sourceAvailableSec(options.sourceB);
-    const budget = sourceClock === 'parallel' ? Math.max(availA, availB) : availA + availB;
-    return budget + Math.max(0, tailDurationSec);
+    const sources: SlotSources = { A: options.sourceA, B: options.sourceB };
+    const slots: IntercutSlot[] = ['A', 'B'];
+    if (options.sourceC) {
+      sources.C = options.sourceC;
+      slots.push('C');
+    }
+    return entireMaterialBudget(slots, sources, sourceClock) + Math.max(0, tailDurationSec);
   }
   return Math.max(0, automation.totalDurationSec) + Math.max(0, tailDurationSec);
 }
@@ -504,19 +534,31 @@ export function intercutShortageMessage(
   sourceB: IntercutSourceBounds,
   consumeMode: IntercutConsumeMode = 'targetDuration',
   sourceClock: IntercutSourceClock = 'freezeHidden',
+  sourceC?: IntercutSourceBounds,
 ): string | null {
+  const sources: SlotSources = { A: sourceA, B: sourceB };
+  const slots: IntercutSlot[] = ['A', 'B'];
+  if (sourceC) {
+    sources.C = sourceC;
+    slots.push('C');
+  }
+  const usedBySlot = (slot: IntercutSlot) =>
+    slices
+      .filter((s) => s.slot === slot)
+      .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+
   if (consumeMode === 'entireSources') {
     if (slices.length === 0) {
-      const avail = sourceAvailableSec(sourceA) + sourceAvailableSec(sourceB);
+      const avail = slots.reduce((sum, slot) => sum + sourceAvailableSec(sources[slot]!), 0);
       if (avail <= 1e-9) {
-        return 'Both clips have zero trimmed duration — nothing to intercut.';
+        return slots.length > 2
+          ? 'All clips have zero trimmed duration — nothing to intercut.'
+          : 'Both clips have zero trimmed duration — nothing to intercut.';
       }
       return 'Intercut produced zero slices — check clip durations and automation settings.';
     }
     const actual = intercutOutputDuration(slices);
-    const availA = sourceAvailableSec(sourceA);
-    const availB = sourceAvailableSec(sourceB);
-    const budget = sourceClock === 'parallel' ? Math.max(availA, availB) : availA + availB;
+    const budget = entireMaterialBudget(slots, sources, sourceClock);
     if (actual >= budget - 1e-3) return null;
     if (sourceClock === 'parallel') {
       return (
@@ -524,15 +566,11 @@ export function intercutShortageMessage(
         `${budget.toFixed(2)}s). Check frequency / min slice settings.`
       );
     }
-    const usedA = slices
-      .filter((s) => s.slot === 'A')
-      .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
-    const usedB = slices
-      .filter((s) => s.slot === 'B')
-      .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+    const used = slots.reduce((sum, slot) => sum + usedBySlot(slot), 0);
+    const avail = slots.reduce((sum, slot) => sum + sourceAvailableSec(sources[slot]!), 0);
     return (
-      `Could not place all source material (${(usedA + usedB).toFixed(2)}s of ` +
-      `${(availA + availB).toFixed(2)}s used). Check frequency / min slice settings.`
+      `Could not place all source material (${used.toFixed(2)}s of ` +
+      `${avail.toFixed(2)}s used). Check frequency / min slice settings.`
     );
   }
 
@@ -543,16 +581,16 @@ export function intercutShortageMessage(
   }
   if (actual >= requestedSec - 1e-3) return null;
 
-  const usedA = slices
-    .filter((s) => s.slot === 'A')
-    .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
-  const usedB = slices
-    .filter((s) => s.slot === 'B')
-    .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
-  const availA = sourceAvailableSec(sourceA);
-  const availB = sourceAvailableSec(sourceB);
-  const exhausted =
-    usedA >= availA - 1e-3 && availA <= availB ? 'A' : usedB >= availB - 1e-3 ? 'B' : 'A';
+  let exhausted: IntercutSlot = 'A';
+  let minRemain = Number.POSITIVE_INFINITY;
+  for (const slot of slots) {
+    const avail = sourceAvailableSec(sources[slot]!);
+    const remain = avail - usedBySlot(slot);
+    if (remain < minRemain) {
+      minRemain = remain;
+      exhausted = slot;
+    }
+  }
 
   return (
     `Requested ${requestedSec.toFixed(2)}s intercut but sources only cover ${actual.toFixed(2)}s ` +

@@ -33,6 +33,7 @@ describe('defaultIntercutPair', () => {
     expect(defaultIntercutPair([a, b, extra], [group], 'b')).toEqual({
       clipAId: 'a',
       clipBId: 'b',
+      clipCId: null,
     });
   });
 
@@ -43,6 +44,7 @@ describe('defaultIntercutPair', () => {
     expect(defaultIntercutPair([audio, a, b], [], 'b')).toEqual({
       clipAId: 'b',
       clipBId: 'a',
+      clipCId: null,
     });
   });
 });

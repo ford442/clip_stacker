@@ -75,7 +75,7 @@ describe('IntercutModal', () => {
     expect(text).toContain('Freeze hidden');
     expect(text).toContain('Parallel');
     expect(text).toContain('Material');
-    expect(text).toContain('Land on');
+    expect(text).toContain('Clip C (optional)');
     expect(text).toContain('Tail after last cut');
     expect(text).toMatch(/\d+ slices/);
     expect(text).toMatch(/stream copy|re-encode/);
@@ -212,5 +212,61 @@ describe('IntercutModal', () => {
       };
     };
     expect(config.automation.easing).toEqual({ type: 'bellCurveSmooth' });
+  });
+
+  it('passes optional clip C through onGenerate', async () => {
+    const a = makeClip('alpha', { duration: 20, trimEnd: 20 });
+    const b = makeClip('bravo', { duration: 20, trimEnd: 20 });
+    const c = makeClip('charlie', { duration: 20, trimEnd: 20 });
+    editorStore.setState({ clips: [a, b, c], selectedClipId: a.id });
+
+    const generated: unknown[] = [];
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    root.render(
+      <StrictMode>
+        <IntercutModal
+          isOpen
+          generating={false}
+          onClose={() => undefined}
+          onGenerate={async (config) => {
+            generated.push(config);
+            return true;
+          }}
+        />
+      </StrictMode>,
+    );
+
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline && !container.querySelector('.intercut-estimate')) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const clipCSelect = Array.from(container.querySelectorAll('select')).find((el) => {
+      const label = el.closest('label')?.textContent ?? '';
+      return label.includes('Clip C');
+    });
+    expect(clipCSelect).toBeTruthy();
+    clipCSelect!.value = c.id;
+    clipCSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(container.textContent).toContain('Clip C (resolve on C)');
+
+    const create = Array.from(container.querySelectorAll('button')).find((btn) =>
+      (btn.textContent ?? '').includes('Create intercut'),
+    );
+    expect(create).toBeTruthy();
+    create!.click();
+
+    const waitGen = Date.now() + 1000;
+    while (Date.now() < waitGen && generated.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(generated).toHaveLength(1);
+    const config = generated[0] as { clipC?: { id: string } };
+    expect(config.clipC?.id).toBe('charlie');
   });
 });

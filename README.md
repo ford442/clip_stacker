@@ -11,7 +11,7 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - Apply per-clip fade in/out controls for video and audio
 - **Picture-in-Picture overlays**: select a video clip and hit **Use as overlay (PiP)** in the Inspector to composite it over the base video in any corner; **Use as base layer** puts it back. Size, position and opacity stay editable under *Picture-in-Picture layout (advanced)*
 - Merge timeline into one MP4 via FFmpeg (WebAssembly, fully in-browser)
-- **Intercut generator**: pick two library clips and bake an accelerating A/B strobe (local FFmpeg concat — no cloud GPU / RIFE)
+- **Intercut generator**: pick two or three library clips and bake an accelerating strobe (local FFmpeg concat — no cloud GPU / RIFE)
 - **Intelligent render plan**: Before rendering, see whether the merge will be lossless concat (fast, no quality loss) or re-encoding, with the specific reason
 - Save/load projects locally as JSON with embedded source media
 - Save/load projects remotely via a contabo_storage_manager-compatible HTTP endpoint with uploaded source media ([ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager))

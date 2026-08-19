@@ -23,6 +23,7 @@ import {
   type FrequencyAutomationConfig,
   type IntercutConsumeMode,
   type IntercutFinalClip,
+  type IntercutSlot,
   type IntercutSlice,
   type IntercutSourceClock,
 } from '../utils/intercut';
@@ -40,6 +41,8 @@ export type IntercutAudioPolicy = 'both' | 'aOnly' | 'silent';
 export interface IntercutGeneratorConfig {
   clipA: Clip;
   clipB: Clip;
+  /** Optional third clip; when set, slices cycle A → B → C. */
+  clipC?: Clip;
   automation: FrequencyAutomationConfig;
   /** When true, always re-encode (needed for strobe / short slices). */
   forceReencode?: boolean;
@@ -47,14 +50,14 @@ export interface IntercutGeneratorConfig {
   audioPolicy?: IntercutAudioPolicy;
   /** Snap slice lengths to the reference clip's beat grid when metadata exists. */
   snapCutsToBeats?: boolean;
-  /** Which clip supplies `beatTimestamps`. Defaults to A, then B. */
-  beatReference?: 'A' | 'B';
+  /** Which clip supplies `beatTimestamps`. Defaults to A, then B, then C. */
+  beatReference?: IntercutSlot;
   /**
    * When true (default), throw if planned output is shorter than
    * `automation.totalDurationSec` plus `tailDurationSec`.
    */
   requireFullDuration?: boolean;
-  /** Last swapping-phase slice. Default `auto` keeps A/B alternation. */
+  /** Last swapping-phase slice. Default `auto` keeps A/B/C cycling. */
   forceFinalClip?: IntercutFinalClip;
   /** Extra seconds of the landing clip after the swapping phase. */
   tailDurationSec?: number;
@@ -94,16 +97,21 @@ function sourceBounds(clip: Clip): { trimStart: number; trimEnd: number } {
   };
 }
 
+function intercutSourceClips(config: IntercutGeneratorConfig): Clip[] {
+  return config.clipC ? [config.clipA, config.clipB, config.clipC] : [config.clipA, config.clipB];
+}
+
 function beatSyncForConfig(config: IntercutGeneratorConfig) {
   if (!config.snapCutsToBeats) return undefined;
-  const ref =
-    config.beatReference === 'B'
-      ? config.clipB
-      : config.clipA.beatTimestamps?.length
-        ? config.clipA
-        : config.clipB.beatTimestamps?.length
-          ? config.clipB
-          : config.clipA;
+  const clips = intercutSourceClips(config);
+  const bySlot: Record<IntercutSlot, Clip | undefined> = {
+    A: config.clipA,
+    B: config.clipB,
+    C: config.clipC,
+  };
+  const preferred = config.beatReference ? bySlot[config.beatReference] : undefined;
+  const order = preferred ? [preferred, ...clips.filter((c) => c.id !== preferred.id)] : clips;
+  const ref = order.find((c) => (c.beatTimestamps?.length ?? 0) >= 2) ?? order[0]!;
   const beats = beatsInTrimWindow(ref);
   if (beats.length < 2) return undefined;
   return { beatTimestamps: beats };
@@ -113,6 +121,7 @@ export function planIntercutSlices(config: IntercutGeneratorConfig): IntercutSli
   return buildIntercutSlices({
     sourceA: sourceBounds(config.clipA),
     sourceB: sourceBounds(config.clipB),
+    sourceC: config.clipC ? sourceBounds(config.clipC) : undefined,
     automation: config.automation,
     beatSync: beatSyncForConfig(config),
     forceFinalClip: config.forceFinalClip,
@@ -122,8 +131,7 @@ export function planIntercutSlices(config: IntercutGeneratorConfig): IntercutSli
   });
 }
 
-/** True when A/B would concat-fail without a shared resolution/fps/codec. */
-export function intercutNeedsNormalization(clipA: Clip, clipB: Clip): boolean {
+function clipsNeedNormalizationPair(clipA: Clip, clipB: Clip): boolean {
   if (isStillImageClip(clipA) || isStillImageClip(clipB)) return true;
 
   const wA = clipA.videoWidth;
@@ -150,10 +158,20 @@ export function intercutNeedsNormalization(clipA: Clip, clipB: Clip): boolean {
   return false;
 }
 
+/** True when sources would concat-fail without a shared resolution/fps/codec. */
+export function intercutNeedsNormalization(clipA: Clip, clipB: Clip, clipC?: Clip): boolean {
+  if (clipsNeedNormalizationPair(clipA, clipB)) return true;
+  if (clipC && (clipsNeedNormalizationPair(clipA, clipC) || clipsNeedNormalizationPair(clipB, clipC))) {
+    return true;
+  }
+  return false;
+}
+
 export function estimateIntercut(config: IntercutGeneratorConfig): IntercutEstimate {
   const slices = planIntercutSlices(config);
   const boundsA = sourceBounds(config.clipA);
   const boundsB = sourceBounds(config.clipB);
+  const boundsC = config.clipC ? sourceBounds(config.clipC) : undefined;
   const consumeMode = config.consumeMode ?? 'targetDuration';
   const sourceClock = config.sourceClock ?? 'freezeHidden';
   const shortageMessage = intercutShortageMessage(
@@ -163,11 +181,13 @@ export function estimateIntercut(config: IntercutGeneratorConfig): IntercutEstim
       sourceClock,
       sourceA: boundsA,
       sourceB: boundsB,
+      sourceC: boundsC,
     }),
     boundsA,
     boundsB,
     consumeMode,
     sourceClock,
+    boundsC,
   );
   return {
     slices,
@@ -176,7 +196,7 @@ export function estimateIntercut(config: IntercutGeneratorConfig): IntercutEstim
     // Generation always re-encodes; stream-copy of alternating inpoints is unsafe.
     usedStreamCopy: false,
     shortageMessage,
-    needsNormalization: intercutNeedsNormalization(config.clipA, config.clipB),
+    needsNormalization: intercutNeedsNormalization(config.clipA, config.clipB, config.clipC),
   };
 }
 
@@ -473,7 +493,7 @@ async function normalizeSourceIfNeeded(
 }
 
 /**
- * Generate an intercut MP4 from two clips already written to the FFmpeg VFS.
+ * Generate an intercut MP4 from clips already written to the FFmpeg VFS.
  */
 export async function generateIntercutFromVfs(
   ffmpeg: IFfmpegRuntime,
@@ -483,10 +503,12 @@ export async function generateIntercutFromVfs(
   onStatus: StatusCallback,
   outputName = 'intercut_output.mp4',
   onProgress?: ProgressCallback,
+  vfsNameC?: string,
 ): Promise<Omit<IntercutGeneratorResult, 'blob'>> {
   const slices = planIntercutSlices(config);
   const boundsA = sourceBounds(config.clipA);
   const boundsB = sourceBounds(config.clipB);
+  const boundsC = config.clipC ? sourceBounds(config.clipC) : undefined;
   const consumeMode = config.consumeMode ?? 'targetDuration';
   const sourceClock = config.sourceClock ?? 'freezeHidden';
   const requireFull = config.requireFullDuration !== false;
@@ -497,17 +519,22 @@ export async function generateIntercutFromVfs(
       sourceClock,
       sourceA: boundsA,
       sourceB: boundsB,
+      sourceC: boundsC,
     }),
     boundsA,
     boundsB,
     consumeMode,
     sourceClock,
+    boundsC,
   );
   if (slices.length === 0) {
     throw new Error(shortage ?? 'Intercut produced zero slices.');
   }
   if (requireFull && shortage) {
     throw new Error(shortage);
+  }
+  if (config.clipC && !vfsNameC) {
+    throw new Error('Intercut clip C is missing from the FFmpeg VFS.');
   }
 
   const audioPolicy: IntercutAudioPolicy = config.audioPolicy ?? 'both';
@@ -516,20 +543,23 @@ export async function generateIntercutFromVfs(
   }
   let workA = vfsNameA;
   let workB = vfsNameB;
+  let workC = vfsNameC;
   let didNormalize = false;
   // After trim-window normalize, playlist times are relative to each trimStart.
   let concatSlices = slices;
 
-  const normalizeBoth = async () => {
+  const normalizeSources = async () => {
     didNormalize = true;
     const { width, height } = resolveTargetResolution(
-      [config.clipA, config.clipB],
+      intercutSourceClips(config),
       DEFAULT_EXPORT_SETTINGS,
     );
     const normA = 'intercut-norm-a.mp4';
     const normB = 'intercut-norm-b.mp4';
+    const normC = 'intercut-norm-c.mp4';
     await deleteQuiet(ffmpeg, normA);
     await deleteQuiet(ffmpeg, normB);
+    await deleteQuiet(ffmpeg, normC);
     // Only re-encode the trimmed windows — full-file normalize OOMs WASM on long clips.
     const windowA = {
       seekSec: boundsA.trimStart,
@@ -559,15 +589,32 @@ export async function generateIntercutFromVfs(
       onStatus,
       windowB,
     );
+    if (config.clipC && vfsNameC && boundsC) {
+      const windowC = {
+        seekSec: boundsC.trimStart,
+        durationSec: Math.max(0.05, boundsC.trimEnd - boundsC.trimStart),
+      };
+      workC = await normalizeSourceIfNeeded(
+        ffmpeg,
+        config.clipC,
+        vfsNameC,
+        normC,
+        width,
+        height,
+        onStatus,
+        windowC,
+      );
+    }
     concatSlices = remapIntercutSlicesToTrimOrigin(
       slices,
       boundsA.trimStart,
       boundsB.trimStart,
+      boundsC?.trimStart ?? 0,
     );
   };
 
-  if (intercutNeedsNormalization(config.clipA, config.clipB)) {
-    await normalizeBoth();
+  if (intercutNeedsNormalization(config.clipA, config.clipB, config.clipC)) {
+    await normalizeSources();
   }
 
   // Always re-encode: stream-copy of multi-source inpoint cuts is rarely
@@ -578,7 +625,7 @@ export async function generateIntercutFromVfs(
   const outputDurationSec = intercutOutputDuration(slices);
 
   const runConcat = async () => {
-    const playlist = buildConcatPlaylist(concatSlices, workA, workB);
+    const playlist = buildConcatPlaylist(concatSlices, workA, workB, workC);
     await safeWriteFile(ffmpeg, playlistName, playlist, 'intercut concat playlist');
     onStatus(
       `Intercut: stitching ${concatSlices.length} slice${concatSlices.length === 1 ? '' : 's'} (re-encode)…`,
@@ -602,11 +649,11 @@ export async function generateIntercutFromVfs(
     await runConcat();
   } catch (err) {
     // Same-res video-only + A/V (or unknown hasAudio) can skip the first
-    // normalize pass and then fail concat. Rebuild both sources with a
+    // normalize pass and then fail concat. Rebuild sources with a
     // shared layout (including synthetic silence) and retry once.
     if (didNormalize) throw err;
     onStatus('Intercut: concat failed — normalizing sources and retrying…');
-    await normalizeBoth();
+    await normalizeSources();
     await runConcat();
   }
 
@@ -646,6 +693,7 @@ export async function generateIntercutFromVfs(
   if (didNormalize) {
     await deleteQuiet(ffmpeg, workA);
     await deleteQuiet(ffmpeg, workB);
+    if (workC) await deleteQuiet(ffmpeg, workC);
   }
 
   emitProgress(onProgress, 'Intercut concat', 1, false);
@@ -653,18 +701,25 @@ export async function generateIntercutFromVfs(
 }
 
 /**
- * End-to-end: write two clips to FFmpeg VFS, build dynamic intercut, return MP4 blob.
+ * End-to-end: write clips to FFmpeg VFS, build dynamic intercut, return MP4 blob.
  */
 export async function generateIntercutClip(
   config: IntercutGeneratorConfig,
   onStatus: StatusCallback,
   onProgress?: ProgressCallback,
 ): Promise<IntercutGeneratorResult> {
-  if (config.clipA.id === config.clipB.id) {
-    throw new Error('Pick two different clips for Intercut.');
+  const ids = [config.clipA.id, config.clipB.id, config.clipC?.id].filter(
+    (id): id is string => !!id,
+  );
+  if (new Set(ids).size !== ids.length) {
+    throw new Error('Pick different clips for Intercut.');
   }
-  if (config.clipA.kind !== 'video' || config.clipB.kind !== 'video') {
-    throw new Error('Intercut requires two video clips.');
+  const kindsOk =
+    config.clipA.kind === 'video' &&
+    config.clipB.kind === 'video' &&
+    (!config.clipC || config.clipC.kind === 'video');
+  if (!kindsOk) {
+    throw new Error('Intercut requires video clips.');
   }
 
   const ffmpeg = await ensureFfmpeg(onStatus);
@@ -672,9 +727,15 @@ export async function generateIntercutClip(
   const extB = getSafeExtension(config.clipB.file.name, 'mp4');
   const vfsNameA = `intercut-a.${extA}`;
   const vfsNameB = `intercut-b.${extB}`;
+  const vfsNameC = config.clipC
+    ? `intercut-c.${getSafeExtension(config.clipC.file.name, 'mp4')}`
+    : undefined;
   const outputName = 'intercut_output.mp4';
 
-  for (const name of [vfsNameA, vfsNameB, outputName, 'intercut_concat.mp4']) {
+  const vfsNames = [vfsNameA, vfsNameB, vfsNameC, outputName, 'intercut_concat.mp4'].filter(
+    (n): n is string => !!n,
+  );
+  for (const name of vfsNames) {
     await deleteQuiet(ffmpeg, name);
   }
 
@@ -692,6 +753,14 @@ export async function generateIntercutClip(
     await fetchFile(config.clipB.file),
     'intercut write clip B',
   );
+  if (config.clipC && vfsNameC) {
+    await safeWriteFile(
+      ffmpeg,
+      vfsNameC,
+      await fetchFile(config.clipC.file),
+      'intercut write clip C',
+    );
+  }
 
   const result = await generateIntercutFromVfs(
     ffmpeg,
@@ -701,6 +770,7 @@ export async function generateIntercutClip(
     onStatus,
     outputName,
     onProgress,
+    vfsNameC,
   );
 
   const output = await safeReadFile(ffmpeg, outputName, 'intercut read output');
@@ -712,7 +782,7 @@ export async function generateIntercutClip(
   // Copy into a standalone buffer — WASM may return a HEAP subarray view.
   const plain = output.slice().buffer as ArrayBuffer;
 
-  for (const name of [vfsNameA, vfsNameB, outputName, 'intercut_concat.mp4']) {
+  for (const name of vfsNames) {
     await deleteQuiet(ffmpeg, name);
   }
 

@@ -141,6 +141,19 @@ describe('intercutGenerator helpers', () => {
     expect(intercutNeedsNormalization(withAudio, makeClip({ id: 'clip-b2' }))).toBe(false);
   });
 
+  it('detects a third-clip mismatch as needing normalization', () => {
+    const a = makeClip();
+    const b = makeClip({ id: 'clip-b', file: new File([], 'b.mp4', { type: 'video/mp4' }) });
+    const c = makeClip({
+      id: 'clip-c',
+      videoWidth: 1920,
+      videoHeight: 1080,
+      file: new File([], 'c.mp4', { type: 'video/mp4' }),
+    });
+    expect(intercutNeedsNormalization(a, b, c)).toBe(true);
+    expect(intercutNeedsNormalization(a, b, makeClip({ id: 'clip-c2' }))).toBe(false);
+  });
+
   it('replace-audio args map video from concat and audio from A', () => {
     const args = buildReplaceAudioFromAArgs(
       'concat.mp4',
@@ -208,5 +221,20 @@ describe('intercutGenerator helpers', () => {
     expect(withTail.shortageMessage).toBeNull();
     expect(withTail.outputDurationSec).toBeCloseTo(2.4, 5);
     expect(withTail.slices[withTail.slices.length - 1]!.slot).toBe('B');
+  });
+
+  it('estimate plans A/B/C slices when clip C is set', () => {
+    const triple = estimateIntercut({
+      clipA: makeClip({ duration: 30, trimEnd: 30 }),
+      clipB: makeClip({ id: 'b', duration: 30, trimEnd: 30, file: new File([], 'b.mp4') }),
+      clipC: makeClip({ id: 'c', duration: 30, trimEnd: 30, file: new File([], 'c.mp4') }),
+      automation: {
+        totalDurationSec: 0.6,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+    });
+    expect(triple.shortageMessage).toBeNull();
+    expect(triple.slices.map((s) => s.slot)).toEqual(['A', 'B', 'C']);
   });
 });

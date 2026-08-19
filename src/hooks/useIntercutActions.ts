@@ -54,9 +54,12 @@ export function useIntercutActions({
 
         const titleA = config.clipA.title.replace(/\.[^.]+$/, '');
         const titleB = config.clipB.title.replace(/\.[^.]+$/, '');
+        const titleC = config.clipC?.title.replace(/\.[^.]+$/, '');
         const file = new File(
           [result.blob],
-          `intercut-${titleA}-x-${titleB}.mp4`,
+          titleC
+            ? `intercut-${titleA}-x-${titleB}-x-${titleC}.mp4`
+            : `intercut-${titleA}-x-${titleB}.mp4`,
           { type: 'video/mp4' },
         );
         if (file.size < 32) {
@@ -67,8 +70,10 @@ export function useIntercutActions({
 
         let duration = result.outputDurationSec;
         let objectUrl = URL.createObjectURL(file);
-        let videoWidth = config.clipA.videoWidth ?? config.clipB.videoWidth;
-        let videoHeight = config.clipA.videoHeight ?? config.clipB.videoHeight;
+        let videoWidth =
+          config.clipA.videoWidth ?? config.clipB.videoWidth ?? config.clipC?.videoWidth;
+        let videoHeight =
+          config.clipA.videoHeight ?? config.clipB.videoHeight ?? config.clipC?.videoHeight;
         let hasAudio: boolean | undefined =
           config.audioPolicy === 'silent' ? false : undefined;
 
