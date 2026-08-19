@@ -55,6 +55,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
 
   const [clipAId, setClipAId] = useState<string>('');
   const [clipBId, setClipBId] = useState<string>('');
+  const [clipCId, setClipCId] = useState<string>('');
   const [totalDurationSec, setTotalDurationSec] = useState(5);
   const [startFrequencyHz, setStartFrequencyHz] = useState(0.5);
   const [endFrequencyHz, setEndFrequencyHz] = useState(12);
@@ -72,16 +73,28 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     const pair = defaultIntercutPair(clips, clipGroups, selectedClipId);
     setClipAId(pair.clipAId ?? '');
     setClipBId(pair.clipBId ?? '');
+    setClipCId(pair.clipCId ?? '');
   }, [isOpen, clips, clipGroups, selectedClipId]);
+
+  useEffect(() => {
+    if (!clipCId && forceFinalClip === 'C') {
+      setForceFinalClip('B');
+    }
+  }, [clipCId, forceFinalClip]);
 
   const clipA = videoClips.find((c) => c.id === clipAId) ?? null;
   const clipB = videoClips.find((c) => c.id === clipBId) ?? null;
+  const clipC = videoClips.find((c) => c.id === clipCId) ?? null;
+  const sourceIds = [clipA?.id, clipB?.id, clipC?.id].filter((id): id is string => !!id);
+  const hasDuplicateSources = new Set(sourceIds).size !== sourceIds.length;
 
   const estimate = useMemo(() => {
     if (!clipA || !clipB || clipA.id === clipB.id) return null;
+    if (clipC && (clipC.id === clipA.id || clipC.id === clipB.id)) return null;
     return estimateIntercut({
       clipA,
       clipB,
+      clipC: clipC ?? undefined,
       automation: {
         totalDurationSec,
         startFrequencyHz,
@@ -98,6 +111,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
   }, [
     clipA,
     clipB,
+    clipC,
     totalDurationSec,
     startFrequencyHz,
     endFrequencyHz,
@@ -114,7 +128,9 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     ? clipA
     : clipB?.beatTimestamps?.length
       ? clipB
-      : null;
+      : clipC?.beatTimestamps?.length
+        ? clipC
+        : null;
   const beatCount = beatRef?.beatTimestamps?.length ?? 0;
 
   const isBellCurve = easingName === 'bellCurveSmooth' || easingName === 'bellCurveSharp';
@@ -136,7 +152,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
   const canGenerate =
     !!clipA &&
     !!clipB &&
-    clipA.id !== clipB.id &&
+    !hasDuplicateSources &&
     (consumeMode === 'entireSources' || totalDurationSec > 0) &&
     !generating &&
     !estimate?.shortageMessage;
@@ -166,8 +182,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
         </div>
         <div className="modal-body">
           <p className="inspector-hint">
-            Alternate two clips at a changing cut rate. Result is a new MP4 in
-            the library (no timeline slicing).
+            Alternate two or three clips at a changing cut rate. Result is a new
+            MP4 in the library (no timeline slicing).
           </p>
 
           <fieldset className="intercut-fieldset">
@@ -178,7 +194,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 className={sourceClock === 'freezeHidden' ? 'active' : ''}
                 onClick={() => setSourceClock('freezeHidden')}
                 disabled={generating}
-                title="Hidden clip freezes; keeps all frames of both"
+                title="Hidden clips freeze; keeps all frames of the selected sources"
               >
                 Freeze hidden
               </button>
@@ -195,7 +211,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
             <p className="inspector-hint">
               {sourceClock === 'parallel'
                 ? 'Both playheads track output time. Cut to B at 1.2s → see B at 1.2s (offscreen frames skipped).'
-                : 'Only the visible source advances; the other freezes and resumes (keeps all frames).'}
+                : 'Only the visible source advances; the others freeze and resume (keeps all frames).'}
             </p>
           </fieldset>
 
@@ -216,14 +232,16 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 onClick={() => setConsumeMode('entireSources')}
                 disabled={generating}
               >
-                {sourceClock === 'parallel' ? 'Full span' : 'All of both'}
+                {sourceClock === 'parallel' ? 'Full span' : clipC ? 'All three' : 'All of both'}
               </button>
             </div>
             <p className="inspector-hint">
               {consumeMode === 'entireSources'
                 ? sourceClock === 'parallel'
-                  ? 'Cut until wall time reaches the longer clip (≈ max(A, B)).'
-                  : 'Cut until every trimmed second of A and B is used (≈ A + B).'
+                  ? 'Cut until wall time reaches the longest clip.'
+                  : clipC
+                    ? 'Cut until every trimmed second of A, B, and C is used (≈ A + B + C).'
+                    : 'Cut until every trimmed second of A and B is used (≈ A + B).'
                 : 'Stop after the swap duration below (or when a source runs out).'}
             </p>
           </fieldset>
@@ -245,13 +263,13 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
           </label>
 
           <label className="intercut-field">
-            Clip B
+            Clip C (optional)
             <select
-              value={clipBId}
-              onChange={(e) => setClipBId(e.target.value)}
+              value={clipCId}
+              onChange={(e) => setClipCId(e.target.value)}
               disabled={generating}
             >
-              <option value="">Select clip…</option>
+              <option value="">None — two-clip A/B</option>
               {videoClips.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.title}
@@ -274,7 +292,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 />
               </label>
               <p className="inspector-hint">
-                Length of the A/B swapping phase. Add a tail below if the landing
+                Length of the swapping phase. Add a tail below if the landing
                 clip should keep playing after the last cut.
               </p>
             </>
@@ -355,7 +373,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 >
                   <option value="B">Clip B (resolve on B)</option>
                   <option value="A">Clip A (resolve on A)</option>
-                  <option value="auto">Natural (odd slices → A, even → B)</option>
+                  {clipC ? <option value="C">Clip C (resolve on C)</option> : null}
+                  <option value="auto">Natural (cycle A → B{clipC ? ' → C' : ''})</option>
                 </select>
               </label>
 
@@ -399,7 +418,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
             />
             Snap cuts to beats
             {beatCount < 2
-              ? ' (needs beatTimestamps on A or B)'
+              ? ' (needs beatTimestamps on a source clip)'
               : beatRef?.bpmEstimate
                 ? ` (${beatRef.bpmEstimate.toFixed(0)} BPM)`
                 : ` (${beatCount} beats)`}
@@ -416,8 +435,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
           {estimate?.shortageMessage && (
             <p className="inspector-warning">{estimate.shortageMessage}</p>
           )}
-          {clipA && clipB && clipA.id === clipB.id && (
-            <p className="inspector-warning">Pick two different clips.</p>
+          {hasDuplicateSources && (
+            <p className="inspector-warning">Pick different clips for each source.</p>
           )}
         </div>
         <div className="modal-actions">
@@ -433,6 +452,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
               void onGenerate({
                 clipA,
                 clipB,
+                clipC: clipC ?? undefined,
                 automation: {
                   totalDurationSec:
                     consumeMode === 'entireSources' ? 0 : totalDurationSec,

@@ -416,4 +416,102 @@ describe('intercut', () => {
     expect(last.slot).toBe('B');
     expect(last.outpoint).toBeCloseTo(1.0, 5);
   });
+
+  it('cycles A → B → C when a third source is provided', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 10 },
+      sourceC: { trimStart: 1, trimEnd: 11 },
+      automation: {
+        totalDurationSec: 0.6,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+    });
+
+    expect(slices).toHaveLength(3);
+    expect(slices[0]).toMatchObject({ slot: 'A', inpoint: 0, outpoint: 0.2 });
+    expect(slices[1]).toMatchObject({ slot: 'B', inpoint: 0, outpoint: 0.2 });
+    expect(slices[2]).toMatchObject({ slot: 'C', inpoint: 1, outpoint: 1.2 });
+  });
+
+  it('three-clip parallel clock advances hidden sources with wall time', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 10 },
+      sourceC: { trimStart: 0, trimEnd: 10 },
+      automation: {
+        totalDurationSec: 0.6,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      sourceClock: 'parallel',
+    });
+
+    expect(slices[0]).toMatchObject({ slot: 'A', inpoint: 0, outpoint: 0.2 });
+    expect(slices[1]).toMatchObject({ slot: 'B', inpoint: 0.2, outpoint: 0.4 });
+    expect(slices[2]).toMatchObject({ slot: 'C', inpoint: 0.4, outpoint: 0.6 });
+  });
+
+  it('three-clip entireSources uses A+B+C in freezeHidden', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 0.4 },
+      sourceB: { trimStart: 0, trimEnd: 0.4 },
+      sourceC: { trimStart: 0, trimEnd: 0.2 },
+      automation: {
+        totalDurationSec: 0,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      consumeMode: 'entireSources',
+    });
+
+    const used = (slot: 'A' | 'B' | 'C') =>
+      slices
+        .filter((s) => s.slot === slot)
+        .reduce((sum, s) => sum + (s.outpoint - s.inpoint), 0);
+    expect(used('A')).toBeCloseTo(0.4, 5);
+    expect(used('B')).toBeCloseTo(0.4, 5);
+    expect(used('C')).toBeCloseTo(0.2, 5);
+    expect(intercutOutputDuration(slices)).toBeCloseTo(1.0, 5);
+  });
+
+  it('lands on clip C when forceFinalClip is C', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 10 },
+      sourceB: { trimStart: 0, trimEnd: 10 },
+      sourceC: { trimStart: 0, trimEnd: 10 },
+      automation: {
+        totalDurationSec: 0.8,
+        startFrequencyHz: 5,
+        endFrequencyHz: 5,
+      },
+      forceFinalClip: 'C',
+    });
+
+    // 4 slices of 0.2s; without force the last would be A.
+    expect(slices).toHaveLength(4);
+    expect(slices.map((s) => s.slot)).toEqual(['A', 'B', 'C', 'C']);
+  });
+
+  it('buildConcatPlaylist emits clip C files', () => {
+    const playlist = buildConcatPlaylist(
+      [{ slot: 'C', inpoint: 1, outpoint: 1.25 }],
+      'clip_a.mp4',
+      'clip_b.mp4',
+      'clip_c.mp4',
+    );
+    expect(playlist).toContain("file 'clip_c.mp4'");
+    expect(playlist).toContain('inpoint 1.000000');
+  });
+
+  it('remapIntercutSlicesToTrimOrigin shifts C independently', () => {
+    const remapped = remapIntercutSlicesToTrimOrigin(
+      [{ slot: 'C', inpoint: 5, outpoint: 5.5 }],
+      0,
+      0,
+      5,
+    );
+    expect(remapped[0]).toMatchObject({ slot: 'C', inpoint: 0, outpoint: 0.5 });
+  });
 });

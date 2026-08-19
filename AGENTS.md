@@ -127,7 +127,7 @@ When `playbackRate` automation is present, FFmpeg export uses the OfflineAudioCo
 
 ## Intercut generator (local FFmpeg)
 
-Library macro that alternates two clips at a configurable (accelerating) cut rate and drops a new MP4 into the library. Planning lives in `src/utils/intercut.ts`.
+Library macro that alternates two or three clips at a configurable (accelerating) cut rate and drops a new MP4 into the library. Planning lives in `src/utils/intercut.ts`.
 
 `sourceClock`:
 - `freezeHidden` (default) — only the visible source’s `inpoint`/`outpoint` advance; the hidden clip freezes and resumes (keeps offscreen frames).
@@ -135,7 +135,7 @@ Library macro that alternates two clips at a configurable (accelerating) cut rat
 
 `consumeMode`:
 - `targetDuration` (default) — fill `automation.totalDurationSec` (plus optional `tailDurationSec` on the landing clip).
-- `entireSources` — drain the material budget: freezeHidden → len(A)+len(B); parallel → max(len(A), len(B)).
+- `entireSources` — drain the material budget: freezeHidden → sum of source lengths; parallel → max of source lengths.
 
-`forceFinalClip` (`A` / `B` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. `src/ffmpeg/intercutGenerator.ts` writes VFS files, optionally normalizes mismatched resolution/fps/codec, concatenates, then applies audio policy (`both` / `aOnly` / `silent`). Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz. Stream copy only when every slice is ≥ `INTERCUT_MIN_STREAM_COPY_SLICE_SEC` (0.5s). UI: `IntercutModal` from Clip Library **Create Intercut Clip**.
+`forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. `src/ffmpeg/intercutGenerator.ts` writes VFS files, optionally normalizes mismatched resolution/fps/codec, concatenates, then applies audio policy (`both` / `aOnly` / `silent`). Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz. Stream copy only when every slice is ≥ `INTERCUT_MIN_STREAM_COPY_SLICE_SEC` (0.5s). UI: `IntercutModal` from Clip Library **Create Intercut Clip** (optional Clip C cycles A → B → C).
 
