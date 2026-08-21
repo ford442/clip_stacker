@@ -115,14 +115,15 @@
 }
 
 .intercut-modal {
-  max-width: 460px;
+  max-width: 560px;
 }
 
 .intercut-field {
   display: grid;
   gap: 0.25rem;
   font-size: 0.82rem;
-  margin: 0.65rem 0;
+  margin: 0.45rem 0;
+  min-width: 0;
 }
 
 .intercut-field input,
@@ -138,8 +139,8 @@
 .intercut-fieldset {
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 0.5rem 0.7rem 0.2rem;
-  margin: 0.5rem 0;
+  padding: 0.5rem 0.7rem 0.35rem;
+  margin: 0.55rem 0;
 }
 
 .intercut-fieldset legend {
@@ -149,6 +150,58 @@
   text-transform: uppercase;
   color: var(--gold);
   padding: 0 0.3rem;
+}
+
+.intercut-sources,
+.intercut-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 0.65rem;
+  align-items: start;
+}
+
+.intercut-sources {
+  gap: 0.2rem 0.65rem;
+}
+
+.intercut-source-c {
+  grid-column: 1 / -1;
+}
+
+.intercut-row > div {
+  min-width: 0;
+}
+
+.intercut-sources .intercut-field {
+  margin: 0.1rem 0 0.35rem;
+}
+
+.intercut-source-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.intercut-source-letter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.15rem;
+  height: 1.15rem;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  background: var(--gold-dim);
+  color: var(--gold-bright);
+  border: 1px solid var(--border-active);
+  flex-shrink: 0;
+}
+
+.intercut-sublabel {
+  margin: 0 0 0.3rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--muted);
 }
 
 .intercut-unit-toggle {
@@ -174,4 +227,11 @@
   font-size: 0.8rem;
   color: var(--muted);
   line-height: 1.45;
+}
+
+@media (max-width: 540px) {
+  .intercut-sources,
+  .intercut-row {
+    grid-template-columns: 1fr;
+  }
 }
