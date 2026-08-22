@@ -1,5 +1,12 @@
+import os
 import sys
 from pathlib import Path
+
+# ZeroGPU sometimes sets ZEROGPU_PROC_SELF_CGROUP_PATH=/etc/host-cgroup but the
+# mount is missing; fall back before `spaces` reads Config.
+_cgroup_path = os.environ.get('ZEROGPU_PROC_SELF_CGROUP_PATH', '/proc/self/cgroup')
+if _cgroup_path == '/etc/host-cgroup' and not Path(_cgroup_path).exists():
+    os.environ['ZEROGPU_PROC_SELF_CGROUP_PATH'] = '/proc/self/cgroup'
 
 # Add packages to Python path
 current_dir = Path(__file__).parent
@@ -11,7 +18,6 @@ import spaces
 import gradio as gr
 from gradio_client import Client, handle_file
 import torch
-from pathlib import Path
 from typing import Optional
 from huggingface_hub import hf_hub_download
 from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline
@@ -113,10 +119,8 @@ def generate_video(
     progress=gr.Progress(track_tqdm=True)
 ):
     """Generate a video based on the given parameters."""
+    current_seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
     try:
-        # Randomize seed if checkbox is enabled
-        current_seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
-
         # Calculate num_frames from duration (using fixed 24 fps)
         frame_rate = 24.0
         num_frames = int(duration * frame_rate) + 1  # +1 to ensure we meet the duration
@@ -162,11 +166,21 @@ def generate_video(
                 negative_prompt=negative_prompt,
                 api_name="/encode_prompt"
             )
-            embedding_path = result[0]  # Path to .pt file
+            embedding_path = result[0] if result else None
+            encoder_status = result[2] if result and len(result) > 2 else None
             print(f"Embeddings received from: {embedding_path}")
+            if encoder_status:
+                print(f"Text encoder status: {encoder_status}")
+
+            if not embedding_path:
+                detail = encoder_status or "text encoder returned no embedding file"
+                raise RuntimeError(
+                    f"Text encoder space did not return embeddings ({detail}). "
+                    f"If the encoder space is on ZeroGPU, restart both spaces or check its logs."
+                )
 
             # Load embeddings
-            embeddings = torch.load(embedding_path)
+            embeddings = torch.load(embedding_path, weights_only=False)
             video_context_positive = embeddings['video_context']
             audio_context_positive = embeddings['audio_context']
 
@@ -209,7 +223,8 @@ def generate_video(
         import traceback
         error_msg = f"Error: {str(e)}\n{traceback.format_exc()}"
         print(error_msg)
-        return None
+        gr.Warning(str(e))
+        return None, current_seed
 
 
 # Create Gradio interface

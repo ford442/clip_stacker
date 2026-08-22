@@ -1,6 +1,4 @@
-# 1. Install PyTorch 2.5.1 for CUDA 12.4
-torch==2.8.0 --index-url https://download.pytorch.org/whl/cu129
-
+# Let the ZeroGPU runtime provide a compatible torch build (do not pin cu129 here).
 # 2. LTX Dependencies
 diffusers>=0.31.0
 transformers>=4.46.0
@@ -18,7 +16,7 @@ numpy
 #torchvision==0.23.0
 huggingface_hub
 hf_transfer
-spaces
+spaces>=0.51.1
 opencv-python
 imageio[ffmpeg]
 einops

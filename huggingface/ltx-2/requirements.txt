@@ -1,0 +1,14 @@
+einops
+numpy
+torchaudio
+transformers
+safetensors
+accelerate
+flashpack==0.1.2
+scikit-image>=0.25.2
+av
+tqdm
+pillow
+scipy>=1.14
+spaces>=0.51.1
+gradio>=6.2.0

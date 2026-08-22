@@ -1,6 +1,14 @@
-import spaces
-import sys
 import os
+import sys
+from pathlib import Path
+
+# ZeroGPU sometimes sets ZEROGPU_PROC_SELF_CGROUP_PATH=/etc/host-cgroup but the
+# mount is missing; fall back before `spaces` reads Config.
+_cgroup_path = os.environ.get('ZEROGPU_PROC_SELF_CGROUP_PATH', '/proc/self/cgroup')
+if _cgroup_path == '/etc/host-cgroup' and not Path(_cgroup_path).exists():
+    os.environ['ZEROGPU_PROC_SELF_CGROUP_PATH'] = '/proc/self/cgroup'
+
+import spaces
 import subprocess
 
 @spaces.GPU(duration=120)
@@ -253,32 +261,25 @@ if PIPELINE_CONFIG_YAML.get("temporal_upscaler_model_path"):
     temporal_upsampler_instance = create_latent_upsampler(PIPELINE_CONFIG_YAML["temporal_upscaler_model_path"], device="cpu")
 
 target_inference_device = "cuda"
-print(f"Target inference device: {target_inference_device}")
-pipeline_instance.to(target_inference_device)
+print(f"Target inference device: {target_inference_device} (moved inside @spaces.GPU at inference time)")
 
 #pipeline_instance.enable_model_cpu_offload()  # For large models
 pipeline_instance.enable_attention_slicing(1)  # Slice attention for memory savings
 #pipeline_instance.enable_vae_slicing()  # Enable VAE slicing
 
-
-# After pipeline.to(device)
-#if not hasattr(pipeline_instance, '_compiled'):
-#    print("Compiling transformer...")
-#    pipeline_instance.transformer = torch.compile(
-#        pipeline_instance.transformer,
-#        mode="reduce-overhead",  # or "max-autotune" for best performance
-#        fullgraph=True,
-#        dynamic=False  # Set True if shapes vary
-#    )
-#    pipeline_instance._compiled = True
-    
-
 if hasattr(pipeline_instance.transformer, 'set_attn_processor'):
     from diffusers.models.attention_processor import AttnProcessor2_0
     pipeline_instance.transformer.set_attn_processor(AttnProcessor2_0())
-    
-if latent_upsampler_instance: latent_upsampler_instance.to(target_inference_device)
-if temporal_upsampler_instance: temporal_upsampler_instance.to(target_inference_device)
+
+
+def ensure_models_on_device(device: str = target_inference_device) -> None:
+    """Move pipeline weights to GPU only inside @spaces.GPU (ZeroGPU requirement)."""
+    if next(pipeline_instance.transformer.parameters()).device.type != device:
+        pipeline_instance.to(device)
+    if latent_upsampler_instance and next(latent_upsampler_instance.parameters()).device.type != device:
+        latent_upsampler_instance.to(device)
+    if temporal_upsampler_instance and next(temporal_upsampler_instance.parameters()).device.type != device:
+        temporal_upsampler_instance.to(device)
     
 dynamic_shapes = {
     "hidden_states": {
@@ -449,6 +450,8 @@ def generate(prompt, negative_prompt, clips_list, input_image_filepath, input_vi
             print("❌ TeaCache is DISABLED.")
     except AttributeError:
         print("⚠️ Could not configure TeaCache on transformer.")
+
+    ensure_models_on_device()
 
     # Set highest precision for the main generation pipeline
     torch.backends.cuda.matmul.allow_tf32 = False
