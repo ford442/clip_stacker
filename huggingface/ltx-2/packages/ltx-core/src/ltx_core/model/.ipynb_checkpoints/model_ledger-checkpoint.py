@@ -1,0 +1,253 @@
+from dataclasses import replace
+# from typing import Self
+from typing_extensions import Self
+
+import torch
+
+from ltx_core.loader.primitives import LoraPathStrengthAndSDOps
+from ltx_core.loader.registry import DummyRegistry, Registry
+from ltx_core.loader.single_gpu_model_builder import SingleGPUModelBuilder as Builder
+from ltx_core.model.audio_vae.audio_vae import Decoder as AudioDecoder
+from ltx_core.model.audio_vae.model_configurator import (
+    AUDIO_VAE_DECODER_COMFY_KEYS_FILTER,
+    VOCODER_COMFY_KEYS_FILTER,
+    VocoderConfigurator,
+)
+from ltx_core.model.audio_vae.model_configurator import VAEDecoderConfigurator as AudioDecoderConfigurator
+from ltx_core.model.audio_vae.vocoder import Vocoder
+from ltx_core.model.clip.gemma.encoders.av_encoder import (
+    AV_GEMMA_TEXT_ENCODER_KEY_OPS,
+    AVGemmaTextEncoderModel,
+    AVGemmaTextEncoderModelConfigurator,
+)
+from ltx_core.model.clip.gemma.encoders.base_encoder import module_ops_from_gemma_root
+from ltx_core.model.transformer.model import X0Model
+from ltx_core.model.transformer.model_configurator import (
+    LTXV_MODEL_COMFY_RENAMING_MAP,
+    LTXV_MODEL_COMFY_RENAMING_WITH_TRANSFORMER_LINEAR_DOWNCAST_MAP,
+    UPCAST_DURING_INFERENCE,
+    LTXModelConfigurator,
+)
+from ltx_core.model.upsampler.model import LatentUpsampler
+from ltx_core.model.upsampler.model_configurator import LatentUpsamplerConfigurator
+from ltx_core.model.video_vae.model_configurator import (
+    VAE_DECODER_COMFY_KEYS_FILTER,
+    VAE_ENCODER_COMFY_KEYS_FILTER,
+    VAEDecoderConfigurator,
+    VAEEncoderConfigurator,
+)
+from ltx_core.model.video_vae.video_vae import Decoder as VideoDecoder
+from ltx_core.model.video_vae.video_vae import Encoder as VideoEncoder
+
+
+class ModelLedger:
+    """
+    Central coordinator for loading, caching, and freeing models used in an LTX pipeline.
+    The ledger wires together multiple model builders (transformer, video VAE encoder/decoder,
+    audio VAE decoder, vocoder, text encoder, and optional latent upsampler) and exposes
+    the resulting models as lazily constructed, cached attributes.
+
+    ### Caching behavior
+
+    Each model attribute (e.g. :attr:`transformer`, :attr:`video_decoder`, :attr:`text_encoder`)
+    is implemented as a :func:`functools.cached_property`. The first time one of these
+    attributes is accessed, the corresponding builder loads weights from the
+    :class:`~ltx_core.loader.registry.StateDictRegistry`, instantiates the model on CPU with
+    the configured ``dtype``, moves it to ``self.device``, and stores the result in
+    the instance ``__dict__``. Subsequent accesses reuse the same model instance until it is
+    explicitly cleared via :meth:`clear_vram`.
+
+    ### Constructor parameters
+
+    dtype:
+        Torch dtype used when constructing all models (e.g. ``torch.float16``).
+    device:
+        Target device to which models are moved after construction (e.g. ``torch.device("cuda")``).
+    checkpoint_path:
+        Path to a checkpoint directory or file containing the core model weights
+        (transformer, video VAE, audio VAE, text encoder, vocoder). If ``None``, the
+        corresponding builders are not created and accessing those properties will raise
+        a :class:`ValueError`.
+    gemma_root_path:
+        Base path to Gemma-compatible CLIP/text encoder weights. Required to
+        initialize the text encoder builder; if omitted, :attr:`text_encoder` cannot be used.
+    spatial_upsampler_path:
+        Optional path to a latent upsampler checkpoint. If provided, the
+        :attr:`upsampler` property becomes available; otherwise accessing it raises
+        a :class:`ValueError`.
+    loras:
+        Optional collection of LoRA configurations (paths, strengths, and key operations)
+        that are applied on top of the base transformer weights when building the model.
+
+    ### Memory management
+
+    ``clear_ram()``
+        Clears the underlying :class:`Registry` cache of state dicts and triggers a
+        Python garbage collection pass. Use this when you no longer need to construct new
+        models from the currently loaded checkpoints and want to free host (CPU) memory.
+    ``clear_vram()``
+        Drops the cached model instances stored by the ``@cached_property`` attributes from
+        this ledger (by removing them from ``self.__dict__``) and calls
+        :func:`torch.cuda.empty_cache`. Use this when you want to release GPU memory;
+        subsequent access to a model property will rebuild the model from the registry
+        while keeping the existing builder configuration.
+    """
+
+    def __init__(
+        self,
+        dtype: torch.dtype,
+        device: torch.device,
+        checkpoint_path: str | None = None,
+        gemma_root_path: str | None = None,
+        spatial_upsampler_path: str | None = None,
+        loras: LoraPathStrengthAndSDOps | None = None,
+        registry: Registry | None = None,
+        fp8transformer: bool = False,
+        local_files_only: bool = True
+    ):
+        self.dtype = dtype
+        self.device = device
+        self.checkpoint_path = checkpoint_path
+        self.gemma_root_path = gemma_root_path
+        self.spatial_upsampler_path = spatial_upsampler_path
+        self.loras = loras or ()
+        self.registry = registry or DummyRegistry()
+        self.fp8transformer = fp8transformer
+        self.local_files_only = local_files_only
+        self.build_model_builders()
+
+    def build_model_builders(self) -> None:
+        if self.checkpoint_path is not None:
+            self.transformer_builder = Builder(
+                model_path=self.checkpoint_path,
+                model_class_configurator=LTXModelConfigurator,
+                model_sd_ops=LTXV_MODEL_COMFY_RENAMING_MAP,
+                loras=tuple(self.loras),
+                registry=self.registry,
+            )
+
+            self.vae_decoder_builder = Builder(
+                model_path=self.checkpoint_path,
+                model_class_configurator=VAEDecoderConfigurator,
+                model_sd_ops=VAE_DECODER_COMFY_KEYS_FILTER,
+                registry=self.registry,
+            )
+
+            self.vae_encoder_builder = Builder(
+                model_path=self.checkpoint_path,
+                model_class_configurator=VAEEncoderConfigurator,
+                model_sd_ops=VAE_ENCODER_COMFY_KEYS_FILTER,
+                registry=self.registry,
+            )
+
+            self.audio_decoder_builder = Builder(
+                model_path=self.checkpoint_path,
+                model_class_configurator=AudioDecoderConfigurator,
+                model_sd_ops=AUDIO_VAE_DECODER_COMFY_KEYS_FILTER,
+                registry=self.registry,
+            )
+
+            self.vocoder_builder = Builder(
+                model_path=self.checkpoint_path,
+                model_class_configurator=VocoderConfigurator,
+                model_sd_ops=VOCODER_COMFY_KEYS_FILTER,
+                registry=self.registry,
+            )
+
+            if self.gemma_root_path is not None:
+                self.text_encoder_builder = Builder(
+                    model_path=self.checkpoint_path,
+                    model_class_configurator=AVGemmaTextEncoderModelConfigurator,
+                    model_sd_ops=AV_GEMMA_TEXT_ENCODER_KEY_OPS,
+                    registry=self.registry,
+                    module_ops=module_ops_from_gemma_root(self.gemma_root_path, self.local_files_only),
+                )
+
+        if self.spatial_upsampler_path is not None:
+            self.upsampler_builder = Builder(
+                model_path=self.spatial_upsampler_path,
+                model_class_configurator=LatentUpsamplerConfigurator,
+                registry=self.registry,
+            )
+
+    def _target_device(self) -> torch.device:
+        if isinstance(self.registry, DummyRegistry) or self.registry is None:
+            return self.device
+        else:
+            return torch.device("cpu")
+
+    def with_loras(self, loras: LoraPathStrengthAndSDOps) -> Self:
+        return ModelLedger(
+            dtype=self.dtype,
+            device=self.device,
+            checkpoint_path=self.checkpoint_path,
+            gemma_root_path=self.gemma_root_path,
+            spatial_upsampler_path=self.spatial_upsampler_path,
+            loras=(*self.loras, *loras),
+            registry=self.registry,
+            fp8transformer=self.fp8transformer,
+        )
+
+    def transformer(self) -> X0Model:
+        if not hasattr(self, "transformer_builder"):
+            raise ValueError(
+                "Transformer not initialized. Please provide a checkpoint path to the ModelLedger constructor."
+            )
+        if self.fp8transformer:
+            fp8_builder = replace(
+                self.transformer_builder,
+                module_ops=(UPCAST_DURING_INFERENCE,),
+                model_sd_ops=LTXV_MODEL_COMFY_RENAMING_WITH_TRANSFORMER_LINEAR_DOWNCAST_MAP,
+            )
+            return X0Model(fp8_builder.build(device=self._target_device())).to(self.device)
+        else:
+            return X0Model(self.transformer_builder.build(device=self._target_device(), dtype=self.dtype)).to(
+                self.device
+            )
+
+    def video_decoder(self) -> VideoDecoder:
+        if not hasattr(self, "vae_decoder_builder"):
+            raise ValueError(
+                "Video decoder not initialized. Please provide a checkpoint path to the ModelLedger constructor."
+            )
+
+        return self.vae_decoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device)
+
+    def video_encoder(self) -> VideoEncoder:
+        if not hasattr(self, "vae_encoder_builder"):
+            raise ValueError(
+                "Video encoder not initialized. Please provide a checkpoint path to the ModelLedger constructor."
+            )
+
+        return self.vae_encoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device)
+
+    def text_encoder(self) -> AVGemmaTextEncoderModel:
+        if not hasattr(self, "text_encoder_builder"):
+            raise ValueError(
+                "Text encoder not initialized. Please provide a checkpoint path and gemma root path to the "
+                "ModelLedger constructor."
+            )
+
+        return self.text_encoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device)
+
+    def audio_decoder(self) -> AudioDecoder:
+        if not hasattr(self, "audio_decoder_builder"):
+            raise ValueError(
+                "Audio decoder not initialized. Please provide a checkpoint path to the ModelLedger constructor."
+            )
+
+        return self.audio_decoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device)
+
+    def vocoder(self) -> Vocoder:
+        if not hasattr(self, "vocoder_builder"):
+            raise ValueError(
+                "Vocoder not initialized. Please provide a checkpoint path to the ModelLedger constructor."
+            )
+
+        return self.vocoder_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device)
+
+    def spatial_upsampler(self) -> LatentUpsampler:
+        if not hasattr(self, "upsampler_builder"):
+            raise ValueError("Upsampler not initialized. Please provide upsampler path to the ModelLedger constructor.")
+
+        return self.upsampler_builder.build(device=self._target_device(), dtype=self.dtype).to(self.device)
