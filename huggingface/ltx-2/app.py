@@ -18,7 +18,7 @@ import spaces
 import gradio as gr
 from gradio_client import Client, handle_file
 import torch
-from typing import Optional
+from typing import Any, Optional
 from huggingface_hub import hf_hub_download
 from ltx_pipelines.ti2vid_two_stages import TI2VidTwoStagesPipeline
 from ltx_core.tiling import TilingConfig
@@ -79,7 +79,7 @@ print(f"Initializing pipeline with:")
 print(f"  checkpoint_path={checkpoint_path}")
 print(f"  distilled_lora_path={distilled_lora_path}")
 print(f"  spatial_upsampler_path={spatial_upsampler_path}")
-print(f"  text_encoder_space={TEXT_ENCODER_SPACE}")
+print(f"  text_encoder_space={TEXT_ENCODER_SPACE} (connected on first generate)")
 
 # Initialize pipeline WITHOUT text encoder (gemma_root=None)
 # Text encoding will be done by external space
@@ -94,16 +94,123 @@ pipeline = TI2VidTwoStagesPipeline(
     local_files_only=False
 )
 
-# Initialize text encoder client
-print(f"Connecting to text encoder space: {TEXT_ENCODER_SPACE}")
-try:
-    text_encoder_client = Client(TEXT_ENCODER_SPACE)
-    print("✓ Text encoder client connected!")
-except Exception as e:
-    print(f"⚠ Warning: Could not connect to text encoder space: {e}")
-    text_encoder_client = None
+def _local_path_from_client_file(value: Any) -> Optional[str]:
+    """gradio_client may return a path string, a FileData dict, or None."""
+    if value is None:
+        return None
+    if isinstance(value, (str, Path)):
+        return str(value)
+    if isinstance(value, dict):
+        for key in ("path", "name"):
+            candidate = value.get(key)
+            if candidate:
+                return str(candidate)
+    return None
+
+
+def fetch_prompt_embeddings(
+    prompt: str,
+    enhance_prompt: bool,
+    image_path: Optional[Path],
+    seed: int,
+    negative_prompt: str,
+):
+    """Call the Gemma encoder Space on CPU. Recreate the client each time so we
+    do not reuse an asyncio loop that Gradio Client already closed at import."""
+    print(f"Encoding prompt: {prompt}")
+    print(f"Connecting to text encoder space: {TEXT_ENCODER_SPACE}")
+    try:
+        client = Client(TEXT_ENCODER_SPACE, download_files=True)
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not connect to {TEXT_ENCODER_SPACE}: {e}. "
+            "That Space must be Running (ZeroGPU) for LTX-2 to encode prompts."
+        ) from e
+
+    image_input = handle_file(str(image_path)) if image_path is not None else None
+    result = client.predict(
+        prompt=prompt,
+        enhance_prompt=enhance_prompt,
+        input_image=image_input,
+        seed=seed,
+        negative_prompt=negative_prompt,
+        api_name="/encode_prompt",
+    )
+    embedding_path = _local_path_from_client_file(result[0] if result else None)
+    encoder_status = result[2] if result and len(result) > 2 else None
+    print(f"Embeddings received from: {embedding_path}")
+    if encoder_status:
+        print(f"Text encoder status: {encoder_status}")
+
+    if not embedding_path:
+        detail = encoder_status or "text encoder returned no embedding file"
+        raise RuntimeError(
+            f"Text encoder space did not return embeddings ({detail}). "
+            f"Check logs on {TEXT_ENCODER_SPACE}."
+        )
+
+    embeddings = torch.load(embedding_path, map_location="cpu", weights_only=False)
+    video_context_positive = embeddings["video_context"]
+    audio_context_positive = embeddings["audio_context"]
+    video_context_negative = embeddings.get("video_context_negative")
+    audio_context_negative = embeddings.get("audio_context_negative")
+    if video_context_positive is None or audio_context_positive is None:
+        raise RuntimeError("Encoder returned incomplete positive embeddings.")
+    # Two-stage pipeline falls back to local Gemma if any negative tensor is
+    # missing — that path cannot run with gemma_root=None.
+    if video_context_negative is None or audio_context_negative is None:
+        raise RuntimeError(
+            "Encoder did not return negative-prompt embeddings. "
+            "Pass a non-empty negative prompt so /encode_prompt includes them."
+        )
+    print("✓ Embeddings loaded successfully")
+    return (
+        video_context_positive,
+        audio_context_positive,
+        video_context_negative,
+        audio_context_negative,
+    )
+
 
 @spaces.GPU(duration=300)
+def run_pipeline_on_gpu(
+    prompt: str,
+    negative_prompt: str,
+    output_path: str,
+    current_seed: int,
+    height: int,
+    width: int,
+    num_frames: int,
+    frame_rate: float,
+    num_inference_steps: int,
+    cfg_guidance_scale: float,
+    images: list,
+    video_context_positive,
+    audio_context_positive,
+    video_context_negative,
+    audio_context_negative,
+):
+    pipeline(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        output_path=output_path,
+        seed=current_seed,
+        height=height,
+        width=width,
+        num_frames=num_frames,
+        frame_rate=frame_rate,
+        num_inference_steps=num_inference_steps,
+        cfg_guidance_scale=cfg_guidance_scale,
+        images=images,
+        tiling_config=TilingConfig.default(),
+        video_context_positive=video_context_positive,
+        audio_context_positive=audio_context_positive,
+        video_context_negative=video_context_negative,
+        audio_context_negative=audio_context_negative,
+    )
+    return str(output_path)
+
+
 def generate_video(
     input_image,
     prompt: str,
@@ -116,111 +223,63 @@ def generate_video(
     cfg_guidance_scale: float = DEFAULT_CFG_GUIDANCE_SCALE,
     height: int = DEFAULT_HEIGHT,
     width: int = DEFAULT_WIDTH,
-    progress=gr.Progress(track_tqdm=True)
+    progress=gr.Progress(track_tqdm=True),
 ):
-    """Generate a video based on the given parameters."""
+    """Encode on CPU via the Gemma Space, then run LTX-2 on ZeroGPU."""
     current_seed = random.randint(0, MAX_SEED) if randomize_seed else int(seed)
     try:
-        # Calculate num_frames from duration (using fixed 24 fps)
         frame_rate = 24.0
-        num_frames = int(duration * frame_rate) + 1  # +1 to ensure we meet the duration
+        num_frames = int(duration * frame_rate) + 1
 
-        # Create output directory if it doesn't exist
         output_dir = Path("outputs")
         output_dir.mkdir(exist_ok=True)
         output_path = output_dir / f"video_{current_seed}.mp4"
 
-        # Handle image input
         images = []
-        temp_image_path = None  # Initialize to None
+        temp_image_path = None
         if input_image is not None:
-            # Save uploaded image temporarily
             temp_image_path = output_dir / f"temp_input_{current_seed}.jpg"
-            if hasattr(input_image, 'save'):
+            if hasattr(input_image, "save"):
                 input_image.save(temp_image_path)
             else:
-                # If it's a file path already
                 temp_image_path = Path(input_image)
-            # Format: (image_path, frame_idx, strength)
             images = [(str(temp_image_path), 0, 1.0)]
-        # Get embeddings from text encoder space
-        print(f"Encoding prompt: {prompt}")
-        
-        if text_encoder_client is None:
-            raise RuntimeError(
-                f"Text encoder client not connected. Please ensure the text encoder space "
-                f"({TEXT_ENCODER_SPACE}) is running and accessible."
-            )
-        
-        try:
-            # Prepare image for upload if it exists
-            image_input = None
-            if temp_image_path is not None:
-                image_input = handle_file(str(temp_image_path))
-            
-            result = text_encoder_client.predict(
-                prompt=prompt,
-                enhance_prompt=enhance_prompt,
-                input_image=image_input,
-                seed=current_seed,
-                negative_prompt=negative_prompt,
-                api_name="/encode_prompt"
-            )
-            embedding_path = result[0] if result else None
-            encoder_status = result[2] if result and len(result) > 2 else None
-            print(f"Embeddings received from: {embedding_path}")
-            if encoder_status:
-                print(f"Text encoder status: {encoder_status}")
 
-            if not embedding_path:
-                detail = encoder_status or "text encoder returned no embedding file"
-                raise RuntimeError(
-                    f"Text encoder space did not return embeddings ({detail}). "
-                    f"If the encoder space is on ZeroGPU, restart both spaces or check its logs."
-                )
-
-            # Load embeddings
-            embeddings = torch.load(embedding_path, weights_only=False)
-            video_context_positive = embeddings['video_context']
-            audio_context_positive = embeddings['audio_context']
-
-            # Load negative contexts if available
-            video_context_negative = embeddings.get('video_context_negative', None)
-            audio_context_negative = embeddings.get('audio_context_negative', None)
-
-            print("✓ Embeddings loaded successfully")
-            if video_context_negative is not None:
-                print("  ✓ Negative prompt embeddings also loaded")
-        except Exception as e:
-            raise RuntimeError(
-                f"Failed to get embeddings from text encoder space: {e}\n"
-                f"Please ensure {TEXT_ENCODER_SPACE} is running properly."
-            )
-
-        # Run inference - progress automatically tracks tqdm from pipeline
-        pipeline(
+        (
+            video_context_positive,
+            audio_context_positive,
+            video_context_negative,
+            audio_context_negative,
+        ) = fetch_prompt_embeddings(
             prompt=prompt,
-            negative_prompt=negative_prompt,
-            output_path=str(output_path),
+            enhance_prompt=enhance_prompt,
+            image_path=temp_image_path,
             seed=current_seed,
-            height=height,
-            width=width,
-            num_frames=num_frames,
-            frame_rate=frame_rate,
-            num_inference_steps=num_inference_steps,
-            cfg_guidance_scale=cfg_guidance_scale,
-            images=images,
-            tiling_config=TilingConfig.default(),
-            video_context_positive=video_context_positive,
-            audio_context_positive=audio_context_positive,
-            video_context_negative=video_context_negative,
-            audio_context_negative=audio_context_negative,
+            negative_prompt=negative_prompt,
         )
 
+        run_pipeline_on_gpu(
+            prompt,
+            negative_prompt,
+            str(output_path),
+            current_seed,
+            height,
+            width,
+            num_frames,
+            frame_rate,
+            num_inference_steps,
+            cfg_guidance_scale,
+            images,
+            video_context_positive,
+            audio_context_positive,
+            video_context_negative,
+            audio_context_negative,
+        )
         return str(output_path), current_seed
 
     except Exception as e:
         import traceback
+
         error_msg = f"Error: {str(e)}\n{traceback.format_exc()}"
         print(error_msg)
         gr.Warning(str(e))
@@ -327,7 +386,8 @@ with gr.Blocks(title="LTX-2 Video 🎥🔈") as demo:
             height,
             width,
         ],
-        outputs=[output_video,seed]
+        outputs=[output_video, seed],
+        api_name="generate_video",
     )
 
     # Add example
@@ -351,14 +411,16 @@ with gr.Blocks(title="LTX-2 Video 🎥🔈") as demo:
         ],
         fn=generate_video,
         inputs=[input_image, prompt, duration],
-        outputs = [output_video,seed],
+        outputs=[output_video, seed],
         label="Example",
-        cache_examples=True,
-        cache_mode="lazy",
+        cache_examples=False,
     )
 
 css = '''
 .gradio-container .contain{max-width: 1200px !important; margin: 0 auto !important}
 '''
 if __name__ == "__main__":
-    demo.launch(theme=gr.themes.Citrus())
+    # Gradio 6 enables experimental SSR by default; Hugging Face and old
+    # clients still POST /api/predict, which SSR rejects with HTTP 405
+    # ("No form actions exist for this page").
+    demo.queue().launch(ssr_mode=False, theme=gr.themes.Citrus())

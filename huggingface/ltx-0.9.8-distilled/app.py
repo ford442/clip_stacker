@@ -783,4 +783,4 @@ with gr.Blocks(css=css) as demo:
 
 if __name__ == "__main__":
     if os.path.exists(models_dir): print(f"Model directory: {Path(models_dir).resolve()}")
-    demo.queue().launch(debug=True, share=True, mcp_server=True)
+    demo.queue().launch(debug=True, share=True, mcp_server=True, ssr_mode=False)
