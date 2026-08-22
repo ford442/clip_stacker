@@ -1,0 +1,32 @@
+# 1. Install PyTorch 2.5.1 for CUDA 12.4
+torch==2.8.0 --index-url https://download.pytorch.org/whl/cu129
+
+# 2. LTX Dependencies
+diffusers>=0.31.0
+transformers>=4.46.0
+accelerate>=1.0.0
+
+
+#accelerate
+#transformers
+#diffusers
+sentencepiece
+pillow
+PyYAML
+numpy
+#torch==2.8.0  # or flash_attn can't install with 2.9.0
+#torchvision==0.23.0
+huggingface_hub
+hf_transfer
+spaces
+opencv-python
+imageio[ffmpeg]
+einops
+timm
+av
+moviepy==1.0.3
+opencv-python
+safetensors
+#git+https://github.com/ford442/image_gen_aux.git@1ink
+paramiko
+kernels
