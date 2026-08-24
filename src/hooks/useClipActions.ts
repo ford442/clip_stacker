@@ -167,12 +167,17 @@ export function useClipActions({
         try {
           const { duration, objectUrl, videoWidth, videoHeight, hasAudio } =
             await getMediaInfo(file);
+          const hasVideoTrack =
+            videoWidth != null &&
+            videoWidth > 0 &&
+            videoHeight != null &&
+            videoHeight > 0;
           const newClip: Clip = {
             id: createClipId(),
             file,
             objectUrl,
             title: file.name,
-            kind: isAudio ? "audio" : "video",
+            kind: isAudio || (!isImage && !hasVideoTrack) ? "audio" : "video",
             duration: Math.max(MIN_CLIP_DURATION, duration),
             videoWidth,
             videoHeight,
@@ -223,12 +228,17 @@ export function useClipActions({
         const isImage = isImageFile(file);
         const { duration, objectUrl, videoWidth, videoHeight, hasAudio } =
           await getMediaInfo(file);
+        const hasVideoTrack =
+          videoWidth != null &&
+          videoWidth > 0 &&
+          videoHeight != null &&
+          videoHeight > 0;
         const newClip: Clip = {
           id: createClipId(),
           file,
           objectUrl,
           title: file.name,
-          kind: isAudio ? "audio" : "video",
+          kind: isAudio || (!isImage && !hasVideoTrack) ? "audio" : "video",
           duration: Math.max(MIN_CLIP_DURATION, duration),
           videoWidth,
           videoHeight,
