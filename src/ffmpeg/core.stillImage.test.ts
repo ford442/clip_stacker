@@ -6,8 +6,10 @@ import {
   buildStillImageFfmpegArgs,
   buildStillImageVideoFilter,
   clipHasSourceAudio,
+  clipHasSourceVideo,
   clipNeedsLoopInput,
   isNoAudioStreamError,
+  isNoVideoStreamError,
   isStillImageClip,
   resolveStillImageEncodeDimensions,
   STILL_IMAGE_OUTPUT_FPS,
@@ -21,6 +23,8 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
     title: 'clip.mp4',
     kind: 'video',
     duration: 5,
+    videoWidth: 1280,
+    videoHeight: 720,
     trimStart: 0,
     trimEnd: NaN,
     videoFadeIn: 0,
@@ -163,5 +167,37 @@ describe('still image FFmpeg helpers', () => {
     (err as { lastFfmpegError?: string }).lastFfmpegError =
       "Stream specifier ':a' in filtergraph matches no streams.";
     expect(isNoAudioStreamError(err)).toBe(true);
+  });
+
+  it('clipHasSourceVideo treats probed zero dimensions as no video', () => {
+    expect(
+      clipHasSourceVideo(makeClip({ videoWidth: 0, videoHeight: 0 })),
+    ).toBe(false);
+    expect(
+      clipHasSourceVideo(makeClip({ videoWidth: undefined, videoHeight: undefined })),
+    ).toBe(false);
+    expect(clipHasSourceVideo(makeClip({ videoWidth: 1920, videoHeight: 1080 }))).toBe(
+      true,
+    );
+    expect(clipHasSourceVideo(makeClip({ kind: 'audio' }))).toBe(false);
+  });
+
+  it('buildSingleClipFilter synthesizes black video for audio-only mp4 sources', () => {
+    const audioOnlyMp4 = makeClip({
+      title: 'stacked.mp4',
+      videoWidth: undefined,
+      videoHeight: undefined,
+    });
+    const filter = buildSingleClipFilter({ ...audioOnlyMp4, kind: 'audio' });
+    expect(filter).toContain('color=c=black');
+    expect(filter).toContain('[0:a]');
+    expect(filter).not.toContain('[0:v]');
+  });
+
+  it('isNoVideoStreamError matches missing 0:v map failures', () => {
+    const err = new Error('FS error');
+    (err as { lastFfmpegError?: string }).lastFfmpegError =
+      "Stream map '0:v' matches no streams";
+    expect(isNoVideoStreamError(err)).toBe(true);
   });
 });

@@ -363,6 +363,28 @@ export function clipHasSourceAudio(clip: Clip): boolean {
   return true;
 }
 
+/**
+ * True when the source is expected to carry a decodable video stream.
+ * Audio-only `.mp4` files are often tagged `video/mp4` with zero frame size;
+ * treat missing/zero dimensions as no video. Stale project metadata may still
+ * report width/height — FFmpeg paths retry with synthesized video on `0:v` errors.
+ */
+export function clipHasSourceVideo(
+  clip: Pick<Clip, "kind" | "stillImage" | "file" | "videoWidth" | "videoHeight">,
+): boolean {
+  if (clip.kind === "audio") return false;
+  if (isStillImageClip(clip)) return true;
+  if (
+    clip.videoWidth != null &&
+    clip.videoWidth > 0 &&
+    clip.videoHeight != null &&
+    clip.videoHeight > 0
+  ) {
+    return true;
+  }
+  return false;
+}
+
 /** Loop single-frame image inputs so trim/duration filters can reach clip length. */
 export function clipNeedsLoopInput(clip: Clip): boolean {
   return isStillImageClip(clip);
@@ -522,7 +544,7 @@ export function buildSingleClipFilter(
     parts.push(speedFilter.videoFilter, speedFilter.audioFilter);
   }
 
-  if (clip.kind === "video") {
+  if (clip.kind === "video" && clipHasSourceVideo(clip)) {
     const videoInput = speedFilter
       ? speedFilter.videoLabel
       : `[0:v]trim=start=${clip.trimStart}:end=${end},${setpts}`;
@@ -709,6 +731,55 @@ export async function mergeClipsLossless(
       continue;
     }
 
+    const encodeLosslessNoVideo = async () => {
+      onStatus(
+        `Clip "${clip.title}" has no video — synthesizing black video track…`,
+      );
+      await safeExec(
+        ffmpeg,
+        [
+          ...buildClipInputArgs(clip),
+          "-filter_complex",
+          buildSingleClipFilter({ ...clip, kind: "audio" }),
+          "-map",
+          "[vout]",
+          "-map",
+          "[aout]",
+          "-c:v",
+          "libx264",
+          "-crf",
+          "16",
+          "-preset",
+          "veryfast",
+          "-pix_fmt",
+          "yuv420p",
+          "-c:a",
+          "aac",
+          "-ar",
+          "44100",
+          "-ac",
+          "2",
+          "-b:a",
+          "192k",
+          outName,
+        ],
+        null,
+        `Lossless encode clip ${index + 1}/${clips.length} "${clip.title}" (no video)`,
+      );
+    };
+
+    if (!clipHasSourceVideo(clip) && clip.kind === "video") {
+      await encodeLosslessNoVideo();
+      intermediates.push(outName);
+      emitProgress(
+        onProgress,
+        "FFmpeg fast concat",
+        0.12 + (0.73 * (index + 1)) / clips.length,
+        false,
+      );
+      continue;
+    }
+
     let primaryArgs: string[];
     let silentAudioArgs: string[];
     const silentDurationArgs: string[] = [
@@ -835,20 +906,25 @@ export async function mergeClipsLossless(
           `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}"`,
         );
       } catch (err) {
-        // Retry without source audio if the clip has no audio stream.  Loop a
-        // pre-encoded silent AAC unit so the intermediate still carries a silent
-        // track for concat layout consistency — without re-encoding silence.
-        if (!isNoAudioStreamError(err)) throw err;
-        onStatus(
-          `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
-        );
-        await ensureSilentAacUnit(ffmpeg, onStatus);
-        await safeExec(
-          ffmpeg,
-          silentAudioArgs,
-          null,
-          `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}" (silent audio)`,
-        );
+        if (isNoVideoStreamError(err)) {
+          await encodeLosslessNoVideo();
+        } else if (isNoAudioStreamError(err)) {
+          // Retry without source audio if the clip has no audio stream.  Loop a
+          // pre-encoded silent AAC unit so the intermediate still carries a silent
+          // track for concat layout consistency — without re-encoding silence.
+          onStatus(
+            `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
+          );
+          await ensureSilentAacUnit(ffmpeg, onStatus);
+          await safeExec(
+            ffmpeg,
+            silentAudioArgs,
+            null,
+            `Lossless copy clip ${index + 1}/${clips.length} "${clip.title}" (silent audio)`,
+          );
+        } else {
+          throw err;
+        }
       }
     }
 
@@ -1006,6 +1082,7 @@ export async function processClipPass1(
   // makes the stitched output change resolution when the clip changes.
   const matchesTargetResolution =
     clip.kind === "video" &&
+    clipHasSourceVideo(clip) &&
     clip.videoWidth === targetWidth &&
     clip.videoHeight === targetHeight;
 
@@ -1019,6 +1096,99 @@ export async function processClipPass1(
   const needsGrain = Boolean(grainFilters);
   const secondaryFilters = buildSecondaryColorFfmpegFilters(secondaryColor);
   const needsSecondary = Boolean(secondaryFilters);
+
+  const encodeClipPass1 = async (filterComplex: string, label: string) => {
+    await safeExec(
+      ffmpeg,
+      [
+        ...buildClipInputArgs(clip),
+        "-filter_complex",
+        filterComplex,
+        "-map",
+        "[vout]",
+        "-map",
+        "[aout]",
+        "-r",
+        "30",
+        "-c:v",
+        "libx264",
+        "-crf",
+        String(settings.crf),
+        "-preset",
+        settings.preset,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        outName,
+      ],
+      {
+        stage: `Pass 1: ${clip.title}`,
+        totalDuration: clipDuration,
+        rangeStart,
+        rangeEnd,
+        onProgress,
+      },
+      label,
+    );
+  };
+
+  const encodeClipPass1WithVideoFallback = async (label: string) => {
+    if (clip.kind === "video" && !clipHasSourceVideo(clip)) {
+      onStatus(
+        `Clip "${clip.title}" has no video — synthesizing black video track…`,
+      );
+      await encodeClipPass1(
+        buildSingleClipFilter(
+          { ...clip, kind: "audio" },
+          targetWidth,
+          targetHeight,
+          primaryColor,
+          noiseReduction,
+          sharpen,
+          secondaryColor,
+          grain,
+        ),
+        label,
+      );
+      return;
+    }
+    try {
+      await encodeClipPass1(
+        buildSingleClipFilter(
+          clip,
+          targetWidth,
+          targetHeight,
+          primaryColor,
+          noiseReduction,
+          sharpen,
+          secondaryColor,
+          grain,
+        ),
+        label,
+      );
+    } catch (err) {
+      if (!isNoVideoStreamError(err)) throw err;
+      onStatus(
+        `Clip "${clip.title}" has no video — synthesizing black video track…`,
+      );
+      await encodeClipPass1(
+        buildSingleClipFilter(
+          { ...clip, kind: "audio" },
+          targetWidth,
+          targetHeight,
+          primaryColor,
+          noiseReduction,
+          sharpen,
+          secondaryColor,
+          grain,
+        ),
+        `${label} (synthesized video)`,
+      );
+    }
+  };
 
   if (
     !clipNeedsEffects(clip) &&
@@ -1055,19 +1225,26 @@ export async function processClipPass1(
       "make_zero",
       outName,
     );
-    await safeExec(
-      ffmpeg,
-      args,
-      {
-        stage: `Pass 1: ${clip.title}`,
-        totalDuration: clipDuration,
-        rangeStart,
-        rangeEnd,
-        onProgress,
-      },
-      `Pass 1 copy for clip ${index + 1}/${total} "${clip.title}"`,
-    );
-    return outName;
+    try {
+      await safeExec(
+        ffmpeg,
+        args,
+        {
+          stage: `Pass 1: ${clip.title}`,
+          totalDuration: clipDuration,
+          rangeStart,
+          rangeEnd,
+          onProgress,
+        },
+        `Pass 1 copy for clip ${index + 1}/${total} "${clip.title}"`,
+      );
+      return outName;
+    } catch (err) {
+      if (!isNoVideoStreamError(err)) throw err;
+      onStatus(
+        `Clip "${clip.title}" has no video — synthesizing black video track…`,
+      );
+    }
   }
 
   // Normalize-only path: a clean video clip whose native size differs from the
@@ -1075,6 +1252,16 @@ export async function processClipPass1(
   // it concatenates seamlessly. Handles clips without an audio stream by
   // synthesizing silence, mirroring the lossless path.
   if (!clipNeedsEffects(clip) && clip.kind === "video") {
+    if (!clipHasSourceVideo(clip)) {
+      onStatus(
+        `Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}" (audio-only source)…`,
+      );
+      await encodeClipPass1WithVideoFallback(
+        `Pass 1 encode for clip ${index + 1}/${total} "${clip.title}" (no video stream)`,
+      );
+      return outName;
+    }
+
     onStatus(
       `Pass 1 [${index + 1}/${total}]: Normalizing "${clip.title}" to ${targetWidth}x${targetHeight}...`,
     );
@@ -1137,24 +1324,40 @@ export async function processClipPass1(
         "copy",
         outName,
       ];
-      await safeExec(
-        ffmpeg,
-        [
-          ...buildClipInputArgs(clip),
-          ...buildSilentAacLoopInputArgs(),
-          "-filter_complex",
+      const runSilentMux = async (videoFilterGraph: string, execLabel: string) => {
+        await safeExec(
+          ffmpeg,
+          [
+            ...buildClipInputArgs(clip),
+            ...buildSilentAacLoopInputArgs(),
+            "-filter_complex",
+            videoFilterGraph,
+            "-map",
+            "[vout]",
+            "-map",
+            "1:a",
+            "-t",
+            String(clipDuration),
+            ...silentEncodeTail,
+          ],
+          progressCtx,
+          execLabel,
+        );
+      };
+      try {
+        await runSilentMux(
           videoFilter,
-          "-map",
-          "[vout]",
-          "-map",
-          "1:a",
-          "-t",
-          String(clipDuration),
-          ...silentEncodeTail,
-        ],
-        progressCtx,
-        `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}" (silent audio)`,
-      );
+          `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}" (silent audio)`,
+        );
+      } catch (err) {
+        if (!isNoVideoStreamError(err)) throw err;
+        onStatus(
+          `Clip "${clip.title}" has no video — synthesizing black video track…`,
+        );
+        await encodeClipPass1WithVideoFallback(
+          `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}" (no video stream)`,
+        );
+      }
     };
 
     if (!clipHasSourceAudio(clip)) {
@@ -1182,6 +1385,15 @@ export async function processClipPass1(
         `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}"`,
       );
     } catch (err) {
+      if (isNoVideoStreamError(err)) {
+        onStatus(
+          `Clip "${clip.title}" has no video — synthesizing black video track…`,
+        );
+        await encodeClipPass1WithVideoFallback(
+          `Pass 1 normalize for clip ${index + 1}/${total} "${clip.title}" (no video stream)`,
+        );
+        return outName;
+      }
       // Clip has no audio stream — add a silent AAC track so all intermediates
       // share an identical stream layout for concat.
       if (!isNoAudioStreamError(err)) throw err;
@@ -1195,39 +1407,7 @@ export async function processClipPass1(
 
   // Re-encode path: clip has fades, is audio-only, or is RIFE-processed.
   onStatus(`Pass 1 [${index + 1}/${total}]: Encoding "${clip.title}"...`);
-  await safeExec(
-    ffmpeg,
-    [
-      ...buildClipInputArgs(clip),
-      "-filter_complex",
-      buildSingleClipFilter(clip, targetWidth, targetHeight, primaryColor, noiseReduction, sharpen, secondaryColor, grain),
-      "-map",
-      "[vout]",
-      "-map",
-      "[aout]",
-      "-r",
-      "30",
-      "-c:v",
-      "libx264",
-      "-crf",
-      String(settings.crf),
-      "-preset",
-      settings.preset,
-      "-pix_fmt",
-      "yuv420p",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      outName,
-    ],
-    {
-      stage: `Pass 1: ${clip.title}`,
-      totalDuration: clipDuration,
-      rangeStart,
-      rangeEnd,
-      onProgress,
-    },
+  await encodeClipPass1WithVideoFallback(
     `Pass 1 encode for clip ${index + 1}/${total} "${clip.title}"`,
   );
 
@@ -1401,4 +1581,15 @@ export function isNoAudioStreamError(error: unknown): boolean {
     getLastFfmpegError() ?? "",
   ];
   return NO_AUDIO_STREAM_RE.test(parts.join("\n"));
+}
+
+/** Detect missing-video FFmpeg failures (e.g. audio-only `.mp4` tagged as video). */
+export function isNoVideoStreamError(error: unknown): boolean {
+  const text = [
+    extractErrorMessage(error),
+    error instanceof Error ? error.message : "",
+    (error as { lastFfmpegError?: string }).lastFfmpegError ?? "",
+    getLastFfmpegError() ?? "",
+  ].join("\n");
+  return /0:v/.test(text) && /matches no streams|Invalid video stream/i.test(text);
 }

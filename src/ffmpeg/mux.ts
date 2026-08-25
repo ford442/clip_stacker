@@ -61,6 +61,7 @@ import {
   DEFAULT_VIDEO_SIZE,
   OUTPUT_WIDTH,
   OUTPUT_HEIGHT,
+  isNoVideoStreamError,
   PASS1_PROGRESS_START,
   PASS1_PROGRESS_END,
   FONT_CDN_URL,
@@ -95,37 +96,80 @@ export async function remuxVideoWithPremixWav(
   await safeWriteFile(ffmpeg, PREMIX_WAV_NAME, wavBytes, "mux write premix wav");
 
   onStatus("Muxing premixed audio with video...");
-  await safeExec(
-    ffmpeg,
-    [
-      "-i",
-      videoVfsName,
-      "-i",
-      PREMIX_WAV_NAME,
-      "-map",
-      "0:v",
-      "-map",
-      "1:a",
-      "-c:v",
-      "copy",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "-shortest",
-      "-movflags",
-      "+faststart",
-      outputName,
-    ],
-    {
-      stage: "Muxing premixed audio with video",
-      totalDuration,
-      rangeStart: progressRange.start,
-      rangeEnd: progressRange.end,
-      onProgress,
-    },
-    "Premix WAV + video mux exec",
-  );
+  const copyMuxArgs = [
+    "-i",
+    videoVfsName,
+    "-i",
+    PREMIX_WAV_NAME,
+    "-map",
+    "0:v",
+    "-map",
+    "1:a",
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-shortest",
+    "-movflags",
+    "+faststart",
+    outputName,
+  ];
+  const synthVideoMuxArgs = [
+    "-f",
+    "lavfi",
+    "-i",
+    `color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:r=30:d=${totalDuration},format=yuv420p`,
+    "-i",
+    PREMIX_WAV_NAME,
+    "-map",
+    "0:v",
+    "-map",
+    "1:a",
+    "-c:v",
+    "libx264",
+    "-crf",
+    "18",
+    "-preset",
+    "fast",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-shortest",
+    "-movflags",
+    "+faststart",
+    outputName,
+  ];
+  const progressOpts = {
+    stage: "Muxing premixed audio with video",
+    totalDuration,
+    rangeStart: progressRange.start,
+    rangeEnd: progressRange.end,
+    onProgress,
+  };
+  try {
+    await safeExec(
+      ffmpeg,
+      copyMuxArgs,
+      progressOpts,
+      "Premix WAV + video mux exec",
+    );
+  } catch (err) {
+    if (!isNoVideoStreamError(err)) throw err;
+    onStatus(
+      "Source has no video stream — muxing premix with synthesized black video…",
+    );
+    await safeExec(
+      ffmpeg,
+      synthVideoMuxArgs,
+      progressOpts,
+      "Premix WAV + synthesized video mux exec",
+    );
+  }
 
   try {
     await ffmpeg.deleteFile(PREMIX_WAV_NAME);
@@ -161,41 +205,88 @@ export async function remuxVideoWithMasterAudio(
 
   const audioStart = Math.max(0, masterAudio.startTime);
   onStatus("Muxing master audio reference with video...");
-  await safeExec(
-    ffmpeg,
-    [
-      "-i",
-      videoVfsName,
-      "-i",
-      `${MASTER_AUDIO_VFS}.${ext}`,
-      "-map",
-      "0:v",
-      "-map",
-      "1:a",
-      "-c:v",
-      "copy",
-      "-c:a",
-      "aac",
-      "-b:a",
-      "192k",
-      "-ss",
-      String(audioStart),
-      "-t",
-      String(totalDuration),
-      "-shortest",
-      "-movflags",
-      "+faststart",
-      outputName,
-    ],
-    {
-      stage: "Muxing master audio reference",
-      totalDuration,
-      rangeStart: progressRange.start,
-      rangeEnd: progressRange.end,
-      onProgress,
-    },
-    "Master audio + video mux exec",
-  );
+  const copyMuxArgs = [
+    "-i",
+    videoVfsName,
+    "-i",
+    `${MASTER_AUDIO_VFS}.${ext}`,
+    "-map",
+    "0:v",
+    "-map",
+    "1:a",
+    "-c:v",
+    "copy",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ss",
+    String(audioStart),
+    "-t",
+    String(totalDuration),
+    "-shortest",
+    "-movflags",
+    "+faststart",
+    outputName,
+  ];
+  const synthVideoMuxArgs = [
+    "-f",
+    "lavfi",
+    "-i",
+    `color=c=black:s=${OUTPUT_WIDTH}x${OUTPUT_HEIGHT}:r=30:d=${totalDuration},format=yuv420p`,
+    "-i",
+    `${MASTER_AUDIO_VFS}.${ext}`,
+    "-map",
+    "0:v",
+    "-map",
+    "1:a",
+    "-c:v",
+    "libx264",
+    "-crf",
+    "18",
+    "-preset",
+    "fast",
+    "-pix_fmt",
+    "yuv420p",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "192k",
+    "-ss",
+    String(audioStart),
+    "-t",
+    String(totalDuration),
+    "-shortest",
+    "-movflags",
+    "+faststart",
+    outputName,
+  ];
+  const progressOpts = {
+    stage: "Muxing master audio reference",
+    totalDuration,
+    rangeStart: progressRange.start,
+    rangeEnd: progressRange.end,
+    onProgress,
+  };
+  try {
+    await safeExec(
+      ffmpeg,
+      copyMuxArgs,
+      progressOpts,
+      "Master audio + video mux exec",
+    );
+  } catch (err) {
+    if (!isNoVideoStreamError(err)) throw err;
+    onStatus(
+      "Source has no video stream — muxing master audio with synthesized black video…",
+    );
+    await safeExec(
+      ffmpeg,
+      synthVideoMuxArgs,
+      progressOpts,
+      "Master audio + synthesized video mux exec",
+    );
+  }
 
   try {
     await ffmpeg.deleteFile(`${MASTER_AUDIO_VFS}.${ext}`);
