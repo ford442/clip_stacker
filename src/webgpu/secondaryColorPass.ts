@@ -114,13 +114,14 @@ export class SecondaryColorGpuPass {
     width: number,
     height: number,
     settings: SecondaryColorPass,
+    commandEncoder?: GPUCommandEncoder,
   ): void {
     if (width <= 0 || height <= 0) return;
     if (!settings.enabled || (settings.amount ?? 1) <= 0) return;
 
-    const encoder = device.createCommandEncoder();
+    const encoder = commandEncoder ?? device.createCommandEncoder();
     this.encodePass(device, encoder, inputTexture, outputView, settings);
-    device.queue.submit([encoder.finish()]);
+    if (!commandEncoder) device.queue.submit([encoder.finish()]);
   }
 
   private encodePass(

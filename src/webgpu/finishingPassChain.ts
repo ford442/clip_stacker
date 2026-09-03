@@ -3,6 +3,8 @@
  *
  * Pass order: noise reduction → primary color → secondary color → LUT → sharpen → grain.
  * Grain / optical emulation is always last so later steps cannot soften the grain.
+ *
+ * One `queue.submit` per `apply()`: all copies and passes share a command encoder.
  */
 
 import { LutPass } from './lutPass';
@@ -29,6 +31,19 @@ export interface FinishingApplyOptions {
   frameIndex?: number;
 }
 
+export function finishingIntermediateTextureDescriptor(
+  width: number,
+  height: number,
+  format: GPUTextureFormat,
+): GPUTextureDescriptor {
+  return {
+    size: [width, height, 1],
+    format,
+    // Spec GPUTextureUsage flags (numeric so tests can load without WebGPU).
+    usage: 0x01 | 0x02 | 0x04 | 0x10, // COPY_SRC | COPY_DST | TEXTURE_BINDING | RENDER_ATTACHMENT
+  };
+}
+
 export class FinishingPassChain {
   private readonly lutPass: LutPass;
   private readonly primaryColorPass: PrimaryColorGpuPass;
@@ -36,6 +51,7 @@ export class FinishingPassChain {
   private readonly noiseReductionPass: NoiseReductionGpuPass;
   private readonly sharpenPass: SharpenGpuPass;
   private readonly grainPass: GrainGpuPass;
+  private readonly format: GPUTextureFormat;
   private pingTexture: GPUTexture | null = null;
   private pongTexture: GPUTexture | null = null;
   /** Previous frame for temporal denoise — cleared on seek via resetTemporal(). */
@@ -52,6 +68,7 @@ export class FinishingPassChain {
     noiseReductionPass: NoiseReductionGpuPass,
     sharpenPass: SharpenGpuPass,
     grainPass: GrainGpuPass,
+    format: GPUTextureFormat,
   ) {
     this.lutPass = lutPass;
     this.primaryColorPass = primaryColorPass;
@@ -59,6 +76,7 @@ export class FinishingPassChain {
     this.noiseReductionPass = noiseReductionPass;
     this.sharpenPass = sharpenPass;
     this.grainPass = grainPass;
+    this.format = format;
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): FinishingPassChain {
@@ -69,6 +87,7 @@ export class FinishingPassChain {
       NoiseReductionGpuPass.create(device, format),
       SharpenGpuPass.create(device, format),
       GrainGpuPass.create(device, format),
+      format,
     );
   }
 
@@ -92,14 +111,12 @@ export class FinishingPassChain {
     const canvasTexture = context.getCurrentTexture();
     this.ensurePingPongTextures(device, width, height);
 
-    // Copy composited frame into ping buffer.
-    const seedEncoder = device.createCommandEncoder();
-    seedEncoder.copyTextureToTexture(
+    const encoder = device.createCommandEncoder();
+    encoder.copyTextureToTexture(
       { texture: canvasTexture },
       { texture: this.pingTexture! },
       [width, height, 1],
     );
-    device.queue.submit([seedEncoder.finish()]);
 
     let current = this.pingTexture!;
     let next = this.pongTexture!;
@@ -161,11 +178,16 @@ export class FinishingPassChain {
           height,
           nr,
           prevForShader,
+          encoder,
         );
         wroteToCanvas = true;
         if (wantsTemporal) {
           this.ensurePrevFrameTexture(device, width, height);
-          this.copyToPrevFrame(device, canvasTexture, width, height);
+          encoder.copyTextureToTexture(
+            { texture: canvasTexture },
+            { texture: this.prevFrameTexture! },
+            [width, height, 1],
+          );
           this.prevFrameValid = true;
         }
       } else {
@@ -178,11 +200,16 @@ export class FinishingPassChain {
             height,
             nr,
             prevForShader,
+            encoder,
           );
         });
         if (wantsTemporal) {
           this.ensurePrevFrameTexture(device, width, height);
-          this.copyToPrevFrame(device, current, width, height);
+          encoder.copyTextureToTexture(
+            { texture: current },
+            { texture: this.prevFrameTexture! },
+            [width, height, 1],
+          );
           this.prevFrameValid = true;
         }
       }
@@ -199,6 +226,7 @@ export class FinishingPassChain {
           width,
           height,
           primary,
+          encoder,
         );
         wroteToCanvas = true;
       } else {
@@ -210,6 +238,7 @@ export class FinishingPassChain {
             width,
             height,
             primary,
+            encoder,
           );
         });
       }
@@ -226,6 +255,7 @@ export class FinishingPassChain {
           width,
           height,
           secondary,
+          encoder,
         );
         wroteToCanvas = true;
       } else {
@@ -237,6 +267,7 @@ export class FinishingPassChain {
             width,
             height,
             secondary,
+            encoder,
           );
         });
       }
@@ -257,6 +288,7 @@ export class FinishingPassChain {
             width,
             height,
             intensity,
+            encoder,
           );
           wroteToCanvas = true;
         } else {
@@ -268,6 +300,7 @@ export class FinishingPassChain {
               width,
               height,
               intensity,
+              encoder,
             );
           });
         }
@@ -285,6 +318,7 @@ export class FinishingPassChain {
           width,
           height,
           sharpen,
+          encoder,
         );
         wroteToCanvas = true;
       } else {
@@ -296,13 +330,13 @@ export class FinishingPassChain {
             width,
             height,
             sharpen,
+            encoder,
           );
         });
       }
     }
 
     if (isGrainActive(settings.grain) && settings.grain) {
-      // Always last — write directly to the canvas swapchain.
       this.grainPass.applyBetweenTextures(
         device,
         current,
@@ -311,13 +345,20 @@ export class FinishingPassChain {
         height,
         settings.grain,
         frameSeed,
+        encoder,
       );
       wroteToCanvas = true;
     }
 
     if (!wroteToCanvas && current !== this.pingTexture) {
-      this.blitToCanvas(device, current, canvasTexture, width, height);
+      encoder.copyTextureToTexture(
+        { texture: current },
+        { texture: canvasTexture },
+        [width, height, 1],
+      );
     }
+
+    device.queue.submit([encoder.finish()]);
   }
 
   /** Clear temporal buffers after timeline seek, scrub-back, or clip change. */
@@ -348,22 +389,6 @@ export class FinishingPassChain {
     this.prevFrameValid = false;
   }
 
-  private copyToPrevFrame(
-    device: GPUDevice,
-    source: GPUTexture,
-    width: number,
-    height: number,
-  ): void {
-    if (!this.prevFrameTexture) return;
-    const encoder = device.createCommandEncoder();
-    encoder.copyTextureToTexture(
-      { texture: source },
-      { texture: this.prevFrameTexture },
-      [width, height, 1],
-    );
-    device.queue.submit([encoder.finish()]);
-  }
-
   private ensurePrevFrameTexture(
     device: GPUDevice,
     width: number,
@@ -377,31 +402,9 @@ export class FinishingPassChain {
       return;
     }
     this.prevFrameTexture?.destroy();
-    this.prevFrameTexture = device.createTexture({
-      size: [width, height, 1],
-      format: 'rgba8unorm',
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.COPY_SRC |
-        GPUTextureUsage.RENDER_ATTACHMENT,
-    });
-  }
-
-  private blitToCanvas(
-    device: GPUDevice,
-    source: GPUTexture,
-    canvasTexture: GPUTexture,
-    width: number,
-    height: number,
-  ): void {
-    const encoder = device.createCommandEncoder();
-    encoder.copyTextureToTexture(
-      { texture: source },
-      { texture: canvasTexture },
-      [width, height, 1],
+    this.prevFrameTexture = device.createTexture(
+      finishingIntermediateTextureDescriptor(width, height, this.format),
     );
-    device.queue.submit([encoder.finish()]);
   }
 
   private ensurePingPongTextures(
@@ -420,15 +423,7 @@ export class FinishingPassChain {
     this.pongTexture?.destroy();
     this.resetTemporal();
 
-    const descriptor: GPUTextureDescriptor = {
-      size: [width, height, 1],
-      format: 'rgba8unorm',
-      usage:
-        GPUTextureUsage.TEXTURE_BINDING |
-        GPUTextureUsage.COPY_DST |
-        GPUTextureUsage.COPY_SRC |
-        GPUTextureUsage.RENDER_ATTACHMENT,
-    };
+    const descriptor = finishingIntermediateTextureDescriptor(width, height, this.format);
     this.pingTexture = device.createTexture(descriptor);
     this.pongTexture = device.createTexture(descriptor);
     this.textureWidth = width;

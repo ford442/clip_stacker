@@ -1,6 +1,7 @@
 @group(0) @binding(0) var inputSampler: sampler;
 @group(0) @binding(1) var inputTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> u: GrainUniforms;
+@group(0) @binding(3) var blurredTex: texture_2d<f32>;
 
 struct GrainUniforms {
   // vec4 0
@@ -20,7 +21,7 @@ struct GrainUniforms {
   bloomAmount: f32,
   // vec4 3
   texelSize: vec2<f32>,
-  _pad0: f32,
+  blurAxis: f32,
   _pad1: f32,
 };
 
@@ -78,26 +79,25 @@ fn midtoneGrainWeight(y: f32, softness: f32) -> f32 {
   return mix(1.0, mid, clamp(softness, 0.0, 1.0));
 }
 
-fn sampleBlurred(uv: vec2<f32>, radiusPx: f32) -> vec3<f32> {
-  let radius = clamp(radiusPx, 0.5, 32.0);
+/// 1D Gaussian matching the previous 17×17 isotropic kernel (separable).
+fn sampleBlurred1d(uv: vec2<f32>, axis: vec2<f32>) -> vec3<f32> {
+  let radius = clamp(max(u.halationRadius, 4.0), 0.5, 32.0);
   let sigma = max(radius * 0.4, 0.5);
   let twoSigma2 = 2.0 * sigma * sigma;
   let limit = i32(min(ceil(radius), 8.0));
 
   var sum = vec3<f32>(0.0);
   var wSum = 0.0;
-  for (var dy = -8; dy <= 8; dy++) {
-    for (var dx = -8; dx <= 8; dx++) {
-      if (abs(dx) > limit || abs(dy) > limit) {
-        continue;
-      }
-      let d2 = f32(dx * dx + dy * dy);
-      let w = exp(-d2 / twoSigma2);
-      let sampleUv = uv + vec2<f32>(f32(dx), f32(dy)) * u.texelSize;
-      let sample = textureSampleLevel(inputTex, inputSampler, sampleUv, 0.0);
-      sum += sample.rgb * w;
-      wSum += w;
+  for (var i = -8; i <= 8; i++) {
+    if (abs(i) > limit) {
+      continue;
     }
+    let d2 = f32(i * i);
+    let w = exp(-d2 / twoSigma2);
+    let sampleUv = uv + axis * f32(i) * u.texelSize;
+    let sample = textureSampleLevel(inputTex, inputSampler, sampleUv, 0.0);
+    sum += sample.rgb * w;
+    wSum += w;
   }
   if (wSum <= 1e-6) {
     return textureSampleLevel(inputTex, inputSampler, uv, 0.0).rgb;
@@ -122,6 +122,14 @@ fn vignetteFactor(uv: vec2<f32>) -> f32 {
 }
 
 @fragment
+fn fs_blur(in: VertexOutput) -> @location(0) vec4<f32> {
+  let src = textureSampleLevel(inputTex, inputSampler, in.uv, 0.0);
+  let axis = select(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), u.blurAxis > 0.5);
+  let rgb = sampleBlurred1d(in.uv, axis);
+  return vec4<f32>(rgb, src.a);
+}
+
+@fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   let src = textureSampleLevel(inputTex, inputSampler, in.uv, 0.0);
   let amount = clamp(u.amount, 0.0, 1.0);
@@ -136,9 +144,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   var color = src.rgb;
   let y = luma(color);
 
-  // Soft highlight bloom + red-channel halation (shared blur).
+  // Soft highlight bloom + red-channel halation (shared pre-blurred texture).
   if (halationAmt > 0.0 || bloomAmt > 0.0) {
-    let blurred = sampleBlurred(in.uv, max(u.halationRadius, 4.0));
+    let blurred = textureSampleLevel(blurredTex, inputSampler, in.uv, 0.0).rgb;
     let bright = max(luma(blurred) - clamp(u.halationThreshold, 0.0, 1.0), 0.0);
     let brightMask = smoothstep(0.0, 0.35, bright);
 

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Clip, TextOverlay } from '../types';
 import {
+  canCaptureWebGpuCanvasWithText,
   canUseGpuVideoEncoder,
   needsMultiLayerComposition,
   needsOverlayPass,
@@ -123,6 +124,29 @@ describe('renderEligibility', () => {
       expect(
         needsOverlayPass([
           solidOverlay({ fill: 'shader', shaderId: 'gradient' }),
+        ]),
+      ).toBe(false);
+    });
+  });
+
+  describe('canCaptureWebGpuCanvasWithText', () => {
+    it('is true with no overlays', () => {
+      expect(canCaptureWebGpuCanvasWithText([])).toBe(true);
+    });
+
+    it('is true for shader-only overlays without boxes', () => {
+      expect(
+        canCaptureWebGpuCanvasWithText([
+          solidOverlay({ fill: 'shader', shaderId: 'gradient' }),
+        ]),
+      ).toBe(true);
+    });
+
+    it('is false for solid text or boxed shader text', () => {
+      expect(canCaptureWebGpuCanvasWithText([solidOverlay()])).toBe(false);
+      expect(
+        canCaptureWebGpuCanvasWithText([
+          solidOverlay({ fill: 'shader', shaderId: 'gradient', box: true }),
         ]),
       ).toBe(false);
     });

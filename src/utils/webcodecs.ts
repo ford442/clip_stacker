@@ -22,7 +22,11 @@ import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { getClipDuration } from './project';
 import { parseOutputResolution } from './resolution';
 import { computeTotalDuration } from './transitions';
-import { needsOverlayPass, shouldUseTimelineGpuExport } from './renderEligibility';
+import {
+  canCaptureWebGpuCanvasWithText,
+  needsOverlayPass,
+  shouldUseTimelineGpuExport,
+} from './renderEligibility';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
 import { buildPreviewCompositionPlan } from './previewComposition';
 import { drawTextOverlays, renderTextOverlaysAsync } from './canvas-renderer';
@@ -37,6 +41,7 @@ import {
 } from './webcodecs-audio';
 import {
   computeTimelineExportFrameCount,
+  flushCaptureThenScheduleNext,
   globalTimeForTimelineFrame,
   shouldEmitTimelineStatusUpdate,
   shouldWaitForEncoderBackpressure,
@@ -47,6 +52,9 @@ import {
 const TARGET_FPS = 30;
 const WEBCODECS_PROGRESS_START = 0.05;
 const WEBCODECS_PROGRESS_RANGE = 0.82;
+
+/** Export uses quality-first hardware encode (not realtime, which can drop quality). */
+export const VIDEO_ENCODER_LATENCY_MODE = 'quality' as const;
 
 function createExportMuxer(
   width: number,
@@ -334,6 +342,7 @@ export async function encodeVideoWithWebCodecs(
     bitrate,
     framerate: TARGET_FPS,
     hardwareAcceleration: 'prefer-hardware',
+    latencyMode: VIDEO_ENCODER_LATENCY_MODE,
   });
 
   let videoTimeUs = 0;
@@ -438,6 +447,9 @@ async function encodeTimelineComposite(
   const totalDuration = computeTotalDuration(timelineClips, transitions);
   const totalFrames = computeTimelineExportFrameCount(totalDuration, TARGET_FPS);
   const hasTextOverlays = textOverlays.length > 0;
+  const shaderTextOnGpu =
+    hasTextOverlays && canCaptureWebGpuCanvasWithText(textOverlays);
+  const use2dTextComposite = hasTextOverlays && !shaderTextOnGpu;
   const statusThrottleFrames = timelineStatusThrottleFrames(TARGET_FPS);
   const frameDurationUs = Math.round(1_000_000 / TARGET_FPS);
 
@@ -447,7 +459,7 @@ async function encodeTimelineComposite(
 
   let exportCanvas: HTMLCanvasElement | null = null;
   let exportCtx: CanvasRenderingContext2D | null = null;
-  if (hasTextOverlays) {
+  if (use2dTextComposite) {
     exportCanvas = document.createElement('canvas');
     exportCanvas.width = width;
     exportCanvas.height = height;
@@ -480,6 +492,7 @@ async function encodeTimelineComposite(
     bitrate,
     framerate: TARGET_FPS,
     hardwareAcceleration: 'prefer-hardware',
+    latencyMode: VIDEO_ENCODER_LATENCY_MODE,
   });
 
   const renderTimelineFrame = async (frameIndex: number) => {
@@ -524,33 +537,39 @@ async function encodeTimelineComposite(
       });
 
       const plan = await pendingRender!;
-      if (frameIndex + 1 < totalFrames) {
-        pendingRender = renderTimelineFrame(frameIndex + 1);
-      }
 
-      // Wait for WebGPU submit to land before capturing pixels for encode.
-      await engine.flush();
+      await flushCaptureThenScheduleNext(
+        async () => {
+          // Wait for WebGPU submit to land before capturing pixels for encode.
+          await engine.flush();
 
-      let frameSource: CanvasImageSource;
-      if (hasTextOverlays) {
-        exportCtx!.drawImage(videoCanvas, 0, 0);
-        const hasShader = textOverlays.some((o) => o.fill === 'shader');
-        if (hasShader) {
-          await renderTextOverlaysAsync(exportCtx!.canvas, plan);
-        } else {
-          drawTextOverlays(exportCtx!, plan);
-        }
-        frameSource = exportCanvas!;
-      } else {
-        frameSource = videoCanvas;
-      }
+          let frameSource: CanvasImageSource;
+          if (shaderTextOnGpu) {
+            await engine.compositeShaderTextOverlays(plan);
+            frameSource = videoCanvas;
+          } else if (use2dTextComposite) {
+            exportCtx!.drawImage(videoCanvas, 0, 0);
+            await renderTextOverlaysAsync(exportCtx!.canvas, plan, {
+              clear: false,
+            });
+            frameSource = exportCanvas!;
+          } else {
+            frameSource = videoCanvas;
+          }
 
-      const frame = new VideoFrame(frameSource, {
-        timestamp: timelineFrameTimestampUs(frameIndex, TARGET_FPS),
-        duration: frameDurationUs,
-      });
-      videoEncoder.encode(frame, { keyFrame: frameIndex % 60 === 0 });
-      frame.close();
+          const frame = new VideoFrame(frameSource, {
+            timestamp: timelineFrameTimestampUs(frameIndex, TARGET_FPS),
+            duration: frameDurationUs,
+          });
+          videoEncoder.encode(frame, { keyFrame: frameIndex % 60 === 0 });
+          frame.close();
+        },
+        frameIndex + 1 < totalFrames
+          ? () => {
+              pendingRender = renderTimelineFrame(frameIndex + 1);
+            }
+          : null,
+      );
 
       if (shouldWaitForEncoderBackpressure(videoEncoder.encodeQueueSize)) {
         await waitForEncoderDequeue(videoEncoder);

@@ -119,6 +119,7 @@ export class SharpenGpuPass {
     width: number,
     height: number,
     settings: SharpenPass,
+    commandEncoder?: GPUCommandEncoder,
   ): void {
     if (width <= 0 || height <= 0) return;
     if (!settings.enabled) return;
@@ -126,9 +127,9 @@ export class SharpenGpuPass {
     const midtone = settings.midtoneDetail ?? 0;
     if (amount <= 0 && midtone <= 0) return;
 
-    const encoder = device.createCommandEncoder();
+    const encoder = commandEncoder ?? device.createCommandEncoder();
     this.encodePass(device, encoder, inputTexture, outputView, width, height, settings);
-    device.queue.submit([encoder.finish()]);
+    if (!commandEncoder) device.queue.submit([encoder.finish()]);
   }
 
   private encodePass(

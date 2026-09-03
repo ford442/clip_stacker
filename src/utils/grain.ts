@@ -184,6 +184,42 @@ function normalizeHalation(
   };
 }
 
+/** True when bloom or halation will sample a blurred copy of the frame. */
+export function grainWantsOpticalBlur(pass: GrainSettings | undefined): boolean {
+  if (!pass?.enabled) return false;
+  const bloom = clamp01(finiteOr(pass.bloomAmount, 0));
+  const halationOn =
+    Boolean(pass.halation?.enabled) && finiteOr(pass.halation?.amount, 0) > 1e-6;
+  return bloom > 1e-6 || halationOn;
+}
+
+/** Matches WGSL: `max(halationRadius, 4)` when optical bloom is active. */
+export function grainOpticalBlurRadiusPx(pass: GrainSettings): number {
+  const radius = clamp(finiteOr(pass.halation?.radius, DEFAULT_GRAIN_HALATION.radius), 0.5, 32);
+  return Math.max(radius, 4);
+}
+
+/** Matches WGSL `sampleBlurred`: `sigma = max(radius * 0.4, 0.5)`. */
+export function grainBlurSigma(radiusPx: number): number {
+  const radius = clamp(radiusPx, 0.5, 32);
+  return Math.max(radius * 0.4, 0.5);
+}
+
+/** Max tap offset in WGSL (`min(ceil(radius), 8)`). */
+export const GRAIN_BLUR_TAP_LIMIT = 8;
+
+/** 2D isotropic Gaussian weight (WGSL `exp(-d2 / twoSigma2)`). */
+export function isotropicGaussianWeight(dx: number, dy: number, sigma: number): number {
+  const twoSigma2 = 2 * sigma * sigma;
+  return Math.exp(-(dx * dx + dy * dy) / twoSigma2);
+}
+
+/** Separable product of 1D Gaussians — equal to {@link isotropicGaussianWeight}. */
+export function separableGaussianWeight(dx: number, dy: number, sigma: number): number {
+  const twoSigma2 = 2 * sigma * sigma;
+  return Math.exp(-(dx * dx) / twoSigma2) * Math.exp(-(dy * dy) / twoSigma2);
+}
+
 /** True when grain amount and all optical effects are effectively off. */
 export function isGrainNeutral(pass: GrainSettings | undefined): boolean {
   if (!pass) return true;

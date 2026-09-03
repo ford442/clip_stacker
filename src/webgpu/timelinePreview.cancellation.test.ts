@@ -8,7 +8,7 @@ vi.mock('./previewEngine', () => ({
   PreviewEngine: { create: vi.fn() },
 }));
 
-let renderLayer: ReturnType<typeof vi.fn>;
+let renderLayers: ReturnType<typeof vi.fn>;
 let clearToBlack: ReturnType<typeof vi.fn>;
 
 function makeClip(id: string): Clip {
@@ -39,11 +39,11 @@ function makeFakeVideo() {
 }
 
 beforeEach(() => {
-  renderLayer = vi.fn();
+  renderLayers = vi.fn();
   clearToBlack = vi.fn();
 
   vi.mocked(PreviewEngine.create).mockResolvedValue({
-    renderLayer,
+    renderLayers,
     clearToBlack,
     destroy: vi.fn(),
   } as unknown as PreviewEngine);
@@ -93,7 +93,7 @@ describe('TimelinePreviewEngine cancellation', () => {
       }
     ).renderPlan(plan, { isCancelled: () => true });
 
-    expect(renderLayer).not.toHaveBeenCalled();
+    expect(renderLayers).not.toHaveBeenCalled();
     expect(clearToBlack).not.toHaveBeenCalled();
   });
 });

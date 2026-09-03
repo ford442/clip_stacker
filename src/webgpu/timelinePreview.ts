@@ -20,7 +20,7 @@ import {
   combineLetterboxWithLayerUv,
   computeLetterboxUv,
 } from './exportCompositor';
-import { PreviewEngine, type NormalizedDestRect } from './previewEngine';
+import { PreviewEngine, type LayerDraw, type NormalizedDestRect } from './previewEngine';
 import { isRegisteredTransitionType } from './transitions/registry';
 import type { TransitionRenderParams } from './transitions/types';
 
@@ -212,9 +212,25 @@ export class TimelinePreviewEngine implements TimelineCompositor {
 
     const drawnClipIds = new Set<string>();
     let isFirstLayer = true;
+    const pendingLayers: LayerDraw[] = [];
+
+    const flushPendingLayers = () => {
+      if (pendingLayers.length === 0) return;
+      this.engine.renderLayers([...pendingLayers]);
+      for (const item of pendingLayers) item.videoFrame.close();
+      pendingLayers.length = 0;
+    };
+
+    const queueLayer = (item: LayerDraw) => {
+      pendingLayers.push(item);
+      isFirstLayer = false;
+    };
 
     for (let index = 0; index < clipLayers.length; index++) {
-      if (options?.isCancelled?.()) return;
+      if (options?.isCancelled?.()) {
+        for (const item of pendingLayers) item.videoFrame.close();
+        return;
+      }
 
       const layer = clipLayers[index];
       const nextLayer = clipLayers[index + 1];
@@ -250,6 +266,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
             if (options?.isCancelled?.()) {
               fromResolved.frame.close();
               toResolved.frame.close();
+              for (const item of pendingLayers) item.videoFrame.close();
               return;
             }
 
@@ -283,6 +300,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
               clear: isFirstLayer,
             };
 
+            flushPendingLayers();
             this.engine.renderTransition(
               fromResolved.frame,
               toResolved.frame,
@@ -307,7 +325,10 @@ export class TimelinePreviewEngine implements TimelineCompositor {
         const video = this.mediaPool.getVideoForUrl(layer.clipId, mediaUrl);
         const seekStart = performance.now();
         await seekVideoTo(video, layer.sourceTime);
-        if (options?.isCancelled?.()) return;
+        if (options?.isCancelled?.()) {
+          for (const item of pendingLayers) item.videoFrame.close();
+          return;
+        }
         previewMetrics.recordSeek(performance.now() - seekStart);
         drawnClipIds.add(layer.clipId);
 
@@ -315,6 +336,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
         if (!frame) continue;
         if (options?.isCancelled?.()) {
           frame.close();
+          for (const item of pendingLayers) item.videoFrame.close();
           return;
         }
 
@@ -325,19 +347,20 @@ export class TimelinePreviewEngine implements TimelineCompositor {
           plan,
         );
 
-        this.engine.renderLayer(frame, {
-          elapsed: layer.localElapsed,
-          duration: layer.clipDuration,
-          fadeIn: 0,
-          fadeOut: 0,
-          opacity: layer.opacity,
-          uvScale,
-          uvOffset,
-          destRect: { x: 0, y: 0, w: 1, h: 1 },
-          clear: isFirstLayer,
+        queueLayer({
+          videoFrame: frame,
+          params: {
+            elapsed: layer.localElapsed,
+            duration: layer.clipDuration,
+            fadeIn: 0,
+            fadeOut: 0,
+            opacity: layer.opacity,
+            uvScale,
+            uvOffset,
+            destRect: { x: 0, y: 0, w: 1, h: 1 },
+            clear: isFirstLayer,
+          },
         });
-        frame.close();
-        isFirstLayer = false;
         continue;
       }
 
@@ -362,6 +385,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
         const resolved = await resolveLayerFrame(layer, clip, this.mediaPool, options);
         if (options?.isCancelled?.()) {
           resolved?.frame.close();
+          for (const item of pendingLayers) item.videoFrame.close();
           return;
         }
         if (resolved) {
@@ -374,6 +398,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
       if (!frame) continue;
       if (options?.isCancelled?.()) {
         frame.close();
+        for (const item of pendingLayers) item.videoFrame.close();
         return;
       }
       drawnClipIds.add(layer.clipId);
@@ -391,20 +416,23 @@ export class TimelinePreviewEngine implements TimelineCompositor {
           ? toNormalizedDestRect(layer.rect, plan.canvasWidth, plan.canvasHeight)
           : { x: 0, y: 0, w: 1, h: 1 };
 
-      this.engine.renderLayer(frame, {
-        elapsed: layer.localElapsed,
-        duration: layer.clipDuration,
-        fadeIn: 0,
-        fadeOut: 0,
-        opacity: layer.opacity,
-        uvScale,
-        uvOffset,
-        destRect,
-        clear: isFirstLayer,
+      queueLayer({
+        videoFrame: frame,
+        params: {
+          elapsed: layer.localElapsed,
+          duration: layer.clipDuration,
+          fadeIn: 0,
+          fadeOut: 0,
+          opacity: layer.opacity,
+          uvScale,
+          uvOffset,
+          destRect,
+          clear: isFirstLayer,
+        },
       });
-      frame.close();
-      isFirstLayer = false;
     }
+
+    flushPendingLayers();
 
     if (isFirstLayer) {
       if (!options?.isCancelled?.()) {
@@ -468,6 +496,50 @@ export class TimelinePreviewEngine implements TimelineCompositor {
   /** Ensure GPU work is complete before capturing the canvas for VideoEncoder. */
   async flush(): Promise<void> {
     await this.engine.flush();
+  }
+
+  /**
+   * Blit shader-filled text onto the WebGPU canvas (no 2D video copy).
+   * Solid overlays and boxed shader overlays stay on the Canvas2D export path.
+   */
+  async compositeShaderTextOverlays(plan: PreviewCompositionPlan): Promise<void> {
+    const { getTextFillRenderer } = await import('./text/textFill');
+    const { createSingleOverlayGlyphMask } = await import('../utils/textMask');
+    const renderer = await getTextFillRenderer();
+
+    for (const layer of plan.layers) {
+      if (layer.kind !== 'text') continue;
+      const overlay = layer.overlay;
+      if (!overlay?.text || overlay.fill !== 'shader') continue;
+
+      const mask = createSingleOverlayGlyphMask(
+        overlay,
+        plan.globalTime,
+        plan.canvasWidth,
+        plan.canvasHeight,
+      );
+      const maskCacheKey = [
+        overlay.id,
+        overlay.text,
+        overlay.font ?? '',
+        overlay.fontsize,
+        layer.x,
+        layer.y,
+        layer.opacity ?? 1,
+        plan.canvasWidth,
+        plan.canvasHeight,
+      ].join(':');
+      const filled = await renderer.render(mask, {
+        time: plan.globalTime,
+        shaderId: overlay.shaderId,
+        params: overlay.shaderParams,
+        colors: overlay.shaderColors,
+        width: plan.canvasWidth,
+        height: plan.canvasHeight,
+        maskCacheKey,
+      });
+      this.engine.blitOverlayCanvas(filled);
+    }
   }
 
   destroy(): void {
@@ -593,10 +665,17 @@ export class WorkerTimelineRenderer {
     }
 
     let isFirstLayer = true;
+    const pendingLayers: LayerDraw[] = [];
+    const flushPendingLayers = () => {
+      if (pendingLayers.length === 0) return;
+      this.engine.renderLayers([...pendingLayers]);
+      for (const item of pendingLayers) item.videoFrame.close();
+      pendingLayers.length = 0;
+    };
 
     for (let index = 0; index < clipLayers.length; index++) {
       if (isCancelled?.()) {
-        // Close any remaining frames.
+        for (const item of pendingLayers) item.videoFrame.close();
         frameMap.forEach((e) => e.frame.close());
         return;
       }
@@ -618,6 +697,7 @@ export class WorkerTimelineRenderer {
           if (isCancelled?.()) {
             fromEntry.frame.close();
             toEntry.frame.close();
+            for (const item of pendingLayers) item.videoFrame.close();
             frameMap.forEach((e) => e.frame.close());
             return;
           }
@@ -639,6 +719,7 @@ export class WorkerTimelineRenderer {
             clear: isFirstLayer,
           };
 
+          flushPendingLayers();
           this.engine.renderTransition(fromEntry.frame, toEntry.frame, layer.crossfade.type, transitionParams);
           fromEntry.frame.close();
           toEntry.frame.close();
@@ -664,6 +745,7 @@ export class WorkerTimelineRenderer {
 
       if (isCancelled?.()) {
         entry.frame.close();
+        for (const item of pendingLayers) item.videoFrame.close();
         frameMap.forEach((e) => e.frame.close());
         return;
       }
@@ -675,20 +757,24 @@ export class WorkerTimelineRenderer {
           ? toNormalizedDestRect(layer.rect, plan.canvasWidth, plan.canvasHeight)
           : { x: 0, y: 0, w: 1, h: 1 };
 
-      this.engine.renderLayer(entry.frame, {
-        elapsed: layer.localElapsed,
-        duration: layer.clipDuration,
-        fadeIn: layer.kind === 'base' ? (this.getClipFadeIn(layer)) : 0,
-        fadeOut: layer.kind === 'base' ? (this.getClipFadeOut(layer)) : 0,
-        opacity: layer.opacity,
-        uvScale,
-        uvOffset,
-        destRect,
-        clear: isFirstLayer,
+      pendingLayers.push({
+        videoFrame: entry.frame,
+        params: {
+          elapsed: layer.localElapsed,
+          duration: layer.clipDuration,
+          fadeIn: layer.kind === 'base' ? (this.getClipFadeIn(layer)) : 0,
+          fadeOut: layer.kind === 'base' ? (this.getClipFadeOut(layer)) : 0,
+          opacity: layer.opacity,
+          uvScale,
+          uvOffset,
+          destRect,
+          clear: isFirstLayer,
+        },
       });
-      entry.frame.close();
       isFirstLayer = false;
     }
+
+    flushPendingLayers();
 
     // Close any frames not consumed (e.g. still-image layers not in plan).
     frameMap.forEach((e) => e.frame.close());

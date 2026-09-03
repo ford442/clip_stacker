@@ -30,7 +30,7 @@ interface FrameInstance {
   close: ReturnType<typeof vi.fn>;
 }
 
-let renderLayer: ReturnType<typeof vi.fn>;
+let renderLayers: ReturnType<typeof vi.fn>;
 let renderTransition: ReturnType<typeof vi.fn>;
 let clearToBlack: ReturnType<typeof vi.fn>;
 let createdFrames: FrameInstance[];
@@ -87,13 +87,13 @@ async function renderClipsAt(clips: Clip[], globalTime: number) {
 }
 
 beforeEach(() => {
-  renderLayer = vi.fn();
+  renderLayers = vi.fn();
   renderTransition = vi.fn();
   clearToBlack = vi.fn();
   createdFrames = [];
 
   vi.mocked(PreviewEngine.create).mockResolvedValue({
-    renderLayer,
+    renderLayers,
     renderTransition,
     clearToBlack,
     destroy: vi.fn(),
@@ -133,10 +133,12 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     // t=2 falls inside clip "a" (0-5s) only.
     await renderClipsAt(clips, 2);
 
-    expect(renderLayer).toHaveBeenCalledTimes(1);
+    expect(renderLayers).toHaveBeenCalledTimes(1);
     expect(clearToBlack).not.toHaveBeenCalled();
 
-    const params = renderLayer.mock.calls[0][1] as LayerRenderParams;
+    const layers = renderLayers.mock.calls[0][0] as Array<{ params: LayerRenderParams }>;
+    expect(layers).toHaveLength(1);
+    const params = layers[0].params;
     expect(params.clear).toBe(true);
     expect(params.destRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
     expect(params.elapsed).toBeCloseTo(2);
@@ -152,8 +154,10 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     // t=7 falls inside clip "b" (5-10s).
     await renderClipsAt(clips, 7);
 
-    expect(renderLayer).toHaveBeenCalledTimes(1);
-    const params = renderLayer.mock.calls[0][1] as LayerRenderParams;
+    expect(renderLayers).toHaveBeenCalledTimes(1);
+    const layers = renderLayers.mock.calls[0][0] as Array<{ params: LayerRenderParams }>;
+    expect(layers).toHaveLength(1);
+    const params = layers[0].params;
     expect(params.elapsed).toBeCloseTo(2); // 7 - 5
   });
 
@@ -170,14 +174,16 @@ describe('TimelinePreviewEngine.renderPlan', () => {
 
     await renderClipsAt([base, pip], 1);
 
-    // Base drawn first (clears), PiP drawn over it.
-    expect(renderLayer).toHaveBeenCalledTimes(2);
+    // Base drawn first (clears), PiP drawn over it — one batched submit.
+    expect(renderLayers).toHaveBeenCalledTimes(1);
+    const layers = renderLayers.mock.calls[0][0] as Array<{ params: LayerRenderParams }>;
+    expect(layers).toHaveLength(2);
 
-    const baseParams = renderLayer.mock.calls[0][1] as LayerRenderParams;
+    const baseParams = layers[0].params;
     expect(baseParams.clear).toBe(true);
     expect(baseParams.destRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
 
-    const pipParams = renderLayer.mock.calls[1][1] as LayerRenderParams;
+    const pipParams = layers[1].params;
     expect(pipParams.clear).toBe(false);
     // 1280x720 canvas (default): 128/1280=0.1, 72/720=0.1, 320/1280=0.25, 180/720=0.25
     expect(pipParams.destRect).toEqual({ x: 0.1, y: 0.1, w: 0.25, h: 0.25 });
@@ -200,7 +206,7 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     ).renderPlan(plan);
 
     expect(renderTransition).toHaveBeenCalledTimes(1);
-    expect(renderLayer).not.toHaveBeenCalled();
+    expect(renderLayers).not.toHaveBeenCalled();
 
     const transitionId = renderTransition.mock.calls[0][2];
     const transitionParams = renderTransition.mock.calls[0][3] as {
@@ -218,7 +224,7 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     // t=999 is past the 10s total duration -> empty plan.
     await renderClipsAt(clips, 999);
 
-    expect(renderLayer).not.toHaveBeenCalled();
+    expect(renderLayers).not.toHaveBeenCalled();
     expect(clearToBlack).toHaveBeenCalledTimes(1);
   });
 });

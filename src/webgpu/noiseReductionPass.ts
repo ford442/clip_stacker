@@ -104,6 +104,7 @@ export class NoiseReductionGpuPass {
     height: number,
     settings: NoiseReductionPass,
     prevTexture: GPUTexture | null,
+    commandEncoder?: GPUCommandEncoder,
   ): void {
     if (width <= 0 || height <= 0) return;
     if (!settings.enabled || (settings.amount ?? 1) <= 0) return;
@@ -132,7 +133,7 @@ export class NoiseReductionGpuPass {
       ],
     });
 
-    const encoder = device.createCommandEncoder();
+    const encoder = commandEncoder ?? device.createCommandEncoder();
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
@@ -147,7 +148,7 @@ export class NoiseReductionGpuPass {
     pass.setBindGroup(0, bindGroup);
     pass.draw(6);
     pass.end();
-    device.queue.submit([encoder.finish()]);
+    if (!commandEncoder) device.queue.submit([encoder.finish()]);
   }
 
   destroy(): void {

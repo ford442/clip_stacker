@@ -1,4 +1,5 @@
 import previewShader from "./shaders/preview.wgsl?raw";
+import overlayShader from "./shaders/overlay.wgsl?raw";
 import { acquireGpuContext } from "./gpuDevice";
 import {
   createTransitionPipelineCache,
@@ -37,6 +38,32 @@ import {
 /** Must match WGSL Uniforms (20 floats = 80 bytes, 16-byte aligned). */
 const UNIFORM_FLOATS = 20;
 
+// Numeric GPUTextureUsage flags (spec values) so this module can load in tests
+// without a WebGPU environment.
+const GPU_TEX_COPY_SRC = 0x01;
+const GPU_TEX_COPY_DST = 0x02;
+const GPU_TEX_TEXTURE_BINDING = 0x04;
+const GPU_TEX_RENDER_ATTACHMENT = 0x10;
+
+const CANVAS_TEXTURE_USAGE =
+  GPU_TEX_RENDER_ATTACHMENT |
+  GPU_TEX_COPY_SRC |
+  GPU_TEX_COPY_DST |
+  GPU_TEX_TEXTURE_BINDING;
+
+const PREMULTIPLIED_BLEND: GPUBlendState = {
+  color: {
+    srcFactor: "one",
+    dstFactor: "one-minus-src-alpha",
+    operation: "add",
+  },
+  alpha: {
+    srcFactor: "one",
+    dstFactor: "one-minus-src-alpha",
+    operation: "add",
+  },
+};
+
 export interface NormalizedDestRect {
   x: number;
   y: number;
@@ -58,6 +85,11 @@ export interface LayerRenderParams {
   clear?: boolean;
 }
 
+export interface LayerDraw {
+  videoFrame: VideoFrame;
+  params: LayerRenderParams;
+}
+
 export class PreviewEngine {
   private device: GPUDevice;
   private context: GPUCanvasContext;
@@ -65,12 +97,20 @@ export class PreviewEngine {
   private sampler: GPUSampler;
   private uniformBuffer: GPUBuffer;
   private uniformData = new Float32Array(UNIFORM_FLOATS);
+  private extraLayerUniformBuffers: GPUBuffer[] = [];
   private transitionUniformBuffer: GPUBuffer;
   private transitionUniformData = new Float32Array(TRANSITION_UNIFORM_FLOATS);
   private transitionPipelineCache: TransitionPipelineCache;
   private finishingChain: FinishingPassChain;
+  private overlayPipeline: GPURenderPipeline;
+  private overlaySampler: GPUSampler;
+  private overlayTexture: GPUTexture | null = null;
+  private overlayWidth = 0;
+  private overlayHeight = 0;
   private destroyed = false;
   private audioReactive: AudioReactiveState = { ...ZERO_AUDIO_REACTIVE };
+  private format: GPUTextureFormat;
+  private canvas: HTMLCanvasElement | OffscreenCanvas;
 
   private constructor(
     device: GPUDevice,
@@ -81,6 +121,8 @@ export class PreviewEngine {
     transitionUniformBuffer: GPUBuffer,
     transitionPipelineCache: TransitionPipelineCache,
     finishingChain: FinishingPassChain,
+    overlayPipeline: GPURenderPipeline,
+    overlaySampler: GPUSampler,
     format: GPUTextureFormat,
   ) {
     this.device = device;
@@ -91,8 +133,9 @@ export class PreviewEngine {
     this.transitionUniformBuffer = transitionUniformBuffer;
     this.transitionPipelineCache = transitionPipelineCache;
     this.finishingChain = finishingChain;
+    this.overlayPipeline = overlayPipeline;
+    this.overlaySampler = overlaySampler;
     this.format = format;
-    // Placeholder; overwritten by the factory before the instance is returned.
     this.canvas = { width: 0, height: 0 } as unknown as OffscreenCanvas;
   }
 
@@ -106,11 +149,9 @@ export class PreviewEngine {
       device: this.device,
       format: this.format,
       alphaMode: "premultiplied",
+      usage: CANVAS_TEXTURE_USAGE,
     });
   }
-
-  private format: GPUTextureFormat;
-  private canvas: HTMLCanvasElement | OffscreenCanvas;
 
   static async create(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<PreviewEngine> {
     const { device, format } = await acquireGpuContext();
@@ -118,9 +159,15 @@ export class PreviewEngine {
     const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
     if (!context) throw new Error("Could not get WebGPU context from canvas");
 
-    context.configure({ device, format, alphaMode: "premultiplied" });
+    context.configure({
+      device,
+      format,
+      alphaMode: "premultiplied",
+      usage: CANVAS_TEXTURE_USAGE,
+    });
 
     const shaderModule = device.createShaderModule({ code: previewShader });
+    const overlayModule = device.createShaderModule({ code: overlayShader });
 
     const sampler = device.createSampler({
       magFilter: "linear",
@@ -164,25 +211,36 @@ export class PreviewEngine {
       fragment: {
         module: shaderModule,
         entryPoint: "fs_main",
-        targets: [
-          {
-            format,
-            blend: {
-              color: {
-                srcFactor: "one",
-                dstFactor: "one-minus-src-alpha",
-                operation: "add",
-              },
-              alpha: {
-                srcFactor: "one",
-                dstFactor: "one-minus-src-alpha",
-                operation: "add",
-              },
-            },
-          },
-        ],
+        targets: [{ format, blend: PREMULTIPLIED_BLEND }],
       },
       primitive: { topology: "triangle-list" },
+    });
+
+    const overlayLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: "float" },
+        },
+      ],
+    });
+
+    const overlayPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [overlayLayout] }),
+      vertex: { module: overlayModule, entryPoint: "vs_main" },
+      fragment: {
+        module: overlayModule,
+        entryPoint: "fs_main",
+        targets: [{ format, blend: PREMULTIPLIED_BLEND }],
+      },
+      primitive: { topology: "triangle-list" },
+    });
+
+    const overlaySampler = device.createSampler({
+      magFilter: "linear",
+      minFilter: "linear",
     });
 
     const engine = new PreviewEngine(
@@ -194,6 +252,8 @@ export class PreviewEngine {
       transitionUniformBuffer,
       transitionPipelineCache,
       finishingChain,
+      overlayPipeline,
+      overlaySampler,
       format,
     );
     engine.canvas = canvas;
@@ -248,53 +308,61 @@ export class PreviewEngine {
 
   /** Render one composited layer (multi-pass timeline preview). */
   renderLayer(videoFrame: VideoFrame, params: LayerRenderParams): void {
-    if (this.destroyed) return;
+    this.renderLayers([{ videoFrame, params }]);
+  }
 
-    const dest = params.destRect ?? { x: 0, y: 0, w: 1, h: 1 };
-    this.uniformData[0] = params.fadeIn;
-    this.uniformData[1] = params.fadeOut;
-    this.uniformData[2] = params.duration;
-    this.uniformData[3] = params.elapsed;
-    this.uniformData[4] = params.opacity;
-    this.uniformData[5] = params.uvScale[0];
-    this.uniformData[6] = params.uvScale[1];
-    this.uniformData[7] = params.uvOffset[0];
-    this.uniformData[8] = params.uvOffset[1];
-    this.uniformData[9] = dest.x;
-    this.uniformData[10] = dest.y;
-    this.uniformData[11] = dest.w;
-    this.uniformData[12] = dest.h;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.bass] = this.audioReactive.bass;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.mid] = this.audioReactive.mid;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.treble] = this.audioReactive.treble;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.beat] = this.audioReactive.beat;
-    this.device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
-
-    const externalTexture = this.device.importExternalTexture({
-      source: videoFrame,
-    });
-
-    const bindGroup = this.device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.sampler },
-        { binding: 1, resource: externalTexture },
-        { binding: 2, resource: { buffer: this.uniformBuffer } },
-      ],
-    });
+  /**
+   * Draw one or more video layers in a single command buffer.
+   * PiP stacks share one submit; each layer has its own uniform buffer.
+   */
+  renderLayers(layers: readonly LayerDraw[]): void {
+    if (this.destroyed || layers.length === 0) return;
 
     const encoder = this.device.createCommandEncoder();
+    const canvasView = this.context.getCurrentTexture().createView();
+
+    for (let i = 0; i < layers.length; i++) {
+      this.encodeLayerDraw(encoder, canvasView, layers[i], i);
+    }
+
+    this.device.queue.submit([encoder.finish()]);
+  }
+
+  /**
+   * Blend a premultiplied overlay canvas (shader text fill) onto the current
+   * WebGPU swapchain without a Canvas2D video copy.
+   */
+  blitOverlayCanvas(source: HTMLCanvasElement | OffscreenCanvas): void {
+    if (this.destroyed) return;
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    if (width <= 0 || height <= 0) return;
+
+    this.ensureOverlayTexture(width, height);
+    this.device.queue.copyExternalImageToTexture(
+      { source },
+      { texture: this.overlayTexture! },
+      [width, height],
+    );
+
+    const encoder = this.device.createCommandEncoder();
+    const bindGroup = this.device.createBindGroup({
+      layout: this.overlayPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.overlaySampler },
+        { binding: 1, resource: this.overlayTexture!.createView() },
+      ],
+    });
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
           view: this.context.getCurrentTexture().createView(),
-          loadOp: params.clear ? "clear" : "load",
+          loadOp: "load",
           storeOp: "store",
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
         },
       ],
     });
-    pass.setPipeline(this.pipeline);
+    pass.setPipeline(this.overlayPipeline);
     pass.setBindGroup(0, bindGroup);
     pass.draw(6);
     pass.end();
@@ -404,5 +472,101 @@ export class PreviewEngine {
     this.uniformBuffer.destroy();
     this.transitionUniformBuffer.destroy();
     this.finishingChain.destroy();
+    this.overlayTexture?.destroy();
+    for (const buffer of this.extraLayerUniformBuffers) {
+      buffer.destroy();
+    }
+    this.extraLayerUniformBuffers = [];
+    this.overlayTexture = null;
+  }
+
+  private uniformBufferForLayer(index: number): GPUBuffer {
+    if (index === 0) return this.uniformBuffer;
+    const extraIndex = index - 1;
+    while (this.extraLayerUniformBuffers.length <= extraIndex) {
+      this.extraLayerUniformBuffers.push(
+        this.device.createBuffer({
+          size: UNIFORM_FLOATS * 4,
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        }),
+      );
+    }
+    return this.extraLayerUniformBuffers[extraIndex];
+  }
+
+  private encodeLayerDraw(
+    encoder: GPUCommandEncoder,
+    canvasView: GPUTextureView,
+    layer: LayerDraw,
+    index: number,
+  ): void {
+    const params = layer.params;
+    const dest = params.destRect ?? { x: 0, y: 0, w: 1, h: 1 };
+    this.uniformData[0] = params.fadeIn;
+    this.uniformData[1] = params.fadeOut;
+    this.uniformData[2] = params.duration;
+    this.uniformData[3] = params.elapsed;
+    this.uniformData[4] = params.opacity;
+    this.uniformData[5] = params.uvScale[0];
+    this.uniformData[6] = params.uvScale[1];
+    this.uniformData[7] = params.uvOffset[0];
+    this.uniformData[8] = params.uvOffset[1];
+    this.uniformData[9] = dest.x;
+    this.uniformData[10] = dest.y;
+    this.uniformData[11] = dest.w;
+    this.uniformData[12] = dest.h;
+    this.uniformData[AUDIO_UNIFORM_OFFSET.bass] = this.audioReactive.bass;
+    this.uniformData[AUDIO_UNIFORM_OFFSET.mid] = this.audioReactive.mid;
+    this.uniformData[AUDIO_UNIFORM_OFFSET.treble] = this.audioReactive.treble;
+    this.uniformData[AUDIO_UNIFORM_OFFSET.beat] = this.audioReactive.beat;
+
+    const uniformBuffer = this.uniformBufferForLayer(index);
+    this.device.queue.writeBuffer(uniformBuffer, 0, this.uniformData);
+
+    const externalTexture = this.device.importExternalTexture({
+      source: layer.videoFrame,
+    });
+
+    const bindGroup = this.device.createBindGroup({
+      layout: this.pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.sampler },
+        { binding: 1, resource: externalTexture },
+        { binding: 2, resource: { buffer: uniformBuffer } },
+      ],
+    });
+
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: canvasView,
+          loadOp: params.clear ? "clear" : "load",
+          storeOp: "store",
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+    pass.setPipeline(this.pipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(6);
+    pass.end();
+  }
+
+  private ensureOverlayTexture(width: number, height: number): void {
+    if (
+      this.overlayTexture &&
+      this.overlayWidth === width &&
+      this.overlayHeight === height
+    ) {
+      return;
+    }
+    this.overlayTexture?.destroy();
+    this.overlayTexture = this.device.createTexture({
+      size: [width, height, 1],
+      format: this.format,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    this.overlayWidth = width;
+    this.overlayHeight = height;
   }
 }

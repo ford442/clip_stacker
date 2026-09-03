@@ -66,3 +66,19 @@ export function shouldWaitForEncoderBackpressure(
 ): boolean {
   return encodeQueueSize > maxDepth;
 }
+
+/**
+ * Flush and capture GPU frame N, then schedule GPU work for N+1.
+ *
+ * `GPUQueue.onSubmittedWorkDone` waits for the entire queue. Starting frame
+ * N+1 before that wait would stall encode of N until N+1 has also finished.
+ * Encode of N can overlap GPU composite of N+1 only after the canvas snapshot.
+ */
+export async function flushCaptureThenScheduleNext<T>(
+  flushAndCapture: () => Promise<T>,
+  scheduleNextGpuFrame: (() => void) | null,
+): Promise<T> {
+  const captured = await flushAndCapture();
+  scheduleNextGpuFrame?.();
+  return captured;
+}

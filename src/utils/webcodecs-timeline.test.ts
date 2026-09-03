@@ -8,6 +8,7 @@ import {
   timelineFrameTimestampUs,
   timelineStatusThrottleFrames,
   MAX_ENCODE_QUEUE_DEPTH,
+  flushCaptureThenScheduleNext,
 } from './webcodecs-timeline';
 
 describe('webcodecs-timeline', () => {
@@ -120,6 +121,37 @@ describe('webcodecs-timeline', () => {
       expect(legacyFrames).toBe(1801); // float `+= 1/30` includes one extra frame at 60s
       expect(statusCallsNew).toBeLessThan(statusCallsLegacy / 5);
       expect(copyBytesAvoided).toBeGreaterThan(14_000_000_000); // ~14.9 GB memcpy avoided / 60s 1080p
+    });
+  });
+
+  describe('flushCaptureThenScheduleNext', () => {
+    it('captures frame N before scheduling GPU work for N+1', async () => {
+      const order: string[] = [];
+      await flushCaptureThenScheduleNext(
+        async () => {
+          order.push('flush-capture');
+        },
+        () => {
+          order.push('next-render');
+        },
+      );
+      expect(order).toEqual(['flush-capture', 'next-render']);
+    });
+
+    it('does not start the next GPU frame if capture throws', async () => {
+      const order: string[] = [];
+      await expect(
+        flushCaptureThenScheduleNext(
+          async () => {
+            order.push('flush-capture');
+            throw new Error('stale');
+          },
+          () => {
+            order.push('next-render');
+          },
+        ),
+      ).rejects.toThrow('stale');
+      expect(order).toEqual(['flush-capture']);
     });
   });
 });

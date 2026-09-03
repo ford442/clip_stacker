@@ -7,15 +7,20 @@ import {
 } from './finishing';
 import {
   GRAIN_AMOUNT_RECOMMENDED,
+  GRAIN_BLUR_TAP_LIMIT,
   GRAIN_UNIFORM_FLOATS,
   appendGrainFilters,
   applyGrainPreset,
   buildGrainBloomFfmpegGraph,
   buildGrainFfmpegFilters,
+  grainBlurSigma,
   grainFrameSeedFromTime,
+  grainWantsOpticalBlur,
+  isotropicGaussianWeight,
   isGrainNeutral,
   normalizeGrainPass,
   packGrainUniforms,
+  separableGaussianWeight,
 } from './grain';
 import { TIMELINE_EXPORT_FPS } from './webcodecs-timeline';
 
@@ -271,5 +276,46 @@ describe('grain ffmpeg filters', () => {
         halation: { ...DEFAULT_GRAIN.halation },
       }),
     ).toBe('');
+  });
+});
+
+describe('separable Gaussian (grain bloom/halation)', () => {
+  it('matches the isotropic 2D kernel within float error', () => {
+    const sigma = grainBlurSigma(8);
+    let maxDelta = 0;
+    for (let dy = -GRAIN_BLUR_TAP_LIMIT; dy <= GRAIN_BLUR_TAP_LIMIT; dy++) {
+      for (let dx = -GRAIN_BLUR_TAP_LIMIT; dx <= GRAIN_BLUR_TAP_LIMIT; dx++) {
+        const a = isotropicGaussianWeight(dx, dy, sigma);
+        const b = separableGaussianWeight(dx, dy, sigma);
+        maxDelta = Math.max(maxDelta, Math.abs(a - b));
+      }
+    }
+    expect(maxDelta).toBeLessThan(1e-12);
+  });
+
+  it('detects optical blur when bloom or halation is on', () => {
+    expect(
+      grainWantsOpticalBlur({
+        ...DEFAULT_GRAIN,
+        enabled: true,
+        bloomAmount: 0.2,
+      }),
+    ).toBe(true);
+    expect(
+      grainWantsOpticalBlur({
+        ...DEFAULT_GRAIN,
+        enabled: true,
+        bloomAmount: 0,
+        halation: { ...DEFAULT_GRAIN.halation, enabled: true, amount: 0.3 },
+      }),
+    ).toBe(true);
+    expect(
+      grainWantsOpticalBlur({
+        ...DEFAULT_GRAIN,
+        enabled: true,
+        amount: 0.4,
+        bloomAmount: 0,
+      }),
+    ).toBe(false);
   });
 });

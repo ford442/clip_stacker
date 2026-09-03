@@ -1,32 +1,47 @@
 /**
  * Film grain + optical emulation pass — always last in the finishing chain.
  * Procedural grain is seeded by integer frame index for WYSIWYG export/preview.
+ * Bloom / halation use a separable Gaussian (H then V) matching the old 17×17 kernel.
  */
 
 import grainShader from './shaders/grain.wgsl?raw';
 import type { GrainPass } from '../utils/finishing';
 import {
   GRAIN_UNIFORM_FLOATS,
+  grainWantsOpticalBlur,
   packGrainUniforms,
 } from '../utils/grain';
 
 export class GrainGpuPass {
-  private readonly pipeline: GPURenderPipeline;
+  private readonly grainPipeline: GPURenderPipeline;
+  private readonly blurPipeline: GPURenderPipeline;
   private readonly sampler: GPUSampler;
   private readonly uniformBuffer: GPUBuffer;
+  private readonly blurUniformH: GPUBuffer;
+  private readonly blurUniformV: GPUBuffer;
   private readonly uniformData = new Float32Array(GRAIN_UNIFORM_FLOATS);
-  private inputTexture: GPUTexture | null = null;
-  private inputWidth = 0;
-  private inputHeight = 0;
+  private readonly format: GPUTextureFormat;
+  private blurPing: GPUTexture | null = null;
+  private blurPong: GPUTexture | null = null;
+  private blurWidth = 0;
+  private blurHeight = 0;
 
   private constructor(
-    pipeline: GPURenderPipeline,
+    grainPipeline: GPURenderPipeline,
+    blurPipeline: GPURenderPipeline,
     sampler: GPUSampler,
     uniformBuffer: GPUBuffer,
+    blurUniformH: GPUBuffer,
+    blurUniformV: GPUBuffer,
+    format: GPUTextureFormat,
   ) {
-    this.pipeline = pipeline;
+    this.grainPipeline = grainPipeline;
+    this.blurPipeline = blurPipeline;
     this.sampler = sampler;
     this.uniformBuffer = uniformBuffer;
+    this.blurUniformH = blurUniformH;
+    this.blurUniformV = blurUniformV;
+    this.format = format;
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): GrainGpuPass {
@@ -34,13 +49,23 @@ export class GrainGpuPass {
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
     });
     const uniformBuffer = device.createBuffer({
       size: GRAIN_UNIFORM_FLOATS * 4,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+    const blurUniformH = device.createBuffer({
+      size: GRAIN_UNIFORM_FLOATS * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    const blurUniformV = device.createBuffer({
+      size: GRAIN_UNIFORM_FLOATS * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
 
-    const bindGroupLayout = device.createBindGroupLayout({
+    const blurLayout = device.createBindGroupLayout({
       entries: [
         { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         {
@@ -56,8 +81,40 @@ export class GrainGpuPass {
       ],
     });
 
-    const pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+    const grainLayout = device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'float' },
+        },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: 'uniform' },
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'float' },
+        },
+      ],
+    });
+
+    const blurPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [blurLayout] }),
+      vertex: { module: shaderModule, entryPoint: 'vs_main' },
+      fragment: {
+        module: shaderModule,
+        entryPoint: 'fs_blur',
+        targets: [{ format }],
+      },
+      primitive: { topology: 'triangle-list' },
+    });
+
+    const grainPipeline = device.createRenderPipeline({
+      layout: device.createPipelineLayout({ bindGroupLayouts: [grainLayout] }),
       vertex: { module: shaderModule, entryPoint: 'vs_main' },
       fragment: {
         module: shaderModule,
@@ -67,7 +124,15 @@ export class GrainGpuPass {
       primitive: { topology: 'triangle-list' },
     });
 
-    return new GrainGpuPass(pipeline, sampler, uniformBuffer);
+    return new GrainGpuPass(
+      grainPipeline,
+      blurPipeline,
+      sampler,
+      uniformBuffer,
+      blurUniformH,
+      blurUniformV,
+      format,
+    );
   }
 
   /**
@@ -82,43 +147,66 @@ export class GrainGpuPass {
     height: number,
     settings: GrainPass,
     frameSeed: number,
+    commandEncoder?: GPUCommandEncoder,
   ): void {
     if (width <= 0 || height <= 0) return;
     if (!settings.enabled) return;
 
-    const encoder = device.createCommandEncoder();
-    this.encodePass(
+    const ownsEncoder = !commandEncoder;
+    const encoder = commandEncoder ?? device.createCommandEncoder();
+
+    packGrainUniforms(settings, width, height, frameSeed, this.uniformData);
+
+    let blurred = inputTexture;
+    if (grainWantsOpticalBlur(settings)) {
+      this.ensureBlurTextures(device, width, height);
+      this.encodeBlurPass(device, encoder, inputTexture, this.blurPing!.createView(), 0);
+      this.encodeBlurPass(device, encoder, this.blurPing!, this.blurPong!.createView(), 1);
+      blurred = this.blurPong!;
+    }
+
+    this.encodeGrainPass(
       device,
       encoder,
       inputTexture,
+      blurred,
       outputView,
       width,
       height,
       settings,
       frameSeed,
     );
-    device.queue.submit([encoder.finish()]);
+
+    if (ownsEncoder) device.queue.submit([encoder.finish()]);
   }
 
-  private encodePass(
+  destroy(): void {
+    this.blurPing?.destroy();
+    this.blurPong?.destroy();
+    this.uniformBuffer.destroy();
+    this.blurUniformH.destroy();
+    this.blurUniformV.destroy();
+    this.blurPing = null;
+    this.blurPong = null;
+  }
+
+  private encodeBlurPass(
     device: GPUDevice,
     encoder: GPUCommandEncoder,
     inputTexture: GPUTexture,
     outputView: GPUTextureView,
-    width: number,
-    height: number,
-    settings: GrainPass,
-    frameSeed: number,
+    axis: 0 | 1,
   ): void {
-    packGrainUniforms(settings, width, height, frameSeed, this.uniformData);
-    device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
+    const buffer = axis === 0 ? this.blurUniformH : this.blurUniformV;
+    this.uniformData[14] = axis;
+    device.queue.writeBuffer(buffer, 0, this.uniformData);
 
     const bindGroup = device.createBindGroup({
-      layout: this.pipeline.getBindGroupLayout(0),
+      layout: this.blurPipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: this.sampler },
         { binding: 1, resource: inputTexture.createView() },
-        { binding: 2, resource: { buffer: this.uniformBuffer } },
+        { binding: 2, resource: { buffer } },
       ],
     });
 
@@ -132,15 +220,71 @@ export class GrainGpuPass {
         },
       ],
     });
-    pass.setPipeline(this.pipeline);
+    pass.setPipeline(this.blurPipeline);
     pass.setBindGroup(0, bindGroup);
     pass.draw(6);
     pass.end();
   }
 
-  destroy(): void {
-    this.inputTexture?.destroy();
-    this.uniformBuffer.destroy();
-    this.inputTexture = null;
+  private encodeGrainPass(
+    device: GPUDevice,
+    encoder: GPUCommandEncoder,
+    inputTexture: GPUTexture,
+    blurredTexture: GPUTexture,
+    outputView: GPUTextureView,
+    width: number,
+    height: number,
+    settings: GrainPass,
+    frameSeed: number,
+  ): void {
+    packGrainUniforms(settings, width, height, frameSeed, this.uniformData);
+    this.uniformData[14] = 0;
+    device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
+
+    const bindGroup = device.createBindGroup({
+      layout: this.grainPipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: this.sampler },
+        { binding: 1, resource: inputTexture.createView() },
+        { binding: 2, resource: { buffer: this.uniformBuffer } },
+        { binding: 3, resource: blurredTexture.createView() },
+      ],
+    });
+
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [
+        {
+          view: outputView,
+          loadOp: 'clear',
+          storeOp: 'store',
+          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        },
+      ],
+    });
+    pass.setPipeline(this.grainPipeline);
+    pass.setBindGroup(0, bindGroup);
+    pass.draw(6);
+    pass.end();
+  }
+
+  private ensureBlurTextures(device: GPUDevice, width: number, height: number): void {
+    if (this.blurPing && this.blurWidth === width && this.blurHeight === height) {
+      return;
+    }
+    this.blurPing?.destroy();
+    this.blurPong?.destroy();
+    const descriptor: GPUTextureDescriptor = {
+      size: [width, height, 1],
+      format: this.format,
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.COPY_SRC |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    };
+    this.blurPing = device.createTexture(descriptor);
+    this.blurPong = device.createTexture(descriptor);
+    this.blurWidth = width;
+    this.blurHeight = height;
   }
 }

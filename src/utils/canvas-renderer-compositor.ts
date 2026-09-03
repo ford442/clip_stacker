@@ -79,6 +79,7 @@ export function renderTextOverlayCanvas(
 export async function renderTextOverlaysAsync(
   canvas: HTMLCanvasElement,
   plan: PreviewCompositionPlan,
+  options?: { clear?: boolean },
 ): Promise<void> {
   if (canvas.width !== plan.canvasWidth) canvas.width = plan.canvasWidth;
   if (canvas.height !== plan.canvasHeight) canvas.height = plan.canvasHeight;
@@ -86,7 +87,9 @@ export async function renderTextOverlaysAsync(
   const ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  if (options?.clear !== false) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
 
   // Quick path: no shader fills -> existing behavior
   const hasShader = plan.layers.some(

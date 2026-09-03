@@ -126,13 +126,14 @@ export class LutPass {
     width: number,
     height: number,
     intensity: number,
+    commandEncoder?: GPUCommandEncoder,
   ): void {
     if (!this.lutTexture || this.lutSize <= 0 || intensity <= 0) return;
     if (width <= 0 || height <= 0) return;
 
-    const encoder = device.createCommandEncoder();
+    const encoder = commandEncoder ?? device.createCommandEncoder();
     this.encodePass(device, encoder, inputTexture, outputView, intensity);
-    device.queue.submit([encoder.finish()]);
+    if (!commandEncoder) device.queue.submit([encoder.finish()]);
   }
 
   private encodePass(

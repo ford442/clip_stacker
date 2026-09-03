@@ -5,6 +5,7 @@ import {
   h264CodecString,
   resolveEncoderBitrate,
   resolveEncoderCodec,
+  VIDEO_ENCODER_LATENCY_MODE,
   WEBCODECS_PROGRESS_STAGES,
 } from './webcodecs';
 
@@ -61,6 +62,12 @@ describe('WEBCODECS_PROGRESS_STAGES', () => {
     expect(WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode).toMatch(/Decode/);
     expect(WEBCODECS_PROGRESS_STAGES.flush).toMatch(/encoder/i);
     expect(WEBCODECS_PROGRESS_STAGES.audio).toMatch(/audio/i);
+  });
+});
+
+describe('VIDEO_ENCODER_LATENCY_MODE', () => {
+  it('uses quality mode so export does not drop to realtime', () => {
+    expect(VIDEO_ENCODER_LATENCY_MODE).toBe('quality');
   });
 });
 
