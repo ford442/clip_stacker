@@ -157,6 +157,14 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     () => sliceIntervalListSum(parsedIntervalList),
     [parsedIntervalList],
   );
+  const intervalSequenceSummary = useMemo(() => {
+    if (parsedIntervalList.length === 0) return '';
+    const slots = clipC ? (['A', 'B', 'C'] as const) : (['A', 'B'] as const);
+    const sequence = parsedIntervalList
+      .map((intervalSec, index) => `${slots[index % slots.length]} ${intervalSec}s`)
+      .join(', ');
+    return `Sequence: ${sequence}. Total list duration: ${intervalListDurationSec.toFixed(2)}s.`;
+  }, [clipC, parsedIntervalList, intervalListDurationSec]);
   const intervalTimingEnabled = cutTimingMode === 'intervalList' && parsedIntervalList.length > 0;
   const isTargetDuration = consumeMode === 'targetDuration';
   const isPlayOnceIntervalMode = intervalTimingEnabled && isTargetDuration && !repeatIntervalList;
@@ -494,7 +502,12 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                   />
                 </label>
                 {parsedIntervalList.length > 0 ? (
-                  <div className="intercut-interval-lane" role="list" aria-label="Interval preview lane">
+                  <div
+                    className="intercut-interval-lane"
+                    role="list"
+                    aria-label="Interval preview lane"
+                    aria-describedby="intercut-interval-summary"
+                  >
                     {parsedIntervalList.map((intervalSec, index) => {
                       const slot = clipC
                         ? (['A', 'B', 'C'] as const)[index % 3]
@@ -516,6 +529,11 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 ) : (
                   <p className="inspector-warning">
                     Enter at least one positive interval (example: {DEFAULT_INTERVAL_LIST_TEXT}).
+                  </p>
+                )}
+                {parsedIntervalList.length > 0 && (
+                  <p id="intercut-interval-summary" className="intercut-estimate">
+                    {intervalSequenceSummary}
                   </p>
                 )}
                 <label className="inspector-checkbox-label">
