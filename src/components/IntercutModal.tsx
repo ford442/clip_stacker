@@ -653,7 +653,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 clipB,
                 clipC: clipC ?? undefined,
                 automation: {
-                  totalDurationSec: swapDurationSec,
+                  totalDurationSec: consumeMode === 'entireSources' ? 0 : swapDurationSec,
                   startFrequencyHz,
                   endFrequencyHz,
                   sliceIntervalsSec: intervalTimingEnabled ? parsedIntervalList : undefined,
