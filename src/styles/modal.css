@@ -229,6 +229,50 @@
   line-height: 1.45;
 }
 
+.intercut-interval-lane {
+  display: flex;
+  gap: 2px;
+  margin: 0.35rem 0 0.45rem;
+  min-height: 2.1rem;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+}
+
+.intercut-interval-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  padding: 0.15rem 0.1rem;
+  line-height: 1.1;
+}
+
+.intercut-interval-a {
+  background: rgba(201, 162, 39, 0.28);
+}
+
+.intercut-interval-b {
+  background: rgba(90, 160, 220, 0.28);
+}
+
+.intercut-interval-c {
+  background: rgba(160, 110, 210, 0.3);
+}
+
+.intercut-interval-slot {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--gold-bright);
+}
+
+.intercut-interval-sec {
+  font-size: 0.62rem;
+  color: var(--muted);
+}
+
 @media (max-width: 540px) {
   .intercut-sources,
   .intercut-row {
