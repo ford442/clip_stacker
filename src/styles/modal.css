@@ -229,6 +229,40 @@
   line-height: 1.45;
 }
 
+.intercut-interval-lane {
+  display: flex;
+  align-items: stretch;
+  gap: 0.3rem;
+  margin: 0.4rem 0 0.5rem;
+}
+
+.intercut-interval-a,
+.intercut-interval-b,
+.intercut-interval-c {
+  min-width: 0;
+  display: grid;
+  gap: 0.15rem;
+  justify-items: center;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.3rem 0.25rem;
+  font-size: 0.72rem;
+  color: var(--text);
+  background: var(--panel-alt);
+}
+
+.intercut-interval-a {
+  border-color: rgba(130, 185, 255, 0.45);
+}
+
+.intercut-interval-b {
+  border-color: rgba(255, 214, 124, 0.45);
+}
+
+.intercut-interval-c {
+  border-color: rgba(149, 230, 170, 0.45);
+}
+
 @media (max-width: 540px) {
   .intercut-sources,
   .intercut-row {

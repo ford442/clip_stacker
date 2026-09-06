@@ -7,7 +7,10 @@ import {
   type IntercutGeneratorConfig,
 } from '../ffmpeg/intercutGenerator';
 import {
+  formatSliceIntervalList,
   hzToSecondsPerCut,
+  parseSliceIntervalList,
+  sliceIntervalListSum,
   secondsPerCutToHz,
   type IntercutConsumeMode,
   type IntercutFinalClip,
@@ -22,6 +25,10 @@ import {
 
 type FrequencyUnit = 'hz' | 'sec';
 type EasingName = 'linear' | keyof typeof EASING_PRESETS;
+type CutTimingMode = 'frequency' | 'intervalList';
+
+const DEFAULT_INTERVALS_SEC = [2, 1, 1, 2, 3, 2];
+const DEFAULT_INTERVAL_LIST_TEXT = DEFAULT_INTERVALS_SEC.join(', ');
 
 const EASING_OPTIONS: { id: EasingName; label: string }[] = [
   { id: 'linear', label: 'Linear' },
@@ -114,6 +121,9 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
   const [startFrequencyHz, setStartFrequencyHz] = useState(0.5);
   const [endFrequencyHz, setEndFrequencyHz] = useState(12);
   const [frequencyUnit, setFrequencyUnit] = useState<FrequencyUnit>('hz');
+  const [cutTimingMode, setCutTimingMode] = useState<CutTimingMode>('frequency');
+  const [intervalListText, setIntervalListText] = useState(DEFAULT_INTERVAL_LIST_TEXT);
+  const [repeatIntervalList, setRepeatIntervalList] = useState(false);
   const [easingName, setEasingName] = useState<EasingName>('easeIn');
   const [audioPolicy, setAudioPolicy] = useState<IntercutAudioPolicy>('both');
   const [snapCutsToBeats, setSnapCutsToBeats] = useState(false);
@@ -139,6 +149,27 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
   const clipA = videoClips.find((c) => c.id === clipAId) ?? null;
   const clipB = videoClips.find((c) => c.id === clipBId) ?? null;
   const clipC = videoClips.find((c) => c.id === clipCId) ?? null;
+  const parsedIntervalList = useMemo(
+    () => parseSliceIntervalList(intervalListText),
+    [intervalListText],
+  );
+  const intervalListDurationSec = useMemo(
+    () => sliceIntervalListSum(parsedIntervalList),
+    [parsedIntervalList],
+  );
+  const intervalSequenceSummary = useMemo(() => {
+    if (parsedIntervalList.length === 0) return '';
+    const slots = clipC ? (['A', 'B', 'C'] as const) : (['A', 'B'] as const);
+    const sequence = parsedIntervalList
+      .map((intervalSec, index) => `${slots[index % slots.length]} ${intervalSec}s`)
+      .join(', ');
+    return `Sequence: ${sequence}. Total list duration: ${intervalListDurationSec.toFixed(2)}s.`;
+  }, [clipC, parsedIntervalList, intervalListDurationSec]);
+  const intervalTimingEnabled = cutTimingMode === 'intervalList' && parsedIntervalList.length > 0;
+  const isTargetDuration = consumeMode === 'targetDuration';
+  const isPlayOnceIntervalMode = intervalTimingEnabled && isTargetDuration && !repeatIntervalList;
+  const swapDurationSec = isPlayOnceIntervalMode ? intervalListDurationSec : totalDurationSec;
+  const showSwapDurationInput = isTargetDuration && !isPlayOnceIntervalMode;
   const sourceIds = [clipA?.id, clipB?.id, clipC?.id].filter((id): id is string => !!id);
   const hasDuplicateSources = new Set(sourceIds).size !== sourceIds.length;
 
@@ -150,13 +181,14 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
       clipB,
       clipC: clipC ?? undefined,
       automation: {
-        totalDurationSec,
+        totalDurationSec: consumeMode === 'entireSources' ? 0 : swapDurationSec,
         startFrequencyHz,
         endFrequencyHz,
+        sliceIntervalsSec: intervalTimingEnabled ? parsedIntervalList : undefined,
         easing: easingFromName(easingName),
       },
       audioPolicy,
-      snapCutsToBeats,
+      snapCutsToBeats: intervalTimingEnabled ? false : snapCutsToBeats,
       forceFinalClip,
       tailDurationSec,
       consumeMode,
@@ -166,6 +198,14 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     clipA,
     clipB,
     clipC,
+    cutTimingMode,
+    intervalListText,
+    repeatIntervalList,
+    parsedIntervalList,
+    intervalListDurationSec,
+    intervalTimingEnabled,
+    isPlayOnceIntervalMode,
+    swapDurationSec,
     totalDurationSec,
     startFrequencyHz,
     endFrequencyHz,
@@ -207,7 +247,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     !!clipA &&
     !!clipB &&
     !hasDuplicateSources &&
-    (consumeMode === 'entireSources' || totalDurationSec > 0) &&
+    (consumeMode === 'entireSources' || swapDurationSec > 0) &&
+    (cutTimingMode === 'frequency' || parsedIntervalList.length > 0) &&
     !generating &&
     !estimate?.shortageMessage;
 
@@ -340,87 +381,176 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                     : 'Cut until every trimmed second of A and B is used (≈ A + B).'
                 : 'Stop after the swap duration below (or when a source runs out).'}
             </p>
-            {consumeMode === 'targetDuration' && (
+            {showSwapDurationInput && (
               <label className="intercut-field">
                 Swap duration (seconds)
                 <input
                   type="number"
                   min={0.2}
                   step={0.1}
-                  value={totalDurationSec}
+                  value={swapDurationSec}
                   onChange={(e) => setTotalDurationSec(Number(e.target.value))}
                   disabled={generating}
                 />
               </label>
             )}
+            {isPlayOnceIntervalMode && (
+              <p className="intercut-estimate">
+                Swap duration follows the interval list sum: {intervalListDurationSec.toFixed(2)}s.
+              </p>
+            )}
           </fieldset>
 
           <fieldset className="intercut-fieldset">
-            <legend>Cut frequency</legend>
-            <div className="intercut-unit-toggle" role="group" aria-label="Frequency unit">
+            <legend>Cut timing</legend>
+            <div className="intercut-unit-toggle" role="group" aria-label="Cut timing mode">
               <button
                 type="button"
-                className={frequencyUnit === 'hz' ? 'active' : ''}
-                onClick={() => setFrequencyUnit('hz')}
+                className={cutTimingMode === 'frequency' ? 'active' : ''}
+                onClick={() => setCutTimingMode('frequency')}
                 disabled={generating}
               >
-                Hz
+                Frequency ramp
               </button>
               <button
                 type="button"
-                className={frequencyUnit === 'sec' ? 'active' : ''}
-                onClick={() => setFrequencyUnit('sec')}
+                className={cutTimingMode === 'intervalList' ? 'active' : ''}
+                onClick={() => setCutTimingMode('intervalList')}
                 disabled={generating}
               >
-                Seconds per cut
+                Interval list
               </button>
             </div>
-            <div className="intercut-row">
-              <label className="intercut-field">
-                {isBellCurve ? 'Base (start & end)' : 'Start'}{' '}
-                {frequencyUnit === 'hz' ? '(Hz)' : '(sec/cut)'}
-                <input
-                  type="number"
-                  min={0.1}
-                  step={0.1}
-                  value={Number(startDisplay.toFixed(3))}
-                  onChange={(e) => setStartFromDisplay(Number(e.target.value))}
-                  disabled={generating}
-                />
-              </label>
-              <label className="intercut-field">
-                {isBellCurve ? 'Peak (midpoint)' : 'End'}{' '}
-                {frequencyUnit === 'hz' ? '(Hz)' : '(sec/cut)'}
-                <input
-                  type="number"
-                  min={0.1}
-                  step={0.1}
-                  value={Number(endDisplay.toFixed(3))}
-                  onChange={(e) => setEndFromDisplay(Number(e.target.value))}
-                  disabled={generating}
-                />
-              </label>
-            </div>
-            <label className="intercut-field">
-              Easing
-              <select
-                value={easingName}
-                onChange={(e) => setEasingName(e.target.value as EasingName)}
-                disabled={generating}
-                aria-label="Easing"
-              >
-                {EASING_OPTIONS.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="inspector-hint">
-              {isBellCurve
-                ? 'Bell curve ramps frequency from the base rate up to a peak strobe at the midpoint, then decelerates back down to the base rate.'
-                : 'Easing shapes how frequency moves from start rate to end rate. Ease in stays near the start rate then ramps hard. Ease out leaves quickly and settles into the end rate. For a strobe that calms down, set start rate high and end rate low.'}
-            </p>
+            {cutTimingMode === 'frequency' ? (
+              <>
+                <div className="intercut-unit-toggle" role="group" aria-label="Frequency unit">
+                  <button
+                    type="button"
+                    className={frequencyUnit === 'hz' ? 'active' : ''}
+                    onClick={() => setFrequencyUnit('hz')}
+                    disabled={generating}
+                  >
+                    Hz
+                  </button>
+                  <button
+                    type="button"
+                    className={frequencyUnit === 'sec' ? 'active' : ''}
+                    onClick={() => setFrequencyUnit('sec')}
+                    disabled={generating}
+                  >
+                    Seconds per cut
+                  </button>
+                </div>
+                <div className="intercut-row">
+                  <label className="intercut-field">
+                    {isBellCurve ? 'Base (start & end)' : 'Start'}{' '}
+                    {frequencyUnit === 'hz' ? '(Hz)' : '(sec/cut)'}
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={Number(startDisplay.toFixed(3))}
+                      onChange={(e) => setStartFromDisplay(Number(e.target.value))}
+                      disabled={generating}
+                    />
+                  </label>
+                  <label className="intercut-field">
+                    {isBellCurve ? 'Peak (midpoint)' : 'End'}{' '}
+                    {frequencyUnit === 'hz' ? '(Hz)' : '(sec/cut)'}
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={Number(endDisplay.toFixed(3))}
+                      onChange={(e) => setEndFromDisplay(Number(e.target.value))}
+                      disabled={generating}
+                    />
+                  </label>
+                </div>
+                <label className="intercut-field">
+                  Easing
+                  <select
+                    value={easingName}
+                    onChange={(e) => setEasingName(e.target.value as EasingName)}
+                    disabled={generating}
+                    aria-label="Easing"
+                  >
+                    {EASING_OPTIONS.map((opt) => (
+                      <option key={opt.id} value={opt.id}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <p className="inspector-hint">
+                  {isBellCurve
+                    ? 'Bell curve ramps frequency from the base rate up to a peak strobe at the midpoint, then decelerates back down to the base rate.'
+                    : 'Easing shapes how frequency moves from start rate to end rate. Ease in stays near the start rate then ramps hard. Ease out leaves quickly and settles into the end rate. For a strobe that calms down, set start rate high and end rate low.'}
+                </p>
+              </>
+            ) : (
+              <>
+                <label className="intercut-field">
+                  Interval list (seconds)
+                  <input
+                    type="text"
+                    value={intervalListText}
+                    onChange={(e) => setIntervalListText(e.target.value)}
+                    disabled={generating}
+                    aria-label="Interval list"
+                    placeholder={DEFAULT_INTERVAL_LIST_TEXT}
+                  />
+                </label>
+                {parsedIntervalList.length > 0 ? (
+                  <div
+                    className="intercut-interval-lane"
+                    role="list"
+                    aria-label="Interval preview lane"
+                    aria-describedby="intercut-interval-summary"
+                  >
+                    {parsedIntervalList.map((intervalSec, index) => {
+                      const slot = clipC
+                        ? (['A', 'B', 'C'] as const)[index % 3]
+                        : (['A', 'B'] as const)[index % 2];
+                      return (
+                        <div
+                          key={`${index}-${intervalSec}`}
+                          className={`intercut-interval-${slot.toLowerCase()}`}
+                          role="listitem"
+                          aria-label={`Cut ${index + 1}: ${slot} for ${intervalSec}s`}
+                          style={{ flexGrow: intervalSec }}
+                        >
+                          <span>{slot}</span>
+                          <span>{intervalSec}s</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="inspector-warning">
+                    Enter at least one positive interval (example: {DEFAULT_INTERVAL_LIST_TEXT}).
+                  </p>
+                )}
+                {parsedIntervalList.length > 0 && (
+                  <p id="intercut-interval-summary" className="intercut-estimate">
+                    {intervalSequenceSummary}
+                  </p>
+                )}
+                <label className="inspector-checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={repeatIntervalList}
+                    onChange={(e) => setRepeatIntervalList(e.target.checked)}
+                    disabled={generating}
+                  />
+                  Repeat list to fill swap duration
+                </label>
+                <p className="inspector-hint">
+                  Example: {formatSliceIntervalList(DEFAULT_INTERVALS_SEC)}. Values are parsed from
+                  commas, spaces, or semicolons.
+                </p>
+              </>
+            )}
           </fieldset>
 
           {consumeMode === 'targetDuration' && (
@@ -480,14 +610,16 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 type="checkbox"
                 checked={snapCutsToBeats}
                 onChange={(e) => setSnapCutsToBeats(e.target.checked)}
-                disabled={generating || beatCount < 2}
+                disabled={generating || beatCount < 2 || cutTimingMode === 'intervalList'}
               />
               Snap cuts to beats
-              {beatCount < 2
-                ? ' (needs beatTimestamps on a source clip)'
-                : beatRef?.bpmEstimate
-                  ? ` (${beatRef.bpmEstimate.toFixed(0)} BPM)`
-                  : ` (${beatCount} beats)`}
+              {cutTimingMode === 'intervalList'
+                ? ' (disabled in interval list mode)'
+                : beatCount < 2
+                  ? ' (needs beatTimestamps on a source clip)'
+                  : beatRef?.bpmEstimate
+                    ? ` (${beatRef.bpmEstimate.toFixed(0)} BPM)`
+                    : ` (${beatCount} beats)`}
             </label>
           </fieldset>
 
@@ -521,14 +653,14 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 clipB,
                 clipC: clipC ?? undefined,
                 automation: {
-                  totalDurationSec:
-                    consumeMode === 'entireSources' ? 0 : totalDurationSec,
+                  totalDurationSec: consumeMode === 'entireSources' ? 0 : swapDurationSec,
                   startFrequencyHz,
                   endFrequencyHz,
+                  sliceIntervalsSec: intervalTimingEnabled ? parsedIntervalList : undefined,
                   easing: easingFromName(easingName),
                 },
                 audioPolicy,
-                snapCutsToBeats,
+                snapCutsToBeats: intervalTimingEnabled ? false : snapCutsToBeats,
                 forceFinalClip,
                 tailDurationSec: consumeMode === 'entireSources' ? 0 : tailDurationSec,
                 consumeMode,

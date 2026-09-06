@@ -137,5 +137,8 @@ Library macro that alternates two or three clips at a configurable (accelerating
 - `targetDuration` (default) — fill `automation.totalDurationSec` (plus optional `tailDurationSec` on the landing clip).
 - `entireSources` — drain the material budget: freezeHidden → sum of source lengths; parallel → max of source lengths.
 
-`forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. `src/ffmpeg/intercutGenerator.ts` writes VFS files, optionally normalizes mismatched resolution/fps/codec, concatenates, then applies audio policy (`both` / `aOnly` / `silent`). Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz. Stream copy only when every slice is ≥ `INTERCUT_MIN_STREAM_COPY_SLICE_SEC` (0.5s). UI: `IntercutModal` from Clip Library **Create Intercut Clip** (optional Clip C cycles A → B → C).
+`automation.sliceIntervalsSec` (optional):
+- Explicit hold durations (seconds) per slice, e.g. `2, 1, 1, 2, 3, 2`.
+- When set, slice lengths follow this list (cycled as needed) and override Hz ramp / beat-sync timing.
 
+`forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. `src/ffmpeg/intercutGenerator.ts` writes VFS files, optionally normalizes mismatched resolution/fps/codec, concatenates, then applies audio policy (`both` / `aOnly` / `silent`). Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz. Stream copy only when every slice is ≥ `INTERCUT_MIN_STREAM_COPY_SLICE_SEC` (0.5s). UI: `IntercutModal` from Clip Library **Create Intercut Clip** (optional Clip C cycles A → B → C).
