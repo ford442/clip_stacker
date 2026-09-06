@@ -4,12 +4,16 @@ import {
   buildConcatPlaylist,
   buildIntercutSlices,
   canUseStreamCopyForIntercut,
+  formatSliceIntervalList,
   frequencyHzAtTime,
   hzToSecondsPerCut,
   intercutOutputDuration,
   intercutShortageMessage,
+  parseSliceIntervalList,
   remapIntercutSlicesToTrimOrigin,
+  sanitizeSliceIntervals,
   INTERCUT_MIN_STREAM_COPY_SLICE_SEC,
+  sliceIntervalListSum,
   secondsPerCutToHz,
 } from './intercut';
 
@@ -135,6 +139,14 @@ describe('intercut', () => {
     expect(hz).toBeCloseTo(6, 1);
   });
 
+  it('parses interval list text into positive second holds', () => {
+    expect(parseSliceIntervalList('2, 1, 1, 2, 3, 2')).toEqual([2, 1, 1, 2, 3, 2]);
+    expect(parseSliceIntervalList('2;1;foo;0')).toEqual([2, 1]);
+    expect(sanitizeSliceIntervals([2, 1, 0, Number.NaN, -1])).toEqual([2, 1]);
+    expect(sliceIntervalListSum([2, 1, 1, 2, 3, 2])).toBe(11);
+    expect(formatSliceIntervalList([2, 1, Number.NaN, 3])).toBe('2, 1, 3');
+  });
+
   it('buildConcatPlaylist emits concat demuxer inpoint/outpoint lines', () => {
     const playlist = buildConcatPlaylist(
       [{ slot: 'A', inpoint: 0, outpoint: 0.25 }],
@@ -210,6 +222,77 @@ describe('intercut', () => {
     });
 
     expect(slices[0]!.outpoint - slices[0]!.inpoint).toBeCloseTo(0.1, 5);
+  });
+
+  it('uses explicit interval list holds and keeps freezeHidden resume points', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 30 },
+      sourceB: { trimStart: 0, trimEnd: 30 },
+      automation: {
+        totalDurationSec: 11,
+        startFrequencyHz: 12,
+        endFrequencyHz: 0.5,
+        sliceIntervalsSec: [2, 1, 1, 2, 3, 2],
+      },
+    });
+
+    expect(slices.map((s) => s.slot)).toEqual(['A', 'B', 'A', 'B', 'A', 'B']);
+    expect(slices.map((s) => s.outpoint - s.inpoint)).toEqual([2, 1, 1, 2, 3, 2]);
+    const aSlices = slices.filter((s) => s.slot === 'A');
+    expect(aSlices[0]).toMatchObject({ inpoint: 0, outpoint: 2 });
+    expect(aSlices[1]).toMatchObject({ inpoint: 2, outpoint: 3 });
+    expect(aSlices[2]).toMatchObject({ inpoint: 3, outpoint: 6 });
+  });
+
+  it('cycles interval list while filling target duration', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 20 },
+      sourceB: { trimStart: 0, trimEnd: 20 },
+      automation: {
+        totalDurationSec: 6,
+        startFrequencyHz: 1,
+        endFrequencyHz: 20,
+        sliceIntervalsSec: [2, 1],
+      },
+    });
+    expect(slices.map((s) => s.outpoint - s.inpoint)).toEqual([2, 1, 2, 1]);
+  });
+
+  it('clamps last interval-list slice to the remaining target duration', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 20 },
+      sourceB: { trimStart: 0, trimEnd: 20 },
+      automation: {
+        totalDurationSec: 3.5,
+        startFrequencyHz: 1,
+        endFrequencyHz: 20,
+        sliceIntervalsSec: [2, 2],
+      },
+    });
+    expect(slices).toHaveLength(2);
+    expect(slices[0]!.outpoint - slices[0]!.inpoint).toBeCloseTo(2, 5);
+    expect(slices[1]!.outpoint - slices[1]!.inpoint).toBeCloseTo(1.5, 5);
+  });
+
+  it('ignores beat-sync when explicit interval list is provided', () => {
+    const slices = buildIntercutSlices({
+      sourceA: { trimStart: 0, trimEnd: 20 },
+      sourceB: { trimStart: 0, trimEnd: 20 },
+      automation: {
+        totalDurationSec: 0.6,
+        startFrequencyHz: 2,
+        endFrequencyHz: 2,
+        sliceIntervalsSec: [0.2, 0.2, 0.2],
+      },
+      beatSync: {
+        beatTimestamps: [0, 0.5, 1, 1.5, 2, 2.5, 3],
+        stride: 2,
+      },
+    });
+    expect(slices).toHaveLength(3);
+    for (const slice of slices) {
+      expect(slice.outpoint - slice.inpoint).toBeCloseTo(0.2, 5);
+    }
   });
 
   it('reports a shortage when sources cannot cover the requested duration', () => {

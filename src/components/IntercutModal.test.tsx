@@ -335,4 +335,59 @@ describe('IntercutModal', () => {
     expect(config.clipB.id).toBe('charlie');
     expect(config.clipC).toBeUndefined();
   });
+
+  it('passes parsed interval list and summed swap duration to onGenerate', async () => {
+    const a = makeClip('alpha', { duration: 20, trimEnd: 20 });
+    const b = makeClip('bravo', { duration: 20, trimEnd: 20 });
+    editorStore.setState({ clips: [a, b], selectedClipId: a.id });
+
+    const generated: unknown[] = [];
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    root.render(
+      <StrictMode>
+        <IntercutModal
+          isOpen
+          generating={false}
+          onClose={() => undefined}
+          onGenerate={async (config) => {
+            generated.push(config);
+            return true;
+          }}
+        />
+      </StrictMode>,
+    );
+
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline && !container.querySelector('.intercut-estimate')) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    const intervalModeButton = Array.from(container.querySelectorAll('button')).find(
+      (btn) => (btn.textContent ?? '').trim() === 'Interval list',
+    );
+    expect(intervalModeButton).toBeTruthy();
+    intervalModeButton!.click();
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    const create = Array.from(container.querySelectorAll('button')).find((btn) =>
+      (btn.textContent ?? '').includes('Create intercut'),
+    );
+    expect(create).toBeTruthy();
+    create!.click();
+
+    const waitGen = Date.now() + 1000;
+    while (Date.now() < waitGen && generated.length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(generated).toHaveLength(1);
+    const config = generated[0] as {
+      automation: { sliceIntervalsSec?: number[]; totalDurationSec: number };
+    };
+    expect(config.automation.sliceIntervalsSec).toEqual([2, 1, 1, 2, 3, 2]);
+    expect(config.automation.totalDurationSec).toBe(11);
+  });
 });
