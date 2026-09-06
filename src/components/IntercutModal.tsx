@@ -494,7 +494,7 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                   />
                 </label>
                 {parsedIntervalList.length > 0 ? (
-                  <div className="intercut-interval-lane" aria-label="Interval preview lane">
+                  <div className="intercut-interval-lane" role="list" aria-label="Interval preview lane">
                     {parsedIntervalList.map((intervalSec, index) => {
                       const slot = clipC
                         ? (['A', 'B', 'C'] as const)[index % 3]
@@ -503,6 +503,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                         <div
                           key={`${index}-${intervalSec}`}
                           className={`intercut-interval-${slot.toLowerCase()}`}
+                          role="listitem"
+                          aria-label={`Cut ${index + 1}: ${slot} for ${intervalSec}s`}
                           style={{ flexGrow: intervalSec }}
                         >
                           <span>{slot}</span>
