@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MasterAudio } from '../types';
 import { editorActions } from '../store';
 import { WaveformCanvas } from './WaveformCanvas';
 import { extractWaveformPeaks } from '../utils/waveform';
 import { getMediaInfo } from '../utils/media';
+import { buildMasterBeatMarkerLayouts } from '../utils/beatMarkers';
 
 interface Props {
   masterAudio: MasterAudio | null;
@@ -85,6 +86,10 @@ export function MasterAudioTrack({
 
   const trackWidth = Math.max(contentWidth, (masterAudio?.duration ?? 0) * pixelsPerSecond);
   const displayPeaks = peaks ?? new Float32Array(0);
+  const beatMarkers = useMemo(
+    () => buildMasterBeatMarkerLayouts(masterAudio, pixelsPerSecond),
+    [masterAudio, pixelsPerSecond],
+  );
 
   return (
     <div className="timeline-track-row timeline-track-row--master-audio" data-track-id="master-audio">
@@ -94,6 +99,7 @@ export function MasterAudioTrack({
       <div className="timeline-track timeline-track--master-audio" style={{ width: contentWidth }}>
         <div className="master-audio-track-inner" style={{ width: trackWidth }}>
           {masterAudio ? (
+            <>
             <div
               className="master-audio-block"
               style={{
@@ -109,6 +115,14 @@ export function MasterAudioTrack({
                   ♫ {masterAudio.fileName}
                 </span>
                 <span className="master-audio-dur">{masterAudio.duration.toFixed(1)}s</span>
+                {masterAudio.bpmEstimate != null && masterAudio.bpmEstimate > 0 && (
+                  <span
+                    className="master-audio-bpm"
+                    title={`Detected tempo from ${beatMarkers.length} beats`}
+                  >
+                    {masterAudio.bpmEstimate.toFixed(1)} BPM
+                  </span>
+                )}
                 <button
                   type="button"
                   className="master-audio-remove"
@@ -120,6 +134,18 @@ export function MasterAudioTrack({
                 </button>
               </div>
             </div>
+            {beatMarkers.length > 0 && (
+              <div className="master-audio-beats" aria-hidden="true">
+                {beatMarkers.map((m) => (
+                  <span
+                    key={m.sourceTime}
+                    className="master-audio-beat-tick"
+                    style={{ left: m.leftPx }}
+                  />
+                ))}
+              </div>
+            )}
+            </>
           ) : (
             <button
               type="button"

@@ -3,6 +3,7 @@
  * Runs analysis hops via the WASM module; suitable for clip load-time metadata.
  */
 
+import { clusterIoiBpm } from '../utils/tempo';
 import {
   createAudioAnalyzer,
   type AudioAnalyzerHandle,
@@ -25,8 +26,10 @@ export interface OfflineAnalysisResult {
   reason?: string;
   /** Beat times in seconds from the start of the PCM. */
   beatTimestamps: number[];
-  /** Rough BPM from median inter-beat interval (when ≥ 2 beats). */
+  /** BPM from IOI clustering (≥ 4 beats) or the median IOI fallback. */
   bpmEstimate?: number;
+  /** 0–1 agreement between the detected intervals and `bpmEstimate`. */
+  bpmConfidence?: number;
   /** Optional downsampled band energy timeline (bass/mid/treble per hop). */
   frameEnergies?: Array<Pick<AudioBandEnergies, 'bass' | 'mid' | 'treble' | 'beat'>>;
   sampleRate: number;
@@ -48,7 +51,11 @@ function mixToMono(buffer: AudioBuffer): Float32Array {
   return out;
 }
 
-function estimateBpm(beats: number[]): number | undefined {
+/**
+ * Legacy median-IOI tempo. Kept as the fallback for short beat lists (and for
+ * callers that still import it); the clustered estimate is preferred above.
+ */
+export function estimateBpm(beats: number[]): number | undefined {
   if (beats.length < 2) return undefined;
   const intervals: number[] = [];
   for (let i = 1; i < beats.length; i++) {
@@ -94,10 +101,14 @@ export function analyzePcmWithHandle(
     }
   }
 
+  const tempo = beatTimestamps.length >= 4 ? clusterIoiBpm(beatTimestamps) : null;
+  const bpmEstimate = tempo?.bpm ?? estimateBpm(beatTimestamps);
+
   return {
     available: true,
     beatTimestamps,
-    bpmEstimate: estimateBpm(beatTimestamps),
+    ...(bpmEstimate != null ? { bpmEstimate } : {}),
+    ...(tempo?.bpm != null ? { bpmConfidence: tempo.confidence } : {}),
     frameEnergies,
     sampleRate,
     durationSec: pcm.length / sampleRate,
@@ -137,16 +148,18 @@ export async function analyzeAudioBuffer(
 /**
  * Attach beat metadata onto a clip-like object (mutates).
  */
-export function applyBeatMetadata<T extends { beatTimestamps?: number[]; bpmEstimate?: number }>(
-  clip: T,
-  result: OfflineAnalysisResult,
-): T {
+export function applyBeatMetadata<
+  T extends { beatTimestamps?: number[]; bpmEstimate?: number; bpmConfidence?: number },
+>(clip: T, result: OfflineAnalysisResult): T {
   if (!result.available || result.beatTimestamps.length === 0) {
     return clip;
   }
   clip.beatTimestamps = result.beatTimestamps.slice();
   if (result.bpmEstimate != null) {
     clip.bpmEstimate = result.bpmEstimate;
+  }
+  if (result.bpmConfidence != null) {
+    clip.bpmConfidence = result.bpmConfidence;
   }
   return clip;
 }

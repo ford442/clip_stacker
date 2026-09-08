@@ -4,6 +4,7 @@ import { useProjectSaveLoad } from "./hooks/useProjectSaveLoad";
 import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { useClipBeatAnalysis } from "./hooks/useClipBeatAnalysis";
+import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
 import { getEffectiveTimelineClips } from "./utils/timelineClips";
 import {
@@ -47,6 +48,7 @@ export function App() {
     resetHistory,
   } = useEditHistory();
   useClipBeatAnalysis(clips, setClips);
+  useMasterAudioBeatAnalysis();
   useClipImportChores(clips, setClips);
   const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
   const [selectedTextOverlayId, setSelectedTextOverlayId] = useState<string | null>(null);

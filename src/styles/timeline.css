@@ -757,6 +757,28 @@
   background: rgba(0, 0, 0, 0.55);
 }
 
+.master-audio-bpm {
+  color: rgba(38, 198, 218, 0.95);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Detected master beats, drawn over the full lane so they read against the ruler. */
+.master-audio-beats {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.master-audio-beat-tick {
+  position: absolute;
+  top: 2px;
+  width: 1px;
+  height: 12px;
+  transform: translateX(-50%);
+  background: rgba(38, 198, 218, 0.7);
+}
+
 .master-audio-label {
   flex: 1;
   overflow: hidden;

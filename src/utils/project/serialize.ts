@@ -109,6 +109,8 @@ export function serializeProject(
         ? { beatTimestamps: clip.beatTimestamps.slice() }
         : {}),
       ...(clip.bpmEstimate != null ? { bpmEstimate: clip.bpmEstimate } : {}),
+      ...(clip.bpmConfidence != null ? { bpmConfidence: clip.bpmConfidence } : {}),
+      ...(clip.bpmOverride != null ? { bpmOverride: clip.bpmOverride } : {}),
       ...(clip.lumaHistogram && clip.lumaHistogram.length === 256
         ? { lumaHistogram: clip.lumaHistogram.slice() }
         : {}),
@@ -148,6 +150,15 @@ export function serializeProject(
             duration: masterAudio.duration,
             ...(masterAudio.startTime > 0 ? { startTime: masterAudio.startTime } : {}),
             ...(masterAudio.file.type ? { fileType: masterAudio.file.type } : {}),
+            ...(masterAudio.beatTimestamps && masterAudio.beatTimestamps.length > 0
+              ? { beatTimestamps: masterAudio.beatTimestamps.slice() }
+              : {}),
+            ...(masterAudio.bpmEstimate != null
+              ? { bpmEstimate: masterAudio.bpmEstimate }
+              : {}),
+            ...(masterAudio.bpmConfidence != null
+              ? { bpmConfidence: masterAudio.bpmConfidence }
+              : {}),
           } satisfies SerializedMasterAudio,
         }
       : {}),

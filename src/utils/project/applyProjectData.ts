@@ -42,12 +42,35 @@ function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   return 'video';
 }
 
+/**
+ * Beat metadata saved with a master track. Absent (or unparsable) values leave
+ * the track without tempo, and `useMasterAudioBeatAnalysis` re-derives it.
+ */
+function restoredMasterTempo(
+  saved: NonNullable<Project['masterAudio']>,
+): Pick<MasterAudio, 'beatTimestamps' | 'bpmEstimate' | 'bpmConfidence'> {
+  const beats = Array.isArray(saved.beatTimestamps)
+    ? saved.beatTimestamps.map((t) => Number(t)).filter((t) => Number.isFinite(t) && t >= 0)
+    : [];
+  return {
+    ...(beats.length > 0 ? { beatTimestamps: beats } : {}),
+    ...(saved.bpmEstimate != null && Number(saved.bpmEstimate) > 0
+      ? { bpmEstimate: Number(saved.bpmEstimate) }
+      : {}),
+    ...(saved.bpmConfidence != null && Number.isFinite(Number(saved.bpmConfidence))
+      ? { bpmConfidence: Math.min(1, Math.max(0, Number(saved.bpmConfidence))) }
+      : {}),
+  };
+}
+
 async function restoreMasterAudio(
   project: Project,
   clips: Clip[],
 ): Promise<MasterAudio | null> {
   const saved = project.masterAudio;
   if (!saved?.fileName) return null;
+
+  const tempo = restoredMasterTempo(saved);
 
   const byName = clips.find((c) => c.file.name === saved.fileName);
   if (byName) {
@@ -57,6 +80,7 @@ async function restoreMasterAudio(
       fileName: saved.fileName,
       duration: saved.duration,
       startTime: saved.startTime ?? 0,
+      ...tempo,
     };
   }
 
@@ -78,6 +102,7 @@ async function restoreMasterAudio(
       fileName: saved.fileName,
       duration: saved.duration,
       startTime: saved.startTime ?? 0,
+      ...tempo,
     };
   } catch {
     return null;
@@ -260,6 +285,12 @@ export async function applyProjectData(
     }
     if (savedClip.bpmEstimate != null && Number.isFinite(Number(savedClip.bpmEstimate))) {
       liveClip.bpmEstimate = Number(savedClip.bpmEstimate);
+    }
+    if (savedClip.bpmConfidence != null && Number.isFinite(Number(savedClip.bpmConfidence))) {
+      liveClip.bpmConfidence = Math.min(1, Math.max(0, Number(savedClip.bpmConfidence)));
+    }
+    if (savedClip.bpmOverride != null && Number(savedClip.bpmOverride) > 0) {
+      liveClip.bpmOverride = Number(savedClip.bpmOverride);
     }
     if (Array.isArray(savedClip.lumaHistogram) && savedClip.lumaHistogram.length === 256) {
       liveClip.lumaHistogram = savedClip.lumaHistogram.map((n) => Number(n) || 0);

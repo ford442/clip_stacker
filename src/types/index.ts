@@ -134,6 +134,13 @@ export interface Clip {
   beatTimestamps?: number[];
   /** Rough BPM estimate from beatTimestamps (when available). */
   bpmEstimate?: number;
+  /** 0–1 agreement between the detected inter-onset intervals and `bpmEstimate`. */
+  bpmConfidence?: number;
+  /**
+   * Manual BPM (typed or tapped). Wins over `bpmEstimate` everywhere a tempo is
+   * needed — see `getClipBpm`.
+   */
+  bpmOverride?: number;
   /** Timing cues (lyrics, transients) used for sync mapping. */
   syncMarkers?: SyncMarker[];
   /** 256-bin Rec.709 luma histogram from gpu-chores (import analysis). */
@@ -202,6 +209,10 @@ export interface SerializedClip {
   beatTimestamps?: number[];
   /** Rough BPM estimate from beatTimestamps. */
   bpmEstimate?: number;
+  /** 0–1 confidence in `bpmEstimate`. */
+  bpmConfidence?: number;
+  /** Manual BPM override (typed or tapped). */
+  bpmOverride?: number;
   syncMarkers?: SyncMarker[];
   lumaHistogram?: number[];
   lumaLevels?: { black: number; white: number; mean: number };
@@ -447,6 +458,12 @@ export interface SerializedMasterAudio {
   sourceMediaDataUrl?: string;
   /** Remote URL for remote project portability. */
   sourceMediaUrl?: string;
+  /** Detected beat onset times in seconds from the start of the audio file. */
+  beatTimestamps?: number[];
+  /** BPM estimate from `beatTimestamps`. */
+  bpmEstimate?: number;
+  /** 0–1 confidence in `bpmEstimate`. */
+  bpmConfidence?: number;
 }
 
 /** Runtime master audio reference (loaded MP3 / WAV for sync UI). */
@@ -457,6 +474,15 @@ export interface MasterAudio {
   duration: number;
   /** Timeline offset in seconds. */
   startTime: number;
+  /**
+   * Detected beat onset times in seconds from the start of the audio file
+   * (add `startTime` for timeline seconds). Populated by offline analysis.
+   */
+  beatTimestamps?: number[];
+  /** BPM estimate from `beatTimestamps`. */
+  bpmEstimate?: number;
+  /** 0–1 confidence in `bpmEstimate`. */
+  bpmConfidence?: number;
 }
 
 export interface Project {

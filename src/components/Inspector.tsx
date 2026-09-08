@@ -52,6 +52,7 @@ import {
   parseCanvasSize,
   type PipCorner,
 } from '../utils/pipPreset';
+import { BeatmatchPanel } from './BeatmatchPanel';
 import { WaveformCanvas } from './WaveformCanvas';
 import { FadeCanvasPreview } from './FadeCanvasPreview';
 import { KeyframeMiniEditor } from './KeyframeMiniEditor';
@@ -1000,6 +1001,12 @@ function InspectorImpl({
               Reset 1×
             </button>
           </div>
+          <BeatmatchPanel
+            clip={clip}
+            playbackRate={playbackRateValue}
+            onPlaybackRateChange={setPlaybackRate}
+          />
+
           <p className="inspector-hint">
             Lip-sync tip: set <em>Fit to duration</em> to the music phrase length, then nudge ±0.01
             while previewing. For cinematic ramps, add a Speed automation curve (Inspector or
