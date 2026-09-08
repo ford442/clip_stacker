@@ -111,6 +111,40 @@ describe('previewComposition', () => {
       expect(layers[0].sourceTime).toBeCloseTo(1.5);
     });
 
+    it('wraps sourceTime back to the trim start at each loop cycle boundary', () => {
+      // 6s trim at 2x → 3s cycle; loopCount 4 → 12s total output.
+      const clips = [
+        makeClip('a', 10, { trimStart: 0, trimEnd: 6, playbackRate: 2, loopCount: 4 }),
+      ];
+
+      const atStart = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0);
+      expect(atStart.totalDuration).toBeCloseTo(12);
+      expect(clipLayers(atStart)[0].sourceTime).toBeCloseTo(0);
+
+      // Start of cycle 2 (global t=3) should read the same source position as t=0.
+      const atCycle2Start = buildPreviewCompositionPlan(clips, [], [], [], undefined, 3);
+      expect(clipLayers(atCycle2Start)[0].sourceTime).toBeCloseTo(0);
+
+      // Mid-way through cycle 2 (global t=3.5, 0.5s into the cycle) mirrors
+      // 0.5s into cycle 1 (global t=0.5): same sourceTime, different localElapsed.
+      const midCycle1 = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0.5);
+      const midCycle2 = buildPreviewCompositionPlan(clips, [], [], [], undefined, 3.5);
+      expect(clipLayers(midCycle2)[0].sourceTime).toBeCloseTo(
+        clipLayers(midCycle1)[0].sourceTime,
+      );
+      expect(clipLayers(midCycle2)[0].localElapsed).toBeCloseTo(3.5);
+    });
+
+    it('loopCount 1 leaves sourceTime mapping unchanged from current behavior', () => {
+      const looped = [makeClip('a', 10, { playbackRate: 2, loopCount: 1 })];
+      const notLooped = [makeClip('a', 10, { playbackRate: 2 })];
+      const planLooped = buildPreviewCompositionPlan(looped, [], [], [], undefined, 1);
+      const planNotLooped = buildPreviewCompositionPlan(notLooped, [], [], [], undefined, 1);
+      expect(clipLayers(planLooped)[0].sourceTime).toBeCloseTo(
+        clipLayers(planNotLooped)[0].sourceTime,
+      );
+    });
+
     it('matches sequential FFmpeg order for non-transition stacks', () => {
       const clips = [makeClip('a', 4), makeClip('b', 4), makeClip('c', 4)];
 

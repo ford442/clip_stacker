@@ -232,6 +232,28 @@
   pointer-events: none;
 }
 
+.speed-lane-loop-tile {
+  position: relative;
+  flex: 0 0 auto;
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(90, 160, 220, 0.12),
+    rgba(90, 160, 220, 0.12) 6px,
+    rgba(90, 160, 220, 0.04) 6px,
+    rgba(90, 160, 220, 0.04) 12px
+  );
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.speed-lane-loop-tile-badge {
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-blue, #5aa0dc);
+  opacity: 0.85;
+}
+
 .speed-lane-gradient {
   pointer-events: none;
 }
@@ -401,6 +423,11 @@
 .timeline-clip-badge--speed {
   background: rgba(201, 162, 39, 0.2);
   color: var(--gold, #c9a227);
+}
+
+.timeline-clip-badge--loop {
+  background: rgba(90, 160, 220, 0.2);
+  color: var(--accent-blue, #5aa0dc);
 }
 
 .transition-zone--overlay {

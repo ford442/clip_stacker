@@ -3,10 +3,13 @@ import {
   audioTempoFilterSegment,
   beatsSpannedByDuration,
   buildAtempoChain,
+  clampClipLoopCount,
   clampClipPlaybackRate,
+  clipHasLoop,
   clipHasPlaybackRateAdjustment,
   clipSourceTimeAtLocal,
   formatPlaybackRate,
+  getClipLoopCount,
   getClipPlaybackRate,
   getTrimmedSourceDuration,
   nudgePlaybackRate,
@@ -85,5 +88,24 @@ describe('playbackRate', () => {
     expect(playbackRateToFitBeats(4, 120, 4)).toBe(2);
     expect(beatsSpannedByDuration(4, 120)).toBeCloseTo(8);
     expect(playbackRateToFitBeats(4, 0, 8)).toBeNull();
+  });
+
+  it('clamps and defaults loop count', () => {
+    expect(clampClipLoopCount(undefined)).toBe(1);
+    expect(clampClipLoopCount(0)).toBe(1);
+    expect(clampClipLoopCount(NaN)).toBe(1);
+    expect(clampClipLoopCount(-3)).toBe(1);
+    expect(clampClipLoopCount(1.7)).toBe(2);
+    expect(clampClipLoopCount(100)).toBe(99);
+    expect(clampClipLoopCount(4)).toBe(4);
+  });
+
+  it('reads loop count from a clip and detects looping', () => {
+    expect(getClipLoopCount(undefined)).toBe(1);
+    expect(getClipLoopCount({ loopCount: undefined })).toBe(1);
+    expect(getClipLoopCount({ loopCount: 4 })).toBe(4);
+    expect(clipHasLoop({ loopCount: 1 })).toBe(false);
+    expect(clipHasLoop({ loopCount: undefined })).toBe(false);
+    expect(clipHasLoop({ loopCount: 4 })).toBe(true);
   });
 });

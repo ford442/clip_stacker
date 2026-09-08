@@ -3,6 +3,7 @@ import type { Clip, TextOverlay } from '../types';
 import {
   canCaptureWebGpuCanvasWithText,
   canUseGpuVideoEncoder,
+  clipNeedsEffects,
   needsMultiLayerComposition,
   needsOverlayPass,
   shouldUseTimelineGpuExport,
@@ -43,6 +44,17 @@ function solidOverlay(overrides: Partial<TextOverlay> = {}): TextOverlay {
 }
 
 describe('renderEligibility', () => {
+  describe('clipNeedsEffects', () => {
+    it('is false for a clean clip with loopCount 1 (or omitted)', () => {
+      expect(clipNeedsEffects(makeClip())).toBe(false);
+      expect(clipNeedsEffects(makeClip({ loopCount: 1 }))).toBe(false);
+    });
+
+    it('is true when loopCount > 1', () => {
+      expect(clipNeedsEffects(makeClip({ loopCount: 4 }))).toBe(true);
+    });
+  });
+
   describe('needsMultiLayerComposition', () => {
     it('is false for plain clip stacks', () => {
       expect(needsMultiLayerComposition([makeClip(), makeClip({ id: 'clip-2' })], [])).toBe(
@@ -79,6 +91,14 @@ describe('renderEligibility', () => {
           [],
         ),
       ).toBe(true);
+    });
+
+    it('is true for looped clips (must not use the loop-unaware sequential WebCodecs path)', () => {
+      expect(needsMultiLayerComposition([makeClip({ loopCount: 4 })], [])).toBe(true);
+    });
+
+    it('is false for a clip with loopCount 1', () => {
+      expect(needsMultiLayerComposition([makeClip({ loopCount: 1 })], [])).toBe(false);
     });
 
     it('is false when only text overlays have keyframes', () => {

@@ -5,8 +5,8 @@
 
 import type { Clip } from '../types';
 import {
+  cycleDurationForClip,
   integrateRateToSourceOffset,
-  remappedClipDuration,
 } from './timeRemap';
 import {
   audioTempoFilterSegment,
@@ -49,7 +49,8 @@ export function buildVariableSpeedSegments(
   clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'>,
   segmentCount = DEFAULT_SEGMENT_COUNT,
 ): VariableSpeedSegment[] {
-  const outputDuration = remappedClipDuration(clip);
+  // One cycle only — looping repeats this segment set, it does not stretch it.
+  const outputDuration = cycleDurationForClip(clip);
   const trimStart = clip.trimStart;
   const defaultRate = getClipPlaybackRate(clip);
   const keyframes = clip.automation?.playbackRate ?? [];

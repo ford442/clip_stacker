@@ -231,6 +231,9 @@ export async function applyProjectData(
     if (savedClip.playbackRate != null) {
       liveClip.playbackRate = Number(savedClip.playbackRate);
     }
+    if (savedClip.loopCount != null) {
+      liveClip.loopCount = Number(savedClip.loopCount);
+    }
     const automation = normalizeClipAutomation(savedClip.automation);
     if (automation) liveClip.automation = automation;
     else delete liveClip.automation;

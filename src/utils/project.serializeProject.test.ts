@@ -51,6 +51,20 @@ describe("utils/project - serializeProject", () => {
     expect(project.clips[0].playbackRate).toBeUndefined();
   });
 
+  it("should serialize non-default loopCount", () => {
+    const clips = [createTestClip("clip1", 5)];
+    clips[0].loopCount = 4;
+    const project = serializeProject(clips, [], [], []);
+    expect(project.clips[0].loopCount).toBe(4);
+  });
+
+  it("should omit default loopCount from serialization", () => {
+    const clips = [createTestClip("clip1", 5)];
+    clips[0].loopCount = 1;
+    const project = serializeProject(clips, [], [], []);
+    expect(project.clips[0].loopCount).toBeUndefined();
+  });
+
   it("should serialize transitions", () => {
     const clips = [createTestClip("a", 5), createTestClip("b", 3)];
     const transitions: ClipTransition[] = [

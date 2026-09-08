@@ -160,6 +160,10 @@
   color: rgba(232, 236, 244, 0.82);
 }
 
+.inspector-speed-loop-badge {
+  color: var(--accent-blue, #5aa0dc);
+}
+
 .inspector-speed-slider input[type="range"] {
   width: 100%;
   accent-color: var(--gold);

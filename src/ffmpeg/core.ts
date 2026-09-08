@@ -10,11 +10,13 @@ import { resolveTargetResolution } from "../utils/resolution";
 import { audioVolumeFilterSegment, clipHasVolumeAdjustment } from "../utils/audioVolume";
 import {
   audioTempoFilterSegment,
+  clipHasLoop,
   clipHasPlaybackRateAdjustment,
+  getClipLoopCount,
   getClipPlaybackRate,
   videoSetptsFilter,
 } from "../utils/playbackRate";
-import { clipHasRateAutomation } from "../utils/timeRemap";
+import { clipHasRateAutomation, cycleDurationForClip } from "../utils/timeRemap";
 import { buildVariableSpeedFilter } from "../utils/variableSpeed";
 import { assertValidBundledFontBytes } from "../utils/fontBytes";
 import {
@@ -337,7 +339,8 @@ export function clipNeedsEffects(clip: Clip): boolean {
     clip.audioFadeOut > 0 ||
     clipHasVolumeAdjustment(clip) ||
     clipHasPlaybackRateAdjustment(clip) ||
-    clipHasRateAutomation(clip)
+    clipHasRateAutomation(clip) ||
+    clipHasLoop(clip)
   );
 }
 
@@ -1022,26 +1025,36 @@ export async function performTwoPassEncode(
     const rangeEnd =
       PASS1_PROGRESS_START +
       localEnd * (PASS1_PROGRESS_END - PASS1_PROGRESS_START);
-    intermediates.push(
-      await processClipPass1(
-        ffmpeg,
-        clip,
-        index,
-        clips.length,
-        settings,
-        onStatus,
-        onProgress,
-        rangeStart,
-        rangeEnd,
-        targetWidth,
-        targetHeight,
-        primaryColor,
-        noiseReduction,
-        sharpen,
-        secondaryColor,
-        grain,
-      ),
+    const outName = await processClipPass1(
+      ffmpeg,
+      clip,
+      index,
+      clips.length,
+      settings,
+      onStatus,
+      onProgress,
+      rangeStart,
+      rangeEnd,
+      targetWidth,
+      targetHeight,
+      primaryColor,
+      noiseReduction,
+      sharpen,
+      secondaryColor,
+      grain,
     );
+    // Pass 1 encodes exactly ONE cycle. To loop it we repeat that same
+    // intermediate filename N times in the pass-2 concat list rather than
+    // using `-stream_loop` on the input: buildSingleClipFilter runs the trim
+    // through a filter_complex against an already-open `-i`, and
+    // `-stream_loop` only affects input demuxing (must precede `-i`), so it
+    // can't repeat a filtered/trimmed/setpts'd stream this way. Concat-demuxer
+    // repetition also works uniformly for the variable-rate (rate-automation)
+    // path, whose one-cycle segments come from the same filter graph.
+    const loopCount = getClipLoopCount(clip);
+    for (let i = 0; i < loopCount; i++) {
+      intermediates.push(outName);
+    }
     pass1ElapsedDuration += clipDuration;
   }
   await mergeClipsPass2(
@@ -1073,7 +1086,9 @@ export async function processClipPass1(
   grain?: GrainSettings,
 ): Promise<string> {
   const outName = `intermediate-${index}.mp4`;
-  const clipDuration = getClipDuration(clip);
+  // Pass 1 always encodes exactly ONE cycle — the caller (performTwoPassEncode)
+  // repeats this intermediate file `loopCount` times in the concat list.
+  const clipDuration = cycleDurationForClip(clip);
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
 
   // A clip can be stream-copied only when it has no effects AND already matches
@@ -1459,8 +1474,15 @@ export async function mergeClipsPass2(
   } catch {
     /* ignore */
   }
-  for (const name of intermediateNames) {
-    await ffmpeg.deleteFile(name);
+  // A looped clip's intermediate filename is repeated in `intermediateNames`
+  // (same cycle file concatenated N times) — dedupe so each file is only
+  // deleted once.
+  for (const name of new Set(intermediateNames)) {
+    try {
+      await ffmpeg.deleteFile(name);
+    } catch {
+      /* ignore */
+    }
   }
 }
 

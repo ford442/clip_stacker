@@ -48,4 +48,34 @@ describe("utils/project - sanitizeClipAdjustments", () => {
     sanitizeClipAdjustments(clip);
     expect(clip.playbackRate).toBe(4);
   });
+
+  it("should clamp loopCount to 1–99 and round non-integers", () => {
+    const clip = createTestClip("test", 5);
+
+    clip.loopCount = 0;
+    sanitizeClipAdjustments(clip);
+    expect(clip.loopCount).toBe(1);
+
+    clip.loopCount = 1.7;
+    sanitizeClipAdjustments(clip);
+    expect(clip.loopCount).toBe(2);
+
+    clip.loopCount = 100;
+    sanitizeClipAdjustments(clip);
+    expect(clip.loopCount).toBe(99);
+
+    clip.loopCount = -3;
+    sanitizeClipAdjustments(clip);
+    expect(clip.loopCount).toBe(1);
+
+    clip.loopCount = NaN;
+    sanitizeClipAdjustments(clip);
+    expect(clip.loopCount).toBe(1);
+  });
+
+  it("should leave loopCount undefined when not set", () => {
+    const clip = createTestClip("test", 5);
+    sanitizeClipAdjustments(clip);
+    expect(clip.loopCount).toBeUndefined();
+  });
 });

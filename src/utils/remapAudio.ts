@@ -7,8 +7,8 @@ import type { Clip } from '../types';
 import { getClipPlaybackRate } from './playbackRate';
 import {
   clipHasRateAutomation,
+  cycleDurationForClip,
   integrateRateToSourceOffset,
-  remappedClipDuration,
 } from './timeRemap';
 import { wasmRemapPlanar } from '../wasm/timeStretch';
 
@@ -139,7 +139,8 @@ export async function remapClipAudioBuffer(
 
   const startFrame = Math.floor(trimStart * sr);
   const inFrames = Math.max(1, Math.floor(sourceLenSec * sr));
-  const outSec = remappedClipDuration(clip);
+  // One cycle only — the caller repeats this buffer loopCount times.
+  const outSec = cycleDurationForClip(clip);
   const outFrames = Math.max(1, Math.floor(outSec * sr));
 
   const planarIn = toPlanar(source, startFrame, inFrames);

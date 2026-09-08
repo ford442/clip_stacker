@@ -70,6 +70,9 @@ export function serializeProject(
       ...(clip.playbackRate != null && clip.playbackRate !== 1
         ? { playbackRate: clip.playbackRate }
         : {}),
+      ...(clip.loopCount != null && clip.loopCount !== 1
+        ? { loopCount: clip.loopCount }
+        : {}),
       ...(automation ? { automation } : {}),
       fileName: clip.file.name,
       fileType: clip.file.type || undefined,

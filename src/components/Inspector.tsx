@@ -28,9 +28,12 @@ import {
 } from '../utils/clipAutomation';
 import {
   beatsSpannedByDuration,
+  clampClipLoopCount,
   clampClipPlaybackRate,
   DEFAULT_CLIP_PLAYBACK_RATE,
   getTrimmedSourceDuration,
+  MAX_CLIP_LOOP_COUNT,
+  MIN_CLIP_LOOP_COUNT,
   MIN_CLIP_PLAYBACK_RATE,
   MAX_CLIP_PLAYBACK_RATE,
   nudgePlaybackRate,
@@ -72,6 +75,7 @@ interface ClipValues {
   opacity: string;
   volume: string;
   playbackRate: string;
+  loopCount: string;
 }
 
 interface Props {
@@ -271,6 +275,7 @@ function InspectorImpl({
     opacity: '1',
     volume: '1',
     playbackRate: '1',
+    loopCount: '1',
   });
 
   const layoutCanvas = useMemo(
@@ -297,6 +302,7 @@ function InspectorImpl({
       opacity: String(clip.opacity ?? 1),
       volume: String(clip.volume ?? 1),
       playbackRate: String(clip.playbackRate ?? 1),
+      loopCount: String(clip.loopCount ?? 1),
     });
     setAdvancedOpen(
       hasAdvancedLayoutValues({
@@ -481,8 +487,14 @@ function InspectorImpl({
     trimmedSourceDuration,
     playbackRateValue,
   );
+  const loopCountValue = clampClipLoopCount(parseNumber(values.loopCount, 1));
+  /** Total output duration across all loop cycles (one cycle × loopCount). */
+  const loopedOutputDuration = outputSpeedDuration * loopCountValue;
   const setPlaybackRate = (rate: number) => {
     update('playbackRate', String(clampClipPlaybackRate(rate)));
+  };
+  const setLoopCount = (count: number) => {
+    update('loopCount', String(clampClipLoopCount(count)));
   };
 
   const updateTrimStart = (nextStart: number) => {
@@ -750,7 +762,10 @@ function InspectorImpl({
                   {playbackRateValue.toFixed(3)}×
                 </strong>
                 <span className="inspector-speed-out-duration" aria-live="polite">
-                  Out {outputSpeedDuration.toFixed(2)}s
+                  Out {loopedOutputDuration.toFixed(2)}s
+                  {loopCountValue > 1 && (
+                    <span className="inspector-speed-loop-badge"> (×{loopCountValue})</span>
+                  )}
                 </span>
               </span>
               <input
@@ -760,7 +775,7 @@ function InspectorImpl({
                 step="0.01"
                 value={playbackRateValue}
                 onChange={(e) => setPlaybackRate(Number(e.target.value))}
-                aria-valuetext={`${playbackRateValue.toFixed(3)} times, output duration ${outputSpeedDuration.toFixed(2)} seconds`}
+                aria-valuetext={`${playbackRateValue.toFixed(3)} times, output duration ${loopedOutputDuration.toFixed(2)} seconds`}
               />
             </label>
 
@@ -853,7 +868,74 @@ function InspectorImpl({
             <div id="inspector-speed-out-hint" className="inspector-speed-meta" aria-live="polite">
               <span>Source {trimmedSourceDuration.toFixed(2)}s</span>
               <span>→</span>
-              <span>Out {outputSpeedDuration.toFixed(2)}s</span>
+              {loopCountValue > 1 ? (
+                <>
+                  <span>cycle {outputSpeedDuration.toFixed(2)}s</span>
+                  <span>× {loopCountValue}</span>
+                  <span>=</span>
+                  <span>Out {loopedOutputDuration.toFixed(2)}s</span>
+                </>
+              ) : (
+                <span>Out {outputSpeedDuration.toFixed(2)}s</span>
+              )}
+            </div>
+          </div>
+
+          <div className="inspector-speed-row">
+            <label
+              className="inspector-speed-field"
+              title="Play the trimmed + sped-up window this many times, back to back, as one timeline block."
+            >
+              Loop
+              <input
+                type="number"
+                min={MIN_CLIP_LOOP_COUNT}
+                max={MAX_CLIP_LOOP_COUNT}
+                step="1"
+                value={loopCountValue}
+                onChange={(e) => setLoopCount(Number(e.target.value))}
+                aria-describedby="inspector-speed-out-hint"
+              />
+            </label>
+            <div className="inspector-speed-nudges" role="group" aria-label="Nudge loop count">
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title="−1 loop"
+                disabled={loopCountValue <= MIN_CLIP_LOOP_COUNT}
+                onClick={() => setLoopCount(loopCountValue - 1)}
+              >
+                −1
+              </button>
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                title="+1 loop"
+                disabled={loopCountValue >= MAX_CLIP_LOOP_COUNT}
+                onClick={() => setLoopCount(loopCountValue + 1)}
+              >
+                +1
+              </button>
+            </div>
+            <div className="inspector-speed-presets">
+              {[1, 2, 4, 8].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  className={`btn-secondary kf-btn${loopCountValue === preset ? ' is-active' : ''}`}
+                  onClick={() => setLoopCount(preset)}
+                >
+                  {preset}×
+                </button>
+              ))}
+              <button
+                type="button"
+                className="btn-secondary kf-btn"
+                disabled={loopCountValue === 1}
+                onClick={() => setLoopCount(1)}
+              >
+                Reset 1×
+              </button>
             </div>
           </div>
 

@@ -48,6 +48,33 @@ describe("calculateRenderPlan", () => {
     expect(plan.reason).toContain("RIFE-processed");
   });
 
+  it('forces re-encoding when a clip has loopCount > 1', () => {
+    const clip = makeClip({
+      title: 'Looped Clip',
+      videoWidth: 1280,
+      videoHeight: 720,
+      loopCount: 4,
+    });
+
+    const plan = calculateRenderPlan([clip], [], [], DEFAULT_EXPORT_SETTINGS);
+
+    expect(plan.path).toBe('effects-reencoding');
+    expect(plan.willReencode).toBe(true);
+    expect(plan.reason).toContain('looped 4×');
+  });
+
+  it('does not force re-encoding for loopCount 1 (default, matches current behavior)', () => {
+    const clips = [
+      makeClip({ videoWidth: 1280, videoHeight: 720, loopCount: 1 }),
+      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1280, videoHeight: 720 }),
+    ];
+
+    const plan = calculateRenderPlan(clips, [], [], DEFAULT_EXPORT_SETTINGS);
+
+    expect(plan.path).toBe('lossless-concat');
+    expect(plan.willReencode).toBe(false);
+  });
+
   it('uses lossless concat when fixed resolution already matches all clips', () => {
     const clips = [
       makeClip({ videoWidth: 1280, videoHeight: 720 }),

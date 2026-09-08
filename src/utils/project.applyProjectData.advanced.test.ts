@@ -93,6 +93,57 @@ describe("utils/project - applyProjectData (advanced)", () => {
     expect(getClipDuration(result.clips[0])).toBe(2.5);
   });
 
+  it("should restore loopCount from saved project and reflect it in duration", async () => {
+    const sourceClips = [createTestClip("source1", 5)];
+    const project: Project = {
+      clips: [
+        {
+          id: "saved",
+          title: "Clip",
+          kind: "video",
+          duration: 5,
+          trimStart: 0,
+          trimEnd: null,
+          videoFadeIn: 0,
+          videoFadeOut: 0,
+          audioFadeIn: 0,
+          audioFadeOut: 0,
+          fileName: sourceClips[0].file.name,
+          loopCount: 3,
+        },
+      ],
+    };
+
+    const result = await applyProjectData(project, sourceClips);
+    expect(result.clips[0].loopCount).toBe(3);
+    expect(getClipDuration(result.clips[0])).toBe(15);
+  });
+
+  it("should default missing loopCount to 1 (old project without the field)", async () => {
+    const sourceClips = [createTestClip("source1", 5)];
+    const project: Project = {
+      clips: [
+        {
+          id: "saved",
+          title: "Clip",
+          kind: "video",
+          duration: 5,
+          trimStart: 0,
+          trimEnd: null,
+          videoFadeIn: 0,
+          videoFadeOut: 0,
+          audioFadeIn: 0,
+          audioFadeOut: 0,
+          fileName: sourceClips[0].file.name,
+        },
+      ],
+    };
+
+    const result = await applyProjectData(project, sourceClips);
+    expect(result.clips[0].loopCount).toBeUndefined();
+    expect(getClipDuration(result.clips[0])).toBe(5);
+  });
+
   it("should restore automation lanes from saved project", async () => {
     const sourceClips = [createTestClip("source1", 5)];
     const project: Project = {

@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { Clip } from '../types';
 import {
   clipHasRateAutomation,
+  cycleDurationForClip,
   integrateRateToSourceOffset,
+  loopedOutputDuration,
   remappedClipDuration,
   samplePlaybackRateAt,
   sourceTimeAtOutputLocal,
+  wrapOutputLocalToCycle,
 } from './timeRemap';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
@@ -81,5 +84,57 @@ describe('timeRemap', () => {
   it('falls back when automation is empty', () => {
     expect(clipHasRateAutomation(makeClip())).toBe(false);
     expect(remappedClipDuration(makeClip({ playbackRate: 0.5 }))).toBeCloseTo(20);
+  });
+
+  describe('loopCount', () => {
+    function loopedClip(loopCount?: number): Clip {
+      return makeClip({ trimStart: 0, trimEnd: 6, playbackRate: 2, loopCount });
+    }
+
+    it('multiplies one cycle by loopCount for total output duration', () => {
+      const clip = loopedClip(4);
+      expect(cycleDurationForClip(clip)).toBeCloseTo(3); // 6s / 2x
+      expect(loopedOutputDuration(clip)).toBeCloseTo(12);
+      expect(remappedClipDuration(clip)).toBeCloseTo(12);
+    });
+
+    it('loopCount 1 (or omitted) leaves duration equal to one cycle', () => {
+      expect(remappedClipDuration(loopedClip(1))).toBeCloseTo(cycleDurationForClip(loopedClip(1)));
+      expect(remappedClipDuration(loopedClip(undefined))).toBeCloseTo(3);
+    });
+
+    it('wraps the loop boundary back to the start of the cycle', () => {
+      const clip = loopedClip(4);
+      const cycleDuration = cycleDurationForClip(clip);
+
+      const start = wrapOutputLocalToCycle(clip, 0);
+      expect(start).toEqual({ cycleIndex: 0, cycleLocalT: 0 });
+
+      const boundary = wrapOutputLocalToCycle(clip, cycleDuration);
+      expect(boundary.cycleIndex).toBe(1);
+      expect(boundary.cycleLocalT).toBeCloseTo(0);
+
+      // Same point in the source regardless of which cycle it's read from.
+      expect(sourceTimeAtOutputLocal(clip, boundary.cycleLocalT)).toBeCloseTo(
+        sourceTimeAtOutputLocal(clip, start.cycleLocalT),
+      );
+    });
+
+    it('clamps the very end of the last cycle instead of rolling into a phantom next cycle', () => {
+      const clip = loopedClip(4);
+      const cycleDuration = cycleDurationForClip(clip);
+      const total = loopedOutputDuration(clip);
+
+      const atEnd = wrapOutputLocalToCycle(clip, total);
+      expect(atEnd.cycleIndex).toBe(3);
+      expect(atEnd.cycleLocalT).toBeCloseTo(cycleDuration);
+    });
+
+    it('is a passthrough (single cycle) when loopCount is 1', () => {
+      const clip = loopedClip(1);
+      const cycleDuration = cycleDurationForClip(clip);
+      const mid = wrapOutputLocalToCycle(clip, cycleDuration / 2);
+      expect(mid).toEqual({ cycleIndex: 0, cycleLocalT: cycleDuration / 2 });
+    });
   });
 });

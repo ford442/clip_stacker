@@ -92,6 +92,39 @@ describe('SpeedAutomationLane', () => {
     expect(localStorage.getItem(SPEED_LANE_LAST_SEED_KEY)).toBe('1');
   });
 
+  it('confines the editable curve domain to one cycle when looped, ignoring the full multi-cycle durationSec', async () => {
+    const onChange = renderLane(
+      makeClip({ trimStart: 0, trimEnd: 6, playbackRate: 2, loopCount: 4 }),
+      { durationSec: 12 },
+    );
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const seed1x = container?.querySelectorAll('.speed-lane-seed')[1] as HTMLButtonElement;
+    seed1x?.click();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const last = onChange.mock.calls.at(-1)?.[0];
+    // Cycle duration is 6s / 2x = 3s — not the full 12s looped duration.
+    expect(last?.playbackRate).toEqual([
+      { t: 0, value: 1 },
+      { t: 3, value: 1 },
+    ]);
+  });
+
+  it('renders a tiled "×N" loop indicator alongside the single editable cycle', async () => {
+    renderLane(makeClip({ trimStart: 0, trimEnd: 6, playbackRate: 2, loopCount: 4 }), {
+      durationSec: 12,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const tile = container?.querySelector('.speed-lane-loop-tile');
+    expect(tile).toBeTruthy();
+    expect(tile?.textContent).toContain('×4');
+  });
+
+  it('does not render a loop tile when loopCount is 1', async () => {
+    renderLane(makeClip({ loopCount: 1 }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(container?.querySelector('.speed-lane-loop-tile')).toBeNull();
+  });
+
   it('shows rate labels on existing keyframes', async () => {
     renderLane(
       makeClip({

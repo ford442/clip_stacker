@@ -13,7 +13,7 @@ import {
   DEFAULT_CANVAS_WIDTH,
   getClipDuration,
 } from './project';
-import { sourceTimeAtOutputLocal } from './timeRemap';
+import { sourceTimeAtOutputLocal, wrapOutputLocalToCycle } from './timeRemap';
 import { parseOutputResolution } from './resolution';
 import { computeTotalDuration } from './transitions';
 import {
@@ -548,7 +548,10 @@ function buildScheduledClipLayer(
       segment.scheduleIndex * 10 + (crossfade?.role === 'incoming' ? 1 : 0),
     localElapsed,
     clipDuration: segment.duration,
-    sourceTime: sourceTimeAtOutputLocal(segment.clip, localElapsed),
+    sourceTime: sourceTimeAtOutputLocal(
+      segment.clip,
+      wrapOutputLocalToCycle(segment.clip, localElapsed).cycleLocalT,
+    ),
     opacity: clipLayerOpacity(segment.clip, localElapsed, segment.duration, crossfade),
     rect,
     crossfade,
@@ -581,7 +584,10 @@ function buildOutgoingCrossfadeLayer(
     zIndex: segment.scheduleIndex * 10,
     localElapsed: outgoingElapsed,
     clipDuration: segment.duration,
-    sourceTime: sourceTimeAtOutputLocal(segment.clip, outgoingElapsed),
+    sourceTime: sourceTimeAtOutputLocal(
+      segment.clip,
+      wrapOutputLocalToCycle(segment.clip, outgoingElapsed).cycleLocalT,
+    ),
     opacity: clipLayerOpacity(
       segment.clip,
       outgoingElapsed,
@@ -739,7 +745,10 @@ function buildPipLayers(
         zIndex: 1000 + (clip.layerIndex ?? 1) * 100 + timelineIndex,
         localElapsed,
         clipDuration: duration,
-        sourceTime: sourceTimeAtOutputLocal(clip, localElapsed),
+        sourceTime: sourceTimeAtOutputLocal(
+          clip,
+          wrapOutputLocalToCycle(clip, localElapsed).cycleLocalT,
+        ),
         opacity: clipLayerOpacity(clip, localElapsed, duration, null),
         rect,
         crossfade: null,

@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
+import { clipHasLoop, getClipLoopCount } from "../utils/playbackRate";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   allVideoClipsMatchOutputResolution,
@@ -135,6 +136,8 @@ function computeRenderPlanPath(
     let volumeClipCount = 0;
     let speedClipCount = 0;
     let rifeClipCount = 0;
+    let loopClipCount = 0;
+    let soleLoopCount: number | null = null;
     for (const clip of effectClips) {
       if (clip.kind === "audio") {
         audioClipCount++;
@@ -156,6 +159,10 @@ function computeRenderPlanPath(
       if (clip.rifeProcessed) {
         rifeClipCount++;
       }
+      if (clipHasLoop(clip)) {
+        loopClipCount++;
+        soleLoopCount = getClipLoopCount(clip);
+      }
     }
 
     const reasonParts: string[] = [];
@@ -164,6 +171,13 @@ function computeRenderPlanPath(
     if (volumeClipCount > 0) reasonParts.push("have volume adjustments");
     if (speedClipCount > 0) reasonParts.push("have speed adjustments");
     if (rifeClipCount > 0) reasonParts.push("are RIFE-processed");
+    if (loopClipCount > 0) {
+      reasonParts.push(
+        loopClipCount === 1 && soleLoopCount != null
+          ? `is looped ${soleLoopCount}×`
+          : "are looped",
+      );
+    }
 
     let reasonDetail = reasonParts.join(" and/or ");
     if (effectClips.length === 1) {

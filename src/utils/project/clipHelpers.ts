@@ -1,7 +1,7 @@
 import type { Clip } from '../../types';
 import { MIN_CLIP_DURATION } from '../media';
 import { clampClipVolume } from '../audioVolume';
-import { clampClipPlaybackRate } from '../playbackRate';
+import { clampClipLoopCount, clampClipPlaybackRate } from '../playbackRate';
 import { remappedClipDuration } from '../timeRemap';
 import {
   clampPixelRectToCanvas,
@@ -57,6 +57,10 @@ export function sanitizeClipAdjustments(clip: Clip): void {
 
   if (clip.playbackRate != null) {
     clip.playbackRate = clampClipPlaybackRate(clip.playbackRate);
+  }
+
+  if (clip.loopCount != null) {
+    clip.loopCount = clampClipLoopCount(clip.loopCount);
   }
 
   const maxFade = Math.max(0, getClipDuration(clip) / 2 - FADE_SAFETY_MARGIN);

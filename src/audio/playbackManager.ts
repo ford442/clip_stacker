@@ -54,7 +54,14 @@ interface ActiveSource {
   entry: AudioScheduleEntry;
   /** AudioContext time when this source was scheduled to start. */
   when: number;
-  /** Clip-local elapsed time at schedule start (handles mid-clip seeks). */
+  /**
+   * Elapsed time (seconds) since `entry.timelineStart` at schedule start —
+   * spans the WHOLE looped entry, not just this source's own cycle. Fades
+   * and volume/pan automation are authored across the full looped duration
+   * (same domain as the Inspector's automation editor), so they're sampled
+   * from this global position rather than resetting at each loop boundary;
+   * a source's own cycle only bounds `playDuration` (how long it plays).
+   */
   clipElapsed: number;
   playDuration: number;
 }
@@ -499,92 +506,108 @@ export class AudioPlaybackManager {
         return;
       }
 
-      const clipElapsed = Math.max(0, globalTime - entry.timelineStart);
-      const remainingTimeline = entry.duration - clipElapsed;
-      if (remainingTimeline <= 1e-4) continue;
-
+      // The decoded/remapped buffer holds exactly ONE cycle; a looped clip
+      // replays it back to back, so schedule one source per remaining cycle
+      // rather than one long source spanning the whole (multiplied) entry.
       const rate =
         entry.rateRemap
           ? 1
           : Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
             ? entry.playbackRate
             : 1;
-      const bufferOffset = entry.bufferOffset + clipElapsed * rate;
-      // Clamp to buffer length so we never schedule past the decoded samples.
       const maxOffset = Math.max(0, buffer.duration - 1e-4);
-      if (bufferOffset >= maxOffset) continue;
-      const remainingSource = maxOffset - bufferOffset;
-      const maxTimelineFromBuffer = remainingSource / rate;
-      const playDuration = Math.min(remainingTimeline, maxTimelineFromBuffer);
-      if (playDuration <= 1e-4) continue;
-      const playDurationSource = playDuration * rate;
 
-      const when =
-        entry.timelineStart > globalTime
-          ? now + (entry.timelineStart - globalTime)
-          : now;
+      for (let cycleIndex = 0; cycleIndex < entry.loopCount; cycleIndex++) {
+        const cycleStart = entry.timelineStart + cycleIndex * entry.cycleDuration;
+        const cycleEnd = cycleStart + entry.cycleDuration;
+        if (cycleEnd <= globalTime + 1e-4) continue;
 
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.playbackRate.value = rate;
+        // Cycle-local elapsed indexes into the single-cycle decoded buffer.
+        const cycleLocalElapsed = Math.max(0, globalTime - cycleStart);
+        const remainingTimeline = entry.cycleDuration - cycleLocalElapsed;
+        if (remainingTimeline <= 1e-4) continue;
 
-      const gain = ctx.createGain();
-      const duckedVolume = effectiveEntryVolume(entry, this.schedule);
-      applyGainEnvelope(
-        gain.gain,
-        { ...entry, volume: duckedVolume },
-        when,
-        playDuration,
-        clipElapsed,
-        ctx.currentTime,
-      );
+        const bufferOffset = entry.bufferOffset + cycleLocalElapsed * rate;
+        // Clamp to buffer length so we never schedule past the decoded samples.
+        if (bufferOffset >= maxOffset) continue;
+        const remainingSource = maxOffset - bufferOffset;
+        const maxTimelineFromBuffer = remainingSource / rate;
+        const playDuration = Math.min(remainingTimeline, maxTimelineFromBuffer);
+        if (playDuration <= 1e-4) continue;
+        const playDurationSource = playDuration * rate;
 
-      let panner: StereoPannerNode | null = null;
-      if (typeof ctx.createStereoPanner === 'function') {
-        panner = ctx.createStereoPanner();
-        applyPanEnvelope(
-          panner.pan,
-          entry.panAutomation,
+        const when =
+          cycleStart > globalTime ? now + (cycleStart - globalTime) : now;
+
+        // Fades and volume/pan automation are authored across the WHOLE
+        // looped span (same domain as the Inspector automation editor), so
+        // sample them from the global (unwrapped) elapsed time — this also
+        // naturally confines fadeIn to the first cycle and fadeOut to the
+        // last, without special-casing interior cycles.
+        const globalClipElapsed = Math.max(0, globalTime - entry.timelineStart);
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.playbackRate.value = rate;
+
+        const gain = ctx.createGain();
+        const duckedVolume = effectiveEntryVolume(entry, this.schedule);
+        applyGainEnvelope(
+          gain.gain,
+          { ...entry, volume: duckedVolume },
           when,
           playDuration,
-          clipElapsed,
+          globalClipElapsed,
           ctx.currentTime,
-          entry.duration,
         );
-        source.connect(gain);
-        gain.connect(panner);
-        panner.connect(master);
-      } else {
-        source.connect(gain);
-        gain.connect(master);
-      }
 
-      try {
-        source.start(when, bufferOffset, playDurationSource);
-      } catch {
-        continue;
-      }
-
-      const active: ActiveSource = {
-        source,
-        gain,
-        panner,
-        entry,
-        when,
-        clipElapsed,
-        playDuration,
-      };
-      source.onended = () => {
-        this.active = this.active.filter((item) => item !== active);
-        try {
-          source.disconnect();
-          gain.disconnect();
-          panner?.disconnect();
-        } catch {
-          // ignore
+        let panner: StereoPannerNode | null = null;
+        if (typeof ctx.createStereoPanner === 'function') {
+          panner = ctx.createStereoPanner();
+          applyPanEnvelope(
+            panner.pan,
+            entry.panAutomation,
+            when,
+            playDuration,
+            globalClipElapsed,
+            ctx.currentTime,
+            entry.duration,
+          );
+          source.connect(gain);
+          gain.connect(panner);
+          panner.connect(master);
+        } else {
+          source.connect(gain);
+          gain.connect(master);
         }
-      };
-      this.active.push(active);
+
+        try {
+          source.start(when, bufferOffset, playDurationSource);
+        } catch {
+          continue;
+        }
+
+        const active: ActiveSource = {
+          source,
+          gain,
+          panner,
+          entry,
+          when,
+          clipElapsed: globalClipElapsed,
+          playDuration,
+        };
+        source.onended = () => {
+          this.active = this.active.filter((item) => item !== active);
+          try {
+            source.disconnect();
+            gain.disconnect();
+            panner?.disconnect();
+          } catch {
+            // ignore
+          }
+        };
+        this.active.push(active);
+      }
     }
   }
 }

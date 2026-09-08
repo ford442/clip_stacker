@@ -111,6 +111,12 @@ export interface Clip {
    */
   playbackRate?: number;
   /**
+   * Play the trimmed + speed-remapped output window this many times, back to
+   * back, as one timeline item. Multiplies output duration. 1 = once (default).
+   * Omitted in older projects (treated as 1).
+   */
+  loopCount?: number;
+  /**
    * Parameter automation lanes (volume / pan / playbackRate).
    * Volume keyframes are absolute linear gain (0–2); empty lane uses `volume`.
    * `playbackRate` keyframes remap output→source time via ∫ rate dt.
@@ -187,6 +193,8 @@ export interface SerializedClip {
   opacity?: number;
   volume?: number;
   playbackRate?: number;
+  /** Play the remapped trim window this many times. 1 = once. Omit in old projects. */
+  loopCount?: number;
   automation?: ClipAutomation;
   keyframes?: ClipKeyframes;
   stillImage?: boolean;

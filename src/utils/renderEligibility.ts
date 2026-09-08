@@ -1,7 +1,8 @@
 import type { Clip, ClipTransition, TextOverlay } from '../types';
 import { clipHasVolumeAdjustment } from './audioVolume';
-import { clipHasPlaybackRateAdjustment } from './playbackRate';
+import { clipHasLoop, clipHasPlaybackRateAdjustment } from './playbackRate';
 import { clipHasKeyframes } from './animatedLayout';
+import { clipHasRateAutomation } from './timeRemap';
 import { isFinishingActive, type FinishingSettings } from './finishing';
 
 /** Mirrors ffmpegService clipNeedsEffects — shared for encoder path selection. */
@@ -14,7 +15,9 @@ export function clipNeedsEffects(clip: Clip): boolean {
     clip.audioFadeIn > 0 ||
     clip.audioFadeOut > 0 ||
     clipHasVolumeAdjustment(clip) ||
-    clipHasPlaybackRateAdjustment(clip)
+    clipHasPlaybackRateAdjustment(clip) ||
+    clipHasRateAutomation(clip) ||
+    clipHasLoop(clip)
   );
 }
 
@@ -45,9 +48,13 @@ export function canCaptureWebGpuCanvasWithText(
 }
 
 /**
- * Transitions, PiP, clip keyframes, and still images need multi-source frame
- * delivery (timeline compositor). Text overlay keyframes are resolved in the
- * overlay post-pass via `buildPreviewCompositionPlan`.
+ * Transitions, PiP, clip keyframes, still images, and looped clips need
+ * multi-source frame delivery (timeline compositor) — the plain sequential
+ * WebCodecs path (`encodeVideoFrames`) walks each clip's trim window once
+ * and has no loop-wrap awareness, so a looped clip must route through the
+ * compositor's `buildPreviewCompositionPlan` (which wraps source time via
+ * `wrapOutputLocalToCycle`) instead. Text overlay keyframes are resolved in
+ * the overlay post-pass via `buildPreviewCompositionPlan`.
  */
 export function needsMultiLayerComposition(
   clips: Clip[],
@@ -57,6 +64,7 @@ export function needsMultiLayerComposition(
   if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) return true;
   if (clips.some(clipHasKeyframes)) return true;
   if (clips.some((clip) => clip.stillImage)) return true;
+  if (clips.some(clipHasLoop)) return true;
   return false;
 }
 

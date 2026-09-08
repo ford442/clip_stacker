@@ -9,8 +9,8 @@ import { audioTracks } from '../utils/trackModel';
 import { clampClipVolume } from '../utils/audioVolume';
 import type { Keyframe } from '../utils/keyframes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
-import { getClipPlaybackRate } from '../utils/playbackRate';
-import { clipHasRateAutomation } from '../utils/timeRemap';
+import { getClipLoopCount, getClipPlaybackRate } from '../utils/playbackRate';
+import { clipHasRateAutomation, cycleDurationForClip } from '../utils/timeRemap';
 
 /** One clip's audio placement on the output timeline. */
 export interface AudioScheduleEntry {
@@ -18,8 +18,12 @@ export interface AudioScheduleEntry {
   objectUrl: string;
   /** Output-timeline time when this clip's audio begins (seconds). */
   timelineStart: number;
-  /** Trimmed duration on the output timeline (seconds). */
+  /** Trimmed duration on the output timeline (seconds), including all loop cycles. */
   duration: number;
+  /** Duration of ONE play-through of the remapped window (seconds). `duration` = `cycleDuration * loopCount`. */
+  cycleDuration: number;
+  /** Number of times the cycle repeats back to back. 1 = no loop. */
+  loopCount: number;
   /** Offset into the source media / AudioBuffer (seconds). */
   bufferOffset: number;
   volume: number;
@@ -71,6 +75,8 @@ function entryFromClip(
     objectUrl: clip.objectUrl,
     timelineStart,
     duration,
+    cycleDuration: cycleDurationForClip(clip),
+    loopCount: getClipLoopCount(clip),
     // Remapped buffers already start at the trim window.
     bufferOffset: rateRemap ? 0 : Math.max(0, clip.trimStart),
     volume: clampClipVolume(clip.volume),
@@ -192,6 +198,8 @@ export function schedulesMatchStructure(
       left.objectUrl !== right.objectUrl ||
       left.timelineStart !== right.timelineStart ||
       left.duration !== right.duration ||
+      left.cycleDuration !== right.cycleDuration ||
+      left.loopCount !== right.loopCount ||
       left.bufferOffset !== right.bufferOffset ||
       left.playbackRate !== right.playbackRate ||
       Boolean(left.rateRemap) !== Boolean(right.rateRemap) ||

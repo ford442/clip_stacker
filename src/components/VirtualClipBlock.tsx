@@ -18,6 +18,7 @@ import type { VirtualClipLayout } from './timelineClipTypes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
 import { remapWaveformPeaks } from '../utils/automation';
 import { clipHasRateAutomation, sampleRemapCurve } from '../utils/timeRemap';
+import { clipHasLoop, getClipLoopCount } from '../utils/playbackRate';
 
 const TRANSITION_COLORS: Record<string, string> = {
   none: 'var(--border)',
@@ -352,6 +353,15 @@ function VirtualClipBlockImpl({
             {clipHasRateAutomation(clip) && (
               <span className="timeline-clip-badge timeline-clip-badge--speed" title="Speed remapping automation">
                 Speed
+              </span>
+            )}
+
+            {clipHasLoop(clip) && (
+              <span
+                className="timeline-clip-badge timeline-clip-badge--loop"
+                title={`Plays the trimmed + sped-up window ${getClipLoopCount(clip)} times`}
+              >
+                ×{getClipLoopCount(clip)}
               </span>
             )}
 
