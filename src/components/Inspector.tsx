@@ -47,11 +47,13 @@ import {
 import { clipHasKeyframes } from '../utils/animatedLayout';
 import {
   buildPipRect,
+  buildLogoRect,
   clipAspectRatio,
   nextOverlayLayerIndex,
   parseCanvasSize,
   type PipCorner,
 } from '../utils/pipPreset';
+import { DEFAULT_CHROMA_KEY } from '../utils/overlayBlend';
 import { BeatmatchPanel } from './BeatmatchPanel';
 import { WaveformCanvas } from './WaveformCanvas';
 import { FadeCanvasPreview } from './FadeCanvasPreview';
@@ -74,6 +76,11 @@ interface ClipValues {
   width: string;
   height: string;
   opacity: string;
+  /** OverlayBlendMode, or '' for the default (source alpha). */
+  overlayBlend: string;
+  chromaColor: string;
+  chromaSimilarity: string;
+  chromaBlend: string;
   volume: string;
   playbackRate: string;
   loopCount: string;
@@ -274,6 +281,10 @@ function InspectorImpl({
     width: '0',
     height: '0',
     opacity: '1',
+    overlayBlend: '',
+    chromaColor: DEFAULT_CHROMA_KEY.color,
+    chromaSimilarity: String(DEFAULT_CHROMA_KEY.similarity),
+    chromaBlend: String(DEFAULT_CHROMA_KEY.blend),
     volume: '1',
     playbackRate: '1',
     loopCount: '1',
@@ -301,6 +312,10 @@ function InspectorImpl({
       width: String(layout.width),
       height: String(layout.height),
       opacity: String(clip.opacity ?? 1),
+      overlayBlend: clip.overlayBlend ?? '',
+      chromaColor: clip.chromaKey?.color ?? DEFAULT_CHROMA_KEY.color,
+      chromaSimilarity: String(clip.chromaKey?.similarity ?? DEFAULT_CHROMA_KEY.similarity),
+      chromaBlend: String(clip.chromaKey?.blend ?? DEFAULT_CHROMA_KEY.blend),
       volume: String(clip.volume ?? 1),
       playbackRate: String(clip.playbackRate ?? 1),
       loopCount: String(clip.loopCount ?? 1),
@@ -444,6 +459,36 @@ function InspectorImpl({
       width: String(display.width),
       height: String(display.height),
       opacity: parseNumber(values.opacity, 1) === 0 ? '1' : values.opacity,
+    });
+    setPipCorner(corner);
+    setAdvancedOpen(true);
+  };
+
+  /**
+   * Channel-bug preset: a small corner overlay locked to the source's own
+   * aspect ratio, keyed on the source alpha and muted, so a non-square logo
+   * composites as a mark rather than a rectangle.
+   */
+  const applyLogoPreset = (corner: PipCorner) => {
+    if (!clip) return;
+    const canvas = parseCanvasSize(exportSettings.outputResolution);
+    const rect = buildLogoRect(canvas, corner, clipAspectRatio(clip));
+    const display = clipLayoutToDisplayPixels(
+      { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+      canvas,
+    );
+    const layerIndex = isOverlay
+      ? parseNumber(values.layerIndex, 1)
+      : nextOverlayLayerIndex(clips, clip.id);
+    applyValues({
+      layerIndex: String(layerIndex),
+      x: String(display.x),
+      y: String(display.y),
+      width: String(display.width),
+      height: String(display.height),
+      opacity: parseNumber(values.opacity, 1) === 0 ? '1' : values.opacity,
+      overlayBlend: 'source-alpha',
+      volume: '0',
     });
     setPipCorner(corner);
     setAdvancedOpen(true);
@@ -1195,6 +1240,14 @@ function InspectorImpl({
               <button
                 type="button"
                 className="btn-secondary"
+                onClick={() => applyLogoPreset(pipCorner)}
+                title="Channel bug: snap this clip to the chosen corner at ~10% of the canvas width, locked to its own aspect ratio, keyed on its alpha channel and muted."
+              >
+                ◹ Use as channel logo
+              </button>
+              <button
+                type="button"
+                className="btn-secondary"
                 onClick={useAsBaseLayer}
                 disabled={!isOverlay}
                 title="Return this clip to the base layer so it plays full-frame in sequence."
@@ -1206,6 +1259,9 @@ function InspectorImpl({
               {isOverlay
                 ? 'This clip is composited on top of the base video. Fine-tune the size, position and opacity below.'
                 : 'Overlay this clip as a small window on top of the base video. You can fine-tune the size, position and opacity afterwards.'}
+              {' '}
+              Channel logo keeps the source transparency, so a PNG / WebP / WebM+alpha mark
+              composites without a black box.
             </p>
           </div>
         )}
@@ -1289,6 +1345,58 @@ function InspectorImpl({
                   />
                 </label>
               )}
+              {isOverlay && (
+                <label title="How this overlay is keyed against the layers below it. Source alpha uses the transparency already in the file (PNG / WebP / WebM+alpha); chroma and luma derive it from the picture.">
+                  Transparency
+                  <select
+                    value={values.overlayBlend || 'source-alpha'}
+                    onChange={(e) => update('overlayBlend', e.target.value)}
+                  >
+                    <option value="source-alpha">Source alpha (PNG / WebM+alpha)</option>
+                    <option value="premultiplied">Source alpha (premultiplied)</option>
+                    <option value="chroma">Chroma key</option>
+                    <option value="luma">Luma key (black is transparent)</option>
+                    <option value="opaque">Opaque rectangle</option>
+                  </select>
+                </label>
+              )}
+              {isOverlay &&
+                (values.overlayBlend === 'chroma' || values.overlayBlend === 'luma') && (
+                  <>
+                    {values.overlayBlend === 'chroma' && (
+                      <label title="Colour keyed out of the overlay.">
+                        Key colour
+                        <input
+                          type="color"
+                          value={values.chromaColor}
+                          onChange={(e) => update('chromaColor', e.target.value)}
+                        />
+                      </label>
+                    )}
+                    <label title="How close a pixel must be to the key before it becomes transparent.">
+                      Key similarity (0–1)
+                      <input
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={values.chromaSimilarity}
+                        onChange={(e) => update('chromaSimilarity', e.target.value)}
+                      />
+                    </label>
+                    <label title="Softness of the edge between kept and keyed pixels.">
+                      Key blend (0–1)
+                      <input
+                        type="number"
+                        min="0"
+                        max="1"
+                        step="0.01"
+                        value={values.chromaBlend}
+                        onChange={(e) => update('chromaBlend', e.target.value)}
+                      />
+                    </label>
+                  </>
+                )}
               {parseNumber(values.layerIndex, 0) === 0 &&
                 parseNumber(values.opacity, 1) !== DEFAULT_LAYOUT_VALUES.opacity && (
                   <p className="inspector-hint">

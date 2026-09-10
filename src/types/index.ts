@@ -2,6 +2,31 @@ import type { Keyframe } from '../utils/keyframes';
 
 export type ClipKind = 'video' | 'audio';
 
+/**
+ * How an overlay (PiP / channel-bug) layer is keyed against the layers below it.
+ * - `opaque`         — ignore any source alpha; the overlay is a solid rectangle (legacy default).
+ * - `source-alpha`   — use the straight alpha already in the source (PNG/WebP still, WebM+alpha).
+ * - `premultiplied`  — same, for sources whose RGB is already multiplied by alpha.
+ * - `chroma`         — derive alpha by keying out `chromaKey.color` (green screen / black plate).
+ * - `luma`           — derive alpha from luminance (black becomes transparent).
+ */
+export type OverlayBlendMode =
+  | 'opaque'
+  | 'source-alpha'
+  | 'premultiplied'
+  | 'chroma'
+  | 'luma';
+
+/** Chroma / luma key parameters for `overlayBlend: 'chroma' | 'luma'`. */
+export interface ChromaKeySettings {
+  /** Key colour, as `#RRGGBB` or an FFmpeg colour name. */
+  color: string;
+  /** 0–1 — how close a pixel must be to `color` to become transparent. */
+  similarity: number;
+  /** 0–1 — softness of the edge between kept and keyed pixels. */
+  blend: number;
+}
+
 /** Animatable scalar properties on clips (PiP layout + Ken Burns UV). */
 export type ClipAnimatableProp =
   | 'x'
@@ -103,6 +128,14 @@ export interface Clip {
   height?: number;
   /** Overlay opacity from 0.0 (transparent) to 1.0 (fully opaque). */
   opacity?: number;
+  /**
+   * How this overlay is keyed against the layers below it. Omitted on older
+   * projects and on base-layer clips (treated as `source-alpha`, which is a
+   * no-op for the opaque sources that PiP overlays have historically used).
+   */
+  overlayBlend?: OverlayBlendMode;
+  /** Key parameters used when `overlayBlend` is `chroma` or `luma`. */
+  chromaKey?: ChromaKeySettings;
   /** Per-clip audio volume multiplier (0 = muted, 1 = unchanged, 2 = double). */
   volume?: number;
   /**
@@ -198,6 +231,10 @@ export interface SerializedClip {
   width?: number;
   height?: number;
   opacity?: number;
+  /** Overlay keying mode (omitted when the clip uses the default). */
+  overlayBlend?: OverlayBlendMode;
+  /** Chroma / luma key parameters (omitted unless keying is configured). */
+  chromaKey?: ChromaKeySettings;
   volume?: number;
   playbackRate?: number;
   /** Play the remapped trim window this many times. 1 = once. Omit in old projects. */

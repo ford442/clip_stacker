@@ -1,5 +1,11 @@
 import { useCallback } from "react";
-import type { Clip, ClipKeyframes, ClipAutomation, ExportSettings } from "../types";
+import type {
+  Clip,
+  ClipKeyframes,
+  ClipAutomation,
+  ExportSettings,
+  OverlayBlendMode,
+} from "../types";
 import { sanitizeClipAdjustments, getClipDuration, ContaboStorageManagerClient } from "../utils/project";
 import { clampClipVolume } from "../utils/audioVolume";
 import { clampClipLoopCount, clampClipPlaybackRate } from "../utils/playbackRate";
@@ -15,6 +21,7 @@ import {
   getLastFfmpegLogs,
 } from "../ffmpeg/ffmpegService";
 import type { ClipValues } from "../components/Inspector";
+import { DEFAULT_CHROMA_KEY } from "../utils/overlayBlend";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
 import { settingsStore } from "../store/settingsStore";
@@ -27,6 +34,44 @@ type InspectorActionsDeps = Pick<
   storageEndpoint: string;
   storageAuthToken: string;
 };
+
+const OVERLAY_BLEND_MODES: OverlayBlendMode[] = [
+  "opaque",
+  "source-alpha",
+  "premultiplied",
+  "chroma",
+  "luma",
+];
+
+function clamp01(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(1, Math.max(0, value));
+}
+
+/**
+ * Overlay keying fields from the inspector form. `chromaKey` is only stored for
+ * the key modes that use it, so an unkeyed overlay round-trips as before.
+ */
+function resolveOverlayKeying(
+  values: ClipValues,
+): Pick<Clip, "overlayBlend" | "chromaKey"> {
+  const mode = OVERLAY_BLEND_MODES.find((m) => m === values.overlayBlend);
+  if (!mode) return { overlayBlend: undefined, chromaKey: undefined };
+  if (mode !== "chroma" && mode !== "luma") {
+    return { overlayBlend: mode, chromaKey: undefined };
+  }
+  return {
+    overlayBlend: mode,
+    chromaKey: {
+      color: values.chromaColor || DEFAULT_CHROMA_KEY.color,
+      similarity: clamp01(
+        Number(values.chromaSimilarity),
+        DEFAULT_CHROMA_KEY.similarity,
+      ),
+      blend: clamp01(Number(values.chromaBlend), DEFAULT_CHROMA_KEY.blend),
+    },
+  };
+}
 
 export function useInspectorActions({
   clips,
@@ -139,6 +184,7 @@ export function useInspectorActions({
             width: layout.width,
             height: layout.height,
             opacity: Math.min(1, Math.max(0, Number(values.opacity ?? 1))),
+            ...resolveOverlayKeying(values),
             volume: clampClipVolume(Number(values.volume ?? 1)),
             playbackRate: clampClipPlaybackRate(
               Number(values.playbackRate ?? 1),

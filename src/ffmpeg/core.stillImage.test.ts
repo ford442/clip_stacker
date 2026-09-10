@@ -5,6 +5,7 @@ import {
   buildSingleClipFilter,
   buildStillImageFfmpegArgs,
   buildStillImageVideoFilter,
+  clipIsOverlayLayer,
   clipHasSourceAudio,
   clipHasSourceVideo,
   clipNeedsLoopInput,
@@ -35,6 +36,29 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
     ...overrides,
   };
 }
+
+describe('buildStillImageVideoFilter', () => {
+  it('flattens to yuv420p with opaque padding by default', () => {
+    const filter = buildStillImageVideoFilter(1280, 720);
+    expect(filter).toContain('pad=1280:720:(ow-iw)/2:(oh-ih)/2,');
+    expect(filter).toContain('format=yuv420p');
+  });
+
+  it('keeps the alpha plane and pads transparently for overlay layers', () => {
+    const filter = buildStillImageVideoFilter(128, 64, 30, { preserveAlpha: true });
+    expect(filter).toContain('pad=128:64:(ow-iw)/2:(oh-ih)/2:color=0x00000000');
+    expect(filter).toContain('format=rgba');
+    expect(filter).not.toContain('yuv420p');
+  });
+});
+
+describe('clipIsOverlayLayer', () => {
+  it('is true only for layer indices above the base layer', () => {
+    expect(clipIsOverlayLayer({})).toBe(false);
+    expect(clipIsOverlayLayer({ layerIndex: 0 })).toBe(false);
+    expect(clipIsOverlayLayer({ layerIndex: 2 })).toBe(true);
+  });
+});
 
 describe('still image FFmpeg helpers', () => {
   it('detects still images and PNG files as having no source audio', () => {

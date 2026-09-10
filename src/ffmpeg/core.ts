@@ -407,18 +407,35 @@ export function resolveStillImageEncodeDimensions(
   return { width, height };
 }
 
+export interface StillImageFilterOptions {
+  /**
+   * Keep the image's alpha channel: letterbox with transparent padding and
+   * finish in `rgba` instead of flattening to `yuv420p`. Required for overlay
+   * (layerIndex > 0) layers — a channel bug flattened to `yuv420p` composites
+   * as a hard rectangle no matter what the compositor does afterwards.
+   */
+  preserveAlpha?: boolean;
+}
+
 /** Video filter chain for edit-friendly still-image MP4 output. */
 export function buildStillImageVideoFilter(
   width: number,
   height: number,
   fps: number = STILL_IMAGE_OUTPUT_FPS,
+  options: StillImageFilterOptions = {},
 ): string {
+  const transparent = options.preserveAlpha === true;
   return [
     `scale=${width}:${height}:force_original_aspect_ratio=decrease`,
-    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`,
+    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2${transparent ? ":color=0x00000000" : ""}`,
     `fps=${fps}`,
-    "format=yuv420p",
+    transparent ? "format=rgba" : "format=yuv420p",
   ].join(",");
+}
+
+/** True when a clip sits on an overlay layer and must keep its alpha plane. */
+export function clipIsOverlayLayer(clip: Pick<Clip, "layerIndex">): boolean {
+  return (clip.layerIndex ?? 0) > 0;
 }
 
 export interface StillImageEncodeOptions {
@@ -442,6 +459,9 @@ export function buildStillImageFfmpegArgs(
   const { inputName, outputName, width, height } = options;
   const durationSec = Math.max(0.1, options.durationSec);
   const gop = STILL_IMAGE_OUTPUT_FPS;
+  // H.264/MP4 cannot carry alpha, so this materialization path always flattens.
+  // Overlay stills stay image inputs in the PiP graph instead (see
+  // `buildPipFilterComplex`), which is where `preserveAlpha` applies.
   const vf = buildStillImageVideoFilter(width, height);
   const silentUnit = options.silentUnitName ?? SILENT_AAC_UNIT_NAME;
 

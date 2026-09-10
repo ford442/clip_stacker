@@ -16,6 +16,10 @@ import {
   videoSetptsFilter,
 } from "../utils/playbackRate";
 import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
+import {
+  buildOverlayAlphaFilters,
+  buildOverlayFilter,
+} from "../utils/overlayBlend";
 import { appendPrimaryColorFilters, type PrimaryColorSettings } from "../utils/primaryColor";
 import {
   appendNoiseReductionFilters,
@@ -57,6 +61,8 @@ import {
   clipNeedsEffects,
   getSafeExtension,
   buildSingleClipFilter,
+  buildClipInputArgs,
+  clipHasSourceAudio,
   getFfmpegEnvironmentDiagnostics,
   toBlobURLWithRetry,
   toBlobURLWithFallback,
@@ -130,10 +136,12 @@ export function buildPipFilterComplex(
         } else if (h > 0) {
           vf += `,scale=-2:${h}`;
         }
-        // Apply opacity when < 1
-        const opacity = clip.opacity ?? 1;
-        if (opacity < 1) {
-          vf += `,format=rgba,colorchannelmixer=aa=${opacity.toFixed(4)}`;
+        // Keep an alpha plane alive through the overlay: source alpha (PNG /
+        // WebP / WebM+alpha), a chroma/luma key, or an explicit opaque wipe.
+        // Opacity is folded in as a multiplier on the resulting alpha.
+        const alphaFilters = buildOverlayAlphaFilters(clip);
+        if (alphaFilters.length > 0) {
+          vf += `,${alphaFilters.join(",")}`;
         }
       }
 
@@ -148,8 +156,12 @@ export function buildPipFilterComplex(
       );
     }
 
-    // Audio — normalize to 44100 Hz stereo so amix / concat always gets matching streams
-    let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
+    // Audio — normalize to 44100 Hz stereo so amix / concat always gets matching streams.
+    // Still images (and sources proven to be silent) have no `[i:a]` to trim;
+    // synthesize silence so the concat / amix graph still sees matching streams.
+    let af = clipHasSourceAudio(clip)
+      ? `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`
+      : `anullsrc=r=44100:cl=stereo:d=${dur},aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
@@ -242,7 +254,7 @@ export function buildPipFilterComplex(
     const outV = isLast ? "vout" : `vcomp${idx}`;
 
     parts.push(
-      `[${currentV}][v${idx}]overlay=${x}:${y}:eof_action=pass[${outV}]`,
+      `[${currentV}][v${idx}]${buildOverlayFilter(clip, x, y)}[${outV}]`,
     );
     currentV = outV;
 
@@ -308,7 +320,8 @@ export async function mergeClipsWithCompositing(
 
   const inputArgs: string[] = [];
   for (const clip of clips) {
-    inputArgs.push("-i", clip.inputName!);
+    // Still images need `-loop 1` so trim/overlay can reach the clip length.
+    inputArgs.push(...buildClipInputArgs(clip));
   }
 
   await safeExec(

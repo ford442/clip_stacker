@@ -57,7 +57,9 @@ describe("buildPipFilterComplex", () => {
 
     expect(filterComplex).toContain("concat=n=2:v=1:a=0[vbase]");
     expect(filterComplex).toContain("concat=n=2:v=0:a=1[abase]");
-    expect(filterComplex).toContain("overlay=10:20:eof_action=pass[vout]");
+    expect(filterComplex).toContain(
+      "overlay=10:20:eof_action=pass:format=auto:alpha=straight[vout]",
+    );
     expect(filterComplex).not.toContain("xfade");
   });
 
@@ -80,7 +82,9 @@ describe("buildPipFilterComplex", () => {
     expect(filterComplex).toContain("[abase]");
 
     // PiP overlay is still composited on top of the transitioned base
-    expect(filterComplex).toContain("overlay=10:20:eof_action=pass[vout]");
+    expect(filterComplex).toContain(
+      "overlay=10:20:eof_action=pass:format=auto:alpha=straight[vout]",
+    );
   });
 
   it("ignores a transition that is not between adjacent base clips", () => {
@@ -105,6 +109,98 @@ describe("buildPipFilterComplex", () => {
     expect(() => buildPipFilterComplex(clips)).toThrow(
       /requires at least one base-layer clip/,
     );
+  });
+
+  it("keeps an alpha plane on overlay layers so transparent logos are not boxed", () => {
+    const clips = [
+      createTestClip("base", 5),
+      createTestClip("logo", 5, {
+        layerIndex: 1,
+        x: 100 / NW,
+        y: 50 / NH,
+        width: 128 / NW,
+        height: 64 / NH,
+      }),
+    ];
+
+    const filterComplex = buildPipFilterComplex(clips);
+    const overlayChain = filterComplex
+      .split(";")
+      .find((part) => part.startsWith("[1:v]"))!;
+
+    expect(overlayChain).toContain("scale=128:64");
+    expect(overlayChain).toContain("format=rgba");
+    expect(overlayChain).not.toContain("yuv420p");
+    expect(filterComplex).toContain(
+      "overlay=100:50:eof_action=pass:format=auto:alpha=straight[vout]",
+    );
+  });
+
+  it("wipes source alpha for an explicitly opaque overlay", () => {
+    const clips = [
+      createTestClip("base", 5),
+      createTestClip("pip", 5, { layerIndex: 1, overlayBlend: "opaque" }),
+    ];
+
+    const overlayChain = buildPipFilterComplex(clips)
+      .split(";")
+      .find((part) => part.startsWith("[1:v]"))!;
+
+    expect(overlayChain).toContain("format=yuv444p,format=rgba");
+  });
+
+  it("keys a chroma overlay and composites it with straight alpha", () => {
+    const clips = [
+      createTestClip("base", 5),
+      createTestClip("plate", 5, {
+        layerIndex: 1,
+        overlayBlend: "chroma",
+        chromaKey: { color: "#00FF00", similarity: 0.25, blend: 0.05 },
+      }),
+    ];
+
+    const filterComplex = buildPipFilterComplex(clips);
+
+    expect(filterComplex).toContain("chromakey=0x00FF00:0.25:0.05");
+    expect(filterComplex).toContain("alpha=straight");
+  });
+
+  it("composites a premultiplied overlay with alpha=premultiplied", () => {
+    const clips = [
+      createTestClip("base", 5),
+      createTestClip("bug", 5, { layerIndex: 1, overlayBlend: "premultiplied" }),
+    ];
+
+    expect(buildPipFilterComplex(clips)).toContain("alpha=premultiplied");
+  });
+
+  it("folds overlay opacity into the alpha plane after keying", () => {
+    const clips = [
+      createTestClip("base", 5),
+      createTestClip("pip", 5, { layerIndex: 1, opacity: 0.5 }),
+    ];
+
+    const overlayChain = buildPipFilterComplex(clips)
+      .split(";")
+      .find((part) => part.startsWith("[1:v]"))!;
+
+    expect(overlayChain).toContain("format=rgba,colorchannelmixer=aa=0.5000");
+  });
+
+  it("synthesizes silence for a still-image overlay that has no audio stream", () => {
+    const clips = [
+      createTestClip("base", 5),
+      createTestClip("logo", 5, {
+        layerIndex: 1,
+        stillImage: true,
+        file: new File([], "logo.png", { type: "image/png" }),
+      }),
+    ];
+
+    const filterComplex = buildPipFilterComplex(clips);
+
+    expect(filterComplex).toContain("anullsrc=r=44100:cl=stereo:d=5");
+    expect(filterComplex).not.toContain("[1:a]");
   });
 
   it("mutes overlay audio when volume is 0", () => {

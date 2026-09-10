@@ -55,4 +55,33 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     expect(result.clipGroups).toHaveLength(1);
     expect(result.clipGroups[0].activeVariant).toBe("B");
   });
+
+  it("should roundtrip overlay keying settings", async () => {
+    const logo = createTestClip("logo", 5, "Channel bug");
+    logo.layerIndex = 1;
+    logo.overlayBlend = "chroma";
+    logo.chromaKey = { color: "#00FF00", similarity: 0.25, blend: 0.05 };
+
+    const serialized = serializeProject([logo], [], [], []);
+    expect(serialized.clips[0].overlayBlend).toBe("chroma");
+    expect(serialized.clips[0].chromaKey).toEqual({
+      color: "#00FF00",
+      similarity: 0.25,
+      blend: 0.05,
+    });
+
+    const result = await applyProjectData(serialized, [logo]);
+    expect(result.clips[0].overlayBlend).toBe("chroma");
+    expect(result.clips[0].chromaKey).toEqual({
+      color: "#00FF00",
+      similarity: 0.25,
+      blend: 0.05,
+    });
+  });
+
+  it("should omit overlay keying for clips that do not use it", () => {
+    const serialized = serializeProject([createTestClip("a", 5)], [], [], []);
+    expect(serialized.clips[0].overlayBlend).toBeUndefined();
+    expect(serialized.clips[0].chromaKey).toBeUndefined();
+  });
 });

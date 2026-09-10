@@ -21,6 +21,8 @@ export interface PipRect {
 const PIP_WIDTH_RATIO = 0.25;
 /** Inset from the canvas edges, as a fraction of the canvas width (32px on a 1280px canvas). */
 const PIP_MARGIN_RATIO = 0.025;
+/** Fraction of the canvas width a channel-bug logo occupies (128px on a 1280px canvas). */
+export const LOGO_WIDTH_RATIO = 0.1;
 
 /**
  * Parse an ExportSettings.outputResolution string ("1280x720") into a canvas size.
@@ -59,9 +61,10 @@ export function buildPipRect(
   canvas: CanvasSize,
   corner: PipCorner = 'bottom-right',
   aspectRatio?: number,
+  widthRatio: number = PIP_WIDTH_RATIO,
 ): PipRect {
   const ratio = Number.isFinite(aspectRatio) && (aspectRatio ?? 0) > 0 ? (aspectRatio as number) : 16 / 9;
-  const width = Math.max(1, Math.round(canvas.width * PIP_WIDTH_RATIO));
+  const width = Math.max(1, Math.round(canvas.width * widthRatio));
   const height = Math.max(1, Math.round(width / ratio));
   const margin = Math.max(1, Math.round(canvas.width * PIP_MARGIN_RATIO));
   const left = margin;
@@ -93,4 +96,17 @@ export function clipAspectRatio(clip: Pick<Clip, 'videoWidth' | 'videoHeight'>):
   const h = clip.videoHeight ?? 0;
   if (w > 0 && h > 0) return w / h;
   return undefined;
+}
+
+/**
+ * Channel-bug rectangle: same corner math as the PiP preset, but small
+ * (~10% of canvas width) and locked to the source's own aspect ratio so a
+ * non-square mark is never stretched into a box.
+ */
+export function buildLogoRect(
+  canvas: CanvasSize,
+  corner: PipCorner = 'top-right',
+  aspectRatio?: number,
+): PipRect {
+  return buildPipRect(canvas, corner, aspectRatio, LOGO_WIDTH_RATIO);
 }

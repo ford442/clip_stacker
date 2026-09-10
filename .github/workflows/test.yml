@@ -36,3 +36,27 @@ jobs:
 
       - name: Build project
         run: npm run build
+
+  wasm:
+    name: Build WASM modules
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.64
+          actions-cache-folder: emsdk-cache
+
+      - name: Verify emcc
+        run: emcc -v
+
+      - name: Build audio analysis module
+        run: npm run build:audio-analysis
+
+      - name: Build time stretch module
+        run: npm run build:time-stretch
+
+      - name: Report drift against committed artifacts
+        run: git --no-pager diff --stat -- public/wasm || true

@@ -252,6 +252,14 @@ export async function applyProjectData(
     if (savedClip.width != null) liveClip.width = Number(savedClip.width);
     if (savedClip.height != null) liveClip.height = Number(savedClip.height);
     if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
+    if (savedClip.overlayBlend) liveClip.overlayBlend = savedClip.overlayBlend;
+    if (savedClip.chromaKey) {
+      liveClip.chromaKey = {
+        color: String(savedClip.chromaKey.color),
+        similarity: Number(savedClip.chromaKey.similarity),
+        blend: Number(savedClip.chromaKey.blend),
+      };
+    }
     if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
     if (savedClip.playbackRate != null) {
       liveClip.playbackRate = Number(savedClip.playbackRate);

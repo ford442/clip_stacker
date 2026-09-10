@@ -103,6 +103,8 @@ export function serializeProject(
             opacity: clip.opacity ?? 1,
           }
         : {}),
+      ...(clip.overlayBlend ? { overlayBlend: clip.overlayBlend } : {}),
+      ...(clip.chromaKey ? { chromaKey: { ...clip.chromaKey } } : {}),
       ...(clip.keyframes ? { keyframes: clip.keyframes } : {}),
       ...(clip.stillImage ? { stillImage: true } : {}),
       ...(clip.beatTimestamps && clip.beatTimestamps.length > 0
