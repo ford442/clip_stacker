@@ -1,3 +1,5 @@
+import type { StabMatrix } from '../../wasm/videoStabilize';
+
 /** Schema for a per-transition uniform exposed in the editor. */
 export interface TransitionParamDef {
   key: string;
@@ -37,5 +39,9 @@ export interface TransitionRenderParams {
   destRect?: { x: number; y: number; w: number; h: number };
   /** Per-transition custom uniforms (keys match registry param defs). */
   custom?: Record<string, number>;
+  /** Camera-shake correction for the outgoing clip (`[a, b, tx, c, d, ty]`). */
+  fromStabMatrix?: StabMatrix;
+  /** Camera-shake correction for the incoming clip. */
+  toStabMatrix?: StabMatrix;
   clear?: boolean;
 }

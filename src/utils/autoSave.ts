@@ -1,4 +1,5 @@
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipTransition,
@@ -6,6 +7,7 @@ import type {
   Project,
   SerializedClip,
   TextOverlay,
+  TextOverlayStyle,
   Track,
 } from '../types';
 import { serializeProject } from './project';
@@ -92,12 +94,17 @@ export async function buildAutoSaveProject(
     maxClipBytes?: number;
     forceMetadataOnly?: boolean;
   } = {},
+  captions: CaptionEntry[] = [],
+  captionStyle: Partial<TextOverlayStyle> = {},
 ): Promise<Project> {
   const embedBudgetBytes = options.embedBudgetBytes ?? AUTO_SAVE_MAX_TOTAL_BYTES;
   const maxClipBytes = options.maxClipBytes ?? AUTO_SAVE_MAX_CLIP_BYTES;
   const forceMetadataOnly = options.forceMetadataOnly ?? false;
 
-  const project = serializeProject(clips, transitions, textOverlays, clipGroups, undefined, tracks);
+  const project = serializeProject(
+    clips, transitions, textOverlays, clipGroups, undefined, tracks,
+    undefined, null, captions, captionStyle,
+  );
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));
   let embedBudgetRemaining = embedBudgetBytes;
   let usedEmbed = false;
@@ -242,8 +249,13 @@ export function hashAutoSaveState(
   selectedClipId: string | null,
   exportSettings: ExportSettings,
   tracks: Track[] = [],
+  captions: CaptionEntry[] = [],
+  captionStyle: Partial<TextOverlayStyle> = {},
 ): string {
-  const project = serializeProject(clips, transitions, textOverlays, clipGroups, undefined, tracks);
+  const project = serializeProject(
+    clips, transitions, textOverlays, clipGroups, undefined, tracks,
+    undefined, null, captions, captionStyle,
+  );
   return JSON.stringify({
     project,
     selectedClipId,

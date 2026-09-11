@@ -28,6 +28,22 @@ import {
 } from './animatedLayout';
 import { getTimelineClips } from './timelineClips';
 import { capPreviewResolution, DEFAULT_PREVIEW_MAX_HEIGHT } from './previewBudget';
+import { resolveTransitionShaderId } from '../webgpu/transitions/registry';
+import { isStabilizationActive, stabMatrixForClip } from './stabilization';
+import type { StabMatrix } from '../wasm/videoStabilize';
+
+/**
+ * Spread-in `stabMatrix` for a clip, or nothing at all when it is not
+ * stabilized — an absent key keeps unstabilized layers structurally identical
+ * to what they were before stabilization existed.
+ */
+function stabMatrixEntry(
+  clip: Clip,
+  sourceTime: number,
+): { stabMatrix?: StabMatrix } {
+  if (!isStabilizationActive(clip)) return {};
+  return { stabMatrix: stabMatrixForClip(clip, sourceTime) };
+}
 
 export type PreviewLayerKind = 'base' | 'pip' | 'text';
 
@@ -73,6 +89,11 @@ export interface PreviewClipLayer {
   /** Ken Burns / per-frame UV override (multiplied with letterbox UV). */
   uvScale?: [number, number];
   uvOffset?: [number, number];
+  /**
+   * Camera-shake correction sampled at this layer's `sourceTime`
+   * (`[a, b, tx, c, d, ty]`). Omitted when the clip is not stabilized.
+   */
+  stabMatrix?: StabMatrix;
 }
 
 export interface PreviewTextLayer {
@@ -431,7 +452,7 @@ function buildCrossfadeForSegment(
   const previewType =
     isMorphTransition(transition) && !isMorphSegmentReady(transition)
       ? 'dissolve'
-      : transition.type;
+      : resolveTransitionShaderId(transition);
 
   return {
     type: previewType,
@@ -540,6 +561,11 @@ function buildScheduledClipLayer(
     localElapsed,
   );
 
+  const sourceTime = sourceTimeAtOutputLocal(
+    segment.clip,
+    wrapOutputLocalToCycle(segment.clip, localElapsed).cycleLocalT,
+  );
+
   return {
     kind: 'base',
     clipId: segment.clip.id,
@@ -548,15 +574,13 @@ function buildScheduledClipLayer(
       segment.scheduleIndex * 10 + (crossfade?.role === 'incoming' ? 1 : 0),
     localElapsed,
     clipDuration: segment.duration,
-    sourceTime: sourceTimeAtOutputLocal(
-      segment.clip,
-      wrapOutputLocalToCycle(segment.clip, localElapsed).cycleLocalT,
-    ),
+    sourceTime,
     opacity: clipLayerOpacity(segment.clip, localElapsed, segment.duration, crossfade),
     rect,
     crossfade,
     uvScale,
     uvOffset,
+    ...stabMatrixEntry(segment.clip, sourceTime),
   };
 }
 
@@ -577,6 +601,11 @@ function buildOutgoingCrossfadeLayer(
     outgoingElapsed,
   );
 
+  const outgoingSourceTime = sourceTimeAtOutputLocal(
+    segment.clip,
+    wrapOutputLocalToCycle(segment.clip, outgoingElapsed).cycleLocalT,
+  );
+
   return {
     kind: 'base',
     clipId: segment.clip.id,
@@ -584,10 +613,7 @@ function buildOutgoingCrossfadeLayer(
     zIndex: segment.scheduleIndex * 10,
     localElapsed: outgoingElapsed,
     clipDuration: segment.duration,
-    sourceTime: sourceTimeAtOutputLocal(
-      segment.clip,
-      wrapOutputLocalToCycle(segment.clip, outgoingElapsed).cycleLocalT,
-    ),
+    sourceTime: outgoingSourceTime,
     opacity: clipLayerOpacity(
       segment.clip,
       outgoingElapsed,
@@ -598,6 +624,7 @@ function buildOutgoingCrossfadeLayer(
     crossfade: outgoingCrossfade,
     uvScale,
     uvOffset,
+    ...stabMatrixEntry(segment.clip, outgoingSourceTime),
   };
 }
 
@@ -738,6 +765,11 @@ function buildPipLayers(
         localElapsed,
       );
 
+      const sourceTime = sourceTimeAtOutputLocal(
+        clip,
+        wrapOutputLocalToCycle(clip, localElapsed).cycleLocalT,
+      );
+
       return {
         kind: 'pip' as const,
         clipId: clip.id,
@@ -745,15 +777,13 @@ function buildPipLayers(
         zIndex: 1000 + (clip.layerIndex ?? 1) * 100 + timelineIndex,
         localElapsed,
         clipDuration: duration,
-        sourceTime: sourceTimeAtOutputLocal(
-          clip,
-          wrapOutputLocalToCycle(clip, localElapsed).cycleLocalT,
-        ),
+        sourceTime,
         opacity: clipLayerOpacity(clip, localElapsed, duration, null),
         rect,
         crossfade: null,
         uvScale,
         uvOffset,
+        ...stabMatrixEntry(clip, sourceTime),
       };
     });
 }

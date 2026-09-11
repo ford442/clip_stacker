@@ -2,6 +2,7 @@ import { createStore } from 'zustand/vanilla';
 import type { ExportSettings, RenderPlan } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
+import type { CaptionExportMode } from '../ffmpeg/captions';
 
 export interface SettingsState {
   exportSettings: ExportSettings;
@@ -10,6 +11,12 @@ export interface SettingsState {
   useCanvasRenderer: boolean;
   audioReactive: boolean;
   forceReencode: boolean;
+  /**
+   * How the caption track is attached to the exported MP4 (#captions).
+   * Runs as a post-pass over the finished file, so it applies to every
+   * encoder path. Sidecar `.srt` export is a separate explicit action.
+   */
+  captionExportMode: CaptionExportMode;
 
   status: string;
   progressStage: string;
@@ -31,6 +38,7 @@ export interface SettingsState {
   setUseCanvasRenderer: (v: boolean) => void;
   setAudioReactive: (v: boolean) => void;
   setForceReencode: (v: boolean) => void;
+  setCaptionExportMode: (mode: CaptionExportMode) => void;
 
   setStatus: (status: string) => void;
   setProgressStage: (stage: string) => void;
@@ -54,6 +62,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   useCanvasRenderer: false,
   audioReactive: true,
   forceReencode: false,
+  captionExportMode: 'none',
 
   status: '',
   progressStage: '',
@@ -75,6 +84,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   setUseCanvasRenderer: (v) => set({ useCanvasRenderer: v }),
   setAudioReactive: (v) => set({ audioReactive: v }),
   setForceReencode: (v) => set({ forceReencode: v }),
+  setCaptionExportMode: (mode) => set({ captionExportMode: mode }),
 
   setStatus: (status) => set({ status }),
   setProgressStage: (stage) => set({ progressStage: stage }),

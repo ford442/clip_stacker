@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { RefObject } from "react";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import type { Clip } from "../types";
+import { playbackStore } from "../store/playbackStore";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
 type AppKeyboardShortcutsDeps = {
@@ -16,6 +17,8 @@ type AppKeyboardShortcutsDeps = {
   handleDuplicateClip: () => void;
   handleDeleteClip: (clipId: string) => void;
   handleReorder: (fromIndex: number, insertBefore: number) => void;
+  /** Adds a caption cue at the given output time; bound to `C`. */
+  handleAddCaptionAtPlayhead: (startSec: number) => string;
   undo: UseEditHistoryResult["undo"];
   redo: UseEditHistoryResult["redo"];
   setStatus: (status: string) => void;
@@ -34,6 +37,7 @@ export function useAppKeyboardShortcuts({
   handleDuplicateClip,
   handleDeleteClip,
   handleReorder,
+  handleAddCaptionAtPlayhead,
   undo,
   redo,
   setStatus,
@@ -56,6 +60,13 @@ export function useAppKeyboardShortcuts({
     if (selectedClipId) handleDeleteClip(selectedClipId);
   }, [selectedClipId, handleDeleteClip]);
 
+  // The playhead is read at press time rather than subscribed to, so this
+  // callback stays stable while the preview scrubs.
+  const handleAddCaption = useCallback(() => {
+    handleAddCaptionAtPlayhead(playbackStore.getState().playheadTime ?? 0);
+    setStatus("Caption added at the playhead. Edit it in the Captions tab.");
+  }, [handleAddCaptionAtPlayhead, setStatus]);
+
   const handleUndo = useCallback(() => {
     if (!canUndo) return;
     undo();
@@ -73,6 +84,7 @@ export function useAppKeyboardShortcuts({
       r: handleMerge,
       "ctrl+s": handleSaveProject,
       s: handleSplitClip,
+      c: handleAddCaption,
       "ctrl+d": handleDuplicateClip,
       l: () => toolbarRef.current?.triggerLoadDialog(),
       delete: handleDeleteSelectedClip,
@@ -90,6 +102,7 @@ export function useAppKeyboardShortcuts({
       handleSaveProject,
       handleSplitClip,
       handleDuplicateClip,
+      handleAddCaption,
       handleDeleteSelectedClip,
       handleMoveSelectedLeft,
       handleMoveSelectedRight,

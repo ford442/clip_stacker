@@ -15,6 +15,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm run preview`: serve the built app locally for verification.
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
 - `npm run build:audio-analysis`: rebuild the audio FFT WASM module (`public/wasm/`) via Emscripten.
+- `npm run build:video-stabilize`: rebuild the video stabilization WASM module (`public/wasm/`) via Emscripten.
 
 ## Coding Style & Naming Conventions
 
@@ -69,6 +70,46 @@ Current small set (license notes):
 
 Never embed user-supplied custom fonts (out of scope).
 
+## Captions / subtitles
+
+The caption track (`CaptionEntry[]`) is separate from `TextOverlay`s: time-coded
+cues that import/export as `.srt` / `.ass`. Both share `TextOverlayStyle`
+(font, size, colours, box, position) — note captions anchor `x`/`y` at their
+**bottom centre**, overlays at their **top left**.
+
+Where the pieces live:
+
+- `src/utils/subtitles.ts` — `parseSrt` / `parseAss` / `parseSubtitles`,
+  `serializeSrt`, `buildAssDocument` (burn-in), `normalizeCaptions`,
+  `DEFAULT_CAPTION_STYLE`. Pure string ↔ `CaptionEntry`, no FFmpeg or DOM.
+- `src/ffmpeg/captions.ts` — the export passes. `buildBurnCaptionsArgs` /
+  `buildSoftSubtitleArgs` are pure argv builders (that's what the tests cover);
+  `applyCaptionsToRenderedVideo` runs them.
+- `src/components/CaptionLane.tsx` — the timeline's **CC** lane.
+- `src/components/CaptionsPanel.tsx` — the Inspector's *Captions* tab.
+- `src/hooks/useCaptionActions.ts` — CRUD, import, `.srt` export.
+- `src/utils/captionProvider.ts` — the (unimplemented) auto-caption interface.
+
+Two things to keep in mind when changing this:
+
+1. **Caption export is a post-pass, not a filter-graph hook.** It runs on the
+   blob `hybridMergeClips` returns (in `useRenderActions`), because that
+   function can finish on any of three encoders and only the FFmpeg one has a
+   graph to hook. Burn-in therefore costs one extra video re-encode; the soft
+   mux is a stream copy. Do not "optimize" this by folding `subtitles=` into
+   the FFmpeg path only — that silently drops captions on the GPU and canvas
+   paths.
+2. **Burn-in depends on libass being in the core build.** `@ffmpeg/core` is
+   built `--enable-libass` but *without* fontconfig, so libass can only resolve
+   a family name by scanning a fonts directory — hence `fontsdir=.` plus
+   `ensureFont` writing the bundled TTFs to the VFS root. The bold Roboto is
+   selected with the ASS bold flag rather than by name, because its internal
+   family is still "Roboto".
+
+`Project.captions` / `Project.captionStyle` are optional, so projects saved
+before captions existed still load (as an empty track). `applyProjectData`
+coerces and drops malformed cues rather than throwing.
+
 ## Audio analysis WASM (FFT / beats)
 
 Real-time and offline audio features use a small Emscripten module (kissfft, BSD-3-Clause) that produces frequency-band energy and beat onset envelopes for WebGPU uniforms and timeline markers.
@@ -94,6 +135,110 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 4. Keep zeros when WASM is unavailable — shaders must remain no-ops (no crash / no visual glitch).
 
 Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approved FFT) inside `native/audio_analysis/`.
+
+## WebGPU transitions
+
+Transitions are WGSL fragment-shader bodies spliced into one shared template,
+so adding one is a `TransitionDef` object and ~5-20 lines of WGSL.
+
+- `src/webgpu/transitions/shaderTemplate.ts` — the preamble/postamble, the
+  `TransitionUniforms` struct, and the `sampleFrom` / `sampleTo` /
+  `sampleMask` / `sampleMaskLuma` helpers a body may call.
+- `src/webgpu/transitions/registry.ts` — the `TransitionDef` list. Drives the
+  picker (`listTransitionOptions`), the preview pipeline, and the FFmpeg
+  fallback (`getXfadeName`).
+- `src/webgpu/transitions/transitionPass.ts` — pipeline cache (one pipeline
+  per transition id, LRU-capped), uniform packing, and the wipe-mask texture.
+- `src/webgpu/transitions/customShader.ts` — the parametric "Custom (WGSL)"
+  transition: validation, content-addressed registration, sandboxed compile.
+- `src/components/TransitionEditor.tsx` — type picker, per-transition params,
+  and the custom-WGSL textarea.
+
+Adding a transition:
+
+1. Write the WGSL body. It must assign `result` (a `vec4<f32>`) and may read
+   `uv`, `u.progress`, `u.resolutionX/Y`, and `u.custom0`-`u.custom3`.
+2. Add a `TransitionDef` to `REGISTRY_LIST` with a stable `id`, a `label`, a
+   `description` (the picker tooltip), and an `xfadeName`.
+3. Expose tunables as `params` — they map **positionally** to `custom0`-`custom3`
+   (`resolveCustomUniforms`), so slot order is the array order. The editor
+   renders a number input per entry automatically.
+4. Add a smoke-render case to `registry.test.ts`.
+
+Two things to keep in mind:
+
+1. **`xfadeName` is not decoration.** Export only uses the WGSL when the
+   WebGPU path runs; `buildTransitionFilterComplex` falls back to FFmpeg's
+   `xfade` for the CPU path, so every transition needs the closest real xfade
+   name. There is no "unsupported transition" error — a missing entry silently
+   exports as a plain `fade`.
+2. **Custom shaders are user input.** The WGSL a user types is only ever
+   spliced into the single `result = (...)` slot, and `validateCustomExpression`
+   rejects the syntax that would let it escape (statements, comments,
+   attributes, declarations, control flow). Keep that check in front of any new
+   path that compiles a user expression. Invalid WGSL falls back to the base
+   `custom` dissolve rather than throwing, so live typing never breaks playback.
+
+The `lumaWipe` boundary comes from a mask texture bound at
+`@group(0) @binding(4)`, never from clip content, so an HDR (>1.0) source
+can't push the wipe threshold out of range. The cache ships a procedural
+diagonal ramp; `previewEngine.setTransitionMask(bitmap)` replaces it (upload
+once per project load, as `lutPass` does with LUTs).
+
+## Video stabilization (WASM optical flow)
+
+Camera-shake removal: a native module measures the camera path with sparse
+optical flow, and the correction rides through every render path as a 2x3
+affine. Enabled per clip with the Inspector's **Stabilize** toggle.
+
+### Layout
+
+- `native/video_stabilize/` — C++ source (no vendored deps); rebuild with
+  `npm run build:video-stabilize` (requires `emcc`). See its README for the
+  algorithm and the matrix convention.
+- `public/wasm/video_stabilize.{js,wasm}` — committed build artifacts (~16 KB gzipped)
+- `src/wasm/videoStabilize.ts` — lazy loader + typed bindings (graceful disable on load failure)
+- `src/utils/stabilizePipeline.ts` — decode → downscale → analyse; `computeAnalysisPlan` picks the resolution and sampling rate
+- `src/utils/stabilization.ts` — pure helpers: sampling, pixel-affine conversion, `.trf` serialization
+- `src/hooks/useClipStabilization.ts` — runs analysis once per toggled-on clip in the background
+- `src/webgpu/shaders/preview.wgsl` — `applyStabilization()` on the source UV
+- `src/webgpu/transitions/shaderTemplate.ts` — the same warp inside `sampleFrom`/`sampleTo`
+- `src/utils/canvas-renderer-layers.ts` — the Canvas2D equivalent via `ctx.transform`
+
+### The matrix is an inverse warp in normalized UV
+
+`[a, b, tx, c, d, ty]` maps an **output** UV to the **source** UV it should
+sample, about the frame centre, with aspect and auto-crop already folded in.
+That is what lets one array serve the preview, GPU export, and canvas export at
+different resolutions. The CPU paths invert it (`stabMatrixToCanvasTransform`)
+because `drawImage` pushes pixels the other way. Identity is `[1,0,0,0,1,0]`,
+and every unstabilized path passes exactly that.
+
+### Four things to keep in mind
+
+1. **Analysis covers the whole source, never the trim window.** Matrix index
+   maps directly to source time, so dragging a trim handle costs nothing.
+   Scoping analysis to the trim would mean re-running optical flow on every
+   trim edit — the most frequent edit there is.
+2. **The matrices are not serialized.** Only `SerializedClip.stabilize` (the
+   toggle) round-trips; a 60 s clip's matrices are tens of KB and are fully
+   derived from the source. `useClipStabilization` refills them on load, which
+   is why a freshly loaded project shows "Analysing camera motion…" again.
+3. **Stabilization must be applied in the transition shader too.** It lives in
+   `sampleFrom`/`sampleTo`, not in a transition body, because otherwise a
+   stabilized clip snaps back to shaky for the length of every crossfade. Any
+   new render path that samples clip pixels needs the same treatment.
+4. **Analysis is two-phase and the smoother is centred.** Nothing is knowable
+   until `finalize()`; `getMatrix` before that returns identity by design, not
+   as an error. Do not try to make it streaming.
+
+### FFmpeg export
+
+`serializeTrf` / `buildVidstabTransformFilter` produce a `vidstabtransform`
+input file, but **`@ffmpeg/core` is not built with libvidstab**, so that path
+only works against a custom core. The shipped export paths warp on the GPU
+(WebGPU export reuses the preview renderer) or through the Canvas2D transform,
+which is why stabilization survives whichever encoder `hybridMergeClips` picks.
 
 ## gpu-chores (import / library pixel work)
 

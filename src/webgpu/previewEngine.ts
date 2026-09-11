@@ -19,6 +19,10 @@ import {
   ZERO_AUDIO_REACTIVE,
   type AudioReactiveState,
 } from "../wasm/audioReactiveUniforms";
+import {
+  IDENTITY_STAB_MATRIX,
+  type StabMatrix,
+} from "../wasm/videoStabilize";
 
 /**
  * WebGPU-based clip preview engine.
@@ -36,7 +40,10 @@ import {
  */
 
 /** Must match WGSL Uniforms (20 floats = 80 bytes, 16-byte aligned). */
-const UNIFORM_FLOATS = 20;
+const UNIFORM_FLOATS = 24;
+
+/** First slot of the stabilization affine in `Uniforms` (must match preview.wgsl). */
+const STAB_UNIFORM_OFFSET = 17;
 
 // Numeric GPUTextureUsage flags (spec values) so this module can load in tests
 // without a WebGPU environment.
@@ -79,6 +86,11 @@ export interface LayerRenderParams {
   opacity: number;
   uvScale: [number, number];
   uvOffset: [number, number];
+  /**
+   * Camera-shake correction as an inverse-warp 2x3 affine in normalized UV,
+   * `[a, b, tx, c, d, ty]`. Omit (or pass identity) for unstabilized clips.
+   */
+  stabMatrix?: StabMatrix;
   /** Destination rectangle on the canvas in normalized 0–1 coordinates. */
   destRect?: NormalizedDestRect;
   /** When true, clears the canvas before drawing this layer. */
@@ -370,6 +382,17 @@ export class PreviewEngine {
   }
 
   /**
+   * Upload the luma-wipe mask used by the `lumaWipe` transition. Call once per
+   * project load; `null` restores the built-in diagonal ramp.
+   */
+  setTransitionMask(
+    source: ImageBitmap | HTMLCanvasElement | OffscreenCanvas | null,
+  ): void {
+    if (this.destroyed) return;
+    this.transitionPipelineCache.setMaskImage(source);
+  }
+
+  /**
    * Render a GPU transition between two video frames (preview + export).
    * Caller must close() both VideoFrames after this returns.
    */
@@ -471,6 +494,7 @@ export class PreviewEngine {
     this.destroyed = true;
     this.uniformBuffer.destroy();
     this.transitionUniformBuffer.destroy();
+    this.transitionPipelineCache.destroy();
     this.finishingChain.destroy();
     this.overlayTexture?.destroy();
     for (const buffer of this.extraLayerUniformBuffers) {
@@ -519,6 +543,13 @@ export class PreviewEngine {
     this.uniformData[AUDIO_UNIFORM_OFFSET.mid] = this.audioReactive.mid;
     this.uniformData[AUDIO_UNIFORM_OFFSET.treble] = this.audioReactive.treble;
     this.uniformData[AUDIO_UNIFORM_OFFSET.beat] = this.audioReactive.beat;
+    const stab = params.stabMatrix ?? IDENTITY_STAB_MATRIX;
+    this.uniformData[STAB_UNIFORM_OFFSET] = stab[0];
+    this.uniformData[STAB_UNIFORM_OFFSET + 1] = stab[1];
+    this.uniformData[STAB_UNIFORM_OFFSET + 2] = stab[2];
+    this.uniformData[STAB_UNIFORM_OFFSET + 3] = stab[3];
+    this.uniformData[STAB_UNIFORM_OFFSET + 4] = stab[4];
+    this.uniformData[STAB_UNIFORM_OFFSET + 5] = stab[5];
 
     const uniformBuffer = this.uniformBufferForLayer(index);
     this.device.queue.writeBuffer(uniformBuffer, 0, this.uniformData);

@@ -12,6 +12,7 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - **Picture-in-Picture overlays**: select a video clip and hit **Use as overlay (PiP)** in the Inspector to composite it over the base video in any corner; **Use as base layer** puts it back. Size, position and opacity stay editable under *Picture-in-Picture layout (advanced)*
 - **Channel logos / bugs**: **Use as channel logo** snaps the clip to a corner at ~10% of the canvas width, locked to the source's own aspect ratio, muted, and keyed on the source alpha — so a non-square mark composites without a black box on both the GPU export and the FFmpeg fallback. Transparency mode is editable under *Picture-in-Picture layout (advanced)*: source alpha (straight or premultiplied), chroma key, luma key, or an opaque rectangle. The mask has to exist in the file: use PNG/WebP for stills and WebM (VP8/VP9 + alpha) for motion — H.264 MP4 carries no alpha, so key those with chroma/luma instead. Chroma and luma keying currently apply on export only; the preview shows the un-keyed source
 - **News tickers / lower thirds**: use a scrolling text overlay (`scrolling` + `scrollSpeed`), which matches between preview and FFmpeg `drawtext`. Only bake a designed motion lower third to video (as WebM + alpha, placed as a full-width bottom overlay) when `drawtext` cannot express it
+- **Captions / subtitles**: a time-coded caption track with its own timeline lane. Import `.srt` / `.ass`, edit text and timings in the Inspector's *Captions* tab, drag a chip's edges to retime, press <kbd>C</kbd> to add a cue at the playhead, and export burned-in, as a toggle-able soft subtitle track, or as a sidecar `.srt` — see [Captions and subtitles](#captions-and-subtitles)
 - Merge timeline into one MP4 via FFmpeg (WebAssembly, fully in-browser)
 - **Intercut generator**: pick two or three library clips and bake an accelerating strobe or explicit interval-list cut pattern (for example `2, 1, 1, 2, 3, 2`) via local FFmpeg concat — no cloud GPU / RIFE
 - **Intelligent render plan**: Before rendering, see whether the merge will be lossless concat (fast, no quality loss) or re-encoding, with the specific reason
@@ -182,6 +183,53 @@ Text overlays can use a procedural shader fill (plasma, gradient, etc.) instead 
 | Canvas audio-reactive renderer | ❌ No — text overlays aren't composited on this path |
 
 If a render falls back to FFmpeg, the app warns in the status bar and on the render plan summary. Switch a shader overlay's Fill to Solid in the Text Overlay panel if you need the exact same look on every export path.
+
+### Captions and subtitles
+
+Captions are a separate track from text overlays: one list of time-coded cues
+(`CaptionEntry`) that round-trips through subtitle files rather than a pile of
+individually timed overlays.
+
+**Editing.** The **CC** lane sits under the timeline ruler. Click a chip to
+select it, drag either edge to retime it, or double-click empty lane space to
+add a cue there. <kbd>C</kbd> adds a cue at the preview playhead. Text, exact
+timings, and the project-wide style live in the Inspector's **Captions** tab.
+
+**Import.** *Import .srt / .ass* replaces the caption track with the cues from
+the file (undoable). The SubRip parser is deliberately lenient — CRLF and lone
+CR line endings, a UTF-8 BOM, missing sequence numbers, missing blank lines
+between cues, `.`-separated milliseconds and trailing SubRip coordinates all
+parse. ASS/SSA import reads the `[Events]` section's dialogue rows and strips
+inline override tags; styling comes from the project's caption style.
+
+**Export.** Three modes, chosen under *Caption export* in the Captions tab:
+
+| Mode | What you get | Cost |
+| --- | --- | --- |
+| Off | Captions stay on the timeline only | — |
+| Burn into video | Cues drawn into the picture with libass (`ass` filter) | One extra video re-encode; audio is stream-copied |
+| Soft subtitle track | A `mov_text` track players can toggle (VLC, QuickTime, Chrome) | Stream copy only |
+
+*Export .srt* downloads the track as a sidecar file with no re-encode at all.
+
+Both muxed modes run as a **post-pass over the finished MP4**
+(`src/ffmpeg/captions.ts`) rather than inside the render's filter graph, so
+they behave identically whichever encoder `hybridMergeClips` picked (WebCodecs
+GPU, the Canvas2D renderer, or FFmpeg).
+
+**Style.** One project-wide style with optional per-cue overrides, sharing the
+`TextOverlayStyle` fields (font, size, colour, background box, position). Note
+the anchor differs from a text overlay: a caption's `x`/`y` place its *bottom
+centre*, which is how subtitles are conventionally positioned. Burn-in
+generates an ASS document with one `Style:` row per distinct override, so
+per-cue styling survives.
+
+**Auto-captioning** is not implemented. `src/utils/captionProvider.ts` defines
+the `CaptionProvider` interface a Whisper-WASM or cloud speech-to-text adapter
+would implement, so the core feature stays decoupled from any model.
+
+Captions are **not drawn in the preview** yet — the CC lane gives timing
+feedback, but you only see the rendered result after a burn-in export.
 
 ### Fonts for text overlays
 

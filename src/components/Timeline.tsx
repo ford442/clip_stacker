@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ClipTransition } from '../types';
-import { useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedClipId, editorActions } from '../store';
+import { useEditorCaptions, useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedCaptionId, useSelectedClipId, editorActions, uiActions } from '../store';
 import { editorStore } from '../store/editorStore';
 import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import {
@@ -38,6 +38,7 @@ import { VirtualClipBlock } from './VirtualClipBlock';
 import { MasterAudioTrack } from './MasterAudioTrack';
 import { clipHasRateAutomation } from '../utils/timeRemap';
 import SyncMarkerLane from './SyncMarkerLane';
+import { CaptionLane } from './CaptionLane';
 import MarkerConnectionCanvas from './MarkerConnectionCanvas';
 import { SyncDragProvider } from '../context/SyncDragContext';
 
@@ -48,6 +49,10 @@ interface Props {
   onMoveToTrack: (clipId: string, targetTrackId: string, startTime: number) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
   onDelete: (id: string) => void;
+  /** Retime one edge of a caption cue (drag on the CC lane). */
+  onCaptionResize: (id: string, edge: 'start' | 'end', timeSec: number) => void;
+  /** Add a caption cue at an output time (double-click on the CC lane). */
+  onCaptionAdd: (startSec: number) => void;
   morphProcessingIndex?: number | null;
 }
 
@@ -139,6 +144,8 @@ function TimelineImpl({
   onMoveToTrack,
   onTransitionUpdate,
   onDelete,
+  onCaptionResize,
+  onCaptionAdd,
   morphProcessingIndex = null,
 }: Props) {
   const clips = useEditorTimelineClips();
@@ -148,6 +155,8 @@ function TimelineImpl({
   const masterAudio = useEditorMasterAudio();
   const transitions = useEditorTransitions();
   const masterAudioMarkers = useEditorMasterAudioMarkers();
+  const captions = useEditorCaptions();
+  const selectedCaptionId = useSelectedCaptionId();
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
   const [editingTransition, setEditingTransition] = useState<ClipTransition | null>(null);
@@ -591,6 +600,17 @@ function TimelineImpl({
           laneType="audio"
           clipId={null}
           onUpdateMarkers={(markers) => editorActions.setMasterAudioMarkers(markers)}
+        />
+
+        <CaptionLane
+          captions={captions}
+          duration={totalDuration}
+          width={contentWidth}
+          pixelsPerSecond={pixelsPerSecond}
+          selectedCaptionId={selectedCaptionId}
+          onSelect={uiActions.setSelectedCaptionId}
+          onResize={onCaptionResize}
+          onAddAt={onCaptionAdd}
         />
 
         <div

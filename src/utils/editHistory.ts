@@ -1,4 +1,14 @@
-import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track, SyncMarker } from '../types';
+import type {
+  CaptionEntry,
+  Clip,
+  ClipGroup,
+  ClipTransition,
+  MasterAudio,
+  TextOverlay,
+  TextOverlayStyle,
+  Track,
+  SyncMarker,
+} from '../types';
 import { cloneTracks } from './trackModel';
 
 /** Maximum undo snapshots kept in memory. */
@@ -11,6 +21,8 @@ export interface EditSnapshot {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  captions: CaptionEntry[];
+  captionStyle: Partial<TextOverlayStyle>;
   masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
   masterAudio: MasterAudio | null;
@@ -34,6 +46,11 @@ export function cloneSnapshot(snapshot: EditSnapshot): EditSnapshot {
     })),
     transitions: snapshot.transitions.map((transition) => ({ ...transition })),
     textOverlays: snapshot.textOverlays.map((overlay) => ({ ...overlay })),
+    captions: (snapshot.captions ?? []).map((caption) => ({
+      ...caption,
+      ...(caption.style ? { style: { ...caption.style } } : {}),
+    })),
+    captionStyle: { ...(snapshot.captionStyle ?? {}) },
     masterAudioMarkers: snapshot.masterAudioMarkers ? snapshot.masterAudioMarkers.map(m => ({...m})) : [],
     selectedClipId: snapshot.selectedClipId,
     masterAudio: snapshot.masterAudio

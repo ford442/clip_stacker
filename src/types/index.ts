@@ -63,6 +63,29 @@ export interface SyncMarker {
   linkedId?: string;
 }
 
+/**
+ * Per-frame camera-shake corrections from the `video_stabilize` WASM module.
+ *
+ * Matrices are inverse warps in normalized UV space, centred on the frame
+ * (see `native/video_stabilize/video_stabilize.h`), so preview, GPU export and
+ * the canvas renderer can all consume them without knowing the analysis
+ * resolution. Deliberately NOT serialized with the project — see
+ * `SerializedClip.stabilize`.
+ */
+export interface ClipStabilization {
+  /** Rate the analysis sampled the source at (frames per second). */
+  fps: number;
+  /** `frameCount * 6` floats — [a, b, tx, c, d, ty] per frame. */
+  matrices: Float32Array;
+  frameCount: number;
+  /** Auto-crop baked into the matrices (>= 1). */
+  zoom: number;
+  /** Peak correction as a fraction of frame width. */
+  maxCorrection: number;
+  /** Moving-average half-width used, in analysis frames. */
+  smoothRadius: number;
+}
+
 export interface Clip {
   id: string;
   file: File;
@@ -184,6 +207,15 @@ export interface Clip {
   /** Last gpu-chores backend used for import analysis. */
   gpuChoreBackend?: 'webgpu' | 'wasm' | 'cpu';
   gpuChoreReason?: string;
+  // ---------------------------------------------------------------------------
+  // Video stabilization
+  // ---------------------------------------------------------------------------
+  /** User toggle — stabilize this clip in preview and export. Video clips only. */
+  stabilize?: boolean;
+  /** Computed corrections. Recomputed on load; never serialized. */
+  stabilization?: ClipStabilization;
+  /** Why analysis could not run for this clip (WASM disabled, undecodable, …). */
+  stabilizeError?: string;
 }
 
 export interface SerializedClip {
@@ -253,6 +285,12 @@ export interface SerializedClip {
   syncMarkers?: SyncMarker[];
   lumaHistogram?: number[];
   lumaLevels?: { black: number; white: number; mean: number };
+  /**
+   * Stabilization toggle. Only the toggle round-trips: the matrices are a few
+   * tens of KB per clip and are fully derived from the source media, so a load
+   * recomputes them instead of bloating every project file.
+   */
+  stabilize?: boolean;
 }
 
 export type TransitionType = 'none' | (string & {});
@@ -284,6 +322,8 @@ export interface ClipTransition {
   duration: number;
   /** Per-transition shader uniforms (keys match registry param defs). */
   params?: Record<string, number>;
+  /** WGSL expression for `type: 'custom'` — substituted into the transition shader template. */
+  customShader?: string;
   /** Populated for `type: 'morph'` after RIFE generates the in-between segment. */
   morphSegment?: MorphTransitionSegment;
 }
@@ -293,6 +333,7 @@ export interface SerializedTransition {
   type: TransitionType;
   duration: number;
   params?: Record<string, number>;
+  customShader?: string;
   morphSegment?: SerializedMorphSegment;
 }
 
@@ -392,14 +433,12 @@ export const EXPORT_PRESETS: ExportPreset[] = [
 ];
 
 /**
- * A text overlay (caption, ticker, title) rendered via FFmpeg's drawtext filter.
- * All overlays are independent of clips and applied to the final composed video.
+ * The purely visual properties shared by text overlays and captions: typeface,
+ * size, colours, box and position. Split out of {@link TextOverlay} so a
+ * {@link CaptionEntry} can carry a partial style override without dragging in
+ * the overlay-only fields (`text`, `scrolling`, keyframes, shader fills).
  */
-export interface TextOverlay {
-  /** Unique identifier */
-  id: string;
-  /** Text content to display */
-  text: string;
+export interface TextOverlayStyle {
   /** Font size in pixels */
   fontsize: number;
   /** Font color — any FFmpeg color value: name ('white'), hex ('#ffffff'), or '0xRRGGBB' */
@@ -409,10 +448,61 @@ export interface TextOverlay {
    * If omitted or unknown at load time, falls back to the default (Roboto Regular).
    */
   font?: string;
-  /** X position as a fraction of output width (ignored for scrolling text). */
+  /**
+   * X position as a fraction of output width (ignored for scrolling text).
+   * For text overlays this is the *left* edge; for captions it is the
+   * horizontal centre — see {@link CaptionEntry}.
+   */
   x: number;
-  /** Y position as a fraction of output height. */
+  /**
+   * Y position as a fraction of output height. For text overlays this is the
+   * *top* edge; for captions it is the baseline of the bottom line.
+   */
   y: number;
+  /** Whether to draw a filled background box behind the text */
+  box: boolean;
+  /** Box color — supports alpha, e.g. 'black@0.5' or '0x000000@0.5' */
+  boxColor: string;
+}
+
+/**
+ * A time-coded caption (subtitle) cue on the output timeline.
+ *
+ * Captions are a separate, importable/exportable track rather than a pile of
+ * individually timed {@link TextOverlay}s: they round-trip through `.srt` /
+ * `.ass` files (`src/utils/subtitles.ts`) and can be exported burned-in, as a
+ * soft `mov_text` track, or as a sidecar `.srt` (`src/ffmpeg/captions.ts`).
+ *
+ * Times are seconds on the **output** timeline (after trims, speed and
+ * transitions), matching text-overlay keyframe times.
+ */
+export interface CaptionEntry {
+  /** Unique identifier */
+  id: string;
+  /** Cue in-point, in output-timeline seconds. */
+  startSec: number;
+  /** Cue out-point, in output-timeline seconds. Always `> startSec`. */
+  endSec: number;
+  /** Cue text. May contain newlines for multi-line cues. */
+  text: string;
+  /**
+   * Per-cue overrides of the project-wide caption style. Unlike a text
+   * overlay, `x` is the horizontal **centre** and `y` the **bottom** of the
+   * cue box (both fractions of the output size), which is how subtitles are
+   * conventionally anchored. Omitted fields inherit `DEFAULT_CAPTION_STYLE`.
+   */
+  style?: Partial<TextOverlayStyle>;
+}
+
+/**
+ * A text overlay (caption, ticker, title) rendered via FFmpeg's drawtext filter.
+ * All overlays are independent of clips and applied to the final composed video.
+ */
+export interface TextOverlay extends TextOverlayStyle {
+  /** Unique identifier */
+  id: string;
+  /** Text content to display */
+  text: string;
   /** When true the text scrolls right-to-left (news-ticker style) */
   scrolling: boolean;
   /**
@@ -421,10 +511,6 @@ export interface TextOverlay {
    * value of 20 takes ~5 seconds to cross the screen at any output size.
    */
   scrollSpeed: number;
-  /** Whether to draw a filled background box behind the text */
-  box: boolean;
-  /** Box color — supports alpha, e.g. 'black@0.5' or '0x000000@0.5' */
-  boxColor: string;
   /** Optional keyframe animation (time = seconds on the output timeline). */
   keyframes?: TextOverlayKeyframes;
 
@@ -531,6 +617,13 @@ export interface Project {
   clipGroups?: SerializedClipGroup[];
   transitions?: SerializedTransition[];
   textOverlays?: TextOverlay[];
+  /**
+   * Time-coded caption cues. Optional so projects saved before captions
+   * existed still parse; treated as an empty track when absent.
+   */
+  captions?: CaptionEntry[];
+  /** Project-wide caption style; per-cue `style` overrides win over this. */
+  captionStyle?: Partial<TextOverlayStyle>;
   /**
    * Output resolution used when layout coordinates were saved as pixels (schema v1).
    * Schema v2 stores normalized coordinates; this field documents the migration source.

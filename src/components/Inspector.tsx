@@ -3,7 +3,11 @@ import type { Clip, ClipAnimatableProp, ClipKeyframes, ClipAutomation, ExportSet
 import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { resolveClipLocalTimeAtGlobal } from '../utils/previewComposition';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
+import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import {
+  settingsActions,
+  settingsStore,
   useEditorClip,
   useEditorClipGroups,
   useEditorClips,
@@ -59,7 +63,7 @@ import { WaveformCanvas } from './WaveformCanvas';
 import { FadeCanvasPreview } from './FadeCanvasPreview';
 import { KeyframeMiniEditor } from './KeyframeMiniEditor';
 import { FinishingPanel } from './FinishingPanel';
-import type { FinishingSettings } from '../utils/finishing';
+import { CaptionsPanel, type CaptionsPanelProps } from './CaptionsPanel';
 
 interface ClipValues {
   title: string;
@@ -87,17 +91,16 @@ interface ClipValues {
 }
 
 interface Props {
-  exportSettings: ExportSettings;
   onChange: (values: ClipValues) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onAutomationChange?: (automation: ClipAutomation | undefined) => void;
   onApplyKenBurns?: () => void;
-  onExportSettingsChange: (settings: ExportSettings) => void;
-  finishing?: FinishingSettings;
-  onFinishingChange?: (settings: FinishingSettings) => void;
   onExtractAudio?: () => void;
   onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
-  rifeProcessing?: boolean;
+  /** Toggle camera-shake stabilization for the selected video clip. */
+  onStabilizeChange?: (enabled: boolean) => void;
+  /** Caption-track callbacks, forwarded to the Captions tab. */
+  captions: CaptionsPanelProps;
 }
 
 const PIP_KEYFRAME_PROPS: Array<{
@@ -141,7 +144,7 @@ const KEN_BURNS_PROPS: Array<{
   { prop: 'uvOffsetY', label: 'Pan Y', step: 0.01, min: -1, max: 1, defaultValue: 0 },
 ];
 
-type Tab = 'clip' | 'export';
+type Tab = 'clip' | 'export' | 'captions';
 
 const PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'] as const;
 
@@ -231,18 +234,25 @@ function GpuChoreLevelsPanel({ clip }: { clip: Clip }) {
 }
 
 function InspectorImpl({
-  exportSettings,
   onChange,
   onKeyframesChange,
   onAutomationChange,
   onApplyKenBurns,
-  onExportSettingsChange,
-  finishing,
-  onFinishingChange,
   onExtractAudio,
   onRife,
-  rifeProcessing,
+  onStabilizeChange,
+  captions,
 }: Props) {
+  const { exportSettings, finishing, rifeProcessing } = useStore(
+    settingsStore,
+    useShallow((s) => ({
+      exportSettings: s.exportSettings,
+      finishing: s.finishing,
+      rifeProcessing: s.rifeProcessingClipId !== null,
+    })),
+  );
+  const onExportSettingsChange = settingsActions.setExportSettings;
+  const onFinishingChange = settingsActions.setFinishing;
   const selectedClipId = useSelectedClipId();
   const clip = useEditorClip(selectedClipId);
   const clips = useEditorClips();
@@ -430,6 +440,15 @@ function InspectorImpl({
       }, layoutCanvas.width, layoutCanvas.height),
     [values, layoutCanvas, clip?.videoWidth, clip?.videoHeight],
   );
+  const stabilizeStatus = !clip?.stabilize
+    ? null
+    : clip.stabilizeError
+      ? `Stabilization unavailable — ${clip.stabilizeError}`
+      : clip.stabilization
+        ? `Steadied: ${(clip.stabilization.maxCorrection * 100).toFixed(1)}% peak shake corrected, ` +
+          `${((clip.stabilization.zoom - 1) * 100).toFixed(1)}% crop.`
+        : 'Analysing camera motion…';
+
   const isOverlay = parseNumber(values.layerIndex, 0) > 0;
 
   /**
@@ -1151,6 +1170,29 @@ function InspectorImpl({
             Remote WAV: <a href={clip.remoteAudioUrl} target="_blank" rel="noreferrer">{clip.remoteAudioUrl}</a>
           </div>
         )}
+        {clip.kind === 'video' && onStabilizeChange && (
+          <div className="inspector-stabilize">
+            <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>
+              Stabilization
+            </div>
+            <label
+              className="inspector-checkbox-label"
+              title="Remove camera shake by tracking features between frames and smoothing the camera path. Analysis runs once per clip in the background."
+            >
+              <input
+                type="checkbox"
+                checked={Boolean(clip.stabilize)}
+                onChange={(e) => onStabilizeChange(e.target.checked)}
+              />
+              Stabilize this clip
+            </label>
+            {clip.stabilize && stabilizeStatus && (
+              <p className={`inspector-hint${clip.stabilizeError ? ' is-error' : ''}`}>
+                {stabilizeStatus}
+              </p>
+            )}
+          </div>
+        )}
         {clip.kind === 'video' && onRife && (
           <>
             <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>Frame interpolation (RIFE)</div>
@@ -1683,6 +1725,16 @@ function InspectorImpl({
         </button>
         <button
           type="button"
+          className={`inspector-tab${tab === 'captions' ? ' active' : ''}`}
+          onClick={() => setTab('captions')}
+          aria-label="Captions tab"
+          aria-selected={tab === 'captions'}
+          role="tab"
+        >
+          Captions
+        </button>
+        <button
+          type="button"
           className={`inspector-tab${tab === 'export' ? ' active' : ''}`}
           onClick={() => setTab('export')}
           aria-label="Export tab"
@@ -1694,7 +1746,9 @@ function InspectorImpl({
       </div>
 
       <div className="inspector-body">
-        {tab === 'clip' ? renderClipTab() : renderExportTab()}
+        {tab === 'clip' && renderClipTab()}
+        {tab === 'captions' && <CaptionsPanel {...captions} />}
+        {tab === 'export' && renderExportTab()}
       </div>
     </section>
   );

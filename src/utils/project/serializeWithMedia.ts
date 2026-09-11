@@ -1,4 +1,15 @@
-import type { Clip, ClipGroup, ClipTransition, MasterAudio, Project, SerializedClip, TextOverlay, Track } from '../../types';
+import type {
+  CaptionEntry,
+  Clip,
+  ClipGroup,
+  ClipTransition,
+  MasterAudio,
+  Project,
+  SerializedClip,
+  TextOverlay,
+  TextOverlayStyle,
+  Track,
+} from '../../types';
 import type { ColorGradeSettings } from '../lut';
 import type { FinishingSettings } from '../finishing';
 import {
@@ -31,6 +42,10 @@ export interface SerializeProjectOptions {
    * `mediaClient` is set) or embedded anyway despite the size.
    */
   onEmbedWarning?: (message: string) => void;
+  /** Caption cues to save alongside the timeline. */
+  captions?: CaptionEntry[];
+  /** Project-wide caption style overrides. */
+  captionStyle?: Partial<TextOverlayStyle>;
 }
 
 function sanitizeUploadFileName(fileName: string): string {
@@ -199,6 +214,8 @@ export async function serializeProjectWithMedia(
     tracks,
     undefined,
     masterAudio,
+    options.captions ?? [],
+    options.captionStyle ?? {},
   );
   if (mediaMode === 'metadata') return project;
 

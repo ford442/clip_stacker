@@ -23,16 +23,16 @@ import {
 import type { ClipValues } from "../components/Inspector";
 import { DEFAULT_CHROMA_KEY } from "../utils/overlayBlend";
 import type { UseEditHistoryResult } from "./useEditHistory";
+import { setClipStabilize } from "./useClipStabilization";
 
 import { settingsStore } from "../store/settingsStore";
+import { useStorageAuthToken, useStorageEndpoint } from "../store";
 
 type InspectorActionsDeps = Pick<
   UseEditHistoryResult,
   "selectedClipId" | "setClips" | "pushHistory" | "pushHistoryDebounced"
 > & {
   clips: Clip[];
-  storageEndpoint: string;
-  storageAuthToken: string;
 };
 
 const OVERLAY_BLEND_MODES: OverlayBlendMode[] = [
@@ -79,9 +79,9 @@ export function useInspectorActions({
   setClips,
   pushHistory,
   pushHistoryDebounced,
-  storageEndpoint,
-  storageAuthToken,
 }: InspectorActionsDeps) {
+  const storageEndpoint = useStorageEndpoint();
+  const storageAuthToken = useStorageAuthToken();
   const selectedClip = clips.find((c) => c.id === selectedClipId) ?? null;
 
   const handleExtractAudio = useCallback(async () => {
@@ -246,6 +246,26 @@ export function useInspectorActions({
     settingsStore.getState().setStatus("Ken Burns keyframes applied.");
   }, [selectedClipId, pushHistory, setClips]);
 
+  const handleStabilizeChange = useCallback(
+    (enabled: boolean) => {
+      if (!selectedClipId) return;
+      pushHistory();
+      setClips((prev) =>
+        prev.map((clip) =>
+          clip.id === selectedClipId ? setClipStabilize(clip, enabled) : clip,
+        ),
+      );
+      settingsStore
+        .getState()
+        .setStatus(
+          enabled
+            ? "Stabilization on — analysing camera motion in the background."
+            : "Stabilization off.",
+        );
+    },
+    [selectedClipId, pushHistory, setClips],
+  );
+
   const handleRife = useCallback(
     async (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
@@ -345,5 +365,6 @@ export function useInspectorActions({
     handleClipAutomationChange,
     handleApplyKenBurns,
     handleRife,
+    handleStabilizeChange,
   };
 }

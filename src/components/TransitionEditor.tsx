@@ -9,6 +9,14 @@ import {
   getTransitionDef,
   defaultTransitionParams,
 } from "../webgpu/transitions/registry";
+import {
+  CUSTOM_TRANSITION_TYPE,
+  DEFAULT_CUSTOM_EXPRESSION,
+  MAX_CUSTOM_EXPRESSION_LENGTH,
+  compileCustomTransition,
+  validateCustomExpression,
+} from "../webgpu/transitions/customShader";
+import { peekGpuDevice } from "../webgpu/gpuDevice";
 import { MORPH_TRANSITION_TYPE } from "../utils/morphTransition";
 
 interface Props {
@@ -46,6 +54,10 @@ export function TransitionEditor({
   const [params, setParams] = useState<Record<string, number>>(
     transition.params ?? {},
   );
+  const [customShader, setCustomShader] = useState(
+    transition.customShader ?? DEFAULT_CUSTOM_EXPRESSION,
+  );
+  const [shaderError, setShaderError] = useState<string | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const activeDef = type !== "none" ? getTransitionDef(type) : undefined;
@@ -55,7 +67,41 @@ export function TransitionEditor({
     setType(transition.type);
     setDuration(transition.duration);
     setParams(transition.params ?? {});
+    setCustomShader(transition.customShader ?? DEFAULT_CUSTOM_EXPRESSION);
   }, [transition]);
+
+  /**
+   * Validate the WGSL out of band: the static check runs immediately, then a
+   * debounced sandboxed compile on the shared device (when one already exists)
+   * surfaces the driver's own diagnostics. The compiled module is discarded —
+   * the render path builds its own pipeline.
+   */
+  useEffect(() => {
+    if (type !== CUSTOM_TRANSITION_TYPE) {
+      setShaderError(null);
+      return;
+    }
+    const staticCheck = validateCustomExpression(customShader);
+    if (!staticCheck.ok) {
+      setShaderError(staticCheck.error ?? "Invalid expression.");
+      return;
+    }
+    setShaderError(null);
+    const device = peekGpuDevice();
+    if (!device) return;
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void compileCustomTransition(device, customShader).then((res) => {
+        if (cancelled) return;
+        setShaderError(res.ok ? null : (res.error ?? "WGSL compilation failed."));
+      });
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [type, customShader]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -73,6 +119,7 @@ export function TransitionEditor({
     nextType: string,
     nextDuration: number,
     nextParams: Record<string, number>,
+    nextShader: string = customShader,
   ): ClipTransition => {
     const def = nextType !== "none" ? getTransitionDef(nextType) : undefined;
     const mergedParams = def
@@ -94,6 +141,9 @@ export function TransitionEditor({
       ...(mergedParams && Object.keys(mergedParams).length > 0
         ? { params: mergedParams }
         : { params: undefined }),
+      ...(nextType === CUSTOM_TRANSITION_TYPE
+        ? { customShader: nextShader }
+        : { customShader: undefined }),
     };
   };
 
@@ -114,6 +164,13 @@ export function TransitionEditor({
     );
     setDuration(clamped);
     onUpdate(buildUpdated(type, clamped, params));
+  };
+
+  const handleCustomShaderChange = (value: string) => {
+    setCustomShader(value);
+    // Push every keystroke: an invalid expression falls back to a dissolve in
+    // the preview rather than throwing, so live editing stays safe.
+    onUpdate(buildUpdated(type, duration, params, value));
   };
 
   const handleParamChange = (key: string, rawValue: string) => {
@@ -218,6 +275,37 @@ export function TransitionEditor({
                 +
               </button>
             </div>
+          </div>
+        )}
+
+        {type === CUSTOM_TRANSITION_TYPE && (
+          <div className="te-field-group">
+            <label className="te-label" htmlFor="te-custom-shader">
+              WGSL expression
+            </label>
+            <textarea
+              id="te-custom-shader"
+              className={`te-shader-input${shaderError ? " invalid" : ""}`}
+              spellCheck={false}
+              rows={4}
+              maxLength={MAX_CUSTOM_EXPRESSION_LENGTH}
+              value={customShader}
+              onChange={(e) => handleCustomShaderChange(e.target.value)}
+              aria-label="Custom transition WGSL expression"
+              aria-invalid={shaderError ? true : undefined}
+              aria-describedby={shaderError ? "te-shader-error" : undefined}
+            />
+            <p className="te-shader-help">
+              One expression returning <code>vec4&lt;f32&gt;</code>. Available:{" "}
+              <code>uv</code>, <code>u.progress</code>, <code>u.custom0-3</code>,{" "}
+              <code>sampleFrom()</code>, <code>sampleTo()</code>,{" "}
+              <code>sampleMaskLuma()</code>.
+            </p>
+            {shaderError && (
+              <p className="te-shader-error" id="te-shader-error" role="alert">
+                {shaderError}
+              </p>
+            )}
           </div>
         )}
 

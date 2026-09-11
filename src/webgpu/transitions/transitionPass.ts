@@ -1,7 +1,10 @@
 import {
   buildTransitionShader,
+  FROM_STAB_UNIFORM_OFFSET,
+  TO_STAB_UNIFORM_OFFSET,
   TRANSITION_UNIFORM_FLOATS,
 } from './shaderTemplate';
+import { IDENTITY_STAB_MATRIX } from '../../wasm/videoStabilize';
 import {
   getTransitionDef,
   resolveCustomUniforms,
@@ -10,6 +13,54 @@ import type { TransitionRenderParams } from './types';
 
 export interface TransitionPipelineCache {
   getOrCreatePipeline(transitionId: string): GPURenderPipeline;
+  /** View bound at @group(0) @binding(4) — the luma-wipe mask. */
+  getMaskView(): GPUTextureView;
+  /**
+   * Upload the luma-wipe mask (once per project load). Replaces the built-in
+   * diagonal ramp. Pass `null` to go back to the built-in mask.
+   */
+  setMaskImage(source: ImageBitmap | HTMLCanvasElement | OffscreenCanvas | null): void;
+  destroy(): void;
+}
+
+/** Cap on live transition pipelines — custom shaders would otherwise grow this without bound. */
+const MAX_CACHED_PIPELINES = 64;
+
+/** Edge length of the built-in mask ramp. Small: it is only a boundary source. */
+const DEFAULT_MASK_SIZE = 64;
+
+/**
+ * Diagonal luminance ramp used when a project ships no mask of its own, so
+ * `lumaWipe` renders as a soft diagonal wipe out of the box.
+ */
+function createDefaultMaskTexture(device: GPUDevice): GPUTexture {
+  const size = DEFAULT_MASK_SIZE;
+  const pixels = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const ramp = Math.round(((x + y) / (2 * (size - 1))) * 255);
+      const i = (y * size + x) * 4;
+      pixels[i] = ramp;
+      pixels[i + 1] = ramp;
+      pixels[i + 2] = ramp;
+      pixels[i + 3] = 255;
+    }
+  }
+  const texture = device.createTexture({
+    size: [size, size, 1],
+    format: 'rgba8unorm',
+    usage:
+      GPUTextureUsage.TEXTURE_BINDING |
+      GPUTextureUsage.COPY_DST |
+      GPUTextureUsage.RENDER_ATTACHMENT,
+  });
+  device.queue.writeTexture(
+    { texture },
+    pixels,
+    { bytesPerRow: size * 4, rowsPerImage: size },
+    { width: size, height: size },
+  );
+  return texture;
 }
 
 export function createTransitionPipelineCache(
@@ -28,6 +79,11 @@ export function createTransitionPipelineCache(
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
         buffer: { type: 'uniform' },
       },
+      {
+        binding: 4,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: { sampleType: 'float' },
+      },
     ],
   });
 
@@ -35,10 +91,53 @@ export function createTransitionPipelineCache(
     bindGroupLayouts: [bindGroupLayout],
   });
 
+  const defaultMask = createDefaultMaskTexture(device);
+  let maskTexture: GPUTexture = defaultMask;
+
   return {
+    getMaskView(): GPUTextureView {
+      return maskTexture.createView();
+    },
+
+    setMaskImage(
+      source: ImageBitmap | HTMLCanvasElement | OffscreenCanvas | null,
+    ): void {
+      if (maskTexture !== defaultMask) maskTexture.destroy();
+      if (!source) {
+        maskTexture = defaultMask;
+        return;
+      }
+      const width = Math.max(1, source.width);
+      const height = Math.max(1, source.height);
+      maskTexture = device.createTexture({
+        size: [width, height, 1],
+        format: 'rgba8unorm',
+        usage:
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_DST |
+          GPUTextureUsage.RENDER_ATTACHMENT,
+      });
+      device.queue.copyExternalImageToTexture(
+        { source },
+        { texture: maskTexture },
+        { width, height },
+      );
+    },
+
+    destroy(): void {
+      if (maskTexture !== defaultMask) maskTexture.destroy();
+      defaultMask.destroy();
+      pipelines.clear();
+    },
+
     getOrCreatePipeline(transitionId: string): GPURenderPipeline {
       const cached = pipelines.get(transitionId);
-      if (cached) return cached;
+      if (cached) {
+        // Refresh recency so the eviction below drops cold entries first.
+        pipelines.delete(transitionId);
+        pipelines.set(transitionId, cached);
+        return cached;
+      }
 
       const def = getTransitionDef(transitionId);
       if (!def) {
@@ -61,6 +160,11 @@ export function createTransitionPipelineCache(
       });
 
       pipelines.set(transitionId, pipeline);
+      while (pipelines.size > MAX_CACHED_PIPELINES) {
+        const oldest = pipelines.keys().next().value;
+        if (oldest === undefined) break;
+        pipelines.delete(oldest);
+      }
       return pipeline;
     },
   };
@@ -97,6 +201,13 @@ export function writeTransitionUniforms(
   buffer[17] = c2;
   buffer[18] = c3;
   buffer[19] = 0;
+
+  const fromStab = params.fromStabMatrix ?? IDENTITY_STAB_MATRIX;
+  const toStab = params.toStabMatrix ?? IDENTITY_STAB_MATRIX;
+  for (let i = 0; i < 6; i++) {
+    buffer[FROM_STAB_UNIFORM_OFFSET + i] = fromStab[i]!;
+    buffer[TO_STAB_UNIFORM_OFFSET + i] = toStab[i]!;
+  }
 }
 
 export function renderTransitionPass(
@@ -133,6 +244,7 @@ export function renderTransitionPass(
       { binding: 1, resource: fromTexture },
       { binding: 2, resource: toTexture },
       { binding: 3, resource: { buffer: uniformBuffer } },
+      { binding: 4, resource: pipelineCache.getMaskView() },
     ],
   });
 

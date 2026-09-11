@@ -1,22 +1,22 @@
 import { formatBytes, estimateRenderMemoryUsage } from "../utils/memory";
-import type { Clip } from "../types";
+import { editorStore } from "../store";
 
 interface Props {
   isOpen: boolean;
-  clips: Clip[];
   onConfirm: () => void;
   onCancel: () => void;
 }
 
 export function MemoryWarningModal({
   isOpen,
-  clips,
   onConfirm,
   onCancel,
 }: Props) {
   if (!isOpen) return null;
 
-  const estimatedMemory = estimateRenderMemoryUsage(clips);
+  // Read once on open rather than subscribing: the modal is a point-in-time
+  // estimate and closes before any edit can change the clip list.
+  const estimatedMemory = estimateRenderMemoryUsage(editorStore.getState().clips);
   const estimatedStr = formatBytes(estimatedMemory);
 
   return (

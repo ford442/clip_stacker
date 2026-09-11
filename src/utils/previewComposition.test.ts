@@ -8,6 +8,8 @@ import {
   type PreviewTextLayer,
 } from './previewComposition';
 import { getTimelineClips } from './timelineClips';
+import { customTransitionId } from '../webgpu/transitions/customShader';
+import { getTransitionDef } from '../webgpu/transitions/registry';
 
 function makeClip(
   id: string,
@@ -180,6 +182,123 @@ describe('previewComposition', () => {
       expect(layers[1].crossfade?.progress).toBeCloseTo(0.5);
       expect(layers[0].opacity).toBeCloseTo(0.5);
       expect(layers[1].opacity).toBeCloseTo(0.5);
+    });
+
+    it('resolves a custom transition to its compiled shader id', () => {
+      const clips = [makeClip('a', 5), makeClip('b', 3)];
+      const expression = 'mix(sampleFrom(uv), sampleTo(uv), u.progress)';
+      const transitions: ClipTransition[] = [
+        {
+          afterClipIndex: 1,
+          type: 'custom',
+          duration: 0.5,
+          customShader: expression,
+        },
+      ];
+      const plan = buildPreviewCompositionPlan(
+        clips,
+        [],
+        transitions,
+        [],
+        undefined,
+        4.75,
+      );
+
+      const layers = clipLayers(plan);
+      // The renderer keys pipelines off this id, not the stored 'custom' type.
+      expect(layers[1].crossfade?.type).toBe(customTransitionId(expression));
+      expect(getTransitionDef(layers[1].crossfade!.type)?.wgslBody).toContain(
+        expression,
+      );
+    });
+
+    it('keeps a half-typed custom shader playable as the base custom id', () => {
+      const clips = [makeClip('a', 5), makeClip('b', 3)];
+      const transitions: ClipTransition[] = [
+        {
+          afterClipIndex: 1,
+          type: 'custom',
+          duration: 0.5,
+          customShader: 'mix(sampleFrom(uv), sampleTo(uv)',
+        },
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
+      expect(clipLayers(plan)[1].crossfade?.type).toBe('custom');
+    });
+
+    it('carries a stabilization matrix onto stabilized clip layers', () => {
+      const stabilization = {
+        fps: 10,
+        matrices: new Float32Array([1, 0, 0, 0, 1, 0, 1, 0, 0.25, 0, 1, 0.5]),
+        frameCount: 2,
+        zoom: 1.1,
+        maxCorrection: 0.5,
+        smoothRadius: 5,
+      };
+      const clips = [makeClip('a', 5, { stabilize: true, stabilization })];
+      // 0.1 s in at 10 fps lands exactly on analysis frame 1.
+      const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0.1);
+      const layer = clipLayers(plan)[0]!;
+      expect(layer.stabMatrix).toBeDefined();
+      expect(layer.stabMatrix![2]).toBeCloseTo(0.25, 5);
+      expect(layer.stabMatrix![5]).toBeCloseTo(0.5, 5);
+    });
+
+    it('omits the matrix entirely when the toggle is off', () => {
+      const stabilization = {
+        fps: 10,
+        matrices: new Float32Array([1, 0, 0.25, 0, 1, 0.5]),
+        frameCount: 1,
+        zoom: 1.1,
+        maxCorrection: 0.5,
+        smoothRadius: 5,
+      };
+      const off = buildPreviewCompositionPlan(
+        [makeClip('a', 5, { stabilize: false, stabilization })],
+        [], [], [], undefined, 0.1,
+      );
+      expect(clipLayers(off)[0]!.stabMatrix).toBeUndefined();
+
+      // Toggled on but not yet analysed: still nothing to apply.
+      const pending = buildPreviewCompositionPlan(
+        [makeClip('a', 5, { stabilize: true })],
+        [], [], [], undefined, 0.1,
+      );
+      expect(clipLayers(pending)[0]!.stabMatrix).toBeUndefined();
+    });
+
+    it('stabilizes both sides through a transition overlap', () => {
+      const stabilization = {
+        fps: 10,
+        matrices: new Float32Array([1, 0, 0.25, 0, 1, 0.5]),
+        frameCount: 1,
+        zoom: 1.1,
+        maxCorrection: 0.5,
+        smoothRadius: 5,
+      };
+      const clips = [
+        makeClip('a', 5, { stabilize: true, stabilization }),
+        makeClip('b', 3, { stabilize: true, stabilization }),
+      ];
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type: 'dissolve', duration: 0.5 },
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
+      const layers = clipLayers(plan);
+      expect(layers).toHaveLength(2);
+      // Both the outgoing and incoming layer must stay corrected, or the
+      // picture snaps back to shaky for the length of the crossfade.
+      expect(layers[0]!.stabMatrix).toBeDefined();
+      expect(layers[1]!.stabMatrix).toBeDefined();
+    });
+
+    it('leaves built-in transition types unresolved', () => {
+      const clips = [makeClip('a', 5), makeClip('b', 3)];
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type: 'filmBurn', duration: 0.5 },
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
+      expect(clipLayers(plan)[1].crossfade?.type).toBe('filmBurn');
     });
 
     it('draws PiP overlays above the base layer with a PiP rect', () => {

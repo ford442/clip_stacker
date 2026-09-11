@@ -33,6 +33,61 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     expect(result.transitions[0].type).toBe("dissolve");
   });
 
+  it("should roundtrip a custom WGSL transition and its params", async () => {
+    const clips = [createTestClip("a", 5, "Clip A"), createTestClip("b", 3, "Clip B")];
+    const expression = "mix(sampleTo(uv), sampleFrom(uv), u.progress * u.custom0)";
+    const transitions: ClipTransition[] = [
+      {
+        afterClipIndex: 1,
+        type: "custom",
+        duration: 0.4,
+        params: { amount: 0.5 },
+        customShader: expression,
+      },
+    ];
+
+    const serialized = serializeProject(clips, transitions, [], []);
+    expect(serialized.transitions?.[0].customShader).toBe(expression);
+
+    const result = await applyProjectData(serialized, clips);
+    expect(result.transitions[0].type).toBe("custom");
+    expect(result.transitions[0].customShader).toBe(expression);
+    expect(result.transitions[0].params).toEqual({ amount: 0.5 });
+  });
+
+  it("should roundtrip the stabilize toggle without its matrices", async () => {
+    const clips = [
+      { ...createTestClip("a", 5, "Clip A"), stabilize: true },
+      createTestClip("b", 3, "Clip B"),
+    ];
+    const serialized = serializeProject(clips, [], [], []);
+    expect(serialized.clips[0].stabilize).toBe(true);
+    expect(serialized.clips[1]).not.toHaveProperty("stabilize");
+    // Matrices are derived data — keeping them out is what stops a project
+    // file growing tens of KB per stabilized clip.
+    expect(JSON.stringify(serialized)).not.toContain("matrices");
+
+    const result = await applyProjectData(serialized, clips);
+    expect(result.clips[0].stabilize).toBe(true);
+    expect(result.clips[0].stabilization).toBeUndefined();
+    expect(result.clips[1].stabilize).toBeUndefined();
+  });
+
+  it("should load pre-custom-shader projects without a shader field", async () => {
+    const clips = [createTestClip("a", 5, "Clip A"), createTestClip("b", 3, "Clip B")];
+    const serialized = serializeProject(
+      clips,
+      [{ afterClipIndex: 1, type: "filmBurn", duration: 0.5 }],
+      [],
+      [],
+    );
+    expect(serialized.transitions?.[0]).not.toHaveProperty("customShader");
+
+    const result = await applyProjectData(serialized, clips);
+    expect(result.transitions[0].type).toBe("filmBurn");
+    expect(result.transitions[0].customShader).toBeUndefined();
+  });
+
   it("should roundtrip complex project with A/B groups", async () => {
     // Create original project with A/B groups
     const clipA = createTestClip("a", 5, "Version A", "group1", "A");

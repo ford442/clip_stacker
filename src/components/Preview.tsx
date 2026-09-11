@@ -4,6 +4,21 @@ import {
   setPlayheadTime,
 } from "../store/playbackStore";
 import { usePlayheadTime } from "../hooks/usePlayheadTime";
+import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
+import {
+  editorActions,
+  settingsStore,
+  uiActions,
+  useEditorClip,
+  useEditorClipGroups,
+  useEditorTextOverlays,
+  useEditorTimelineClips,
+  useEditorTracks,
+  useEditorTransitions,
+  useSelectedClipId,
+  useSelectedTextOverlayId,
+} from "../store";
 import type {
   Clip,
   ClipGroup,
@@ -84,20 +99,6 @@ import { createRenderScheduler } from "../utils/seekCoalescer";
 import { PreviewOverlayManipulator } from "./PreviewOverlayManipulator";
 
 interface Props {
-  clip: Clip | null;
-  timelineClips?: Clip[];
-  tracks?: Track[];
-  clipGroups?: ClipGroup[];
-  transitions?: ClipTransition[];
-  textOverlays?: TextOverlay[];
-  exportSettings?: ExportSettings;
-  finishing?: FinishingSettings;
-  outputUrl: string | null;
-  exportFilename?: string;
-  selectedClipId?: string | null;
-  selectedTextOverlayId?: string | null;
-  onSelectClip?: (clipId: string | null) => void;
-  onSelectTextOverlay?: (overlayId: string | null) => void;
   onClipLayoutCommit?: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
   onTextOverlayLayoutCommit?: (
     overlayId: string,
@@ -113,24 +114,31 @@ interface Props {
  * playhead position.
  */
 function PreviewImpl({
-  clip,
-  timelineClips = [],
-  tracks = [],
-  clipGroups = [],
-  transitions = [],
-  textOverlays = [],
-  exportSettings,
-  finishing,
-  outputUrl,
-  exportFilename,
-  selectedClipId,
-  selectedTextOverlayId,
-  onSelectClip,
-  onSelectTextOverlay,
   onClipLayoutCommit,
   onTextOverlayLayoutCommit,
   onPreviewDragStart,
 }: Props) {
+  // Every hook must run before the early returns below.
+  const timelineClips = useEditorTimelineClips();
+  const tracks = useEditorTracks();
+  const clipGroups = useEditorClipGroups();
+  const transitions = useEditorTransitions();
+  const textOverlays = useEditorTextOverlays();
+  const selectedClipId = useSelectedClipId();
+  const clip = useEditorClip(selectedClipId);
+  const selectedTextOverlayId = useSelectedTextOverlayId();
+  const { exportSettings, finishing, outputUrl } = useStore(
+    settingsStore,
+    useShallow((s) => ({
+      exportSettings: s.exportSettings,
+      finishing: s.finishing,
+      outputUrl: s.outputUrl,
+    })),
+  );
+  const exportFilename = exportSettings.filename;
+  const onSelectClip = editorActions.setSelectedClipId;
+  const onSelectTextOverlay = uiActions.setSelectedTextOverlayId;
+
   if (outputUrl) {
     const downloadFilename = exportFilename
       ? sanitizeFilename(exportFilename)

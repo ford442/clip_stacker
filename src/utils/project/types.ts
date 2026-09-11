@@ -1,4 +1,14 @@
-import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track, SyncMarker } from '../../types';
+import type {
+  CaptionEntry,
+  Clip,
+  ClipGroup,
+  ClipTransition,
+  MasterAudio,
+  TextOverlay,
+  TextOverlayStyle,
+  Track,
+  SyncMarker,
+} from '../../types';
 import type { ColorGradeSettings } from '../lut';
 import type { FinishingSettings } from '../finishing';
 
@@ -27,6 +37,10 @@ export interface AppliedProjectData {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  /** Caption cues restored from the project (empty when it predates captions). */
+  captions: CaptionEntry[];
+  /** Project-wide caption style overrides (empty when unset). */
+  captionStyle: Partial<TextOverlayStyle>;
   masterAudio: MasterAudio | null;
   masterAudioMarkers: SyncMarker[];
   colorGrade: ColorGradeSettings;

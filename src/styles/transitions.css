@@ -197,3 +197,52 @@
   margin: 0;
   font-style: italic;
 }
+
+.te-shader-input {
+  width: 100%;
+  resize: vertical;
+  min-height: 4.5rem;
+  padding: 0.45rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.te-shader-input:focus {
+  outline: none;
+  border-color: var(--gold);
+}
+
+.te-shader-input.invalid {
+  border-color: var(--danger);
+}
+
+.te-shader-help {
+  margin: 0.35rem 0 0;
+  font-size: 0.68rem;
+  color: var(--muted);
+}
+
+.te-shader-help code {
+  font-size: 0.68rem;
+  color: var(--text);
+}
+
+.te-shader-error {
+  margin: 0.35rem 0 0;
+  padding: 0.35rem 0.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--danger);
+  background: rgba(248, 113, 113, 0.12);
+  color: var(--danger);
+  font-size: 0.7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 8rem;
+  overflow-y: auto;
+}

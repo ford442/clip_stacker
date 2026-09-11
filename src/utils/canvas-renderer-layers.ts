@@ -12,6 +12,7 @@ import {
   uvRectToSourcePixels,
 } from '../webgpu/exportCompositor';
 import { calculateLetterboxRect, clampOpacity } from './canvas-renderer-helpers';
+import { isIdentityStabMatrix, stabMatrixToCanvasTransform } from './stabilization';
 
 // Default fallbacks when an overlay carries an invalid FFmpeg color.
 const DEFAULT_FONT_COLOR = "white";
@@ -35,17 +36,34 @@ export function drawClipLayer(
   const inner = calculateLetterboxRect(srcW, srcH, destWidth, destHeight);
   const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = clampOpacity(layer.opacity);
+
+  // Camera-shake correction. drawImage's crop rectangle can only translate and
+  // scale, so the rotation component has to ride on the context transform;
+  // the stored matrix is an inverse warp, hence the flip to a forward one.
+  const stab = layer.stabMatrix;
+  const warped = Boolean(stab) && !isIdentityStabMatrix(stab!);
+  const originX = layer.rect.x + inner.x;
+  const originY = layer.rect.y + inner.y;
+  if (warped) {
+    const t = stabMatrixToCanvasTransform(stab!, inner.width, inner.height);
+    ctx.save();
+    ctx.translate(originX, originY);
+    ctx.transform(t[0], t[3], t[1], t[4], t[2], t[5]);
+    ctx.translate(-originX, -originY);
+  }
+
   ctx.drawImage(
     source.image,
     crop.sx,
     crop.sy,
     crop.sw,
     crop.sh,
-    layer.rect.x + inner.x,
-    layer.rect.y + inner.y,
+    originX,
+    originY,
     inner.width,
     inner.height,
   );
+  if (warped) ctx.restore();
   ctx.globalAlpha = prevAlpha;
 }
 

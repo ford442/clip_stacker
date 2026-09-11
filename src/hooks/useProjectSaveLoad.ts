@@ -96,7 +96,13 @@ export function useProjectSaveLoad({
         transitions,
         textOverlays,
         clipGroups,
-        { mediaMode: "embed", onEmbedWarning: (message) => embedWarnings.push(message), finishing },
+        {
+          mediaMode: "embed",
+          onEmbedWarning: (message) => embedWarnings.push(message),
+          finishing,
+          captions: editorStore.getState().captions,
+          captionStyle: editorStore.getState().captionStyle,
+        },
         tracks,
         editorStore.getState().masterAudio,
       );
@@ -129,6 +135,8 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          captions: loadedCaptions,
+          captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           finishing: loadedFinishing,
           masterAudio: loadedMasterAudio,
@@ -145,6 +153,8 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          captions: loadedCaptions,
+          captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           selectedClipId: selectedId,
           masterAudio: loadedMasterAudio,
@@ -234,6 +244,8 @@ export function useProjectSaveLoad({
           {
             mediaMode: "remote",
             mediaClient: client,
+            captions: editorStore.getState().captions,
+            captionStyle: editorStore.getState().captionStyle,
             onRemoteUploadProgress: (event) => {
               setRemoteUploadItems((prev) => {
                 const next = [...prev];
@@ -294,6 +306,8 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          captions: loadedCaptions,
+          captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           finishing: loadedFinishing,
           masterAudio: loadedMasterAudio,
@@ -322,6 +336,8 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          captions: loadedCaptions,
+          captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           selectedClipId: selectedId,
           masterAudio: loadedMasterAudio,

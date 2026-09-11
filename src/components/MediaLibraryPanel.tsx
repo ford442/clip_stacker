@@ -1,14 +1,15 @@
 import { useCallback, useState } from "react";
 import { ContaboStorageManagerClient, type MediaLibraryItem } from "../utils/project";
 import { formatBytes } from "../utils/memory";
+import { useStorageAuthToken, useStorageEndpoint } from "../store";
 
 interface Props {
-  endpoint: string;
-  authToken: string;
   onAddClip: (item: MediaLibraryItem) => Promise<void>;
 }
 
-export function MediaLibraryPanel({ endpoint, authToken, onAddClip }: Props) {
+export function MediaLibraryPanel({ onAddClip }: Props) {
+  const endpoint = useStorageEndpoint();
+  const authToken = useStorageAuthToken();
   const [items, setItems] = useState<MediaLibraryItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");

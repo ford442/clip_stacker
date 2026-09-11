@@ -24,6 +24,7 @@ import {
 } from '../utils/autoSave';
 
 import { settingsStore } from '../store/settingsStore';
+import { editorStore } from '../store/editorStore';
 import { useStore } from 'zustand';
 
 export function useAutoSave({
@@ -65,6 +66,8 @@ export function useAutoSave({
       selectedClipId,
       exportSettings,
       tracks,
+      editorStore.getState().captions,
+      editorStore.getState().captionStyle,
     );
     if (stateHash === lastSavedHashRef.current) return;
 
@@ -86,6 +89,9 @@ export function useAutoSave({
         textOverlays,
         clipGroups,
         tracks,
+        {},
+        editorStore.getState().captions,
+        editorStore.getState().captionStyle,
       );
       let session = buildAutoSaveSession(project, selectedClipId, exportSettings);
       let result = writeAutoSaveSession(session);
@@ -98,6 +104,8 @@ export function useAutoSave({
           clipGroups,
           tracks,
           { forceMetadataOnly: true },
+          editorStore.getState().captions,
+          editorStore.getState().captionStyle,
         );
         session = buildAutoSaveSession(project, selectedClipId, exportSettings);
         result = writeAutoSaveSession(session);
@@ -161,6 +169,8 @@ export function useAutoSave({
         clipGroups: restoredGroups,
         transitions: restoredTransitions,
         textOverlays: restoredOverlays,
+        captions: restoredCaptions,
+        captionStyle: restoredCaptionStyle,
         skippedClipCount,
         skippedClipFileNames,
         invalidColorWarnings,
@@ -181,6 +191,8 @@ export function useAutoSave({
         clipGroups: restoredGroups,
         transitions: restoredTransitions,
         textOverlays: restoredOverlays,
+        captions: restoredCaptions,
+        captionStyle: restoredCaptionStyle,
         masterAudioMarkers: session.project.masterAudioMarkers ?? [],
         selectedClipId: selectedId,
         masterAudio: null,

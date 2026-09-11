@@ -1,8 +1,19 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track, SyncMarker } from '../types';
+import type {
+  CaptionEntry,
+  Clip,
+  ClipGroup,
+  ClipTransition,
+  MasterAudio,
+  TextOverlay,
+  TextOverlayStyle,
+  Track,
+  SyncMarker,
+} from '../types';
 import { getEffectiveTimelineClips } from '../utils/timelineClips';
+import { computeTotalDuration } from '../utils/transitions';
 import { createDefaultTracks } from '../utils/trackModel';
 import {
   cloneSnapshot,
@@ -13,6 +24,7 @@ import {
   type EditSnapshot,
 } from '../utils/editHistory';
 import { cloneTracks } from '../utils/trackModel';
+import { normalizeCaptions } from '../utils/subtitles';
 
 /**
  * Durable editing state (#144).
@@ -45,6 +57,10 @@ export interface EditorState {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  /** Time-coded caption cues, sorted by start time (see `utils/subtitles.ts`). */
+  captions: CaptionEntry[];
+  /** Project-wide caption style; per-cue `style` overrides win over it. */
+  captionStyle: Partial<TextOverlayStyle>;
   masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
   masterAudio: MasterAudio | null;
@@ -57,6 +73,8 @@ export interface EditorState {
   setClipGroups: (action: StateUpdater<ClipGroup[]>) => void;
   setTransitions: (action: StateUpdater<ClipTransition[]>) => void;
   setTextOverlays: (action: StateUpdater<TextOverlay[]>) => void;
+  setCaptions: (action: StateUpdater<CaptionEntry[]>) => void;
+  setCaptionStyle: (action: StateUpdater<Partial<TextOverlayStyle>>) => void;
   setMasterAudioMarkers: (action: StateUpdater<SyncMarker[]>) => void;
   setSelectedClipId: (action: StateUpdater<string | null>) => void;
   setMasterAudio: (action: StateUpdater<MasterAudio | null>) => void;
@@ -94,6 +112,8 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       clipGroups: state.clipGroups,
       transitions: state.transitions,
       textOverlays: state.textOverlays,
+      captions: state.captions,
+      captionStyle: state.captionStyle,
       masterAudioMarkers: state.masterAudioMarkers,
       selectedClipId: state.selectedClipId,
       masterAudio: state.masterAudio,
@@ -116,6 +136,8 @@ export const editorStore = createStore<EditorState>()((set, get) => {
         clipGroups: syncClipGroups(snapshot.clipGroups, mergedClips),
         transitions: snapshot.transitions.map((transition) => ({ ...transition })),
         textOverlays: snapshot.textOverlays.map((overlay) => ({ ...overlay })),
+        captions: (snapshot.captions ?? []).map((caption) => ({ ...caption })),
+        captionStyle: { ...(snapshot.captionStyle ?? {}) },
         masterAudioMarkers: snapshot.masterAudioMarkers ? snapshot.masterAudioMarkers.map(m => ({...m})) : [],
         selectedClipId: snapshot.selectedClipId,
         masterAudio: snapshot.masterAudio
@@ -141,6 +163,8 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     clipGroups: [],
     transitions: [],
     textOverlays: [],
+    captions: [],
+    captionStyle: {},
     masterAudioMarkers: [],
     selectedClipId: null,
     masterAudio: null,
@@ -155,6 +179,10 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       set((s) => ({ transitions: resolveUpdater(action, s.transitions) })),
     setTextOverlays: (action) =>
       set((s) => ({ textOverlays: resolveUpdater(action, s.textOverlays) })),
+    setCaptions: (action) =>
+      set((s) => ({ captions: normalizeCaptions(resolveUpdater(action, s.captions)) })),
+    setCaptionStyle: (action) =>
+      set((s) => ({ captionStyle: resolveUpdater(action, s.captionStyle) })),
     setMasterAudioMarkers: (action) =>
       set((s) => ({ masterAudioMarkers: resolveUpdater(action, s.masterAudioMarkers) })),
     setSelectedClipId: (action) =>
@@ -226,6 +254,10 @@ export const useEditorTransitions = () =>
   useStore(editorStore, useShallow((s) => s.transitions));
 export const useEditorTextOverlays = () =>
   useStore(editorStore, useShallow((s) => s.textOverlays));
+export const useEditorCaptions = () =>
+  useStore(editorStore, useShallow((s) => s.captions));
+export const useEditorCaptionStyle = () =>
+  useStore(editorStore, useShallow((s) => s.captionStyle));
 export const useEditorMasterAudioMarkers = () =>
   useStore(editorStore, useShallow((s) => s.masterAudioMarkers));
 export const useSelectedClipId = () => useStore(editorStore, (s) => s.selectedClipId);
@@ -236,6 +268,19 @@ export const useEditorTimelineClips = () =>
   useStore(
     editorStore,
     useShallow((s) => getEffectiveTimelineClips(s.tracks, s.clips, s.clipGroups)),
+  );
+
+/** Undo/redo availability — re-renders only when a stack transitions empty/non-empty. */
+export const useCanUndo = () => useStore(editorStore, (s) => s.undoDepth > 0);
+export const useCanRedo = () => useStore(editorStore, (s) => s.redoDepth > 0);
+
+/** Total timeline duration, accounting for transition overlaps. */
+export const useEditorTotalDuration = () =>
+  useStore(editorStore, (s) =>
+    computeTotalDuration(
+      getEffectiveTimelineClips(s.tracks, s.clips, s.clipGroups),
+      s.transitions,
+    ),
   );
 
 /** Per-row selection subscription — only re-renders when this clip's selected state toggles. */
@@ -263,6 +308,8 @@ export const editorActions: Pick<
   | 'setClipGroups'
   | 'setTransitions'
   | 'setTextOverlays'
+  | 'setCaptions'
+  | 'setCaptionStyle'
   | 'setMasterAudioMarkers'
   | 'setSelectedClipId'
   | 'setMasterAudio'
@@ -287,6 +334,8 @@ export function __resetEditorStoreForTests(): void {
     clipGroups: [],
     transitions: [],
     textOverlays: [],
+    captions: [],
+    captionStyle: {},
     masterAudioMarkers: [],
     selectedClipId: null,
     masterAudio: null,

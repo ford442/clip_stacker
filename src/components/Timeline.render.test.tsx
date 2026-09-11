@@ -71,6 +71,8 @@ describe('Timeline render stability', () => {
           onMoveToTrack={noop}
           onTransitionUpdate={noop}
           onDelete={noop}
+          onCaptionResize={noop}
+          onCaptionAdd={noop}
         />
         <RenderProbe onRender={() => (renderCount += 1)} />
       </StrictMode>,

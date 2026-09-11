@@ -1,4 +1,5 @@
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipTransition,
@@ -8,6 +9,7 @@ import type {
   SerializedMasterAudio,
   SerializedTransition,
   TextOverlay,
+  TextOverlayStyle,
   SerializedClipGroup,
   Track,
   SerializedTrack,
@@ -19,6 +21,7 @@ import {
 } from '../finishing';
 import type { FinishingSettings } from '../finishing';
 import { normalizeClipAutomation } from '../clipAutomation';
+import { normalizeCaptions } from '../subtitles';
 export function serializeProject(
   clips: Clip[],
   transitions: ClipTransition[] = [],
@@ -28,6 +31,8 @@ export function serializeProject(
   tracks: Track[] = [],
   layoutReferenceResolution?: string,
   masterAudio: MasterAudio | null = null,
+  captions: CaptionEntry[] = [],
+  captionStyle: Partial<TextOverlayStyle> = {},
 ): Project {
   const serializedTracks: SerializedTrack[] = tracks.map((track) => ({
     id: track.id,
@@ -117,6 +122,7 @@ export function serializeProject(
         ? { lumaHistogram: clip.lumaHistogram.slice() }
         : {}),
       ...(clip.lumaLevels ? { lumaLevels: { ...clip.lumaLevels } } : {}),
+      ...(clip.stabilize ? { stabilize: true } : {}),
     };
     }),
     transitions: transitions.map((t): SerializedTransition => ({
@@ -124,6 +130,7 @@ export function serializeProject(
       type: t.type,
       duration: t.duration,
       ...(t.params ? { params: t.params } : {}),
+      ...(t.customShader ? { customShader: t.customShader } : {}),
       ...(t.morphSegment
         ? {
             morphSegment: {
@@ -144,6 +151,20 @@ export function serializeProject(
       }
     : {}),
     ...(textOverlays.length > 0 ? { textOverlays } : {}),
+    ...(captions.length > 0
+      ? {
+          captions: normalizeCaptions(captions).map((caption): CaptionEntry => ({
+            id: caption.id,
+            startSec: caption.startSec,
+            endSec: caption.endSec,
+            text: caption.text,
+            ...(caption.style && Object.keys(caption.style).length > 0
+              ? { style: { ...caption.style } }
+              : {}),
+          })),
+        }
+      : {}),
+    ...(Object.keys(captionStyle).length > 0 ? { captionStyle: { ...captionStyle } } : {}),
     ...(isFinishingActive(finishing) ? { finishing } : {}),
     ...(masterAudio
       ? {

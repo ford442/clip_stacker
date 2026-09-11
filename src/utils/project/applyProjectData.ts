@@ -1,4 +1,5 @@
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipKind,
@@ -7,6 +8,7 @@ import type {
   Project,
   SerializedClip,
   SerializedClipGroup,
+  TextOverlayStyle,
   Track,
 } from '../../types';
 import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from '../media';
@@ -33,6 +35,7 @@ import {
 import { deserializeTextOverlays, usesPixelLayoutForProject } from './applyTextOverlays';
 import type { AppliedProjectData, ApplyProjectDataOptions } from './types';
 import { normalizeClipAutomation } from '../clipAutomation';
+import { createCaptionId, normalizeCaptions } from '../subtitles';
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
@@ -107,6 +110,36 @@ async function restoreMasterAudio(
   } catch {
     return null;
   }
+}
+
+/**
+ * Restore caption cues from a saved project.
+ *
+ * Everything is coerced and clamped rather than trusted: project JSON can come
+ * from remote storage or a hand-edited file, and one malformed cue must not
+ * take the whole timeline down. Cues missing usable text or timings are
+ * dropped, and ids are regenerated when absent so the lane can key on them.
+ */
+function deserializeCaptions(raw: Project['captions']): CaptionEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const entries: CaptionEntry[] = [];
+  for (const saved of raw) {
+    const text = typeof saved?.text === 'string' ? saved.text : '';
+    if (text.trim() === '') continue;
+    const startSec = Number(saved.startSec);
+    const endSec = Number(saved.endSec);
+    if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) continue;
+    entries.push({
+      id: typeof saved.id === 'string' && saved.id ? saved.id : createCaptionId(),
+      startSec,
+      endSec,
+      text,
+      ...(saved.style && typeof saved.style === 'object'
+        ? { style: { ...saved.style } }
+        : {}),
+    });
+  }
+  return normalizeCaptions(entries);
 }
 
 export async function applyProjectData(
@@ -310,6 +343,11 @@ export async function applyProjectData(
         mean: Number(savedClip.lumaLevels.mean) || 0,
       };
     }
+    if (savedClip.stabilize) {
+      // Only the toggle round-trips; useClipStabilization recomputes the
+      // matrices from the source on load.
+      liveClip.stabilize = true;
+    }
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
   }
@@ -345,6 +383,7 @@ export async function applyProjectData(
         type: t.type ?? 'dissolve',
         duration: Number(t.duration ?? 0.5),
         ...(t.params ? { params: t.params } : {}),
+        ...(typeof t.customShader === 'string' ? { customShader: t.customShader } : {}),
         ...(t.morphSegment
           ? {
               morphSegment: {
@@ -364,6 +403,12 @@ export async function applyProjectData(
     usesPixelLayout,
     project.layoutReferenceResolution,
   );
+
+  const captions = deserializeCaptions(project.captions);
+  const captionStyle: Partial<TextOverlayStyle> =
+    project.captionStyle && typeof project.captionStyle === 'object'
+      ? { ...project.captionStyle }
+      : {};
 
   const finishing = resolveFinishingFromProject(project);
   const colorGrade = getColorGradeFromFinishing(finishing);
@@ -398,6 +443,8 @@ export async function applyProjectData(
     clipGroups,
     transitions,
     textOverlays,
+    captions,
+    captionStyle,
     masterAudio,
     masterAudioMarkers: project.masterAudioMarkers ?? [],
     colorGrade,

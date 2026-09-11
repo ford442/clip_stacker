@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, forwardRef } from 'react';
 import type { BrowserCapabilities } from '../utils/feature-detector';
-import type { RenderPlan } from '../types';
 import { detectCapabilities } from '../utils/feature-detector';
 import { ProgressBar } from './ProgressBar';
+import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
+import { settingsActions, settingsStore, useCanRedo, useCanUndo } from '../store';
 
 interface Props {
   onAddClips: (files: File[]) => void;
@@ -11,8 +13,6 @@ interface Props {
   onGpuStitch?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
-  canUndo?: boolean;
-  canRedo?: boolean;
   onSaveProject: () => void;
   onLoadProject: (file: File) => void;
   onTriggerLoadDialog?: () => void;
@@ -20,27 +20,6 @@ interface Props {
   onDebugResetFFmpeg?: () => void;
   /** Called when the user clicks "Retry FFmpeg load" after a failed/stuck load. */
   onRetryFfmpegLoad?: () => void;
-  /** When true, FFmpeg is currently loading (shows spinner feedback in status). */
-  ffmpegLoading?: boolean;
-  /** When true, last FFmpeg load attempt failed — show the retry button prominently. */
-  ffmpegLoadFailed?: boolean;
-  status: string;
-  forceFFmpeg: boolean;
-  onToggleForceFFmpeg: (v: boolean) => void;
-  /** Enable the canvas renderer path (audio-reactive compositing). */
-  useCanvasRenderer: boolean;
-  onToggleCanvasRenderer: (v: boolean) => void;
-  /** Enable audio-reactive visual effects in the canvas renderer. */
-  audioReactive: boolean;
-  onToggleAudioReactive: (v: boolean) => void;
-  /** Force re-encoding even when lossless concat would be available. */
-  forceReencode: boolean;
-  onToggleForceReencode: (v: boolean) => void;
-  progressStage: string;
-  progressValue: number | null;
-  progressIndeterminate: boolean;
-  isRendering: boolean;
-  renderPlan?: RenderPlan | null;
   /** Optional: copy last FFmpeg logs + context for support / bug reports. */
   onCopyDebugInfo?: () => void;
 }
@@ -52,34 +31,52 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     onGpuStitch,
     onUndo,
     onRedo,
-    canUndo = false,
-    canRedo = false,
     onSaveProject,
     onLoadProject,
     onTriggerLoadDialog,
     onShowKeyboardShortcuts,
     onDebugResetFFmpeg,
     onRetryFfmpegLoad,
+    onCopyDebugInfo,
+  },
+  ref,
+) {
+  const canUndo = useCanUndo();
+  const canRedo = useCanRedo();
+  const {
     ffmpegLoading,
     ffmpegLoadFailed,
     status,
     forceFFmpeg,
-    onToggleForceFFmpeg,
     useCanvasRenderer,
-    onToggleCanvasRenderer,
     audioReactive,
-    onToggleAudioReactive,
     forceReencode,
-    onToggleForceReencode,
     progressStage,
     progressValue,
     progressIndeterminate,
     isRendering,
     renderPlan,
-    onCopyDebugInfo,
-  },
-  ref,
-) {
+  } = useStore(
+    settingsStore,
+    useShallow((s) => ({
+      ffmpegLoading: s.ffmpegLoading,
+      ffmpegLoadFailed: s.ffmpegFailed,
+      status: s.status,
+      forceFFmpeg: s.forceFFmpeg,
+      useCanvasRenderer: s.useCanvasRenderer,
+      audioReactive: s.audioReactive,
+      forceReencode: s.forceReencode,
+      progressStage: s.progressStage,
+      progressValue: s.progressValue,
+      progressIndeterminate: s.progressIndeterminate,
+      isRendering: s.isRendering,
+      renderPlan: s.renderPlan,
+    })),
+  );
+  const onToggleForceFFmpeg = settingsActions.setForceFFmpeg;
+  const onToggleCanvasRenderer = settingsActions.setUseCanvasRenderer;
+  const onToggleAudioReactive = settingsActions.setAudioReactive;
+  const onToggleForceReencode = settingsActions.setForceReencode;
   const clipInputRef = useRef<HTMLInputElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   const [caps, setCaps] = useState<BrowserCapabilities | null>(null);

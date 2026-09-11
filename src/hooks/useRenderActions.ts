@@ -6,6 +6,8 @@ import { getTimelineClips } from "../utils/timelineClips";
 import { resolveTargetResolution } from "../utils/resolution";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
 import { hybridMergeClips } from "../utils/hybrid-encoder";
+import { applyCaptionsToRenderedVideo } from "../ffmpeg/captions";
+import { computeTotalDuration } from "../utils/transitions";
 import {
   extractTrimmedVideoClip,
   calculateRenderPlan,
@@ -66,6 +68,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         useCanvasRenderer, 
         audioReactive, 
         forceReencode,
+        captionExportMode,
         outputUrl,
         setStatus,
         setFfmpegFailed,
@@ -140,7 +143,30 @@ export function useRenderActions(deps: RenderActionsDeps) {
         finishing,
         editorStore.getState().masterAudio,
       );
-      const url = URL.createObjectURL(result.blob);
+      // Captions are attached after the encode so every encoder path (GPU,
+      // canvas, FFmpeg) gets the same result — see `ffmpeg/captions.ts`.
+      const { captions, captionStyle } = editorStore.getState();
+      const { width, height } = resolveTargetResolution(
+        timelineClips,
+        exportSettings,
+      );
+      const captionedBlob = await applyCaptionsToRenderedVideo(
+        result.blob,
+        captions,
+        {
+          mode: captionExportMode,
+          width,
+          height,
+          projectStyle: captionStyle,
+          crf: exportSettings.crf,
+          preset: exportSettings.preset,
+          totalDuration: computeTotalDuration(timelineClips, transitions),
+          onStatus: (message) => settingsStore.getState().setStatus(message),
+          onProgress: handleProgress,
+        },
+      );
+
+      const url = URL.createObjectURL(captionedBlob);
       setOutputUrl(url);
       setEncoderPath(result.path);
 

@@ -1,8 +1,4 @@
-interface Props {
-  isOpen: boolean;
-  onClose: () => void;
-}
-
+import { uiActions, useShowKeyboardShortcuts } from '../store';
 const SHORTCUTS = [
   { key: "R", description: "Render merge" },
   { key: "Ctrl/Cmd+Z", description: "Undo last edit" },
@@ -10,6 +6,7 @@ const SHORTCUTS = [
   { key: "Ctrl/Cmd+S", description: "Save local project" },
   { key: "Ctrl/Cmd+D", description: "Duplicate selected clip" },
   { key: "S", description: "Split selected clip at preview playhead" },
+  { key: "C", description: "Add a caption at the preview playhead" },
   { key: "L", description: "Load local project" },
   { key: "Delete / Backspace", description: "Delete selected clip" },
   { key: "Arrow Left (with Ctrl/Cmd)", description: "Move selected clip left" },
@@ -22,7 +19,9 @@ const SHORTCUTS = [
   { key: "Enter / Space (in library)", description: "Select clip" },
 ];
 
-export function KeyboardShortcutsModal({ isOpen, onClose }: Props) {
+export function KeyboardShortcutsModal() {
+  const isOpen = useShowKeyboardShortcuts();
+  const onClose = () => uiActions.setShowKeyboardShortcuts(false);
   if (!isOpen) return null;
 
   return (

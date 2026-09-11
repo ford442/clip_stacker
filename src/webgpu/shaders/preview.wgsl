@@ -21,10 +21,33 @@ struct Uniforms {
   mid: f32,
   treble: f32,
   beat: f32,
+  // Stabilization: inverse-warp 2x3 affine in normalized UV, centred on the
+  // frame. Identity (1,0,0, 0,1,0) when the clip is not stabilized.
+  stabA: f32,
+  stabB: f32,
+  stabTx: f32,
+  stabC: f32,
+  stabD: f32,
+  stabTy: f32,
   _pad0: f32,
-  _pad1: f32,
-  _pad2: f32,
 };
+
+/**
+ * Camera-shake correction. Applied to the source UV before the letterbox map,
+ * about the frame centre, so it composes with Ken Burns instead of fighting it.
+ *
+ * This is an inverse warp done in the vertex shader rather than a separate
+ * compute pass: the correction is affine, so evaluating it at the three
+ * corners and letting the rasteriser interpolate is exact, and it costs no
+ * intermediate texture.
+ */
+fn applyStabilization(uv: vec2<f32>) -> vec2<f32> {
+  let centered = uv - vec2<f32>(0.5, 0.5);
+  return vec2<f32>(
+    u.stabA * centered.x + u.stabB * centered.y + u.stabTx,
+    u.stabC * centered.x + u.stabD * centered.y + u.stabTy,
+  ) + vec2<f32>(0.5, 0.5);
+}
 
 fn applyAudioReactive(color: vec3<f32>, bass: f32, beat: f32) -> vec3<f32> {
   let pulse = clamp(bass * 0.15 + beat * 0.1, 0.0, 0.25);
@@ -67,7 +90,7 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 
   var out: VertexOutput;
   out.pos = vec4<f32>(ndcX, ndcY, 0.0, 1.0);
-  let baseUv = uvs[idx];
+  let baseUv = applyStabilization(uvs[idx]);
   out.uv = baseUv * vec2<f32>(u.uvScaleX, u.uvScaleY) + vec2<f32>(u.uvOffsetX, u.uvOffsetY);
   return out;
 }

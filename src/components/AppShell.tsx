@@ -1,16 +1,10 @@
 import type { RefObject } from "react";
-import type {
-  Clip,
-  ClipGroup,
-  ClipTransition,
-  ExportSettings,
-  RenderPlan,
-  TextOverlay,
-  Track,
-} from "../types";
+import type { Clip, ClipTransition, TextOverlay } from "../types";
+import type { CaptionsPanelProps } from "./CaptionsPanel";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
-import { settingsStore } from "../store/settingsStore";
+import { settingsStore, uiActions } from "../store";
 import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import type { ClipValues } from "./Inspector";
 import type { PendingRemoteUploadError } from "../hooks/useProjectSaveLoad";
 import type { AutoSaveOffer } from "../utils/autoSave";
@@ -29,25 +23,20 @@ import { MemoryWarningModal } from "./MemoryWarningModal";
 import { RecoveryModal } from "./RecoveryModal";
 import { RenderFailurePanel } from "./RenderFailurePanel";
 
+/**
+ * Props are limited to things the panels cannot get for themselves: the
+ * imperative toolbar ref, callbacks owned by App's action hooks, and the
+ * transient async state those hooks expose (remote transfer progress, recovery
+ * offer, render failure). Clip, timeline, selection, settings and render state
+ * are read from the Zustand stores by whichever panel renders them, so an edit
+ * never re-renders this shell (#144).
+ */
 export type AppShellProps = {
   toolbarRef: RefObject<{ triggerLoadDialog: () => void }>;
-  selectedTextOverlayId: string | null;
-  selectedClip: Clip | null;
-  selectedClipId: string | null;
-  timelineClips: Clip[];
-  previewTotalDuration: number;
   morphProcessingIndex: number | null;
-  showKeyboardShortcuts: boolean;
   showMemoryWarning: boolean;
   recoveryOffer: AutoSaveOffer | null;
   isRecovering: boolean;
-  storageEndpoint: string;
-  storageAuthToken: string;
-  clips: Clip[];
-  tracks: Track[];
-  clipGroups: ClipGroup[];
-  transitions: ClipTransition[];
-  textOverlays: TextOverlay[];
   renderFailureMessage: string | null;
   isRemoteSaving: boolean;
   isRemoteLoading: boolean;
@@ -56,8 +45,6 @@ export type AppShellProps = {
   remoteLoadIndeterminate: boolean;
   remoteUploadItems: RemoteUploadProgressEvent[];
   pendingRemoteUploadError: PendingRemoteUploadError | null;
-  canUndo: boolean;
-  canRedo: boolean;
   onAddClips: (files: File[]) => Promise<void>;
   onMerge: () => Promise<void>;
   onGpuStitch: () => Promise<void>;
@@ -65,13 +52,11 @@ export type AppShellProps = {
   onRedo: () => void;
   onSaveProject: () => void;
   onLoadProject: (file: File) => void;
-  onShowKeyboardShortcuts: () => void;
   onDebugResetFFmpeg: () => Promise<void>;
   onRetryFfmpegLoad: () => Promise<void>;
   onCopyDebugInfo: () => Promise<void>;
   onPerformRender: () => Promise<void>;
   onDismissRenderFailure: () => void;
-  onStorageAuthTokenChange: (value: string) => void;
   onSaveRemote: (endpoint: string, authToken: string, projectName: string) => Promise<void>;
   onLoadRemote: (endpoint: string, authToken: string, projectName: string) => Promise<void>;
   onResolveRemoteUploadError: (action: "retry" | "skip" | "abort") => void;
@@ -79,8 +64,6 @@ export type AppShellProps = {
   onToggleVariant: (groupId: string, variant: "A" | "B") => void;
   onDeleteClip: (clipId: string) => void;
   onGenerateIntercut: (config: IntercutGeneratorConfig) => Promise<boolean>;
-  onSelectClip: (id: string | null) => void;
-  onSelectTextOverlay: (id: string | null) => void;
   onClipLayoutCommit: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
   onTextOverlayLayoutCommit: (
     overlayId: string,
@@ -94,15 +77,19 @@ export type AppShellProps = {
   onApplyKenBurns: () => void;
   onExtractAudio: () => Promise<void>;
   onRife: (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => Promise<void>;
+  onStabilizeChange: (enabled: boolean) => void;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
   onMoveToTrack: (clipId: string, targetTrackId: string, startTime: number) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
+  /** Caption-track callbacks, forwarded to the Inspector's Captions tab. */
+  captions: CaptionsPanelProps;
+  /** Retime one edge of a caption cue from the timeline's CC lane. */
+  onCaptionResize: (id: string, edge: "start" | "end", timeSec: number) => void;
   onAddTextOverlay: () => string;
   onUpdateTextOverlay: (overlay: TextOverlay) => void;
   onDeleteTextOverlay: (id: string) => void;
-  onCloseKeyboardShortcuts: () => void;
   onMemoryWarningConfirm: () => void;
   onMemoryWarningCancel: () => void;
   onRecover: () => void;
@@ -113,20 +100,7 @@ export function AppShell(props: AppShellProps) {
   const {
     toolbarRef,
     renderFailureMessage,
-    storageEndpoint,
-    storageAuthToken,
-    clips,
-    tracks,
-    clipGroups,
-    transitions,
-    textOverlays,
-    selectedTextOverlayId,
-    selectedClip,
-    selectedClipId,
-    timelineClips,
-    previewTotalDuration,
     morphProcessingIndex,
-    showKeyboardShortcuts,
     showMemoryWarning,
     recoveryOffer,
     isRecovering,
@@ -137,8 +111,6 @@ export function AppShell(props: AppShellProps) {
     remoteLoadIndeterminate,
     remoteUploadItems,
     pendingRemoteUploadError,
-    canUndo,
-    canRedo,
     onAddClips,
     onMerge,
     onGpuStitch,
@@ -146,13 +118,11 @@ export function AppShell(props: AppShellProps) {
     onRedo,
     onSaveProject,
     onLoadProject,
-    onShowKeyboardShortcuts,
     onDebugResetFFmpeg,
     onRetryFfmpegLoad,
     onCopyDebugInfo,
     onPerformRender,
     onDismissRenderFailure,
-    onStorageAuthTokenChange,
     onSaveRemote,
     onLoadRemote,
     onResolveRemoteUploadError,
@@ -160,8 +130,6 @@ export function AppShell(props: AppShellProps) {
     onToggleVariant,
     onDeleteClip,
     onGenerateIntercut,
-    onSelectClip,
-    onSelectTextOverlay,
     onClipLayoutCommit,
     onTextOverlayLayoutCommit,
     onPreviewDragStart,
@@ -171,46 +139,33 @@ export function AppShell(props: AppShellProps) {
     onApplyKenBurns,
     onExtractAudio,
     onRife,
+    onStabilizeChange,
     onMoveUp,
     onMoveDown,
     onReorder,
     onMoveToTrack,
     onTransitionUpdate,
+    captions,
+    onCaptionResize,
     onAddTextOverlay,
     onUpdateTextOverlay,
     onDeleteTextOverlay,
-    onCloseKeyboardShortcuts,
     onMemoryWarningConfirm,
     onMemoryWarningCancel,
     onRecover,
     onDiscardRecovery,
   } = props;
 
-  const {
-    encoderPath,
-    isRendering,
-    renderPlan,
-    exportSettings,
-    finishing,
-    outputUrl,
-    ffmpegLoading,
-    ffmpegFailed,
-    forceFFmpeg,
-    useCanvasRenderer,
-    audioReactive,
-    forceReencode,
-    status,
-    progressStage,
-    progressValue,
-    progressIndeterminate,
-    rifeProcessingClipId,
-    setFinishing,
-    setForceFFmpeg,
-    setUseCanvasRenderer,
-    setAudioReactive,
-    setForceReencode,
-    setExportSettings,
-  } = useStore(settingsStore);
+  // Only the three fields this shell itself renders — a progress tick during a
+  // render must not re-render every panel below.
+  const { encoderPath, isRendering, renderPlan } = useStore(
+    settingsStore,
+    useShallow((s) => ({
+      encoderPath: s.encoderPath,
+      isRendering: s.isRendering,
+      renderPlan: s.renderPlan,
+    })),
+  );
 
   return (
     <main className="app-shell">
@@ -232,30 +187,12 @@ export function AppShell(props: AppShellProps) {
           onGpuStitch={onGpuStitch}
           onUndo={onUndo}
           onRedo={onRedo}
-          canUndo={canUndo}
-          canRedo={canRedo}
           onSaveProject={onSaveProject}
           onLoadProject={onLoadProject}
-          onShowKeyboardShortcuts={onShowKeyboardShortcuts}
+          onShowKeyboardShortcuts={() => uiActions.setShowKeyboardShortcuts(true)}
           onDebugResetFFmpeg={onDebugResetFFmpeg}
           onRetryFfmpegLoad={onRetryFfmpegLoad}
-          ffmpegLoading={ffmpegLoading}
-          ffmpegLoadFailed={ffmpegFailed}
           onCopyDebugInfo={onCopyDebugInfo}
-          status={status}
-          forceFFmpeg={forceFFmpeg}
-          onToggleForceFFmpeg={setForceFFmpeg}
-          useCanvasRenderer={useCanvasRenderer}
-          onToggleCanvasRenderer={setUseCanvasRenderer}
-          audioReactive={audioReactive}
-          onToggleAudioReactive={setAudioReactive}
-          forceReencode={forceReencode}
-          onToggleForceReencode={setForceReencode}
-          progressStage={progressStage}
-          progressValue={progressValue}
-          progressIndeterminate={progressIndeterminate}
-          isRendering={isRendering}
-          renderPlan={renderPlan}
         />
         {renderFailureMessage && !isRendering && (
           <RenderFailurePanel
@@ -270,9 +207,6 @@ export function AppShell(props: AppShellProps) {
           />
         )}
         <StorageRow
-          endpoint={storageEndpoint}
-          authToken={storageAuthToken}
-          onAuthTokenChange={onStorageAuthTokenChange}
           onSaveRemote={onSaveRemote}
           onLoadRemote={onLoadRemote}
           isRemoteSaving={isRemoteSaving}
@@ -282,13 +216,9 @@ export function AppShell(props: AppShellProps) {
           remoteLoadIndeterminate={remoteLoadIndeterminate}
           remoteUploadItems={remoteUploadItems}
           pendingRemoteUploadError={pendingRemoteUploadError}
-          onResolveRemoteUploadError={onResolveRemoteUploadError as any}
+          onResolveRemoteUploadError={onResolveRemoteUploadError}
         />
-        <MediaLibraryPanel
-          endpoint={storageEndpoint}
-          authToken={storageAuthToken}
-          onAddClip={onAddLibraryClip}
-        />
+        <MediaLibraryPanel onAddClip={onAddLibraryClip} />
       </section>
 
       <section className="layout-grid">
@@ -298,36 +228,19 @@ export function AppShell(props: AppShellProps) {
           onGenerateIntercut={onGenerateIntercut}
         />
         <Preview
-          clip={selectedClip}
-          timelineClips={timelineClips}
-          tracks={tracks}
-          clipGroups={clipGroups}
-          transitions={transitions}
-          textOverlays={textOverlays}
-          exportSettings={exportSettings}
-          finishing={finishing}
-          outputUrl={outputUrl}
-          exportFilename={exportSettings.filename}
-          selectedClipId={selectedClipId}
-          selectedTextOverlayId={selectedTextOverlayId}
-          onSelectClip={onSelectClip}
-          onSelectTextOverlay={onSelectTextOverlay}
           onClipLayoutCommit={onClipLayoutCommit}
           onTextOverlayLayoutCommit={onTextOverlayLayoutCommit}
           onPreviewDragStart={onPreviewDragStart}
         />
         <Inspector
-          exportSettings={exportSettings}
-          finishing={finishing}
-          onFinishingChange={setFinishing}
           onChange={onInspectorChange}
           onKeyframesChange={onKeyframesChange}
           onAutomationChange={onAutomationChange}
           onApplyKenBurns={onApplyKenBurns}
-          onExportSettingsChange={setExportSettings}
           onExtractAudio={onExtractAudio}
           onRife={onRife}
-          rifeProcessing={rifeProcessingClipId !== null}
+          onStabilizeChange={onStabilizeChange}
+          captions={captions}
         />
       </section>
 
@@ -338,27 +251,21 @@ export function AppShell(props: AppShellProps) {
         onMoveToTrack={onMoveToTrack}
         onTransitionUpdate={onTransitionUpdate}
         onDelete={onDeleteClip}
+        onCaptionResize={onCaptionResize}
+        onCaptionAdd={captions.onAdd}
         morphProcessingIndex={morphProcessingIndex}
       />
 
       <TextOverlayPanel
-        totalDuration={previewTotalDuration}
-        exportSettings={exportSettings}
-        selectedOverlayId={selectedTextOverlayId}
-        onSelectOverlay={onSelectTextOverlay}
         onAdd={onAddTextOverlay}
         onUpdate={onUpdateTextOverlay}
         onDelete={onDeleteTextOverlay}
       />
 
-      <KeyboardShortcutsModal
-        isOpen={showKeyboardShortcuts}
-        onClose={onCloseKeyboardShortcuts}
-      />
+      <KeyboardShortcutsModal />
 
       <MemoryWarningModal
         isOpen={showMemoryWarning}
-        clips={clips}
         onConfirm={onMemoryWarningConfirm}
         onCancel={onMemoryWarningCancel}
       />
