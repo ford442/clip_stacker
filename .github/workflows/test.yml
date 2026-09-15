@@ -13,8 +13,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18.x, 20.x]
+        # Vitest 4 / rolldown import `styleText` from node:util (Node 20.12+).
+        node-version: [20.x, 22.x]
 
     steps:
       - uses: actions/checkout@v4
