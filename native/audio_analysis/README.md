@@ -12,7 +12,8 @@ detection for WebGPU audio-reactive uniforms and timeline beat markers.
 Requires [Emscripten](https://emscripten.org/) (`emcc` on `PATH`):
 
 ```bash
-./scripts/build-audio-analysis.sh
+npm run build:audio-analysis
+# or: npm run build:wasm
 ```
 
 Outputs:

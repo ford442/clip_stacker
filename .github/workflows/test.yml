@@ -52,11 +52,10 @@ jobs:
       - name: Verify emcc
         run: emcc -v
 
-      - name: Build audio analysis module
-        run: npm run build:audio-analysis
+      - name: Build all WASM modules
+        run: npm run build:wasm
 
-      - name: Build time stretch module
-        run: npm run build:time-stretch
-
-      - name: Report drift against committed artifacts
-        run: git --no-pager diff --stat -- public/wasm || true
+      - name: Fail on committed-artifact drift
+        run: |
+          git --no-pager diff --stat -- public/wasm
+          git --no-pager diff --exit-code -- public/wasm

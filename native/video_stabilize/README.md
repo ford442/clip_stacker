@@ -16,6 +16,7 @@ Requires [Emscripten](https://emscripten.org/) (`emcc` on `PATH`):
 
 ```bash
 npm run build:video-stabilize
+# or: npm run build:wasm
 ```
 
 Outputs (both committed):

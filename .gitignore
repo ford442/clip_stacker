@@ -2,6 +2,7 @@ node_modules/
 dist/
 *.local
 .DS_Store
+native/build/
 
 # Python bytecode (from local hf_space syntax checks)
 __pycache__/

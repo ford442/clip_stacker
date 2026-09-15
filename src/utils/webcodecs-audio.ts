@@ -25,6 +25,15 @@ import {
   timelineHasAudioAutomation,
 } from './clipAutomation';
 import { RemappedAudioCache } from './remappedAudioCache';
+import {
+  audioBufferToInterleaved,
+  isMediaEngineMixEnabled,
+  mixTimelineAudio,
+  scheduleNeedsOfflineAudioMix,
+  writeMixToAudioBuffer,
+  type ClipPcm,
+  type MediaEngineMixEntry,
+} from '../wasm/mediaEngine';
 
 /** AAC-LC — matches the existing FFmpeg mux path (192 kbps stereo @ 48 kHz). */
 export const AAC_CODEC = 'mp4a.40.2';
@@ -91,9 +100,63 @@ export function assessWebCodecsAudioMix(
   return { supported: true };
 }
 
+function entryPlaybackRate(entry: AudioScheduleEntry): number {
+  if (entry.rateRemap) return 1;
+  if (Number.isFinite(entry.playbackRate) && entry.playbackRate > 0) {
+    return entry.playbackRate;
+  }
+  return 1;
+}
+
+/**
+ * Optional C++ mix: constant volume + linear fades + resample.
+ * Volume/pan automation still uses OfflineAudioContext (arbitrary curves).
+ */
+async function tryWasmTimelineMix(
+  entries: AudioScheduleEntry[],
+  durationSec: number,
+  cache: ClipAudioCache,
+  fullSchedule: AudioScheduleEntry[],
+  ctx: BaseAudioContext,
+): Promise<AudioBuffer | null> {
+  if (!isMediaEngineMixEnabled()) return null;
+  if (scheduleNeedsOfflineAudioMix(entries)) return null;
+
+  const remapCache = new RemappedAudioCache();
+  const pcmByClipId: Record<string, ClipPcm> = {};
+  const mixEntries: MediaEngineMixEntry[] = [];
+
+  for (const entry of entries) {
+    const buffer = await remapCache.get(entry, cache, ctx);
+    if (!buffer) return null;
+    if (!pcmByClipId[entry.clipId]) {
+      pcmByClipId[entry.clipId] = audioBufferToInterleaved(buffer);
+    }
+    mixEntries.push({
+      clipId: entry.clipId,
+      timelineStart: entry.timelineStart,
+      duration: entry.duration,
+      bufferOffset: entry.bufferOffset,
+      volume: effectiveEntryVolume(entry, fullSchedule),
+      audioFadeIn: entry.audioFadeIn,
+      audioFadeOut: entry.audioFadeOut,
+      playbackRate: entryPlaybackRate(entry),
+    });
+  }
+
+  const mix = await mixTimelineAudio(mixEntries, pcmByClipId, {
+    sampleRate: AAC_SAMPLE_RATE,
+    durationSec,
+    channels: AAC_CHANNELS,
+  });
+  if (!mix) return null;
+  return writeMixToAudioBuffer(mix, ctx);
+}
+
 /**
  * Render the mixed timeline audio into a single `AudioBuffer`.
  * Volume keyframes + per-clip fades + stereo pan match preview schedule math.
+ * Prefers media-engine WASM when loaded; OfflineAudioContext remains the fallback.
  */
 export async function renderTimelineAudioMix(
   entries: AudioScheduleEntry[],
@@ -107,6 +170,16 @@ export async function renderTimelineAudioMix(
 
   const sampleCount = Math.max(1, Math.ceil(durationSec * AAC_SAMPLE_RATE));
   const offline = new OfflineAudioContext(AAC_CHANNELS, sampleCount, AAC_SAMPLE_RATE);
+
+  const wasmMix = await tryWasmTimelineMix(
+    entries,
+    durationSec,
+    cache,
+    fullSchedule,
+    offline,
+  );
+  if (wasmMix) return wasmMix;
+
   const remapCache = new RemappedAudioCache();
 
   for (const entry of entries) {
@@ -150,12 +223,7 @@ export async function renderTimelineAudioMix(
     }
     leaf.connect(offline.destination);
 
-    const rate =
-      entry.rateRemap
-        ? 1
-        : Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
-          ? entry.playbackRate
-          : 1;
+    const rate = entryPlaybackRate(entry);
     source.playbackRate.value = rate;
     source.start(start, entry.bufferOffset, entry.duration * rate);
   }
