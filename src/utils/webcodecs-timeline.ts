@@ -1,4 +1,4 @@
-/** Frame rate used for timeline WebCodecs export (matches `TARGET_FPS` in webcodecs.ts). */
+/** Frame rate used for timeline WebCodecs export (aliased as `TARGET_FPS` in webcodecs-codec.ts). */
 export const TIMELINE_EXPORT_FPS = 30;
 
 /** Minimum interval between `onStatus` updates during timeline export. */
