@@ -9,6 +9,12 @@ export default defineConfig({
     environment: 'happy-dom',
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'scripts/**/*.test.ts'],
     exclude: ['node_modules', 'dist', '.idea', '.git', '.cache'],
+    // Emscripten glue uses `new URL(..., import.meta.url)`; Vite must not rewrite it.
+    server: {
+      deps: {
+        external: [/\/public\/wasm\//],
+      },
+    },
   },
   resolve: {
     alias: {

@@ -14,8 +14,9 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
-- `npm run build:audio-analysis`: rebuild the audio FFT WASM module (`public/wasm/`) via Emscripten.
-- `npm run build:video-stabilize`: rebuild the video stabilization WASM module (`public/wasm/`) via Emscripten.
+- `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, time-stretch, video stabilize, media-engine) via the shared CMake toolchain. Requires Emscripten (`emcmake` / `emcc`).
+- `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF).
+- `npm run build:audio-analysis` / `build:time-stretch` / `build:video-stabilize` / `build:media-engine`: rebuild one module.
 
 ## Coding Style & Naming Conventions
 
@@ -135,6 +136,32 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 4. Keep zeros when WASM is unavailable — shaders must remain no-ops (no crash / no visual glitch).
 
 Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approved FFT) inside `native/audio_analysis/`.
+
+## Native WASM toolchain
+
+Four Emscripten modules share one flag file. Do not copy-paste `emcc` invocations.
+
+- `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / no pthreads / `EXPORTED_RUNTIME_METHODS`
+- `native/CMakeLists.txt` — builds all four targets into `public/wasm/`
+- `scripts/emscripten-flags.sh` — cmake driver (`WASM_DEBUG=1` for the debug target)
+- `scripts/wasm-size-check.sh` — **fails** if gzip(`.wasm`) exceeds 200 KB
+- CI `wasm` job runs `npm run build:wasm` and `git diff --exit-code -- public/wasm` (including `video_stabilize` and `media_engine`)
+
+Keep WebGPU as the pixel owner. Do not fold video frames into this engine.
+
+## Media engine (timeline PCM mix)
+
+Phase-1 C++ mix/resample for export premix. Live preview still uses the Web Audio graph; FFmpeg remains AAC/exotic-demux fallback.
+
+### Layout
+
+- `native/media_engine/` — `audio_mix.cpp` (schedule → stereo f32), `resampler.cpp` (linear; polyphase later), `bindings.cpp`
+- `public/wasm/media_engine.{js,wasm}` — committed artifacts (gzip budget 200 KB)
+- `src/wasm/mediaEngine.ts` — `mixTimelineAudio(schedule, pcmByClipId)`; lazy load, graceful disable
+- `src/utils/webcodecs-audio.ts` — optional path in `renderTimelineAudioMix` / `encodeTimelineAudio`; OfflineAudioContext fallback
+- Kill switch: `?no_media_engine`. Volume/pan **automation curves** always stay on OfflineAudioContext.
+
+Do not add more DSP inside `canvas-renderer` or FFmpeg `filter_complex` for mix/fade/resample this engine should own.
 
 ## WebGPU transitions
 
@@ -268,7 +295,7 @@ Do not keep a second WebGL context for histograms. Keep COOP/COEP and the produc
 - `src/components/SpeedAutomationLane.tsx` — Cubase-style lane under the selected timeline clip
 - Inspector **Speed (time remap)** `KeyframeMiniEditor` — same lane as volume/pan
 
-When `playbackRate` automation is present, FFmpeg export uses the OfflineAudioContext premix path (same as volume/pan). Constant `clip.playbackRate` without a curve still uses `setpts` + chained `atempo`.
+When `playbackRate` automation is present, FFmpeg export uses the OfflineAudioContext premix path (same as volume/pan). Constant `clip.playbackRate` without a curve still uses `setpts` + chained `atempo` on the FFmpeg video path; export audio premix may use media-engine WASM (linear resample) when the module loads.
 
 ## Intercut generator (local FFmpeg)
 

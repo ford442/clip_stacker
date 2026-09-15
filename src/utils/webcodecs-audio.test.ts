@@ -7,8 +7,15 @@ import {
   extractPlanarFrame,
   isAudioEncoderAvailable,
   MAX_OFFLINE_AUDIO_SECONDS,
+  renderTimelineAudioMix,
   timelineHasAudioAutomation,
 } from './webcodecs-audio';
+import {
+  __setMediaEngineKillSwitchForTests,
+  _resetMediaEngineLoadStateForTests,
+  scheduleNeedsOfflineAudioMix,
+} from '../wasm/mediaEngine';
+import type { AudioScheduleEntry } from '../audio/schedule';
 import { applyGainEnvelope } from '../audio/playbackManager';
 import { buildAudioSchedule } from '../audio/schedule';
 
@@ -34,6 +41,7 @@ describe('webcodecs-audio', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+    _resetMediaEngineLoadStateForTests();
   });
 
   describe('isAudioEncoderAvailable', () => {
@@ -139,6 +147,98 @@ describe('webcodecs-audio', () => {
       expect(param.events.some((e) => e.type === 'ramp' && e.value === 0.25)).toBe(
         true,
       );
+    });
+  });
+
+  describe('media-engine fallback', () => {
+    it('treats volume/pan automation as OfflineAudioContext-only', () => {
+      expect(
+        scheduleNeedsOfflineAudioMix([
+          { volumeAutomation: [{ t: 0, value: 1 }], panAutomation: [] },
+        ]),
+      ).toBe(true);
+      expect(scheduleNeedsOfflineAudioMix([{}])).toBe(false);
+    });
+
+    it('still mixes via OfflineAudioContext when WASM mix is disabled', async () => {
+      __setMediaEngineKillSwitchForTests(true);
+
+      const rendered = {
+        length: 48_000,
+        numberOfChannels: 2,
+        sampleRate: 48_000,
+        getChannelData: () => new Float32Array(48_000),
+      } as unknown as AudioBuffer;
+
+      let startRenderingCalls = 0;
+      class FakeOfflineAudioContext {
+        destination = {};
+        sampleRate = 48_000;
+        createBufferSource() {
+          return {
+            buffer: null as AudioBuffer | null,
+            playbackRate: { value: 1 },
+            connect() {},
+            start() {},
+          };
+        }
+        createGain() {
+          return {
+            gain: {
+              cancelScheduledValues() {},
+              setValueAtTime() {},
+              linearRampToValueAtTime() {},
+            },
+            connect() {},
+          };
+        }
+        createStereoPanner() {
+          return {
+            pan: {
+              cancelScheduledValues() {},
+              setValueAtTime() {},
+            },
+            connect() {},
+          };
+        }
+        async startRendering() {
+          startRenderingCalls += 1;
+          return rendered;
+        }
+      }
+      vi.stubGlobal('OfflineAudioContext', FakeOfflineAudioContext);
+
+      const entry = {
+        clipId: 'a',
+        objectUrl: 'blob:a',
+        timelineStart: 0,
+        duration: 1,
+        cycleDuration: 1,
+        loopCount: 1,
+        bufferOffset: 0,
+        volume: 1,
+        audioFadeIn: 0,
+        audioFadeOut: 0,
+        playbackRate: 1,
+      } as AudioScheduleEntry;
+
+      const cache = {
+        get: async () =>
+          ({
+            length: 48_000,
+            numberOfChannels: 2,
+            sampleRate: 48_000,
+            getChannelData: () => new Float32Array(48_000),
+          }) as unknown as AudioBuffer,
+      };
+
+      const mixed = await renderTimelineAudioMix(
+        [entry],
+        1,
+        cache as never,
+      );
+      expect(startRenderingCalls).toBe(1);
+      expect(mixed).toBe(rendered);
     });
   });
 

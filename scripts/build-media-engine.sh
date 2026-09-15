@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Build the pitch-preserving WSOLA time-stretch WASM module (shared CMake toolchain).
+# Build the timeline PCM mix / resample media-engine WASM module.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck source=emscripten-flags.sh
 source "$ROOT/scripts/emscripten-flags.sh"
 
-echo "Building time_stretch WASM → $ROOT/public/wasm"
-build_wasm_targets time_stretch
+echo "Building media_engine WASM → $ROOT/public/wasm"
+build_wasm_targets media_engine
 echo "Done."

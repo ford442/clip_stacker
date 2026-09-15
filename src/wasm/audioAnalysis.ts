@@ -4,6 +4,8 @@
  * Feature gracefully disables when the module fails to load (no crash).
  */
 
+import { readWasmBinaryIfFileUrl, type EmscriptenFactory } from './emscriptenLoader';
+
 export const AUDIO_ANALYSIS_BAND_COUNT = 8;
 
 export interface AudioBandEnergies {
@@ -51,7 +53,7 @@ interface WasmModule {
   HEAPF32: Float32Array;
 }
 
-type ModuleFactory = (opts?: { locateFile?: (path: string) => string }) => Promise<WasmModule>;
+type ModuleFactory = EmscriptenFactory<WasmModule>;
 
 let loadPromise: Promise<WasmModule | null> | null = null;
 let loadFailedReason: string | null = null;
@@ -108,6 +110,9 @@ export async function loadAudioAnalysisModule(options?: {
       }
 
       const instance = await factory({
+        ...(await readWasmBinaryIfFileUrl(wasmUrl).then((wasmBinary) =>
+          wasmBinary ? { wasmBinary } : {},
+        )),
         locateFile: (path: string) => {
           if (path.endsWith('.wasm')) return wasmUrl;
           return resolveAssetUrl(path, options?.baseUrl);

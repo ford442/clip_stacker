@@ -13,8 +13,10 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [18.x, 20.x]
+        # Vitest 4 / rolldown import `styleText` from node:util (Node 20.12+).
+        node-version: [20.x, 22.x]
 
     steps:
       - uses: actions/checkout@v4
@@ -52,11 +54,10 @@ jobs:
       - name: Verify emcc
         run: emcc -v
 
-      - name: Build audio analysis module
-        run: npm run build:audio-analysis
+      - name: Build all WASM modules
+        run: npm run build:wasm
 
-      - name: Build time stretch module
-        run: npm run build:time-stretch
-
-      - name: Report drift against committed artifacts
-        run: git --no-pager diff --stat -- public/wasm || true
+      - name: Fail on committed-artifact drift
+        run: |
+          git --no-pager diff --stat -- public/wasm
+          git --no-pager diff --exit-code -- public/wasm

@@ -1,5 +1,6 @@
 import { probeWebGpu, publishWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
+import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
 
 export interface BrowserCapabilities {
   /** WebCodecs API (VideoEncoder / VideoDecoder / VideoFrame) available. */
@@ -158,6 +159,7 @@ export function formatCapabilities(caps: BrowserCapabilities): string {
   lines.push(`Hardware H.264: ${caps.hardwareH264 ? "✓" : "✗"}`);
   lines.push(`WebGPU: ${caps.webgpu ? "✓" : "✗"}`);
   lines.push(formatGpuChoreDiagnostics());
+  lines.push(formatMediaEngineDiagnostics());
   lines.push(`OffscreenCanvas: ${caps.offscreenCanvas ? "✓" : "✗"}`);
   lines.push(`MediaRecorder MP4: ${caps.mediaRecorderMp4 ? "✓" : "✗"}`);
   lines.push(`SharedArrayBuffer: ${caps.sharedArrayBuffer ? "✓" : "✗"}`);

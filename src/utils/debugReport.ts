@@ -16,6 +16,7 @@ import {
 import { getGpuErrorLog } from '../webgpu/gpuDevice';
 import { getPublishedWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
+import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
 
 export interface DebugReportContext {
   status: string;
@@ -208,6 +209,10 @@ export function generateDebugReport(ctx: DebugReportContext): string {
       );
     });
   }
+  lines.push('');
+
+  lines.push('## media-engine');
+  lines.push(`- ${formatMediaEngineDiagnostics()}`);
   lines.push('');
 
   const gpuErrors = getGpuErrorLog();
