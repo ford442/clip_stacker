@@ -5,6 +5,7 @@
  */
 
 import { getWasmPublicBaseUrl } from './audioAnalysis';
+import { readWasmBinaryIfFileUrl, type EmscriptenFactory } from './emscriptenLoader';
 
 interface WasmModule {
   _time_stretch_remap(
@@ -31,7 +32,7 @@ interface WasmModule {
   HEAPF32: Float32Array;
 }
 
-type ModuleFactory = (opts?: { locateFile?: (path: string) => string }) => Promise<WasmModule>;
+type ModuleFactory = EmscriptenFactory<WasmModule>;
 
 let loadPromise: Promise<WasmModule | null> | null = null;
 let loadFailedReason: string | null = null;
@@ -59,7 +60,9 @@ export async function loadTimeStretchModule(options?: {
       const mod = (await import(/* @vite-ignore */ jsUrl)) as {
         default: ModuleFactory;
       };
+      const wasmBinary = await readWasmBinaryIfFileUrl(wasmUrl);
       const instance = await mod.default({
+        ...(wasmBinary ? { wasmBinary } : {}),
         locateFile: (path: string) =>
           path.endsWith('.wasm') ? wasmUrl : resolveAssetUrl(path, options?.baseUrl),
       });

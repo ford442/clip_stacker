@@ -14,7 +14,7 @@ void resample_linear_stereo(
     const float* interleaved,
     int frames,
     int channels,
-    float src_frame,
+    double src_frame,
     float* out_l,
     float* out_r);
 

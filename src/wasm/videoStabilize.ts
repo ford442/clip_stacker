@@ -11,6 +11,7 @@
  */
 
 import { getWasmPublicBaseUrl } from './audioAnalysis';
+import { readWasmBinaryIfFileUrl, type EmscriptenFactory } from './emscriptenLoader';
 
 /** Floats per correction matrix: [a, b, tx, c, d, ty]. */
 export const STAB_MATRIX_FLOATS = 6;
@@ -67,7 +68,7 @@ interface WasmModule {
   HEAPF32: Float32Array;
 }
 
-type ModuleFactory = (opts?: { locateFile?: (path: string) => string }) => Promise<WasmModule>;
+type ModuleFactory = EmscriptenFactory<WasmModule>;
 
 let loadPromise: Promise<WasmModule | null> | null = null;
 let loadFailedReason: string | null = null;
@@ -101,6 +102,9 @@ export async function loadVideoStabilizeModule(options?: {
       }
 
       return await factory({
+        ...(await readWasmBinaryIfFileUrl(wasmUrl).then((wasmBinary) =>
+          wasmBinary ? { wasmBinary } : {},
+        )),
         locateFile: (path: string) => {
           if (path.endsWith('.wasm')) return wasmUrl;
           return resolveAssetUrl(path, options?.baseUrl);

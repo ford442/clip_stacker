@@ -6,6 +6,10 @@
 # Debug (CMAKE_BUILD_TYPE=Debug or -DCLIP_STACKER_WASM_DEBUG=ON):
 #   -O0 -g -s ASSERTIONS=1 --profiling-funcs
 #
+# ENVIRONMENT=web,worker (not node): Vitest injects wasmBinary for file://.
+# USE_ES6_IMPORT_META=0: glue uses locateFile instead of `new URL(..., import.meta.url)`,
+# which Vite would otherwise rewrite during tests.
+#
 # No pthreads: COOP/COEP is already on for FFmpeg; threads only pay off once
 # mix is streaming + multi-clip (phase 2).
 
@@ -66,8 +70,9 @@ function(clip_stacker_wasm_module target)
     "SHELL:-s WASM=1"
     "SHELL:-s MODULARIZE=1"
     "SHELL:-s EXPORT_ES6=1"
+    "SHELL:-s USE_ES6_IMPORT_META=0"
     "SHELL:-s EXPORT_NAME=${ARG_EXPORT_NAME}"
-    "SHELL:-s ENVIRONMENT=web,worker,node"
+    "SHELL:-s ENVIRONMENT=web,worker"
     "SHELL:-s FILESYSTEM=0"
     "SHELL:-s USE_PTHREADS=0"
     "SHELL:-s ALLOW_MEMORY_GROWTH=1"

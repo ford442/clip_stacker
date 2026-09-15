@@ -7,6 +7,7 @@
  */
 
 import { getWasmPublicBaseUrl } from './audioAnalysis';
+import { readWasmBinaryIfFileUrl, type EmscriptenFactory } from './emscriptenLoader';
 
 export const MEDIA_ENGINE_CHANNELS = 2;
 export const MIX_ENTRY_STRIDE = 8;
@@ -56,7 +57,7 @@ interface WasmModule {
   HEAP32: Int32Array;
 }
 
-type ModuleFactory = (opts?: { locateFile?: (path: string) => string }) => Promise<WasmModule>;
+type ModuleFactory = EmscriptenFactory<WasmModule>;
 
 let loadPromise: Promise<WasmModule | null> | null = null;
 let loadFailedReason: string | null = null;
@@ -95,7 +96,9 @@ export async function loadMediaEngineModule(options?: {
       if (typeof factory !== 'function') {
         throw new Error('media_engine module factory missing');
       }
+      const wasmBinary = await readWasmBinaryIfFileUrl(wasmUrl);
       return await factory({
+        ...(wasmBinary ? { wasmBinary } : {}),
         locateFile: (path: string) => {
           if (path.endsWith('.wasm')) return wasmUrl;
           return resolveAssetUrl(path, options?.baseUrl);

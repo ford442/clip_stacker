@@ -6,15 +6,15 @@
 
 namespace {
 
-float fade_gain(float local_time, float duration, float fade_in, float fade_out) {
-  float gain = 1.f;
-  if (fade_in > 0.f && local_time < fade_in) {
+double fade_gain(double local_time, double duration, double fade_in, double fade_out) {
+  double gain = 1.0;
+  if (fade_in > 0.0 && local_time < fade_in) {
     gain *= local_time / fade_in;
   }
-  if (fade_out > 0.f && local_time > duration - fade_out) {
-    const float remaining = duration - local_time;
-    const float out_progress = remaining / fade_out;
-    gain *= std::max(0.f, std::min(1.f, out_progress));
+  if (fade_out > 0.0 && local_time > duration - fade_out) {
+    const double remaining = duration - local_time;
+    const double out_progress = remaining / fade_out;
+    gain *= std::max(0.0, std::min(1.0, out_progress));
   }
   return gain;
 }
@@ -41,7 +41,7 @@ int mix_timeline_audio(
   const int out_samples = out_frames * out_ch;
   for (int i = 0; i < out_samples; ++i) out[i] = 0.f;
 
-  const float inv_out_rate = 1.f / static_cast<float>(out_sample_rate);
+  const double inv_out_rate = 1.0 / static_cast<double>(out_sample_rate);
 
   for (int e = 0; e < entry_count; ++e) {
     const float* row = entries + e * MIX_ENTRY_STRIDE;
@@ -55,36 +55,36 @@ int mix_timeline_audio(
     const int src_rate = meta[MIX_CLIP_SAMPLE_RATE];
     if (src_frames <= 0 || src_rate <= 0 || src_ch < 1 || pcm_offset < 0) continue;
 
-    const float timeline_start = row[MIX_ENTRY_TIMELINE_START];
-    const float duration = row[MIX_ENTRY_DURATION];
-    const float buffer_offset = std::max(0.f, row[MIX_ENTRY_BUFFER_OFFSET]);
-    const float volume = row[MIX_ENTRY_VOLUME];
-    const float fade_in = std::max(0.f, row[MIX_ENTRY_FADE_IN]);
-    const float fade_out = std::max(0.f, row[MIX_ENTRY_FADE_OUT]);
-    float playback_rate = row[MIX_ENTRY_PLAYBACK_RATE];
-    if (!(playback_rate > 0.f) || !std::isfinite(playback_rate)) playback_rate = 1.f;
-    if (!(duration > 0.f) || !std::isfinite(duration)) continue;
+    const double timeline_start = static_cast<double>(row[MIX_ENTRY_TIMELINE_START]);
+    const double duration = static_cast<double>(row[MIX_ENTRY_DURATION]);
+    const double buffer_offset = std::max(0.0, static_cast<double>(row[MIX_ENTRY_BUFFER_OFFSET]));
+    const double volume = static_cast<double>(row[MIX_ENTRY_VOLUME]);
+    const double fade_in = std::max(0.0, static_cast<double>(row[MIX_ENTRY_FADE_IN]));
+    const double fade_out = std::max(0.0, static_cast<double>(row[MIX_ENTRY_FADE_OUT]));
+    double playback_rate = static_cast<double>(row[MIX_ENTRY_PLAYBACK_RATE]);
+    if (!(playback_rate > 0.0) || !std::isfinite(playback_rate)) playback_rate = 1.0;
+    if (!(duration > 0.0) || !std::isfinite(duration)) continue;
     if (!std::isfinite(timeline_start) || !std::isfinite(volume)) continue;
 
     const float* pcm = pcm_blob + pcm_offset;
-    const float src_rate_f = static_cast<float>(src_rate);
+    const double src_rate_d = static_cast<double>(src_rate);
 
     const int start_frame = std::max(
-        0, static_cast<int>(std::floor(timeline_start * static_cast<float>(out_sample_rate))));
+        0, static_cast<int>(std::floor(timeline_start * static_cast<double>(out_sample_rate))));
     const int end_frame = std::min(
         out_frames,
-        static_cast<int>(std::ceil((timeline_start + duration) * static_cast<float>(out_sample_rate))));
+        static_cast<int>(std::ceil((timeline_start + duration) * static_cast<double>(out_sample_rate))) + 1);
 
-    for (int of = start_frame; of < end_frame; ++of) {
-      const float t = static_cast<float>(of) * inv_out_rate;
-      const float local = t - timeline_start;
-      if (local < 0.f || local >= duration) continue;
+    for (int of = start_frame; of < end_frame && of < out_frames; ++of) {
+      const double t = static_cast<double>(of) * inv_out_rate;
+      const double local = t - timeline_start;
+      if (local < 0.0 || local >= duration) continue;
 
-      const float gain = volume * fade_gain(local, duration, fade_in, fade_out);
+      const float gain = static_cast<float>(volume * fade_gain(local, duration, fade_in, fade_out));
       if (gain == 0.f) continue;
 
-      const float src_time = buffer_offset + local * playback_rate;
-      const float src_frame = src_time * src_rate_f;
+      const double src_time = buffer_offset + local * playback_rate;
+      const double src_frame = src_time * src_rate_d;
       float sl = 0.f;
       float sr = 0.f;
       resample_linear_stereo(pcm, src_frames, src_ch, src_frame, &sl, &sr);

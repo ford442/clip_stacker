@@ -229,7 +229,7 @@ describe('webcodecs-audio', () => {
             numberOfChannels: 2,
             sampleRate: 48_000,
             getChannelData: () => new Float32Array(48_000),
-          }) as AudioBuffer,
+          }) as unknown as AudioBuffer,
       };
 
       const mixed = await renderTimelineAudioMix(
