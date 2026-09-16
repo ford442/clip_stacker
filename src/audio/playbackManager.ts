@@ -15,6 +15,7 @@ import {
 import { sampleKeyframes } from '../utils/keyframes';
 import { clampClipVolume } from '../utils/audioVolume';
 import { RemappedAudioCache } from '../utils/remappedAudioCache';
+import { createAudioContext } from './context';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
 
@@ -106,6 +107,16 @@ export class AudioPlaybackManager {
 
   getAnalyser(): AnalyserNode | null {
     return this.analyser;
+  }
+
+  /** Live AudioContext sample rate / latency, for Copy Debug. Null before the context exists. */
+  getContextDiagnostics(): { sampleRate: number; baseLatency: number; state: AudioContextState } | null {
+    if (!this.ctx) return null;
+    return {
+      sampleRate: this.ctx.sampleRate,
+      baseLatency: this.ctx.baseLatency,
+      state: this.ctx.state,
+    };
   }
 
   /** Master output gain (0–2). Live-updates without restarting sources. */
@@ -207,19 +218,7 @@ export class AudioPlaybackManager {
     if (this.ctx) return true;
 
     try {
-      const Ctx =
-        typeof window !== 'undefined'
-          ? window.AudioContext ||
-            (window as unknown as { webkitAudioContext?: typeof AudioContext })
-              .webkitAudioContext
-          : undefined;
-      if (!Ctx) {
-        this.contextFailed = true;
-        this.available = false;
-        this.emit();
-        return false;
-      }
-      this.ctx = new Ctx();
+      this.ctx = createAudioContext();
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.value = this.masterVolume;
       this.analyser = this.ctx.createAnalyser();

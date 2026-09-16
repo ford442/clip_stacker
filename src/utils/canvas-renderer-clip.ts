@@ -11,6 +11,7 @@ import type { RendererOptions, RenderProgress, ProgressCallback } from "./canvas
 import { getClipDuration } from "./project";
 import { bassLevelFromAnalyserBytes } from "./canvas-renderer-audio";
 import { calculateLetterboxRect, computeFadeAlpha, waitForSeeked } from "./canvas-renderer-helpers";
+import { createAudioContext } from "../audio/context";
 
 const TARGET_WIDTH = 1280;
 const TARGET_HEIGHT = 720;
@@ -124,7 +125,7 @@ export class CanvasRenderer {
 
     if (this.options.audioReactive) {
       try {
-        audioCtx = new AudioContext();
+        audioCtx = createAudioContext();
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
         freqData = new Uint8Array(

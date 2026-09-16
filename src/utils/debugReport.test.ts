@@ -84,6 +84,11 @@ describe('generateDebugReport', () => {
     expect(report).toContain('## media-engine');
     expect(report).toContain('gpuComputeAvailable');
     expect(report).toContain('## WebGPU probe');
+    expect(report).toContain('## WebGPU Optional Features');
+    expect(report).toContain('## Export Encoder');
+    expect(report).toContain('(no WebCodecs export run yet this session)');
+    expect(report).toContain('## Audio Context');
+    expect(report).toContain('(no live AudioContext yet)');
     expect(report).toContain('## WebGPU Errors (last 0)');
     expect(report).toContain('(none captured)');
 

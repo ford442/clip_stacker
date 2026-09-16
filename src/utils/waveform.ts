@@ -1,3 +1,5 @@
+import { createAudioContext } from '../audio/context';
+
 /**
  * Decode the audio track of an audio or video file into an AudioBuffer.
  * Works for both audio and video containers via `decodeAudioData`.
@@ -31,7 +33,7 @@ export async function extractWaveformPeaks(
   const { signal } = options;
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-  const audioCtx = new AudioContext();
+  const audioCtx = createAudioContext();
   try {
     const audioBuffer = await decodeAudioBuffer(objectUrl, audioCtx);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');

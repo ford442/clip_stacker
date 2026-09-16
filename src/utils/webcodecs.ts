@@ -36,7 +36,7 @@ import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import {
   TARGET_FPS,
-  VIDEO_ENCODER_LATENCY_MODE,
+  buildVideoEncoderConfig,
   mapWebCodecsProgress,
   resolveEncoderBitrate,
   resolveEncoderCodec,
@@ -52,12 +52,16 @@ import { encodeVideoFrames } from './webcodecs-clip-encode';
 import { encodeTimelineComposite } from './webcodecs-timeline-export';
 
 export type { GpuCompositorKind } from './webcodecs-compositor';
-export type { ExportVideoCodec, ResolvedEncoderCodec } from './webcodecs-codec';
+export type { ExportVideoCodec, ResolvedEncoderCodec, VideoEncoderConfigWithColorSpace } from './webcodecs-codec';
 export {
+  EXPORT_BITRATE_MODE,
+  REC709_COLOR_SPACE,
   VIDEO_ENCODER_LATENCY_MODE,
   WEBCODECS_PROGRESS_STAGES,
+  buildVideoEncoderConfig,
   codecCandidates,
   crfToBitsPerPixel,
+  getLastResolvedEncoderCodec,
   h264CodecString,
   isWebCodecsAvailable,
   resolveEncoderBitrate,
@@ -117,8 +121,8 @@ export async function encodeVideoWithWebCodecs(
       : `Canvas compositor active (${width}x${height})`,
   );
 
-  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
   const bitrate = resolveEncoderBitrate(settings, width, height);
+  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height, bitrate);
   const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
@@ -127,15 +131,7 @@ export async function encodeVideoWithWebCodecs(
     error: (e) => { videoError = e; },
   });
 
-  videoEncoder.configure({
-    codec: encoderCodec.codec,
-    width,
-    height,
-    bitrate,
-    framerate: TARGET_FPS,
-    hardwareAcceleration: 'prefer-hardware',
-    latencyMode: VIDEO_ENCODER_LATENCY_MODE,
-  });
+  videoEncoder.configure(buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TARGET_FPS));
 
   let videoTimeUs = 0;
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);

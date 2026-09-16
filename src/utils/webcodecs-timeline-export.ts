@@ -25,12 +25,12 @@ import {
   TIMELINE_EXPORT_FPS,
 } from './webcodecs-timeline';
 import {
+  buildVideoEncoderConfig,
   mapWebCodecsProgress,
   resolveEncoderBitrate,
   resolveEncoderCodec,
   waitForEncoderDequeue,
   WEBCODECS_PROGRESS_STAGES,
-  VIDEO_ENCODER_LATENCY_MODE,
 } from './webcodecs-codec';
 import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecs-mux';
 
@@ -82,8 +82,8 @@ export async function encodeTimelineComposite(
   // back to the seek path automatically (see TimelineDecoderFrameProvider).
   const frameProvider = new TimelineDecoderFrameProvider();
 
-  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height);
   const bitrate = resolveEncoderBitrate(settings, width, height);
+  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height, bitrate);
   const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
@@ -92,15 +92,9 @@ export async function encodeTimelineComposite(
     error: (e) => { videoError = e; },
   });
 
-  videoEncoder.configure({
-    codec: encoderCodec.codec,
-    width,
-    height,
-    bitrate,
-    framerate: TIMELINE_EXPORT_FPS,
-    hardwareAcceleration: 'prefer-hardware',
-    latencyMode: VIDEO_ENCODER_LATENCY_MODE,
-  });
+  videoEncoder.configure(
+    buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TIMELINE_EXPORT_FPS),
+  );
 
   const renderTimelineFrame = async (frameIndex: number) => {
     const globalTime = globalTimeForTimelineFrame(frameIndex, TIMELINE_EXPORT_FPS);

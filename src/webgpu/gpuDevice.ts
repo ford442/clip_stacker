@@ -34,22 +34,49 @@ export interface GpuContext {
   readonly adapter: GPUAdapter;
   readonly device: GPUDevice;
   readonly format: GPUTextureFormat;
+  /**
+   * Optional GPU features actually adopted on this device (subset of
+   * {@link DESIRED_OPTIONAL_FEATURES} that this adapter supports). Always
+   * check `features.has(...)` before using a feature-gated code path —
+   * these are best-effort and commonly absent on Safari/Firefox.
+   */
+  readonly features: Set<GPUFeatureName>;
   /** Returns this context if still live, otherwise acquires a fresh one. */
   ensure(): Promise<GpuContext>;
   /** Destroys the underlying device. Only call this if you truly own the app's GPU lifecycle (e.g. tests). */
   destroy(): void;
 }
 
+/** Device/queue labels so `about:gpu` and PIX-style captures read clearly. */
+const GPU_DEVICE_LABEL = 'clip_stacker-preview';
+const GPU_QUEUE_LABEL = 'clip_stacker-preview-queue';
+
 /**
- * Limits we'd like beyond the WebGPU defaults, sized for up to 4K export
- * (3840×2160). Each is clamped to what the adapter actually reports —
- * requesting more than `adapter.limits.<key>` throws, so we never ask for
- * more than the hardware advertises.
+ * Limits we'd like beyond the WebGPU defaults, sized for up to 8K export
+ * (7680×4320) and large 3D LUT textures. Each is clamped to what the
+ * adapter actually reports — requesting more than `adapter.limits.<key>`
+ * throws, so we never ask for more than the hardware advertises.
  */
 const DESIRED_LIMITS: Record<string, number> = {
-  maxTextureDimension2D: 4096,
-  maxBufferSize: 256 * 1024 * 1024,
+  maxTextureDimension2D: 16384,
+  maxBufferSize: 512 * 1024 * 1024,
+  maxStorageBufferBindingSize: 512 * 1024 * 1024,
+  maxColorAttachmentBytesPerSample: 64,
 };
+
+/**
+ * Optional features adopted when the adapter supports them, and otherwise
+ * silently skipped — never passed as a hard requirement, so an adapter
+ * missing one (Safari, Firefox, older Chrome) still boots. Callers check
+ * `GpuContext.features` before relying on any of these.
+ */
+const DESIRED_OPTIONAL_FEATURES: GPUFeatureName[] = [
+  'timestamp-query',
+  'float32-filterable',
+  'bgra8unorm-storage',
+  'rg11b10ufloat-renderable',
+  'dual-source-blending',
+];
 
 function resolveRequiredLimits(adapter: GPUAdapter): Record<string, number> {
   const limits = adapter.limits as unknown as Record<string, number>;
@@ -61,6 +88,10 @@ function resolveRequiredLimits(adapter: GPUAdapter): Record<string, number> {
     }
   }
   return required;
+}
+
+function resolveOptionalFeatures(adapter: GPUAdapter): GPUFeatureName[] {
+  return DESIRED_OPTIONAL_FEATURES.filter((feature) => adapter.features.has(feature));
 }
 
 const MAX_ERROR_LOG = 20;
@@ -105,6 +136,7 @@ class GpuContextImpl implements GpuContext {
     readonly adapter: GPUAdapter,
     readonly device: GPUDevice,
     readonly format: GPUTextureFormat,
+    readonly features: Set<GPUFeatureName>,
   ) {
     void this.device.lost.then((info) => this.handleLost(info));
     this.device.onuncapturederror = (event) => {
@@ -175,12 +207,16 @@ export async function acquireGpuContext(): Promise<GpuContext> {
     });
     if (!adapter) throw new Error('No WebGPU adapter available');
 
+    const optionalFeatures = resolveOptionalFeatures(adapter);
     const device = await adapter.requestDevice({
       requiredLimits: resolveRequiredLimits(adapter),
+      requiredFeatures: optionalFeatures,
+      label: GPU_DEVICE_LABEL,
+      defaultQueue: { label: GPU_QUEUE_LABEL },
     });
     const format = navigator.gpu.getPreferredCanvasFormat();
 
-    const ctx = new GpuContextImpl(adapter, device, format);
+    const ctx = new GpuContextImpl(adapter, device, format, new Set(optionalFeatures));
     current = ctx;
     return ctx;
   })();
@@ -203,6 +239,11 @@ export function hasGpuContext(): boolean {
  */
 export function peekGpuDevice(): GPUDevice | null {
   return current?.device ?? null;
+}
+
+/** Optional GPU features adopted on the shared device, for diagnostics (Copy Debug). */
+export function peekGpuFeatures(): Set<GPUFeatureName> | null {
+  return current?.features ?? null;
 }
 
 /** Test/dev-only: force the singleton to forget its current device. */

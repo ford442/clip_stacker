@@ -69,6 +69,7 @@ describe('webgpuProbe', () => {
     const device = makeFakeDevice();
     const adapter = {
       limits: {},
+      features: new Set<string>(),
       requestDevice: vi.fn().mockResolvedValue(device),
       info: { vendor: 'swiftshader', architecture: '', device: '', description: 'SwiftShader' },
     };
@@ -121,6 +122,7 @@ describe('webgpuProbe', () => {
   it('reports requestDevice rejection', async () => {
     const adapter = {
       limits: {},
+      features: new Set<string>(),
       requestDevice: vi.fn().mockRejectedValue(new Error('operation failed')),
     };
     vi.stubGlobal('navigator', {
