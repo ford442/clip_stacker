@@ -7,6 +7,7 @@
 import type { Clip } from "../types";
 import {
   buildPreviewCompositionPlan,
+  captionPlanOptions,
   type PreviewCompositionPlan,
   type TimelineCompositor,
   type TimelineRenderOptions,
@@ -78,6 +79,7 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
       globalTime,
       options?.maxHeight,
       options?.maxWidth,
+      captionPlanOptions(options),
     );
     if (options?.isCancelled?.()) return plan;
     this.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
@@ -97,7 +99,7 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
 
     for (const layer of plan.layers) {
       if (options?.isCancelled?.()) return;
-      if (layer.kind === "text") continue;
+      if (layer.kind === "text" || layer.kind === "caption") continue;
 
       if (layer.mediaObjectUrl) {
         const video = this.mediaPool.getVideoForUrl(

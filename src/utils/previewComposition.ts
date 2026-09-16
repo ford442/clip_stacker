@@ -1,9 +1,11 @@
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipTransition,
   ExportSettings,
   TextOverlay,
+  TextOverlayStyle,
 } from '../types';
 import { computeFadeAlpha } from './fadePreview';
 import { sampleKeyframes } from './keyframes';
@@ -31,6 +33,8 @@ import { capPreviewResolution, DEFAULT_PREVIEW_MAX_HEIGHT } from './previewBudge
 import { resolveTransitionShaderId } from '../webgpu/transitions/registry';
 import { isStabilizationActive, stabMatrixForClip } from './stabilization';
 import type { StabMatrix } from '../wasm/videoStabilize';
+import { layerKeyEntry, type LayerKeyUniforms } from './overlayKey';
+import { normalizeCaptions, resolveCaptionStyle } from './subtitles';
 
 /**
  * Spread-in `stabMatrix` for a clip, or nothing at all when it is not
@@ -45,7 +49,7 @@ function stabMatrixEntry(
   return { stabMatrix: stabMatrixForClip(clip, sourceTime) };
 }
 
-export type PreviewLayerKind = 'base' | 'pip' | 'text';
+export type PreviewLayerKind = 'base' | 'pip' | 'text' | 'caption';
 
 export interface PreviewPipRect {
   x: number;
@@ -94,6 +98,12 @@ export interface PreviewClipLayer {
    * (`[a, b, tx, c, d, ty]`). Omitted when the clip is not stabilized.
    */
   stabMatrix?: StabMatrix;
+  /**
+   * Chroma / luma key from the clip's `overlayBlend` + `chromaKey`. Omitted
+   * when the clip is not keyed, so unkeyed layers stay structurally identical
+   * to what they were before keying moved onto the compositors.
+   */
+  key?: LayerKeyUniforms;
 }
 
 export interface PreviewTextLayer {
@@ -107,7 +117,32 @@ export interface PreviewTextLayer {
   opacity: number;
 }
 
-export type PreviewCompositionLayer = PreviewClipLayer | PreviewTextLayer;
+/**
+ * One caption cue active at `globalTime`.
+ *
+ * Note the anchor: unlike {@link PreviewTextLayer} (top-left), `x`/`y` are the
+ * cue's **bottom centre** in canvas pixels, matching the ASS burn-in path,
+ * where every cue is alignment 2 with an explicit `\pos()`.
+ */
+export interface PreviewCaptionLayer {
+  kind: 'caption';
+  captionId: string;
+  text: string;
+  /** Per-cue style merged over the project style over the built-in defaults. */
+  style: TextOverlayStyle;
+  timelineIndex: number;
+  zIndex: number;
+  /** Horizontal centre in canvas px. */
+  x: number;
+  /** Bottom edge of the last line in canvas px. */
+  y: number;
+  opacity: number;
+}
+
+export type PreviewCompositionLayer =
+  | PreviewClipLayer
+  | PreviewTextLayer
+  | PreviewCaptionLayer;
 
 /** Optional controls passed into timeline preview renders. */
 /**
@@ -146,6 +181,29 @@ export interface TimelineRenderOptions {
    * encoder loop index; preview may omit (derived from plan.globalTime).
    */
   frameIndex?: number;
+  /**
+   * Caption cues to draw. Omitted (or empty) leaves the plan caption-free,
+   * which is what the soft-subtitle mux and the FFmpeg burn-in post-pass want.
+   */
+  captions?: CaptionEntry[];
+  /** Project-wide caption style; per-cue `style` overrides win over it. */
+  captionStyle?: Partial<TextOverlayStyle>;
+}
+
+/** Caption inputs for {@link buildPreviewCompositionPlan}. */
+export interface CaptionPlanOptions {
+  captions?: CaptionEntry[];
+  captionStyle?: Partial<TextOverlayStyle>;
+}
+
+/** Narrow a plan's render options down to just its caption inputs. */
+export function captionPlanOptions(
+  options?: Pick<TimelineRenderOptions, 'captions' | 'captionStyle'>,
+): CaptionPlanOptions {
+  return {
+    captions: options?.captions,
+    captionStyle: options?.captionStyle,
+  };
 }
 
 export interface PreviewCompositionPlan {
@@ -581,6 +639,7 @@ function buildScheduledClipLayer(
     uvScale,
     uvOffset,
     ...stabMatrixEntry(segment.clip, sourceTime),
+    ...layerKeyEntry(segment.clip),
   };
 }
 
@@ -625,6 +684,7 @@ function buildOutgoingCrossfadeLayer(
     uvScale,
     uvOffset,
     ...stabMatrixEntry(segment.clip, outgoingSourceTime),
+    ...layerKeyEntry(segment.clip),
   };
 }
 
@@ -784,6 +844,7 @@ function buildPipLayers(
         uvScale,
         uvOffset,
         ...stabMatrixEntry(clip, sourceTime),
+        ...layerKeyEntry(clip),
       };
     });
 }
@@ -820,6 +881,47 @@ function buildTextLayers(
 }
 
 /**
+ * Caption cues active at `globalTime`, as bottom-centre anchored layers.
+ *
+ * Captions are *not* clamped to `totalDuration` the way text overlays are —
+ * a cue is drawn whenever the playhead is inside it, which is exactly what
+ * the CC lane shows and what the ASS burn-in does.
+ */
+function buildCaptionLayers(
+  captions: CaptionEntry[],
+  projectStyle: Partial<TextOverlayStyle> | undefined,
+  globalTime: number,
+  geom: CanvasGeometry,
+): PreviewCaptionLayer[] {
+  if (captions.length === 0) return [];
+  if (globalTime < 0) return [];
+
+  const layers: PreviewCaptionLayer[] = [];
+  const normalized = normalizeCaptions(captions);
+  for (let index = 0; index < normalized.length; index++) {
+    const entry = normalized[index];
+    if (globalTime < entry.startSec || globalTime >= entry.endSec) continue;
+    if (!entry.text) continue;
+
+    const style = resolveCaptionStyle(entry, projectStyle);
+    layers.push({
+      kind: 'caption',
+      captionId: entry.id,
+      text: entry.text,
+      style,
+      timelineIndex: index,
+      // Above text overlays (2000+): burned-in captions are the last thing
+      // drawn on the FFmpeg path too, since they run as a post-pass.
+      zIndex: 3000 + index,
+      x: style.x * geom.canvasWidth,
+      y: style.y * geom.canvasHeight,
+      opacity: 1,
+    });
+  }
+  return layers;
+}
+
+/**
  * Pure composition planner: map global timeline time → ordered draw layers.
  */
 export function buildPreviewCompositionPlan(
@@ -831,11 +933,14 @@ export function buildPreviewCompositionPlan(
   globalTime: number,
   maxHeight: number = DEFAULT_PREVIEW_MAX_HEIGHT,
   maxWidth?: number,
+  captionOptions?: CaptionPlanOptions,
 ): PreviewCompositionPlan {
   const timelineClips = getTimelineClips(clips, groups);
   const geom = resolveCanvasSize(settings, { maxHeight, maxWidth });
   const { canvasWidth, canvasHeight, scale, capped } = geom;
-  const isEmpty = timelineClips.length === 0 && overlays.length === 0;
+  const captions = captionOptions?.captions ?? [];
+  const isEmpty =
+    timelineClips.length === 0 && overlays.length === 0 && captions.length === 0;
 
   const pipClips = timelineClips
     .map((clip, timelineIndex) => ({ clip, timelineIndex }))
@@ -886,8 +991,16 @@ export function buildPreviewCompositionPlan(
   ];
 
   const textLayers = buildTextLayers(overlays, globalTime, totalDuration, geom);
+  const captionLayers = buildCaptionLayers(
+    captions,
+    captionOptions?.captionStyle,
+    globalTime,
+    geom,
+  );
 
-  const layers = [...clipLayers, ...textLayers].sort((a, b) => a.zIndex - b.zIndex);
+  const layers = [...clipLayers, ...textLayers, ...captionLayers].sort(
+    (a, b) => a.zIndex - b.zIndex,
+  );
 
   return {
     globalTime,

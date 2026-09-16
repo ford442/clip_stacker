@@ -10,7 +10,7 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - Reorder clips in a timeline editor
 - Apply per-clip fade in/out controls for video and audio
 - **Picture-in-Picture overlays**: select a video clip and hit **Use as overlay (PiP)** in the Inspector to composite it over the base video in any corner; **Use as base layer** puts it back. Size, position and opacity stay editable under *Picture-in-Picture layout (advanced)*
-- **Channel logos / bugs**: **Use as channel logo** snaps the clip to a corner at ~10% of the canvas width, locked to the source's own aspect ratio, muted, and keyed on the source alpha — so a non-square mark composites without a black box on both the GPU export and the FFmpeg fallback. Transparency mode is editable under *Picture-in-Picture layout (advanced)*: source alpha (straight or premultiplied), chroma key, luma key, or an opaque rectangle. The mask has to exist in the file: use PNG/WebP for stills and WebM (VP8/VP9 + alpha) for motion — H.264 MP4 carries no alpha, so key those with chroma/luma instead. Chroma and luma keying currently apply on export only; the preview shows the un-keyed source
+- **Channel logos / bugs**: **Use as channel logo** snaps the clip to a corner at ~10% of the canvas width, locked to the source's own aspect ratio, muted, and keyed on the source alpha — so a non-square mark composites without a black box on both the GPU export and the FFmpeg fallback. Transparency mode is editable under *Picture-in-Picture layout (advanced)*: source alpha (straight or premultiplied), chroma key, luma key, or an opaque rectangle. The mask has to exist in the file: use PNG/WebP for stills and WebM (VP8/VP9 + alpha) for motion — H.264 MP4 carries no alpha, so key those with chroma/luma instead. Chroma and luma keying run in the compositor itself (`src/utils/overlayKey.ts` — one `keyPixel()` shared by the WGSL shader, the Canvas2D path, and the unit tests), so the Inspector's sliders update the live preview and the default WebGPU + WebCodecs export matches it. FFmpeg's `chromakey` / `lumakey` stay as the Force-FFmpeg fallback and are tuned to the same maths, so the two paths look alike rather than merely similar. The render-plan line under the toolbar says which one ran
 - **News tickers / lower thirds**: use a scrolling text overlay (`scrolling` + `scrollSpeed`), which matches between preview and FFmpeg `drawtext`. Only bake a designed motion lower third to video (as WebM + alpha, placed as a full-width bottom overlay) when `drawtext` cannot express it
 - **Captions / subtitles**: a time-coded caption track with its own timeline lane. Import `.srt` / `.ass`, edit text and timings in the Inspector's *Captions* tab, drag a chip's edges to retime, press <kbd>C</kbd> to add a cue at the playhead, and export burned-in, as a toggle-able soft subtitle track, or as a sidecar `.srt` — see [Captions and subtitles](#captions-and-subtitles)
 - Merge timeline into one MP4 via FFmpeg (WebAssembly, fully in-browser)
@@ -240,10 +240,12 @@ inline override tags; styling comes from the project's caption style.
 
 *Export .srt* downloads the track as a sidecar file with no re-encode at all.
 
-Both muxed modes run as a **post-pass over the finished MP4**
-(`src/ffmpeg/captions.ts`) rather than inside the render's filter graph, so
-they behave identically whichever encoder `hybridMergeClips` picked (WebCodecs
-GPU, the Canvas2D renderer, or FFmpeg).
+Burn-in is drawn by the compositor when the GPU (WebCodecs) path runs: the
+cues land in the same pass as the titles, so there is no second video encode.
+Every other case — the soft `mov_text` mux, Force FFmpeg, and no-WebGPU
+machines — still goes through the **post-pass over the finished MP4**
+(`src/ffmpeg/captions.ts`), which is why that post-pass stays. The soft mux is
+a stream copy either way and never burns anything into the picture.
 
 **Style.** One project-wide style with optional per-cue overrides, sharing the
 `TextOverlayStyle` fields (font, size, colour, background box, position). Note
@@ -256,8 +258,9 @@ per-cue styling survives.
 the `CaptionProvider` interface a Whisper-WASM or cloud speech-to-text adapter
 would implement, so the core feature stays decoupled from any model.
 
-Captions are **not drawn in the preview** yet — the CC lane gives timing
-feedback, but you only see the rendered result after a burn-in export.
+Captions are **drawn in the preview** at their CC-lane timings, bottom-centre
+anchored with the resolved per-cue style. *Show captions in preview* in the
+Inspector's Captions tab turns the overlay off without touching the track.
 
 ### Fonts for text overlays
 

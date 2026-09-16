@@ -12,7 +12,7 @@
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */
 
-import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, RenderPlan } from '../types';
+import type { CaptionEntry, Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, TextOverlayStyle, RenderPlan } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
@@ -25,6 +25,7 @@ import {
 import { canUseGpuVideoEncoder } from './renderEligibility';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
+import { resolveLayerKey } from './overlayKey';
 
 export type EncoderPath = 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
 
@@ -32,6 +33,18 @@ export interface HybridEncodeResult {
   blob: Blob;
   path: EncoderPath;
   renderPlan?: RenderPlan;
+  /**
+   * True when the encoder drew the caption cues into the composite itself, so
+   * the caller must skip the FFmpeg burn-in post-pass (it would burn a second
+   * copy on top and cost a full re-encode).
+   */
+  captionsBurnedIn?: boolean;
+}
+
+/** Caption cues to burn into the composite, when the export mode is burn-in. */
+export interface CaptionBurnInRequest {
+  captions: CaptionEntry[];
+  captionStyle?: Partial<TextOverlayStyle>;
 }
 
 /**
@@ -52,11 +65,24 @@ export async function hybridMergeClips(
   clipGroups: ClipGroup[] = [],
   finishing: FinishingSettings = DEFAULT_FINISHING,
   masterAudio: MasterAudio | null = null,
+  captionBurnIn: CaptionBurnInRequest | null = null,
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
 
   const effectiveRenderPlan = renderPlan || calculateRenderPlan(clips, transitions, textOverlays, settings);
+
+  // Chroma/luma keying now lives in the compositors (WGSL + Canvas2D), so the
+  // GPU path keys the same way the preview does and never also runs FFmpeg's
+  // `chromakey` — only the FFmpeg filter-graph path does. Recorded on the
+  // resolved plan so the toolbar can say which one ran.
+  const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
+  const planWithKeying = (
+    where: NonNullable<RenderPlan['overlayKeying']>,
+  ): RenderPlan =>
+    hasKeyedClip
+      ? { ...effectiveRenderPlan, overlayKeying: where }
+      : effectiveRenderPlan;
 
   // -- Canvas renderer path --------------------------------------------------
   if (useCanvas && typeof MediaRecorder !== 'undefined') {
@@ -64,7 +90,11 @@ export async function hybridMergeClips(
       onStatus('Canvas renderer path selected (audio-reactive compositing)...');
       onProgress?.({ stage: 'Canvas renderer selected', progress: 0, indeterminate: false });
       const blob = await encodeClipsWithCanvas(clips, settings, onStatus, audioReactive, onProgress);
-      return { blob, path: 'canvas', renderPlan: effectiveRenderPlan };
+      return {
+        blob,
+        path: 'canvas',
+        renderPlan: planWithKeying('unsupported'),
+      };
     } catch (err) {
       canvasFailure = (err as Error).message;
       onStatus(`Canvas render failed (${canvasFailure}). Trying next encoder...`);
@@ -99,6 +129,11 @@ export async function hybridMergeClips(
         }
         onProgress?.({ stage: 'GPU encoder selected', progress: 0, indeterminate: false });
 
+        const burnCaptions =
+          captionBurnIn && captionBurnIn.captions.length > 0
+            ? captionBurnIn
+            : null;
+
         const blob = await encodeVideoWithWebCodecs(
           clips,
           settings,
@@ -110,10 +145,17 @@ export async function hybridMergeClips(
           clipGroups,
           finishing,
           useWebCodecsAudio,
+          burnCaptions ?? {},
         );
+        const captionsBurnedIn = Boolean(burnCaptions);
 
         if (useWebCodecsAudio) {
-          return { blob, path: 'webcodecs-av', renderPlan: effectiveRenderPlan };
+          return {
+            blob,
+            path: 'webcodecs-av',
+            renderPlan: planWithKeying('gpu'),
+            captionsBurnedIn,
+          };
         }
 
         onStatus('Muxing GPU video with source audio via FFmpeg...');
@@ -126,7 +168,12 @@ export async function hybridMergeClips(
           clipGroups,
           transitions,
         );
-        return { blob: muxed, path: 'webcodecs', renderPlan: effectiveRenderPlan };
+        return {
+          blob: muxed,
+          path: 'webcodecs',
+          renderPlan: planWithKeying('gpu'),
+          captionsBurnedIn,
+        };
       } catch (err) {
         gpuFailure = (err as Error).message;
         onStatus(`GPU encode failed (${gpuFailure}). Falling back to FFmpeg...`);
@@ -164,14 +211,15 @@ export async function hybridMergeClips(
       finishing,
       masterAudio,
     );
+    const keyedPlan = planWithKeying('ffmpeg');
     const ffmpegRenderPlan: RenderPlan =
       shaderOverlays.length > 0
         ? {
-            ...effectiveRenderPlan,
+            ...keyedPlan,
             shaderTextOverlays: shaderOverlays.map((o) => ({ id: o.id, text: o.text })),
             shaderTextFallbackApplied: true,
           }
-        : effectiveRenderPlan;
+        : keyedPlan;
     return { blob, path: 'ffmpeg', renderPlan: ffmpegRenderPlan };
   } catch (err) {
     const prev: string[] = [];

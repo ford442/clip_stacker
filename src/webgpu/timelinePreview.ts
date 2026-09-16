@@ -9,6 +9,7 @@ import { grainFrameSeedFromTime } from '../utils/grain';
 import { projectHasKeyframeAnimation } from '../utils/animatedLayout';
 import {
   buildPreviewCompositionPlan,
+  captionPlanOptions,
   type PreviewClipLayer,
   type PreviewCompositionPlan,
   type TimelineCompositor,
@@ -360,6 +361,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
             uvScale,
             uvOffset,
             stabMatrix: layer.stabMatrix,
+            key: layer.key,
             destRect: { x: 0, y: 0, w: 1, h: 1 },
             clear: isFirstLayer,
           },
@@ -430,6 +432,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
           uvScale,
           uvOffset,
           stabMatrix: layer.stabMatrix,
+          key: layer.key,
           destRect,
           clear: isFirstLayer,
         },
@@ -477,6 +480,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
       globalTime,
       options?.maxHeight,
       options?.maxWidth,
+      captionPlanOptions(options),
     );
     if (options?.isCancelled?.()) return plan;
     this.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
@@ -774,6 +778,7 @@ export class WorkerTimelineRenderer {
           uvScale,
           uvOffset,
           stabMatrix: layer.stabMatrix,
+          key: layer.key,
           destRect,
           clear: isFirstLayer,
         },

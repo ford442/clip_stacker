@@ -15,11 +15,13 @@
  */
 
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipTransition,
   ExportSettings,
   TextOverlay,
+  TextOverlayStyle,
 } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
@@ -140,6 +142,9 @@ export type PreviewWorkerInbound =
       finishing?: FinishingSettings;
       /** @deprecated Prefer `finishing`. */
       colorGrade?: ColorGradeSettings;
+      /** Caption cues to plan for; omitted or empty means no caption layers. */
+      captions?: CaptionEntry[];
+      captionStyle?: Partial<TextOverlayStyle>;
     }
   | {
       type: 'frames-ready';

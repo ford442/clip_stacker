@@ -7,7 +7,15 @@
  * independent media elements are sought in parallel.
  */
 
-import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
+import type {
+  CaptionEntry,
+  Clip,
+  ClipGroup,
+  ClipTransition,
+  ExportSettings,
+  TextOverlay,
+  TextOverlayStyle,
+} from '../types';
 import type { FinishingSettings } from '../utils/finishing';
 import { resolveTimelineFinishing } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
@@ -77,6 +85,8 @@ export interface RenderTimelineParams {
   finishing?: FinishingSettings;
   /** @deprecated Prefer `finishing`. */
   colorGrade?: ColorGradeSettings;
+  captions?: CaptionEntry[];
+  captionStyle?: Partial<TextOverlayStyle>;
 }
 
 /**
@@ -347,6 +357,8 @@ export class PreviewWorkerRuntime {
         maxWidth: params.maxWidth,
         maxHeight: params.maxHeight,
         finishing: resolveTimelineFinishing(params),
+        captions: params.captions,
+        captionStyle: params.captionStyle,
       };
       this.worker.postMessage(renderMsg);
     });
@@ -580,6 +592,8 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         maxWidth: options?.maxWidth,
         maxHeight: options?.maxHeight,
         finishing: resolveTimelineFinishing(options),
+        captions: options?.captions,
+        captionStyle: options?.captionStyle,
       },
       captureFrames,
     );

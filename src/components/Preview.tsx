@@ -8,6 +8,8 @@ import {
   settingsStore,
   uiActions,
   useEditorClip,
+  useEditorCaptions,
+  useEditorCaptionStyle,
   useEditorClipGroups,
   useEditorTextOverlays,
   useEditorTimelineClips,
@@ -48,15 +50,18 @@ function PreviewImpl({
   const clipGroups = useEditorClipGroups();
   const transitions = useEditorTransitions();
   const textOverlays = useEditorTextOverlays();
+  const captions = useEditorCaptions();
+  const captionStyle = useEditorCaptionStyle();
   const selectedClipId = useSelectedClipId();
   const clip = useEditorClip(selectedClipId);
   const selectedTextOverlayId = useSelectedTextOverlayId();
-  const { exportSettings, finishing, outputUrl } = useStore(
+  const { exportSettings, finishing, outputUrl, showCaptionsInPreview } = useStore(
     settingsStore,
     useShallow((s) => ({
       exportSettings: s.exportSettings,
       finishing: s.finishing,
       outputUrl: s.outputUrl,
+      showCaptionsInPreview: s.showCaptionsInPreview,
     })),
   );
   const exportFilename = exportSettings.filename;
@@ -98,6 +103,8 @@ function PreviewImpl({
           clipGroups={clipGroups}
           transitions={transitions}
           textOverlays={textOverlays}
+          captions={showCaptionsInPreview ? captions : undefined}
+          captionStyle={captionStyle}
           exportSettings={exportSettings}
           finishing={finishing}
           selectedClipId={selectedClipId}

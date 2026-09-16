@@ -674,4 +674,16 @@ export interface RenderPlan {
    * estimate and on GPU-compositor renders, which preserve shader fills.
    */
   shaderTextFallbackApplied?: boolean;
+  /**
+   * Where chroma / luma keying ran, on the resolved plan returned after
+   * encoding. Absent when no clip is keyed at all.
+   *
+   * - `gpu` — the WebGPU/Canvas2D compositor keyed each layer, matching the
+   *   preview. FFmpeg's `chromakey` is *not* also applied on this path.
+   * - `ffmpeg` — the FFmpeg fallback keyed via `chromakey` / `lumakey`.
+   * - `unsupported` — the encoder has no keying step (the MediaRecorder canvas
+   *   path plays clips back rather than compositing a plan), so the key is
+   *   lost. Same class of limitation as its missing transitions/PiP.
+   */
+  overlayKeying?: 'gpu' | 'ffmpeg' | 'unsupported';
 }

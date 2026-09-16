@@ -9,7 +9,10 @@ import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { computeTotalDuration } from './transitions';
 import { canCaptureWebGpuCanvasWithText } from './renderEligibility';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
-import { buildPreviewCompositionPlan } from './previewComposition';
+import {
+  buildPreviewCompositionPlan,
+  type CaptionPlanOptions,
+} from './previewComposition';
 import { renderTextOverlaysAsync } from './canvas-renderer';
 import { TimelineDecoderFrameProvider } from './decoderFrameProvider';
 import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
@@ -46,6 +49,7 @@ export async function encodeTimelineComposite(
   onProgress?: ProgressCallback,
   finishing: FinishingSettings = DEFAULT_FINISHING,
   includeWebCodecsAudio = false,
+  captionBurnIn: CaptionPlanOptions = {},
 ): Promise<Blob> {
   onStatus(`WebGPU timeline export (${width}x${height})...`);
   onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode, progress: 0, indeterminate: false });
@@ -54,9 +58,14 @@ export async function encodeTimelineComposite(
   const totalDuration = computeTotalDuration(timelineClips, transitions);
   const totalFrames = computeTimelineExportFrameCount(totalDuration, TIMELINE_EXPORT_FPS);
   const hasTextOverlays = textOverlays.length > 0;
+  const hasCaptions = (captionBurnIn.captions?.length ?? 0) > 0;
+  // Captions are rasterized on the 2D pass (no shader fill), so any cue forces
+  // the 2D composite even when every text overlay could have stayed on the GPU.
+  // Both still ride the same encode — this is what removes the burn-in
+  // post-pass's extra full re-encode.
   const shaderTextOnGpu =
-    hasTextOverlays && canCaptureWebGpuCanvasWithText(textOverlays);
-  const use2dTextComposite = hasTextOverlays && !shaderTextOnGpu;
+    hasTextOverlays && !hasCaptions && canCaptureWebGpuCanvasWithText(textOverlays);
+  const use2dTextComposite = (hasTextOverlays || hasCaptions) && !shaderTextOnGpu;
   const statusThrottleFrames = timelineStatusThrottleFrames(TIMELINE_EXPORT_FPS);
   const frameDurationUs = Math.round(1_000_000 / TIMELINE_EXPORT_FPS);
 
@@ -107,6 +116,7 @@ export async function encodeTimelineComposite(
       globalTime,
       height,
       width,
+      captionBurnIn,
     );
     await engine.renderPlan(plan, { finishing, frameProvider, frameIndex });
     return plan;

@@ -43,6 +43,7 @@ import {
   WEBCODECS_PROGRESS_STAGES,
 } from './webcodecs-codec';
 import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecs-mux';
+import type { CaptionPlanOptions } from './previewComposition';
 import {
   DecoderTextOverlayPass,
   resolveCompositor,
@@ -84,6 +85,12 @@ export async function encodeVideoWithWebCodecs(
   clipGroups: ClipGroup[] = [],
   finishing: FinishingSettings = DEFAULT_FINISHING,
   includeWebCodecsAudio = false,
+  /**
+   * Caption cues to burn into the composite. Pass these only when the caller
+   * wants burn-in — a soft subtitle mux must leave them out so the cues stay
+   * a separate stream (see `ffmpeg/captions.ts`).
+   */
+  captionBurnIn: CaptionPlanOptions = {},
 ): Promise<Blob> {
   const { width, height } = parseOutputResolution(settings.outputResolution);
 
@@ -104,6 +111,7 @@ export async function encodeVideoWithWebCodecs(
       onProgress,
       finishing,
       includeWebCodecsAudio,
+      captionBurnIn,
     );
   }
 
@@ -136,17 +144,20 @@ export async function encodeVideoWithWebCodecs(
   let videoTimeUs = 0;
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
   let elapsedDuration = 0;
-  const overlayPass = needsOverlayPass(textOverlays, finishing)
-    ? new DecoderTextOverlayPass(
-        clips,
-        clipGroups,
-        transitions,
-        textOverlays,
-        settings,
-        width,
-        height,
-      )
-    : null;
+  const hasCaptionBurnIn = (captionBurnIn.captions?.length ?? 0) > 0;
+  const overlayPass =
+    needsOverlayPass(textOverlays, finishing) || hasCaptionBurnIn
+      ? new DecoderTextOverlayPass(
+          clips,
+          clipGroups,
+          transitions,
+          textOverlays,
+          settings,
+          width,
+          height,
+          captionBurnIn,
+        )
+      : null;
 
   try {
     for (let i = 0; i < clips.length; i++) {
