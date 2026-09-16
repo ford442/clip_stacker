@@ -270,6 +270,37 @@ describe('AudioPlaybackManager lifecycle', () => {
     expect(c).not.toBe(a);
   });
 
+  it('constructs its AudioContext with interactive latency and a 48kHz sample rate', async () => {
+    const recordedOptions: unknown[] = [];
+    class FakeAudioContext {
+      sampleRate: number;
+      constructor(options?: { sampleRate?: number }) {
+        recordedOptions.push(options);
+        this.sampleRate = options?.sampleRate ?? 44_100;
+      }
+      createGain() {
+        return { gain: { value: 0 }, connect: () => {} } as unknown as GainNode;
+      }
+      createAnalyser() {
+        return {
+          fftSize: 0,
+          connect: () => {},
+        } as unknown as AnalyserNode;
+      }
+    }
+    const original = window.AudioContext;
+    // @ts-expect-error test double stands in for the real constructor
+    window.AudioContext = FakeAudioContext;
+
+    const manager = new AudioPlaybackManager();
+    const ok = await manager.ensureContext();
+    expect(ok).toBe(true);
+    expect(recordedOptions).toEqual([{ latencyHint: 'interactive', sampleRate: 48_000 }]);
+
+    window.AudioContext = original;
+    await manager.dispose();
+  });
+
   it('falls back gracefully when AudioContext is unavailable', async () => {
     const original = window.AudioContext;
     // @ts-expect-error force missing constructor

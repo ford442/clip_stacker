@@ -13,10 +13,12 @@ import {
   getLastFfmpegLogs,
   getFfmpegEnvironmentDiagnostics,
 } from '../ffmpeg/ffmpegService';
-import { getGpuErrorLog } from '../webgpu/gpuDevice';
+import { getGpuErrorLog, peekGpuFeatures } from '../webgpu/gpuDevice';
 import { getPublishedWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
 import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
+import { getLastResolvedEncoderCodec } from './webcodecs-codec';
+import { getAudioPlaybackManager } from '../audio/playbackManager';
 
 export interface DebugReportContext {
   status: string;
@@ -220,6 +222,33 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   lines.push('```json');
   lines.push(JSON.stringify(getPublishedWebGpuProbe(), null, 2));
   lines.push('```');
+  lines.push('');
+
+  const gpuFeatures = peekGpuFeatures();
+  lines.push('## WebGPU Optional Features');
+  lines.push(
+    gpuFeatures && gpuFeatures.size > 0
+      ? [...gpuFeatures].sort().join(', ')
+      : '(none adopted, or no device acquired yet)',
+  );
+  lines.push('');
+
+  const lastCodec = getLastResolvedEncoderCodec();
+  lines.push('## Export Encoder');
+  lines.push(
+    lastCodec
+      ? `- Codec: \`${lastCodec.codec}\` (${lastCodec.muxerCodec})`
+      : '- (no WebCodecs export run yet this session)',
+  );
+  lines.push('');
+
+  const audioDiagnostics = getAudioPlaybackManager().getContextDiagnostics();
+  lines.push('## Audio Context');
+  lines.push(
+    audioDiagnostics
+      ? `- Sample rate: ${audioDiagnostics.sampleRate} Hz — Base latency: ${(audioDiagnostics.baseLatency * 1000).toFixed(2)} ms — State: ${audioDiagnostics.state}`
+      : '- (no live AudioContext yet)',
+  );
   lines.push('');
 
   lines.push(`## WebGPU Errors (last ${gpuErrors.length})`);

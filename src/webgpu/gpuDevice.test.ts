@@ -31,9 +31,14 @@ function makeFakeDevice(): { device: FakeDevice; triggerLost: (info: GPUDeviceLo
   return { device, triggerLost: resolveLost };
 }
 
-function makeFakeAdapter(device: FakeDevice, limits: Record<string, number> = {}) {
+function makeFakeAdapter(
+  device: FakeDevice,
+  limits: Record<string, number> = {},
+  features: string[] = [],
+) {
   return {
     limits,
+    features: new Set(features),
     requestDevice: vi.fn().mockResolvedValue(device),
   };
 }
@@ -101,7 +106,7 @@ describe('gpuDevice registry', () => {
   it('clamps requiredLimits to what the adapter reports', async () => {
     const { device } = makeFakeDevice();
     const adapter = makeFakeAdapter(device, {
-      maxTextureDimension2D: 2048, // below our 4096 desired value
+      maxTextureDimension2D: 2048, // below our 16384 desired value
       maxBufferSize: 1024,
     });
     stubGpu(adapter);
@@ -113,7 +118,44 @@ describe('gpuDevice registry', () => {
         maxTextureDimension2D: 2048,
         maxBufferSize: 1024,
       },
+      requiredFeatures: [],
+      label: 'clip_stacker-preview',
+      defaultQueue: { label: 'clip_stacker-preview-queue' },
     });
+  });
+
+  it('adopts only the optional features the adapter reports supporting', async () => {
+    const { device } = makeFakeDevice();
+    const adapter = makeFakeAdapter(device, {}, [
+      'timestamp-query',
+      'float32-filterable',
+      'shader-f16', // supported by the adapter but not in our desired list
+    ]);
+    stubGpu(adapter);
+
+    const ctx = await acquireGpuContext();
+
+    expect(adapter.requestDevice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requiredFeatures: ['timestamp-query', 'float32-filterable'],
+      }),
+    );
+    expect(ctx.features.has('timestamp-query')).toBe(true);
+    expect(ctx.features.has('float32-filterable')).toBe(true);
+    expect(ctx.features.has('shader-f16' as GPUFeatureName)).toBe(false);
+  });
+
+  it('never requires an optional feature the adapter lacks (boots with an empty feature set)', async () => {
+    const { device } = makeFakeDevice();
+    const adapter = makeFakeAdapter(device, {}, []);
+    stubGpu(adapter);
+
+    const ctx = await acquireGpuContext();
+
+    expect(adapter.requestDevice).toHaveBeenCalledWith(
+      expect.objectContaining({ requiredFeatures: [] }),
+    );
+    expect(ctx.features.size).toBe(0);
   });
 
   it('rejects when navigator.gpu is unavailable', async () => {

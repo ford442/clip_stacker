@@ -1,6 +1,6 @@
 import previewShader from "./shaders/preview.wgsl?raw";
 import overlayShader from "./shaders/overlay.wgsl?raw";
-import { acquireGpuContext } from "./gpuDevice";
+import { acquireGpuContext, onGpuDeviceRecovered, type GpuContext } from "./gpuDevice";
 import {
   createTransitionPipelineCache,
   renderTransitionPass,
@@ -48,15 +48,30 @@ const STAB_UNIFORM_OFFSET = 17;
 // Numeric GPUTextureUsage flags (spec values) so this module can load in tests
 // without a WebGPU environment.
 const GPU_TEX_COPY_SRC = 0x01;
-const GPU_TEX_COPY_DST = 0x02;
-const GPU_TEX_TEXTURE_BINDING = 0x04;
 const GPU_TEX_RENDER_ATTACHMENT = 0x10;
 
-const CANVAS_TEXTURE_USAGE =
-  GPU_TEX_RENDER_ATTACHMENT |
-  GPU_TEX_COPY_SRC |
-  GPU_TEX_COPY_DST |
-  GPU_TEX_TEXTURE_BINDING;
+// RENDER_ATTACHMENT (we draw into it) + COPY_SRC (VideoFrame/VideoEncoder and
+// the finishing pass chain read it back) is all a canvas swapchain texture
+// ever needs. COPY_DST / TEXTURE_BINDING are not portable across adapters —
+// some reject configure() outright — and nothing here samples or copies into
+// the canvas texture; the finishing chain copies FROM it into an offscreen
+// ping-pong texture and renders back onto it as a color attachment.
+const CANVAS_TEXTURE_USAGE = GPU_TEX_RENDER_ATTACHMENT | GPU_TEX_COPY_SRC;
+
+/** Shared `GPUCanvasContext.configure()` options (initial configure, resize, and device-recovery reconfigure). */
+function canvasConfiguration(
+  device: GPUDevice,
+  format: GPUTextureFormat,
+): GPUCanvasConfiguration {
+  return {
+    device,
+    format,
+    alphaMode: "premultiplied",
+    usage: CANVAS_TEXTURE_USAGE,
+    colorSpace: "srgb",
+    toneMapping: { mode: "standard" },
+  };
+}
 
 const PREMULTIPLIED_BLEND: GPUBlendState = {
   color: {
@@ -123,6 +138,7 @@ export class PreviewEngine {
   private audioReactive: AudioReactiveState = { ...ZERO_AUDIO_REACTIVE };
   private format: GPUTextureFormat;
   private canvas: HTMLCanvasElement | OffscreenCanvas;
+  private unsubscribeRecovered: (() => void) | null = null;
 
   private constructor(
     device: GPUDevice,
@@ -157,27 +173,16 @@ export class PreviewEngine {
    */
   resize(): void {
     if (this.destroyed) return;
-    this.context.configure({
-      device: this.device,
-      format: this.format,
-      alphaMode: "premultiplied",
-      usage: CANVAS_TEXTURE_USAGE,
-    });
+    this.context.configure(canvasConfiguration(this.device, this.format));
   }
 
-  static async create(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<PreviewEngine> {
-    const { device, format } = await acquireGpuContext();
-
-    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
-    if (!context) throw new Error("Could not get WebGPU context from canvas");
-
-    context.configure({
-      device,
-      format,
-      alphaMode: "premultiplied",
-      usage: CANVAS_TEXTURE_USAGE,
-    });
-
+  /**
+   * Build the device-scoped pipelines/samplers/buffers. Pulled out of
+   * `create()` so a device-loss recovery (see `handleDeviceRecovered`) can
+   * rebuild the same resources against the freshly-recreated device instead
+   * of leaving this engine's GPU objects bound to a destroyed one.
+   */
+  private static buildDeviceResources(device: GPUDevice, format: GPUTextureFormat) {
     const shaderModule = device.createShaderModule({ code: previewShader });
     const overlayModule = device.createShaderModule({ code: overlayShader });
 
@@ -255,9 +260,7 @@ export class PreviewEngine {
       minFilter: "linear",
     });
 
-    const engine = new PreviewEngine(
-      device,
-      context,
+    return {
       pipeline,
       sampler,
       uniformBuffer,
@@ -266,11 +269,75 @@ export class PreviewEngine {
       finishingChain,
       overlayPipeline,
       overlaySampler,
+    };
+  }
+
+  static async create(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<PreviewEngine> {
+    const { device, format } = await acquireGpuContext();
+
+    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
+    if (!context) throw new Error("Could not get WebGPU context from canvas");
+
+    context.configure(canvasConfiguration(device, format));
+
+    const built = PreviewEngine.buildDeviceResources(device, format);
+
+    const engine = new PreviewEngine(
+      device,
+      context,
+      built.pipeline,
+      built.sampler,
+      built.uniformBuffer,
+      built.transitionUniformBuffer,
+      built.transitionPipelineCache,
+      built.finishingChain,
+      built.overlayPipeline,
+      built.overlaySampler,
       format,
     );
     engine.canvas = canvas;
     adoptGpuDevice(device);
+    engine.unsubscribeRecovered = onGpuDeviceRecovered((ctx) => engine.handleDeviceRecovered(ctx));
     return engine;
+  }
+
+  /**
+   * A device loss strands this engine's pipelines/buffers/context on a dead
+   * device. Some callers tear the whole engine down on `onGpuDeviceLost` and
+   * build a fresh one later (the shared registry already has the recovered
+   * device by then, so nothing more is needed there); this covers any
+   * `PreviewEngine` that instead stays alive across the loss — without this,
+   * its `context` would remain configured against a destroyed device and
+   * every subsequent frame would silently no-op onto a black canvas.
+   */
+  private handleDeviceRecovered(ctx: GpuContext): void {
+    if (this.destroyed || ctx.device === this.device) return;
+
+    this.uniformBuffer.destroy();
+    this.transitionUniformBuffer.destroy();
+    this.transitionPipelineCache.destroy();
+    this.finishingChain.destroy();
+    this.overlayTexture?.destroy();
+    this.overlayTexture = null;
+    this.overlayWidth = 0;
+    this.overlayHeight = 0;
+    for (const buffer of this.extraLayerUniformBuffers) buffer.destroy();
+    this.extraLayerUniformBuffers = [];
+
+    this.device = ctx.device;
+    this.format = ctx.format;
+    const built = PreviewEngine.buildDeviceResources(this.device, this.format);
+    this.pipeline = built.pipeline;
+    this.sampler = built.sampler;
+    this.uniformBuffer = built.uniformBuffer;
+    this.transitionUniformBuffer = built.transitionUniformBuffer;
+    this.transitionPipelineCache = built.transitionPipelineCache;
+    this.finishingChain = built.finishingChain;
+    this.overlayPipeline = built.overlayPipeline;
+    this.overlaySampler = built.overlaySampler;
+
+    this.context.configure(canvasConfiguration(this.device, this.format));
+    adoptGpuDevice(this.device);
   }
 
   /**
@@ -492,6 +559,8 @@ export class PreviewEngine {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
+    this.unsubscribeRecovered?.();
+    this.unsubscribeRecovered = null;
     this.uniformBuffer.destroy();
     this.transitionUniformBuffer.destroy();
     this.transitionPipelineCache.destroy();

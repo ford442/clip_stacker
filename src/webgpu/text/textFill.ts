@@ -17,7 +17,7 @@
  */
 
 import textFillShader from '../shaders/textFill.wgsl?raw';
-import { acquireGpuContext } from '../gpuDevice';
+import { acquireGpuContext, peekGpuDevice } from '../gpuDevice';
 import { ffmpegColorToRgb01 } from '../../utils/color';
 import { getTextShader, resolveShaderColors, resolveShaderParams } from './registry';
 
@@ -190,7 +190,18 @@ export class TextFillRenderer {
     this.outputCanvas.height = h;
     const context = this.outputCanvas.getContext('webgpu') as GPUCanvasContext | null;
     if (!context) throw new Error('Could not acquire a WebGPU canvas context');
-    context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
+    context.configure({
+      device: this.device,
+      format: this.format,
+      alphaMode: 'premultiplied',
+      // Same reasoning as previewEngine.ts's canvas: this output is only ever
+      // rendered into (RENDER_ATTACHMENT) and read back via drawImage/copy
+      // (COPY_SRC) — never sampled or copied into — so a broader usage mask
+      // risks configure() rejection on some adapters for no benefit.
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      colorSpace: 'srgb',
+      toneMapping: { mode: 'standard' },
+    });
     this.context = context;
     return context;
   }
@@ -311,6 +322,11 @@ export class TextFillRenderer {
     return this.outputCanvas;
   }
 
+  /** True while this renderer's pipeline/buffers still belong to the live shared device. */
+  isBoundToCurrentDevice(): boolean {
+    return this.device === peekGpuDevice();
+  }
+
   /** Releases this renderer's own textures/buffers. The shared `GPUDevice` is untouched. */
   destroy(): void {
     if (this.destroyed) return;
@@ -323,7 +339,13 @@ export class TextFillRenderer {
 let cached: TextFillRenderer | null = null;
 
 export async function getTextFillRenderer(): Promise<TextFillRenderer> {
-  if (cached && !cached['destroyed']) return cached;
+  // A device-lost + automatic-recreate cycle (see gpuDevice.ts) leaves this
+  // singleton's pipeline/buffers bound to the now-destroyed device — its
+  // render() calls would silently no-op onto whatever the output canvas last
+  // held. Drop and rebuild against the current shared device instead of
+  // reusing a stale renderer.
+  if (cached && !cached['destroyed'] && cached.isBoundToCurrentDevice()) return cached;
+  cached?.destroy();
   cached = await TextFillRenderer.create();
   return cached;
 }

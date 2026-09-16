@@ -1,5 +1,6 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import { clampClipVolume } from '../utils/audioVolume';
+import { createAudioContext } from '../audio/context';
 
 /**
  * Applies per-clip volume (0–200%) to a media element. Values outside the
@@ -37,7 +38,7 @@ export function useMediaVolume(
     routingRef.current = null;
 
     try {
-      const ctx = new AudioContext();
+      const ctx = createAudioContext();
       const source = ctx.createMediaElementSource(media);
       const gain = ctx.createGain();
       gain.gain.value = clamped;
