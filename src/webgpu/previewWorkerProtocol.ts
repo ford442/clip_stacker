@@ -8,10 +8,15 @@
  *   3. Worker posts `initialized` once the real compositor is up.
  * A failed probe is a hard-fail for GPU preview — not a Canvas2D stand-in.
  *
- * Main → Worker: init, render, frames-ready, cancel, resize, sync-clips,
- *                pause-decoders, reset-finishing, chore-jobs, destroy
+ * Frame sourcing: the worker decodes what it can itself (`clip-media` gives it
+ * the clip blobs once) and only asks main for the layers its decoder cannot
+ * serve, so the happy path never touches `HTMLVideoElement.currentTime`.
+ *
+ * Main → Worker: init, clip-media, render, frames-ready, cancel, resize,
+ *                sync-clips, pause-decoders, reset-finishing, set-scopes,
+ *                chore-jobs, destroy
  * Worker → Main: ready, initialized, need-frames, render-complete,
- *                render-cancelled, chore-jobs-result, error
+ *                render-cancelled, scopes, chore-jobs-result, error
  */
 
 import type {
@@ -114,6 +119,32 @@ export interface CapturedFrame {
   videoHeight: number;
 }
 
+/** Which scopes the worker should compute from the composed preview texture. */
+export interface ScopeSettings {
+  waveform: boolean;
+  vectorscope: boolean;
+}
+
+export const SCOPES_OFF: ScopeSettings = { waveform: false, vectorscope: false };
+
+/** One frame's scope readback (bins are plain typed arrays, transferred). */
+export interface ScopeData {
+  /** 256 Rec.709 luma bins. */
+  histogram?: Uint32Array;
+  /** `vectorscopeSize²` CbCr bins, row-major (V rows, U columns). */
+  vectorscope?: Uint32Array;
+  vectorscopeSize?: number;
+  /** Composed frame size the scopes were measured on. */
+  width: number;
+  height: number;
+}
+
+/** How each layer of a rendered frame was sourced (decoder vs `<video>` seek). */
+export interface FrameSourceStats {
+  decoder: number;
+  element: number;
+}
+
 /** How long main waits for the worker GPU probe / init before falling back. */
 export const PREVIEW_WORKER_INIT_TIMEOUT_MS = 5_000;
 
@@ -127,6 +158,19 @@ export type PreviewWorkerInbound =
       canvas: OffscreenCanvas;
       width: number;
       height: number;
+      /**
+       * Resolved on main (a worker's `location.search` is the worker script's,
+       * not the page's). False keeps every layer on the `<video>` fallback.
+       */
+      decoderEnabled?: boolean;
+    }
+  | {
+      /**
+       * Hand the worker the source bytes for clips it should decode itself.
+       * `Blob`/`File` is structured-cloneable by reference — no copy.
+       */
+      type: 'clip-media';
+      media: Array<{ clipId: string; blob: Blob }>;
     }
   | {
       type: 'render';
@@ -166,6 +210,7 @@ export type PreviewWorkerInbound =
     }
   | { type: 'pause-decoders' }
   | { type: 'reset-finishing' }
+  | { type: 'set-scopes'; scopes: ScopeSettings }
   | {
       type: 'chore-jobs';
       id: number;
@@ -198,6 +243,13 @@ export type PreviewWorkerOutbound =
       type: 'render-complete';
       renderId: number;
       plan: PreviewCompositionPlan;
+      /** Per-layer frame sourcing for this frame (decoder path vs `<video>`). */
+      frameSources?: FrameSourceStats;
+    }
+  | {
+      type: 'scopes';
+      renderId: number;
+      scopes: ScopeData;
     }
   | {
       type: 'render-cancelled';

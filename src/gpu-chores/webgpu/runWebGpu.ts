@@ -1,6 +1,13 @@
 import { levelsFromHistogram } from '../cpu/lumaHistogram';
 import type { GpuChoreJob, GpuChoreResult } from '../types';
-import { BLUR_H_WGSL, BLUR_V_WGSL, DOWNSAMPLE_WGSL, HISTOGRAM_WGSL } from './shaders';
+import { VECTORSCOPE_SIZE } from '../cpu/vectorscope';
+import {
+  BLUR_H_WGSL,
+  BLUR_V_WGSL,
+  DOWNSAMPLE_WGSL,
+  HISTOGRAM_WGSL,
+  VECTORSCOPE_WGSL,
+} from './shaders';
 
 function workgroups(size: number): number {
   return Math.max(1, Math.ceil(size / 8));
@@ -34,10 +41,16 @@ function packedToRgba(packed: Uint32Array): Uint8ClampedArray {
   return out;
 }
 
+/**
+ * Source texture for the job, plus whether this call owns (and must destroy)
+ * it. A caller-supplied `job.texture` — the preview scopes' copy of the
+ * composed frame — is borrowed, never destroyed here.
+ */
 function createSrcTexture(
   device: GPUDevice,
   job: GpuChoreJob,
-): GPUTexture {
+): { texture: GPUTexture; owned: boolean } {
+  if (job.texture) return { texture: job.texture, owned: false };
   const texture = device.createTexture({
     size: { width: job.width, height: job.height },
     format: 'rgba8unorm',
@@ -53,7 +66,7 @@ function createSrcTexture(
         { texture },
         { width: job.width, height: job.height },
       );
-      return texture;
+      return { texture, owned: true };
     } catch {
       /* fall through to CPU pixel upload */
     }
@@ -68,7 +81,7 @@ function createSrcTexture(
     { bytesPerRow: job.width * 4 },
     { width: job.width, height: job.height },
   );
-  return texture;
+  return { texture, owned: true };
 }
 
 export async function runWebGpuJob(
@@ -76,7 +89,7 @@ export async function runWebGpuJob(
   job: GpuChoreJob,
   reason: string,
 ): Promise<GpuChoreResult> {
-  const src = createSrcTexture(device, job);
+  const { texture: src, owned } = createSrcTexture(device, job);
   try {
     if (job.op === 'luma_histogram_bt709') {
       const bins = device.createBuffer({
@@ -110,6 +123,47 @@ export async function runWebGpuJob(
         histogram,
         levels: levelsFromHistogram(histogram),
       };
+    }
+
+    if (job.op === 'vectorscope_uv') {
+      const binSize = job.binSize ?? VECTORSCOPE_SIZE;
+      const cellCount = binSize * binSize;
+      const bins = device.createBuffer({
+        size: cellCount * 4,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(bins, 0, new Uint32Array(cellCount));
+      const uniform = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      device.queue.writeBuffer(uniform, 0, new Uint32Array([binSize, 0, 0, 0]));
+      const pipeline = device.createComputePipeline({
+        layout: 'auto',
+        compute: {
+          module: device.createShaderModule({ code: VECTORSCOPE_WGSL }),
+          entryPoint: 'main',
+        },
+      });
+      const bind = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: src.createView() },
+          { binding: 1, resource: { buffer: bins } },
+          { binding: 2, resource: { buffer: uniform } },
+        ],
+      });
+      const encoder = device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(pipeline);
+      pass.setBindGroup(0, bind);
+      pass.dispatchWorkgroups(workgroups(job.width), workgroups(job.height));
+      pass.end();
+      device.queue.submit([encoder.finish()]);
+      const vectorscope = await mapU32(device, bins, cellCount * 4);
+      bins.destroy();
+      uniform.destroy();
+      return { backend: 'webgpu', reason, vectorscope, binSize };
     }
 
     if (job.op === 'downsample_2d') {
@@ -219,6 +273,6 @@ export async function runWebGpuJob(
       height: job.height,
     };
   } finally {
-    src.destroy();
+    if (owned) src.destroy();
   }
 }

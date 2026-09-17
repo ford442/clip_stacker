@@ -25,6 +25,7 @@ export {
 } from './diagnostics';
 export { runJob } from './runJob';
 export { lumaHistogramBt709, levelsFromHistogram } from './cpu/lumaHistogram';
+export { VECTORSCOPE_SIZE, vectorscopePeak, vectorscopeUv } from './cpu/vectorscope';
 export { downsample2d, rgbaMeanAbsError } from './cpu/downsample';
 export { separableBlur } from './cpu/separableBlur';
 export { analyzeImportedStillFile, analyzeImportedStillPixels } from './stillImport';

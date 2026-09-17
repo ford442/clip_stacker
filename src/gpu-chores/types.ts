@@ -5,7 +5,11 @@
  * encode/decode and not the WebGPU preview compositor.
  */
 
-export type GpuChoreOp = 'luma_histogram_bt709' | 'downsample_2d' | 'separable_blur';
+export type GpuChoreOp =
+  | 'luma_histogram_bt709'
+  | 'vectorscope_uv'
+  | 'downsample_2d'
+  | 'separable_blur';
 
 /** Caller hint. `auto` applies documented break-even thresholds. */
 export type GpuChorePrefer = 'auto' | 'webgpu' | 'wasm' | 'cpu';
@@ -43,12 +47,20 @@ export interface GpuChoreJob {
   outHeight?: number;
   /** separable_blur radius in pixels (integer ≥ 1). */
   radius?: number;
+  /** vectorscope_uv bin grid edge length (default VECTORSCOPE_SIZE). */
+  binSize?: number;
+  /**
+   * Already-resident GPU texture to read instead of uploading `pixels`/`source`
+   * (preview scopes read the composed frame copy). Caller keeps ownership — the
+   * WebGPU path never destroys it. WebGPU-only; ignored by CPU/worker backends.
+   */
+  texture?: GPUTexture;
 }
 
 /** Job fields that can be posted to the preview worker (bitmap transferred separately). */
 export type GpuChoreJobSpec = Pick<
   GpuChoreJob,
-  'op' | 'prefer' | 'width' | 'height' | 'outWidth' | 'outHeight' | 'radius'
+  'op' | 'prefer' | 'width' | 'height' | 'outWidth' | 'outHeight' | 'radius' | 'binSize'
 >;
 
 export interface GpuChoreResult {
@@ -57,6 +69,10 @@ export interface GpuChoreResult {
   /** 256 Rec.709 luma bins (histogram op). */
   histogram?: Uint32Array;
   levels?: LumaLevels;
+  /** `binSize²` CbCr bins, row-major with Cr on rows (vectorscope op). */
+  vectorscope?: Uint32Array;
+  /** Bin grid edge length the vectorscope was computed at. */
+  binSize?: number;
   /** RGBA8 output (downsample / blur). */
   pixels?: Uint8ClampedArray;
   width?: number;

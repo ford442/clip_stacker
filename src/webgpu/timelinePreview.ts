@@ -812,6 +812,19 @@ export class WorkerTimelineRenderer {
     return 0;
   }
 
+  /**
+   * Copy of the composed frame for the gpu-chores scopes. Borrowed from the
+   * engine (never destroy it) and only valid in the same task as the render
+   * that produced it — see `PreviewEngine.captureScopeTexture`.
+   */
+  captureScopeTexture(): GPUTexture | null {
+    return this.engine.captureScopeTexture();
+  }
+
+  get scopeTextureSize(): { width: number; height: number } {
+    return this.engine.scopeTextureSize;
+  }
+
   resetFinishingTemporal(): void {
     this.engine.resetFinishingTemporal();
   }

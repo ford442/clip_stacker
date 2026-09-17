@@ -29,6 +29,8 @@ import {
 } from '../webgpu/webgpuProbe';
 import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
 import { PreviewWorkerAdapter, isCanvasTransferred } from '../webgpu/previewWorkerRuntime';
+import type { ScopeData } from '../webgpu/previewWorkerProtocol';
+import { PreviewScopes } from './PreviewScopes';
 import {
   renderTextOverlayCanvas,
   renderTextOverlaysAsync,
@@ -103,6 +105,11 @@ export function TimelineCompositorPreview({
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const textCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const engineRef = useRef<TimelineCompositor | null>(null);
+  // Scopes are off by default — each enabled scope costs a compute dispatch and
+  // a readback per composed frame.
+  const [showWaveform, setShowWaveform] = useState(false);
+  const [showVectorscope, setShowVectorscope] = useState(false);
+  const [scopeData, setScopeData] = useState<ScopeData | null>(null);
   const schedulerRef = useRef<ReturnType<typeof createRenderScheduler> | null>(
     null,
   );
@@ -343,6 +350,20 @@ export function TimelineCompositorPreview({
     });
   }, []);
 
+  // Only the worker-backed WebGPU compositor can produce scopes: they are read
+  // from the composed GPU texture, which the Canvas2D path does not have.
+  useEffect(() => {
+    const engine = engineRef.current;
+    if (!(engine instanceof PreviewWorkerAdapter)) {
+      setScopeData(null);
+      return;
+    }
+    engine.setScopes({ waveform: showWaveform, vectorscope: showVectorscope }, (data) =>
+      setScopeData(data),
+    );
+    if (!showWaveform && !showVectorscope) setScopeData(null);
+  }, [showWaveform, showVectorscope, backend, canvasGeneration]);
+
   useEffect(() => {
     engineRef.current?.syncClips(timelineClips);
     const time = playheadTime ?? globalTimeRef.current;
@@ -539,7 +560,30 @@ export function TimelineCompositorPreview({
           >
             {previewBackendLabel(backend)}
           </span>
+          <label className="preview-scope-toggle">
+            <input
+              type="checkbox"
+              checked={showWaveform}
+              onChange={(e) => setShowWaveform(e.target.checked)}
+            />
+            Waveform
+          </label>
+          <label className="preview-scope-toggle">
+            <input
+              type="checkbox"
+              checked={showVectorscope}
+              onChange={(e) => setShowVectorscope(e.target.checked)}
+            />
+            Vectorscope
+          </label>
         </div>
+      )}
+      {previewActive && (
+        <PreviewScopes
+          data={scopeData}
+          showWaveform={showWaveform}
+          showVectorscope={showVectorscope}
+        />
       )}
       {typeof displayTime === 'number' && (
         <p className="preview-playhead-label">

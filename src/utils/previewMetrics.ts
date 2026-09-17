@@ -37,6 +37,10 @@ export interface PreviewMetricsSnapshot {
   decoderCount: number;
   /** Configured decoder cap (for context in the log line). */
   decoderLimit: number;
+  /** Layers of the last frame served by the in-worker VideoDecoder. */
+  decoderSourcedLayers: number;
+  /** Layers of the last frame that still needed an `<video>` seek on main. */
+  elementSourcedLayers: number;
 }
 
 /** Returns true when running under Vite's dev flag (guarded for non-Vite envs). */
@@ -55,6 +59,8 @@ export class PreviewMetrics {
   private lastSeekMs = 0;
   private decoderCount = 0;
   private decoderLimit = 0;
+  private decoderSourcedLayers = 0;
+  private elementSourcedLayers = 0;
   private lastLogAt = 0;
 
   recordFrame(ms: number): void {
@@ -72,6 +78,15 @@ export class PreviewMetrics {
     if (typeof limit === "number") this.decoderLimit = limit;
   }
 
+  /**
+   * Record how the last rendered frame's layers were sourced. The happy path
+   * is `element === 0` — no `HTMLVideoElement.currentTime` during scrub.
+   */
+  setFrameSources(sources: { decoder: number; element: number }): void {
+    this.decoderSourcedLayers = sources.decoder;
+    this.elementSourcedLayers = sources.element;
+  }
+
   snapshot(): PreviewMetricsSnapshot {
     return {
       avgFrameMs: average(this.frameSamples),
@@ -80,6 +95,8 @@ export class PreviewMetrics {
       lastSeekMs: this.lastSeekMs,
       decoderCount: this.decoderCount,
       decoderLimit: this.decoderLimit,
+      decoderSourcedLayers: this.decoderSourcedLayers,
+      elementSourcedLayers: this.elementSourcedLayers,
     };
   }
 
@@ -91,6 +108,8 @@ export class PreviewMetrics {
     this.lastSeekMs = 0;
     this.decoderCount = 0;
     this.decoderLimit = 0;
+    this.decoderSourcedLayers = 0;
+    this.elementSourcedLayers = 0;
     this.lastLogAt = 0;
   }
 
@@ -107,7 +126,7 @@ export class PreviewMetrics {
     console.debug(
       `[preview] frame ${s.avgFrameMs.toFixed(1)}ms · seek ${s.avgSeekMs.toFixed(
         1,
-      )}ms · decoders ${s.decoderCount}/${s.decoderLimit}`,
+      )}ms · decoders ${s.decoderCount}/${s.decoderLimit} · layers ${s.decoderSourcedLayers} decoded / ${s.elementSourcedLayers} seeked`,
     );
   }
 }

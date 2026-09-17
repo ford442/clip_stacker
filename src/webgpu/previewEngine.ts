@@ -52,6 +52,8 @@ const KEY_UNIFORM_OFFSET = 23;
 // Numeric GPUTextureUsage flags (spec values) so this module can load in tests
 // without a WebGPU environment.
 const GPU_TEX_COPY_SRC = 0x01;
+const GPU_TEX_COPY_DST = 0x02;
+const GPU_TEX_TEXTURE_BINDING = 0x04;
 const GPU_TEX_RENDER_ATTACHMENT = 0x10;
 
 // RENDER_ATTACHMENT (we draw into it) + COPY_SRC (VideoFrame/VideoEncoder and
@@ -143,6 +145,9 @@ export class PreviewEngine {
   private overlayTexture: GPUTexture | null = null;
   private overlayWidth = 0;
   private overlayHeight = 0;
+  private scopeTexture: GPUTexture | null = null;
+  private scopeWidth = 0;
+  private scopeHeight = 0;
   private destroyed = false;
   private audioReactive: AudioReactiveState = { ...ZERO_AUDIO_REACTIVE };
   private format: GPUTextureFormat;
@@ -496,6 +501,55 @@ export class PreviewEngine {
     );
   }
 
+  /**
+   * Copy the composed canvas texture into a reusable offscreen texture that
+   * compute shaders (the gpu-chores scopes) can sample.
+   *
+   * The canvas is configured swapchain-only — RENDER_ATTACHMENT | COPY_SRC — so
+   * scopes never bind or copy *into* it; they read this private copy instead.
+   * Must be called while the current frame's texture is still valid, i.e. in
+   * the same task that drew it, before yielding to the event loop.
+   *
+   * Returns a borrowed texture owned by the engine: do not destroy it.
+   */
+  captureScopeTexture(): GPUTexture | null {
+    if (this.destroyed) return null;
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    if (width <= 0 || height <= 0) return null;
+
+    if (!this.scopeTexture || this.scopeWidth !== width || this.scopeHeight !== height) {
+      this.scopeTexture?.destroy();
+      this.scopeTexture = this.device.createTexture({
+        size: { width, height },
+        format: this.format,
+        usage: GPU_TEX_COPY_DST | GPU_TEX_TEXTURE_BINDING,
+      });
+      this.scopeWidth = width;
+      this.scopeHeight = height;
+    }
+
+    try {
+      const encoder = this.device.createCommandEncoder();
+      encoder.copyTextureToTexture(
+        { texture: this.context.getCurrentTexture() },
+        { texture: this.scopeTexture },
+        { width, height },
+      );
+      this.device.queue.submit([encoder.finish()]);
+    } catch {
+      // Swapchain texture already presented (or device lost) — skip this
+      // frame's scopes rather than failing the render.
+      return null;
+    }
+    return this.scopeTexture;
+  }
+
+  /** Size of the texture `captureScopeTexture` returns. */
+  get scopeTextureSize(): { width: number; height: number } {
+    return { width: this.scopeWidth, height: this.scopeHeight };
+  }
+
   /** Clear the canvas to black without sampling a video frame. */
   clearToBlack(): void {
     if (this.destroyed) return;
@@ -575,6 +629,8 @@ export class PreviewEngine {
     this.transitionPipelineCache.destroy();
     this.finishingChain.destroy();
     this.overlayTexture?.destroy();
+    this.scopeTexture?.destroy();
+    this.scopeTexture = null;
     for (const buffer of this.extraLayerUniformBuffers) {
       buffer.destroy();
     }

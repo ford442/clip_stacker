@@ -107,7 +107,9 @@ function meetsGpuBreakEven(
   },
 ): boolean {
   const pixels = pixelCount(options.width, options.height);
-  if (op === 'luma_histogram_bt709') {
+  if (op === 'luma_histogram_bt709' || op === 'vectorscope_uv') {
+    // Both are one atomic add per pixel with a ≤64 KiB readback; the upload is
+    // the whole cost, so they share the histogram break-even.
     return pixels >= GPU_MIN_PIXELS;
   }
   if (op === 'downsample_2d') {
