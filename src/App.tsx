@@ -7,6 +7,7 @@ import { useClipStabilization } from "./hooks/useClipStabilization";
 import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
 import { getEffectiveTimelineClips } from "./utils/timelineClips";
+import { visibleTextOverlays } from "./utils/trackModel";
 import { setPlayheadTime, settingsActions, uiActions } from "./store";
 import { useClipActions } from "./hooks/useClipActions";
 import { useIntercutActions } from "./hooks/useIntercutActions";
@@ -126,11 +127,19 @@ export function App() {
     setSelectedClipId,
   });
 
+  // Titles on a muted text lane are excluded from the render, matching what the
+  // preview draws (#168 Phase C).
+  const visibleOverlays = useMemo(
+    () => visibleTextOverlays(tracks, textOverlays),
+    [tracks, textOverlays],
+  );
+
   const renderActions = useRenderActions({
     clips,
+    tracks,
     clipGroups,
     transitions,
-    textOverlays,
+    textOverlays: visibleOverlays,
   });
 
   const inspectorActions = useInspectorActions({

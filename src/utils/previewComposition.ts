@@ -29,6 +29,7 @@ import {
   resolveAnimatedTextLayout,
 } from './animatedLayout';
 import { getTimelineClips } from './timelineClips';
+import { placementWindow } from './trackStacking';
 import { capPreviewResolution, DEFAULT_PREVIEW_MAX_HEIGHT } from './previewBudget';
 import { resolveTransitionShaderId } from '../webgpu/transitions/registry';
 import { isStabilizationActive, stabMatrixForClip } from './stabilization';
@@ -801,7 +802,17 @@ function collectScheduledClipLayers(
   return clipLayers;
 }
 
-/** PiP overlays begin at output time 0 (matches FFmpeg overlay filter timing). */
+/**
+ * Overlay (non-base) video layers.
+ *
+ * Stacking order and timing come from the track model: `layerIndex` is the
+ * clip's video-track index (bottom-up) and `timelineStart` is its
+ * `TrackItem.startTime`, both stamped by `toLegacyTimelineView` via
+ * `trackStacking.ts`. An overlay is drawn only while the playhead is inside
+ * `[timelineStart, timelineStart + duration)`; legacy projects with no
+ * placement fall back to `timelineStart = 0`, which is where the pre-track PiP
+ * pipeline put them.
+ */
 function buildPipLayers(
   pipClips: Array<{ clip: Clip; timelineIndex: number }>,
   globalTime: number,
@@ -816,9 +827,17 @@ function buildPipLayers(
         (a.clip.layerIndex ?? 1) - (b.clip.layerIndex ?? 1) ||
         a.timelineIndex - b.timelineIndex,
     )
+    .filter(({ clip }) => {
+      const { start, end } = placementWindow(clip, getClipDuration(clip));
+      return globalTime >= start && globalTime < end;
+    })
     .map(({ clip, timelineIndex }) => {
       const duration = getClipDuration(clip);
-      const localElapsed = Math.min(globalTime, Math.max(0, duration - 1e-6));
+      const { start } = placementWindow(clip, duration);
+      const localElapsed = Math.min(
+        Math.max(0, globalTime - start),
+        Math.max(0, duration - 1e-6),
+      );
       const { rect, uvScale, uvOffset } = resolveClipRectAtTime(
         clip,
         geom,
@@ -960,7 +979,14 @@ export function buildPreviewCompositionPlan(
     ? filterBaseLayerTransitions(timelineClips, transitions)
     : transitions;
 
-  const totalDuration = computeTotalDuration(scheduleClips, scheduleTransitions);
+  // Overlay lanes extend the output when they are placed past the base
+  // sequence's end — an overlay at t=5s over a 3s base yields an 8s output
+  // rather than being clipped away (Phase B: startTime is the output time).
+  const baseDuration = computeTotalDuration(scheduleClips, scheduleTransitions);
+  const totalDuration = pipClips.reduce((max, { clip }) => {
+    const { end } = placementWindow(clip, getClipDuration(clip));
+    return Math.max(max, end);
+  }, baseDuration);
   const segments = buildClipTimelineSegments(
     scheduleClips,
     scheduleTransitions,
@@ -1028,8 +1054,10 @@ export function resolveClipLocalTimeAtGlobal(
 
   const duration = getClipDuration(clip);
   if ((clip.layerIndex ?? 0) > 0) {
+    // Overlay lanes are placed at their track item's output time (Phase B).
+    const { start } = placementWindow(clip, duration);
     const localTime = Math.min(
-      Math.max(0, globalTime),
+      Math.max(0, globalTime - start),
       Math.max(0, duration - 1e-6),
     );
     return { localTime, duration };

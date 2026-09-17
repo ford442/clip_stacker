@@ -189,3 +189,46 @@ describe('bed ducking helpers', () => {
     ).toBe(false);
   });
 });
+
+describe('lane mute (#168 Phase A)', () => {
+  const base = makeClip('base', 4);
+  const overlay = makeClip('overlay', 2, { layerIndex: 1, timelineStart: 5 });
+
+  it('places an overlay-lane clip at its derived timelineStart, not output 0', () => {
+    const schedule = buildAudioSchedule([base, overlay], [], []);
+    expect(schedule.find((e) => e.clipId === 'overlay')?.timelineStart).toBe(5);
+  });
+
+  it('drops clips flattened from a muted video lane', () => {
+    const schedule = buildAudioSchedule(
+      [{ ...base, trackMuted: true }, overlay],
+      [],
+      [],
+    );
+    expect(schedule.map((e) => e.clipId)).toEqual(['overlay']);
+
+    const overlayMuted = buildAudioSchedule(
+      [base, { ...overlay, trackMuted: true }],
+      [],
+      [],
+    );
+    expect(overlayMuted.map((e) => e.clipId)).toEqual(['base']);
+  });
+
+  it('drops bed entries from a muted audio lane', () => {
+    const bed = makeClip('bed', 8, { kind: 'audio' });
+    const tracks: Track[] = [
+      { id: 'v1', kind: 'video', items: [{ clipId: 'base', startTime: 0 }] },
+      { id: 'a1', kind: 'audio', items: [{ clipId: 'bed', startTime: 0 }] },
+    ];
+
+    expect(
+      buildAudioSchedule([base, bed], [], [], tracks).map((e) => e.clipId),
+    ).toEqual(['base', 'bed']);
+
+    const muted = tracks.map((t) => (t.id === 'a1' ? { ...t, muted: true } : t));
+    expect(
+      buildAudioSchedule([base, bed], [], [], muted).map((e) => e.clipId),
+    ).toEqual(['base']);
+  });
+});

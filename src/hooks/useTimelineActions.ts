@@ -2,10 +2,33 @@ import { useCallback } from "react";
 import { getTimelineClips } from "../utils/timelineClips";
 import { reindexTransitions } from "../utils/transitions";
 import {
+  isClipLocked,
   moveClipBetweenTracks,
   removeClipFromTracks,
   reorderMainTrackClips,
+  MAIN_VIDEO_TRACK_ID,
 } from "../utils/trackModel";
+import { editorStore } from "../store/editorStore";
+import { settingsStore } from "../store/settingsStore";
+
+/**
+ * Guard every clip edit that a locked lane must reject (#168 Phase A).
+ *
+ * Checked here rather than in the UI so the block holds for keyboard shortcuts
+ * and programmatic callers too, not just the timeline's buttons.
+ */
+function mainTrackLocked(): boolean {
+  const main = editorStore.getState().tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID);
+  if (!main?.locked) return false;
+  settingsStore.getState().setStatus("Track is locked — unlock the lane to reorder clips.");
+  return true;
+}
+
+function refuseWhenLocked(clipId: string, what: string): boolean {
+  if (!isClipLocked(editorStore.getState().tracks, clipId)) return false;
+  settingsStore.getState().setStatus(`Track is locked — unlock the lane to ${what}.`);
+  return true;
+}
 import { reindexAfterSwap } from "../app/helpers";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
@@ -23,7 +46,6 @@ type TimelineActionsDeps = Pick<
   | "pushHistory"
 > & {};
 
-import { settingsStore } from "../store/settingsStore";
 
 export function useTimelineActions({
   clips,
@@ -39,6 +61,7 @@ export function useTimelineActions({
 }: TimelineActionsDeps) {
   const handleMoveUp = useCallback((index: number) => {
     if (index <= 0) return;
+    if (mainTrackLocked()) return;
     pushHistory();
     setClips((prev) => {
       const next = [...prev];
@@ -49,6 +72,7 @@ export function useTimelineActions({
   }, [pushHistory, setClips, setTransitions]);
 
   const handleMoveDown = useCallback((index: number) => {
+    if (mainTrackLocked()) return;
     pushHistory();
     setClips((prev) => {
       if (index >= prev.length - 1) return prev;
@@ -70,6 +94,13 @@ export function useTimelineActions({
       // insertBefore === fromIndex means "insert before itself",
       // insertBefore === fromIndex + 1 means "insert after itself" — both are identity moves.
       if (insertBefore === fromIndex || insertBefore === fromIndex + 1) return;
+      const mainTrack = editorStore
+        .getState()
+        .tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID);
+      if (mainTrack?.locked) {
+        settingsStore.getState().setStatus("Track is locked — unlock the lane to reorder clips.");
+        return;
+      }
       pushHistory();
       setTracks((prev) => reorderMainTrackClips(prev, clips, transitions, fromIndex, insertBefore));
       setClips((prev) => {
@@ -98,8 +129,22 @@ export function useTimelineActions({
 
   const handleMoveToTrack = useCallback(
     (clipId: string, targetTrackId: string, startTime: number) => {
+      if (refuseWhenLocked(clipId, "move this clip")) return;
+      const { tracks, clips: poolClips } = editorStore.getState();
+      const next = moveClipBetweenTracks(tracks, clipId, targetTrackId, startTime, poolClips);
+      if (next === tracks) {
+        const target = tracks.find((t) => t.id === targetTrackId);
+        settingsStore
+          .getState()
+          .setStatus(
+            target?.locked
+              ? "Target track is locked."
+              : `Cannot place this clip on ${target?.label ?? "that track"}.`,
+          );
+        return;
+      }
       pushHistory();
-      setTracks((prev) => moveClipBetweenTracks(prev, clipId, targetTrackId, startTime));
+      setTracks(next);
     },
     [pushHistory, setTracks],
   );
@@ -110,6 +155,8 @@ export function useTimelineActions({
       const clipIndex = clips.findIndex((c) => c.id === clipId);
       if (clipIndex < 0) return;
       const clipToDelete = clips[clipIndex];
+
+      if (refuseWhenLocked(clipId, "delete this clip")) return;
 
       // Confirm deletion
       const clipTitle = clipToDelete.title || clipToDelete.file.name;

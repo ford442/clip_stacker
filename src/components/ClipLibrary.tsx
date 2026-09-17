@@ -9,6 +9,7 @@ import {
 } from '../store';
 import { getClipDuration } from '../utils/project';
 import { IntercutModal } from './IntercutModal';
+import { AutoCutPanel } from './AutoCutPanel';
 import { settingsStore } from '../store/settingsStore';
 import { useStore } from 'zustand';
 import type { IntercutGeneratorConfig } from '../ffmpeg/intercutGenerator';
@@ -207,6 +208,7 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
           ✂️ Create Intercut Clip
         </button>
       )}
+      <AutoCutPanel />
       {clips.length === 0 && activeGroups.length === 0 && (
         <p className="muted">No clips yet. Add clips above.</p>
       )}

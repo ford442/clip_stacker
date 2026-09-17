@@ -7,6 +7,7 @@ import {
   removeClipFromGroups,
 } from "../utils/clipOperations";
 import {
+  isClipLocked,
   replaceClipOnTrackAfterSplit,
 } from "../utils/trackModel";
 import { shiftTransitionsForInsert } from "../utils/transitions";
@@ -104,6 +105,12 @@ export function useClipActions({
 
     const index = clips.findIndex((clip) => clip.id === selectedClipId);
     if (index < 0) return;
+
+    // A split retimes the lane's items, so a locked lane refuses it (#168 Phase A).
+    if (isClipLocked(editorStore.getState().tracks, selectedClipId)) {
+      setStatus("Track is locked — unlock the lane to split this clip.");
+      return;
+    }
 
     const source = clips[index];
     const snappedTime = snapSplitTimeToBeat(source, currentPlayheadTime);

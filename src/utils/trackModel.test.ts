@@ -1,8 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { Clip, ClipTransition } from '../types';
 import {
+  addTrack,
   createDefaultTracks,
   migrateLegacyClipsToTracks,
+  setTrackHeight,
+  setTrackLocked,
+  setTrackMuted,
   toLegacyTimelineView,
   MAIN_VIDEO_TRACK_ID,
   OVERLAY_VIDEO_TRACK_ID,
@@ -117,5 +121,44 @@ describe('project migration', () => {
       'a',
       'b',
     ]);
+  });
+
+  it('round-trips lane mute / lock / height and a titles lane', async () => {
+    const clips = [makeClip('a', 5)];
+    let tracks = migrateLegacyClipsToTracks(clips, []);
+    tracks = addTrack(tracks, 'text');
+    const titlesId = tracks[tracks.length - 1].id;
+    tracks = tracks.map((t) =>
+      t.id === titlesId ? { ...t, items: [{ clipId: 'overlay-1', startTime: 2 }] } : t,
+    );
+    tracks = setTrackMuted(tracks, MAIN_VIDEO_TRACK_ID, true);
+    tracks = setTrackLocked(tracks, OVERLAY_VIDEO_TRACK_ID, true);
+    tracks = setTrackHeight(tracks, OVERLAY_VIDEO_TRACK_ID, 96);
+
+    const project = serializeProject(clips, [], [], [], undefined, tracks);
+    const result = await applyProjectData(project, clips);
+
+    expect(result.tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID)?.muted).toBe(true);
+    expect(result.tracks.find((t) => t.id === OVERLAY_VIDEO_TRACK_ID)).toMatchObject({
+      locked: true,
+      height: 96,
+    });
+    expect(result.tracks.find((t) => t.kind === 'text')?.items).toEqual([
+      { clipId: 'overlay-1', startTime: 2 },
+    ]);
+  });
+
+  it('never serializes the derived placement fields onto clips', () => {
+    const clips = [makeClip('a', 5), makeClip('pip', 2, { layerIndex: 1 })];
+    const tracks = migrateLegacyClipsToTracks(clips, []);
+    // The flattened view carries them...
+    expect(toLegacyTimelineView(tracks, clips)[1]).toHaveProperty('timelineStart');
+    // ...but the saved project does not.
+    const project = serializeProject(clips, [], [], [], undefined, tracks);
+    for (const clip of project.clips) {
+      expect(clip).not.toHaveProperty('timelineStart');
+      expect(clip).not.toHaveProperty('trackMuted');
+      expect(clip).not.toHaveProperty('trackLocked');
+    }
   });
 });
