@@ -4,7 +4,11 @@
 
 import type { PreviewCompositionPlan } from './previewComposition';
 import type { FrameSource } from './canvas-renderer-types';
-import { drawClipLayer, drawTextLayer } from './canvas-renderer-layers';
+import {
+  drawCaptionLayer,
+  drawClipLayer,
+  drawTextLayer,
+} from './canvas-renderer-layers';
 
 /**
  * Composite one frame of a preview plan's *video* layers onto a 2D context.
@@ -28,7 +32,7 @@ export function compositeFrame(
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   for (const layer of plan.layers) {
-    if (layer.kind === "text") continue;
+    if (layer.kind === "text" || layer.kind === "caption") continue;
     const source = frameSources.get(layer.clipId);
     if (!source) continue;
     drawClipLayer(ctx, layer, source);
@@ -36,16 +40,21 @@ export function compositeFrame(
 }
 
 /**
- * Final compositing pass: draw a plan's text overlays onto a 2D context. Used
- * for both preview backends — the WebGPU path draws onto a stacked overlay
- * canvas, the Canvas2D path onto the same overlay canvas above its video
- * composite. Does not clear the context (the caller owns the surface).
+ * Final compositing pass: draw a plan's text overlays and caption cues onto a
+ * 2D context. Used for both preview backends — the WebGPU path draws onto a
+ * stacked overlay canvas, the Canvas2D path onto the same overlay canvas above
+ * its video composite. Does not clear the context (the caller owns the
+ * surface).
  */
 export function drawTextOverlays(
   ctx: CanvasRenderingContext2D,
   plan: PreviewCompositionPlan,
 ): void {
   for (const layer of plan.layers) {
+    if (layer.kind === "caption") {
+      drawCaptionLayer(ctx, layer, plan.scale);
+      continue;
+    }
     if (layer.kind !== "text") continue;
     drawTextLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
   }
@@ -108,6 +117,11 @@ export async function renderTextOverlaysAsync(
   const DEFAULT_BOX_COLOR = "black@0.5";
 
   for (const layer of plan.layers) {
+    // Captions are never shader-filled — solid draw in the same z-order pass.
+    if (layer.kind === 'caption') {
+      drawCaptionLayer(ctx, layer, plan.scale);
+      continue;
+    }
     if (layer.kind !== 'text') continue;
     const overlay = (layer as any).overlay as import('../types').TextOverlay;
     if (!overlay || !overlay.text) continue;

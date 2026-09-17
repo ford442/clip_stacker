@@ -93,13 +93,17 @@ Where the pieces live:
 
 Two things to keep in mind when changing this:
 
-1. **Caption export is a post-pass, not a filter-graph hook.** It runs on the
-   blob `hybridMergeClips` returns (in `useRenderActions`), because that
-   function can finish on any of three encoders and only the FFmpeg one has a
-   graph to hook. Burn-in therefore costs one extra video re-encode; the soft
-   mux is a stream copy. Do not "optimize" this by folding `subtitles=` into
-   the FFmpeg path only — that silently drops captions on the GPU and canvas
-   paths.
+1. **Caption export is a post-pass, not a filter-graph hook** — except on the
+   compositor. Cues reach the preview and the GPU export through the
+   composition plan (`buildPreviewCompositionPlan`'s `captionOptions` →
+   `PreviewCaptionLayer` → `drawCaptionLayer`), so a burn-in on the WebCodecs
+   path costs no extra encode. Everything else still runs on the blob
+   `hybridMergeClips` returns (in `useRenderActions`): the soft `mov_text` mux
+   (a stream copy, and never a burn), Force FFmpeg, and any machine without
+   WebGPU. `hybridMergeClips` reports `captionsBurnedIn` so the caller skips
+   the post-pass rather than burning a second copy. Do not "optimize" the rest
+   away by folding `subtitles=` into the FFmpeg path only — that silently
+   drops captions on the GPU and canvas paths.
 2. **Burn-in depends on libass being in the core build.** `@ffmpeg/core` is
    built `--enable-libass` but *without* fontconfig, so libass can only resolve
    a family name by scanning a fonts directory — hence `fontsdir=.` plus
@@ -110,6 +114,32 @@ Two things to keep in mind when changing this:
 `Project.captions` / `Project.captionStyle` are optional, so projects saved
 before captions existed still load (as an empty track). `applyProjectData`
 coerces and drops malformed cues rather than throwing.
+
+## Overlay keying (chroma / luma)
+
+`src/utils/overlayKey.ts` owns the key maths for **every** compositor. Add a
+blend mode there, not in one backend.
+
+- `keyPixel(r, g, b, key)` — the reference implementation, unit tested in
+  `overlayKey.test.ts`. Chroma follows `vf_chromakey.c` (normalized BT.601
+  limited-range UV distance, ramped from `similarity` over `blend`); luma
+  follows `vf_lumakey.c` as `buildOverlayAlphaFilters` configures it.
+- `preview.wgsl`'s `keyAlpha()` is the same function in WGSL, driven by six
+  uniforms at `KEY_UNIFORM_OFFSET` (packed by `packKeyUniforms`). It runs on
+  the sampled colour *before* opacity and the fades, so a soft edge is not
+  squashed by them.
+- `applyKeyToImageData` is the Canvas2D export path (`drawClipLayer` pre-keys
+  into a scratch canvas, since Canvas2D has no per-pixel hook).
+- `buildOverlayAlphaFilters` in `overlayBlend.ts` is the FFmpeg fallback.
+
+Because GPU export reuses the preview compositor, the shader covers the
+preview *and* the default WebCodecs export. The FFmpeg filter is only reached
+on the Force-FFmpeg / no-WebGPU path, so the two must agree numerically — the
+limited-range chroma scale in `overlayKey.ts` is there for exactly that. The
+GPU path never also runs `chromakey`; `RenderPlan.overlayKeying` records which
+one ran. Transitions do not key (they composite base-layer cuts, which are not
+overlays), and the MediaRecorder canvas path has no keying step at all — it
+reports `overlayKeying: 'unsupported'` rather than keying silently wrong.
 
 ## Audio analysis WASM (FFT / beats)
 

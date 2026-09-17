@@ -98,7 +98,10 @@ describe('previewComposition morph layers', () => {
     // Overlap starts at t=4 (5 - 1).
     const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.5);
     const morphLayer = plan.layers.find(
-      (layer) => layer.kind !== 'text' && layer.clipId === morphClipId(1),
+      (layer) =>
+        layer.kind !== 'text' &&
+        layer.kind !== 'caption' &&
+        layer.clipId === morphClipId(1),
     );
     expect(morphLayer).toBeDefined();
     expect(morphLayer && 'mediaObjectUrl' in morphLayer && morphLayer.mediaObjectUrl).toBe(

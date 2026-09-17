@@ -294,6 +294,23 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
           <p className="render-plan-info">
             Render plan: {renderPlan.description} ({renderPlan.reason})
           </p>
+          {renderPlan.overlayKeying === 'gpu' && (
+            <p className="render-plan-info">
+              Chroma / luma key applied on the GPU compositor — matches the preview.
+            </p>
+          )}
+          {renderPlan.overlayKeying === 'ffmpeg' && (
+            <p className="render-plan-info">
+              Chroma / luma key applied via the FFmpeg <code>chromakey</code> fallback.
+            </p>
+          )}
+          {renderPlan.overlayKeying === 'unsupported' && (
+            <p className="render-plan-warning" role="alert">
+              ⚠ Chroma / luma key skipped — the Canvas (MediaRecorder) renderer plays
+              clips back rather than compositing, so it has no keying step. Turn off the
+              Canvas renderer to key on the GPU, or use Force FFmpeg.
+            </p>
+          )}
           {renderPlan.shaderTextFallbackApplied && renderPlan.shaderTextOverlays && (
             <p className="render-plan-warning" role="alert">
               ⚠ Shader-filled text overlay{renderPlan.shaderTextOverlays.length > 1 ? 's' : ''}{' '}

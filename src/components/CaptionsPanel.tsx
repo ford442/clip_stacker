@@ -64,6 +64,10 @@ function CaptionsPanelImpl({
   const selectedCaptionId = useSelectedCaptionId();
   const playheadTime = usePlayheadTime() ?? 0;
   const captionExportMode = useStore(settingsStore, (s) => s.captionExportMode);
+  const showCaptionsInPreview = useStore(
+    settingsStore,
+    (s) => s.showCaptionsInPreview,
+  );
   const importInputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
 
@@ -328,6 +332,21 @@ function CaptionsPanelImpl({
           />
         </label>
       </div>
+
+      <div className="inspector-group-label">Preview</div>
+      <label
+        className="encoder-toggle-label"
+        title="Draw caption cues over the preview at their CC-lane timings"
+      >
+        <input
+          type="checkbox"
+          checked={showCaptionsInPreview}
+          onChange={(e) =>
+            settingsStore.getState().setShowCaptionsInPreview(e.target.checked)
+          }
+        />
+        Show captions in preview
+      </label>
 
       <div className="inspector-group-label">Export</div>
       <label title="How captions are attached to the rendered MP4">

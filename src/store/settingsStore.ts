@@ -17,6 +17,12 @@ export interface SettingsState {
    * encoder path. Sidecar `.srt` export is a separate explicit action.
    */
   captionExportMode: CaptionExportMode;
+  /**
+   * Draw caption cues in the live preview and (for burn-in export) in the
+   * compositor. On by default — the preview used to be the one place the CC
+   * lane's cues never showed up.
+   */
+  showCaptionsInPreview: boolean;
 
   status: string;
   progressStage: string;
@@ -39,6 +45,7 @@ export interface SettingsState {
   setAudioReactive: (v: boolean) => void;
   setForceReencode: (v: boolean) => void;
   setCaptionExportMode: (mode: CaptionExportMode) => void;
+  setShowCaptionsInPreview: (v: boolean) => void;
 
   setStatus: (status: string) => void;
   setProgressStage: (stage: string) => void;
@@ -63,6 +70,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   audioReactive: true,
   forceReencode: false,
   captionExportMode: 'none',
+  showCaptionsInPreview: true,
 
   status: '',
   progressStage: '',
@@ -85,6 +93,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   setAudioReactive: (v) => set({ audioReactive: v }),
   setForceReencode: (v) => set({ forceReencode: v }),
   setCaptionExportMode: (mode) => set({ captionExportMode: mode }),
+  setShowCaptionsInPreview: (v) => set({ showCaptionsInPreview: v }),
 
   setStatus: (status) => set({ status }),
   setProgressStage: (stage) => set({ progressStage: stage }),

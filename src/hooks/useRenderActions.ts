@@ -127,6 +127,19 @@ export function useRenderActions(deps: RenderActionsDeps) {
           actions.setProgressValue(null);
         }
       };
+      // Caption cues are drawn into the composite by the GPU (WebCodecs)
+      // compositor when the export mode is burn-in — one pass instead of the
+      // FFmpeg post-pass's extra full re-encode. Every other case still falls
+      // through to `applyCaptionsToRenderedVideo` below: the soft mux (a
+      // stream copy), the MediaRecorder canvas path, and FFmpeg itself, none
+      // of which composite a plan. `result.captionsBurnedIn` says which
+      // happened, so the post-pass never burns a second copy.
+      const { captions, captionStyle } = editorStore.getState();
+      const captionBurnIn =
+        captionExportMode === 'burn' && captions.length > 0
+          ? { captions, captionStyle }
+          : null;
+
       const result = await hybridMergeClips(
         timelineClips,
         transitions,
@@ -142,10 +155,11 @@ export function useRenderActions(deps: RenderActionsDeps) {
         clipGroups,
         finishing,
         editorStore.getState().masterAudio,
+        captionBurnIn,
       );
-      // Captions are attached after the encode so every encoder path (GPU,
-      // canvas, FFmpeg) gets the same result — see `ffmpeg/captions.ts`.
-      const { captions, captionStyle } = editorStore.getState();
+      // Captions the compositor could not burn are attached after the encode,
+      // so every remaining encoder path gets the same result — see
+      // `ffmpeg/captions.ts`.
       const { width, height } = resolveTargetResolution(
         timelineClips,
         exportSettings,
@@ -154,7 +168,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         result.blob,
         captions,
         {
-          mode: captionExportMode,
+          mode: result.captionsBurnedIn ? 'none' : captionExportMode,
           width,
           height,
           projectStyle: captionStyle,

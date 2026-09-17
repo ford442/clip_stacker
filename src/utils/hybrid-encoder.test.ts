@@ -177,6 +177,7 @@ describe('utils/hybrid-encoder', () => {
         [],
         expect.anything(),
         false,
+        {},
       );
       expect(muxVideoWithAudio).toHaveBeenCalledWith(
         videoBlob,
@@ -221,9 +222,74 @@ describe('utils/hybrid-encoder', () => {
         [],
         expect.anything(),
         true,
+        {},
       );
       expect(muxVideoWithAudio).not.toHaveBeenCalled();
       expect(result.blob).toBe(avBlob);
+    });
+
+    it('burns captions into the GPU composite and reports it', async () => {
+      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      (isAudioEncoderAvailable as any).mockResolvedValue(true);
+      (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
+      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['av mp4']));
+      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+
+      const captions = [
+        { id: 'c1', startSec: 0, endSec: 2, text: 'hello' },
+      ];
+      const result = await hybridMergeClips(
+        testClips,
+        [],
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        false,
+        [],
+        false,
+        true,
+        false,
+        undefined,
+        [],
+        undefined,
+        null,
+        { captions, captionStyle: { fontsize: 42 } },
+      );
+
+      // The caller reads this to skip the FFmpeg burn-in post-pass, which
+      // would otherwise burn a second copy and cost a full re-encode.
+      expect(result.captionsBurnedIn).toBe(true);
+      const call = (encodeVideoWithWebCodecs as any).mock.calls[0];
+      expect(call[10]).toEqual({ captions, captionStyle: { fontsize: 42 } });
+    });
+
+    it('does not claim a burn-in when there are no cues', async () => {
+      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      (isAudioEncoderAvailable as any).mockResolvedValue(true);
+      (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
+      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['av mp4']));
+      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+
+      const result = await hybridMergeClips(
+        testClips,
+        [],
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+        false,
+        [],
+        false,
+        true,
+        false,
+        undefined,
+        [],
+        undefined,
+        null,
+        { captions: [] },
+      );
+
+      expect(result.captionsBurnedIn).toBe(false);
+      expect((encodeVideoWithWebCodecs as any).mock.calls[0][10]).toEqual({});
     });
 
     it('should use FFmpeg lossless when clips already match export resolution', async () => {
@@ -348,6 +414,7 @@ describe('utils/hybrid-encoder', () => {
         [],
         expect.anything(),
         false,
+        {},
       );
       expect(mergeClips).not.toHaveBeenCalled();
     });

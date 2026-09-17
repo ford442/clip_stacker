@@ -97,6 +97,8 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         maxHeight,
         finishing,
         colorGrade,
+        captions,
+        captionStyle,
       } = msg;
 
       const resolvedFinishing = resolveTimelineFinishing({ finishing, colorGrade });
@@ -119,6 +121,7 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         globalTime,
         maxHeight,
         maxWidth,
+        { captions, captionStyle },
       );
 
       if (cancelledIds.has(renderId)) {

@@ -5,11 +5,13 @@ import {
 } from '../store/playbackStore';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipTransition,
   ExportSettings,
   TextOverlay,
+  TextOverlayStyle,
   Track,
 } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
@@ -54,6 +56,9 @@ export interface TimelinePreviewProps {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  /** Caption cues to draw over the composite (empty when the toggle is off). */
+  captions?: CaptionEntry[];
+  captionStyle?: Partial<TextOverlayStyle>;
   exportSettings?: ExportSettings;
   finishing?: FinishingSettings;
   selectedClipId?: string | null;
@@ -75,6 +80,8 @@ export function TimelineCompositorPreview({
   clipGroups,
   transitions,
   textOverlays,
+  captions,
+  captionStyle,
   exportSettings,
   finishing,
   selectedClipId = null,
@@ -156,6 +163,8 @@ export function TimelineCompositorPreview({
             maxHeight: size?.canvasHeight,
             maxWidth: size?.canvasWidth,
             finishing,
+            captions,
+            captionStyle,
           },
         );
         if (isCancelled()) return;
@@ -166,6 +175,8 @@ export function TimelineCompositorPreview({
 
         // Final pass: draw text overlays onto the stacked 2D canvas above the
         // video composite (works identically for both backends).
+        // Captions ride the same overlay canvas as text overlays, so they are
+        // drawn whenever the plan carries a caption layer.
         if (textCanvasRef.current && !isCancelled()) {
           if (textOverlays.some((o) => o.fill === 'shader')) {
             await renderTextOverlaysAsync(textCanvasRef.current, plan);
@@ -194,7 +205,16 @@ export function TimelineCompositorPreview({
         }
       }
     },
-    [timelineClips, clipGroups, transitions, textOverlays, exportSettings, finishing],
+    [
+      timelineClips,
+      clipGroups,
+      transitions,
+      textOverlays,
+      captions,
+      captionStyle,
+      exportSettings,
+      finishing,
+    ],
   );
 
   const requestRender = useCallback((globalTime: number) => {

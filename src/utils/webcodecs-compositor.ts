@@ -5,7 +5,10 @@
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
 import { drawTextOverlays } from './canvas-renderer';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
-import { buildPreviewCompositionPlan } from './previewComposition';
+import {
+  buildPreviewCompositionPlan,
+  type CaptionPlanOptions,
+} from './previewComposition';
 import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { TARGET_FPS } from './webcodecs-codec';
 
@@ -65,6 +68,7 @@ export class DecoderTextOverlayPass {
     private readonly settings: ExportSettings,
     private readonly targetWidth: number,
     private readonly targetHeight: number,
+    private readonly captions: CaptionPlanOptions = {},
   ) {
     this.exportCanvas = document.createElement('canvas');
     this.exportCanvas.width = targetWidth;
@@ -88,6 +92,7 @@ export class DecoderTextOverlayPass {
       globalTimeSec,
       this.targetHeight,
       this.targetWidth,
+      this.captions,
     );
     drawTextOverlays(this.exportCtx, plan);
     return this.exportCanvas;

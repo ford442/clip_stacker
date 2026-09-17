@@ -23,6 +23,7 @@ import {
   IDENTITY_STAB_MATRIX,
   type StabMatrix,
 } from "../wasm/videoStabilize";
+import { packKeyUniforms, type LayerKeyUniforms } from "../utils/overlayKey";
 
 /**
  * WebGPU-based clip preview engine.
@@ -39,11 +40,14 @@ import {
  *   engine.destroy();
  */
 
-/** Must match WGSL Uniforms (20 floats = 80 bytes, 16-byte aligned). */
-const UNIFORM_FLOATS = 24;
+/** Must match WGSL Uniforms (32 floats = 128 bytes, 16-byte aligned). */
+const UNIFORM_FLOATS = 32;
 
 /** First slot of the stabilization affine in `Uniforms` (must match preview.wgsl). */
 const STAB_UNIFORM_OFFSET = 17;
+
+/** First slot of the chroma/luma key block in `Uniforms` (must match preview.wgsl). */
+const KEY_UNIFORM_OFFSET = 23;
 
 // Numeric GPUTextureUsage flags (spec values) so this module can load in tests
 // without a WebGPU environment.
@@ -106,6 +110,11 @@ export interface LayerRenderParams {
    * `[a, b, tx, c, d, ty]`. Omit (or pass identity) for unstabilized clips.
    */
   stabMatrix?: StabMatrix;
+  /**
+   * Chroma / luma key for this layer. Omit for unkeyed layers — the shader
+   * then samples the source as-is.
+   */
+  key?: LayerKeyUniforms;
   /** Destination rectangle on the canvas in normalized 0–1 coordinates. */
   destRect?: NormalizedDestRect;
   /** When true, clears the canvas before drawing this layer. */
@@ -619,6 +628,7 @@ export class PreviewEngine {
     this.uniformData[STAB_UNIFORM_OFFSET + 3] = stab[3];
     this.uniformData[STAB_UNIFORM_OFFSET + 4] = stab[4];
     this.uniformData[STAB_UNIFORM_OFFSET + 5] = stab[5];
+    packKeyUniforms(this.uniformData, KEY_UNIFORM_OFFSET, params.key);
 
     const uniformBuffer = this.uniformBufferForLayer(index);
     this.device.queue.writeBuffer(uniformBuffer, 0, this.uniformData);

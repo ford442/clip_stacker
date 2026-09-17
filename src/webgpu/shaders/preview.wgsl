@@ -29,8 +29,66 @@ struct Uniforms {
   stabC: f32,
   stabD: f32,
   stabTy: f32,
+  // Chroma / luma key (see src/utils/overlayKey.ts — keyPixel() is the same
+  // function in TypeScript and is what the unit tests pin down).
+  // keyMode: 0 = none, 1 = chroma, 2 = luma.
+  keyMode: f32,
+  keyR: f32,
+  keyG: f32,
+  keyB: f32,
+  keySimilarity: f32,
+  keyBlend: f32,
   _pad0: f32,
+  _pad1: f32,
+  _pad2: f32,
 };
+
+// BT.601 luma — the `Y` plane FFmpeg's lumakey reads.
+fn lumaBt601(c: vec3<f32>) -> f32 {
+  return dot(c, vec3<f32>(0.299, 0.587, 0.114));
+}
+
+// BT.601 U/V for *limited* range (224 of 255 code values), with the +128
+// offset dropped because only differences are used. Matching the range matters:
+// full-range UV would come out ~14% further apart and key more than FFmpeg.
+fn chromaUv(c: vec3<f32>) -> vec2<f32> {
+  let y = lumaBt601(c);
+  let scale = 224.0 / 255.0;
+  return vec2<f32>(scale * (c.b - y) / 1.772, scale * (c.r - y) / 1.402);
+}
+
+/**
+ * Alpha multiplier for one pixel: 0 = keyed out, 1 = kept.
+ *
+ * Chroma follows `vf_chromakey.c` (normalized Euclidean UV distance ramped
+ * from similarity over blend, hard cut when blend is ~0); luma follows
+ * `vf_lumakey.c` as `buildOverlayAlphaFilters` configures it (threshold=0,
+ * tolerance=similarity, softness=blend).
+ */
+fn keyAlpha(color: vec3<f32>) -> f32 {
+  if (u.keyMode < 0.5) {
+    return 1.0;
+  }
+
+  if (u.keyMode < 1.5) {
+    let d = chromaUv(color) - chromaUv(vec3<f32>(u.keyR, u.keyG, u.keyB));
+    let diff = sqrt(dot(d, d) / 2.0);
+    if (u.keyBlend > 0.0001) {
+      return clamp((diff - u.keySimilarity) / u.keyBlend, 0.0, 1.0);
+    }
+    return select(0.0, 1.0, diff > u.keySimilarity);
+  }
+
+  let white = clamp(u.keySimilarity, 0.0, 1.0);
+  let luma = lumaBt601(color);
+  if (luma <= white) {
+    return 0.0;
+  }
+  if (u.keyBlend > 0.0001) {
+    return clamp((luma - white) / u.keyBlend, 0.0, 1.0);
+  }
+  return 1.0;
+}
 
 /**
  * Camera-shake correction. Applied to the source UV before the letterbox map,
@@ -99,6 +157,10 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   var color = textureSampleBaseClampToEdge(videoTexture, videoSampler, in.uv);
 
+  // Keying runs on the sampled colour, before opacity and the fades multiply
+  // in, so the key's soft edge is not squashed by them.
+  let keyed = keyAlpha(color.rgb);
+
   var fadeAlpha = 1.0;
   if (u.fadeIn > 0.0 && u.elapsed < u.fadeIn) {
     fadeAlpha = u.elapsed / u.fadeIn;
@@ -110,5 +172,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   fadeAlpha = clamp(fadeAlpha, 0.0, 1.0) * clamp(u.opacity, 0.0, 1.0);
 
   let rgb = applyAudioReactive(color.rgb, u.bass, u.beat);
-  return vec4<f32>(rgb * fadeAlpha, color.a * fadeAlpha);
+  let outAlpha = fadeAlpha * keyed;
+  return vec4<f32>(rgb * outAlpha, color.a * outAlpha);
 }
