@@ -71,6 +71,87 @@ Current small set (license notes):
 
 Never embed user-supplied custom fonts (out of scope).
 
+## Timeline tracks
+
+`editorStore.tracks` is the timeline's source of truth. A `Track` is a lane
+(`kind: 'video' | 'audio' | 'text'`) holding `TrackItem`s — `{ clipId, startTime }`
+placements on the **output** timeline. Everything else about layout is derived
+from it.
+
+- `src/utils/trackStacking.ts` — the one place that answers "which video sits on
+  top of which, and when?". `buildVideoStack` walks the video lanes bottom-up;
+  `stackFromTracks(tracks, clips, time)` narrows that to the overlays visible at
+  a given output time.
+- `src/utils/trackModel.ts` — every pure lane mutation (`addTrack`,
+  `removeTrack`, `setTrackMuted`, `setTrackLocked`, `setTrackHeight`,
+  `renameTrack`, `moveClipBetweenTracks`, `moveClipToVideoLayer`,
+  `migrateLegacyClipsToTracks`) plus `toLegacyTimelineView`, the flattening step.
+- `src/store/editorStore.ts` — the undoable actions the UI calls
+  (`addTrack`, `toggleTrackMuted`, …). Components never mutate a `Track`.
+- `src/components/TrackLaneHeader.tsx` — the lane's chrome: name, **M**ute,
+  **L**ock, remove, height drag. Track state belongs here, not in the Inspector.
+
+Two rules that used to be heuristics and are now settled:
+
+1. **Stacking order is lane order.** The first video lane is the base sequence;
+   each one above it composites on top. `Clip.layerIndex` is *derived* from that
+   index for the FFmpeg filter graph — it is not an independent authoring knob,
+   and the Inspector's "layer" field is a shortcut for `moveClipToVideoLayer`.
+2. **`TrackItem.startTime` is the output timestamp on every video lane**, not
+   just the base sequence. An overlay placed at 5s appears at 5s and ends at
+   5s + its trimmed duration. Base-lane items are the one exception: their start
+   times come from transition-aware segment math
+   (`buildClipTimelineSegments`), because an xfade overlaps its neighbours.
+
+`toLegacyTimelineView` stamps four **derived** fields onto the flattened clip
+list that preview and export consume: `layerIndex`, `timelineStart`,
+`trackMuted` and `trackLocked`. They travel on the clip so the deep export
+paths (`webcodecs-audio.ts`, `ffmpeg/video.ts`) see lane state without every
+call site growing a `tracks` parameter. `serializeProject` never writes them,
+and setting them on a pool clip does nothing — change the track instead. The
+function keeps a small identity cache: stamping necessarily allocates new clip
+objects, and without it the store's `useShallow` selectors would see fresh
+element identities every render and spin React into an update loop.
+
+Lane **mute** drops a lane's audio from the preview, the WebCodecs premix and
+the FFmpeg mix (as a `volume=0` segment, so the concat graph keeps one stream
+per clip). It does not hide video. Lane **lock** blocks trim, drag, split and
+delete; the guards live in the action hooks (`useTimelineActions`,
+`useClipActions`, `useInspectorActions`), not in the components, so keyboard
+shortcuts and programmatic callers are blocked too.
+
+### Text tracks vs the caption track
+
+Two decisions worth stating, because the type system allows other readings:
+
+- **Captions stay their own track.** `CaptionEntry[]` is time-coded subtitle
+  data with its own import/export formats and its own timeline lane
+  (`CaptionLane`). It is *not* modelled as `kind: 'text'` track items.
+- **`kind: 'text'` lanes are titles lanes.** Their `TrackItem.clipId` holds a
+  `TextOverlay` id — the holding lane's `kind` selects which pool the id
+  resolves against, which is why adding titles lanes needed no schema bump. A
+  new text overlay is placed on the first unlocked titles lane at the playhead,
+  so titles participate in lane mute (`visibleTextOverlays`), lock
+  (`isTextOverlayLocked`) and ordering. Overlays with no placement are always
+  visible, so projects that never made a titles lane are unaffected.
+
+### Auto-cut to music
+
+`src/utils/autoEdit.ts` rebuilds the main video lane so every cut lands on a
+beat. `autoCutFromReference` takes an `AutoCutReference` — a clip's
+`beatTimestamps` or the master audio lane, both reduced to
+`{ beats, sourceOrigin, outputStart }` — and returns a new arrangement without
+touching the source clips. `AutoCutPanel` (in the Library) applies it under a
+single `pushHistory`, so one undo restores the prior tracks, clips and
+transitions. Fewer than two beats, no B-roll, or a locked main lane all return
+the input unchanged.
+
+### Known gap
+
+The FFmpeg **GPU stitch** path (`handleGpuStitch`) is still a naive
+resolution-normalize + concat and ignores lane placement by design; use the
+normal render for anything with overlays.
+
 ## Captions / subtitles
 
 The caption track (`CaptionEntry[]`) is separate from `TextOverlay`s: time-coded

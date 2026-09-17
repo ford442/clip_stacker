@@ -10,11 +10,21 @@ import type {
   TextOverlay,
   TextOverlayStyle,
   Track,
+  TrackKind,
   SyncMarker,
 } from '../types';
 import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import { computeTotalDuration } from '../utils/transitions';
-import { createDefaultTracks } from '../utils/trackModel';
+import {
+  addTrack as addTrackToList,
+  createDefaultTracks,
+  removeTrack as removeTrackFromList,
+  renameTrack as renameTrackInList,
+  setTrackHeight as setTrackHeightInList,
+  setTrackLocked as setTrackLockedInList,
+  setTrackMuted as setTrackMutedInList,
+  visibleTextOverlays,
+} from '../utils/trackModel';
 import {
   cloneSnapshot,
   mergeClipUrls,
@@ -70,6 +80,22 @@ export interface EditorState {
 
   setClips: (action: StateUpdater<Clip[]>) => void;
   setTracks: (action: StateUpdater<Track[]>) => void;
+
+  // ── Lane chrome (#168 Phase A) ────────────────────────────────────────────
+  // Discrete, undoable lane operations. The timeline calls these rather than
+  // reaching for `setTracks` so all track mutation stays in `trackModel.ts`.
+  /** Append an empty lane of `kind` (video lanes group above the audio lanes). */
+  addTrack: (kind: TrackKind) => void;
+  /** Remove a lane. No-op for the main video lane, the last video lane, or a locked lane. */
+  removeTrack: (trackId: string) => void;
+  /** Toggle a lane's mute flag (drops it from the audio mix). */
+  toggleTrackMuted: (trackId: string) => void;
+  /** Toggle a lane's lock flag (blocks trim / drag / delete on its clips). */
+  toggleTrackLocked: (trackId: string) => void;
+  /** Set a lane's row height in px (clamped by `trackModel`). */
+  setTrackHeight: (trackId: string, height: number) => void;
+  /** Rename a lane. */
+  renameTrack: (trackId: string, label: string) => void;
   setClipGroups: (action: StateUpdater<ClipGroup[]>) => void;
   setTransitions: (action: StateUpdater<ClipTransition[]>) => void;
   setTextOverlays: (action: StateUpdater<TextOverlay[]>) => void;
@@ -173,6 +199,36 @@ export const editorStore = createStore<EditorState>()((set, get) => {
 
     setClips: (action) => set((s) => ({ clips: resolveUpdater(action, s.clips) })),
     setTracks: (action) => set((s) => ({ tracks: resolveUpdater(action, s.tracks) })),
+
+    addTrack: (kind) => {
+      pushHistory();
+      set((s) => ({ tracks: addTrackToList(s.tracks, kind) }));
+    },
+    removeTrack: (trackId) => {
+      const next = removeTrackFromList(get().tracks, trackId);
+      if (next === get().tracks) return;
+      pushHistory();
+      set({ tracks: next });
+    },
+    toggleTrackMuted: (trackId) => {
+      const current = get().tracks.find((t) => t.id === trackId);
+      if (!current) return;
+      pushHistory();
+      set((s) => ({ tracks: setTrackMutedInList(s.tracks, trackId, !current.muted) }));
+    },
+    toggleTrackLocked: (trackId) => {
+      const current = get().tracks.find((t) => t.id === trackId);
+      if (!current) return;
+      pushHistory();
+      set((s) => ({ tracks: setTrackLockedInList(s.tracks, trackId, !current.locked) }));
+    },
+    setTrackHeight: (trackId, height) => {
+      set((s) => ({ tracks: setTrackHeightInList(s.tracks, trackId, height) }));
+    },
+    renameTrack: (trackId, label) => {
+      pushHistory();
+      set((s) => ({ tracks: renameTrackInList(s.tracks, trackId, label) }));
+    },
     setClipGroups: (action) =>
       set((s) => ({ clipGroups: resolveUpdater(action, s.clipGroups) })),
     setTransitions: (action) =>
@@ -248,12 +304,21 @@ export const useEditorClips = () =>
   useStore(editorStore, useShallow((s) => s.clips));
 export const useEditorTracks = () =>
   useStore(editorStore, useShallow((s) => s.tracks));
+/** One lane by id — re-renders a lane header only when that lane changes. */
+export const useEditorTrack = (trackId: string) =>
+  useStore(editorStore, (s) => s.tracks.find((t) => t.id === trackId) ?? null);
 export const useEditorClipGroups = () =>
   useStore(editorStore, useShallow((s) => s.clipGroups));
 export const useEditorTransitions = () =>
   useStore(editorStore, useShallow((s) => s.transitions));
 export const useEditorTextOverlays = () =>
   useStore(editorStore, useShallow((s) => s.textOverlays));
+/**
+ * Text overlays that should be drawn — titles on a muted `text` lane are
+ * excluded (#168 Phase C). Overlays with no lane placement are always visible.
+ */
+export const useEditorVisibleTextOverlays = () =>
+  useStore(editorStore, useShallow((s) => visibleTextOverlays(s.tracks, s.textOverlays)));
 export const useEditorCaptions = () =>
   useStore(editorStore, useShallow((s) => s.captions));
 export const useEditorCaptionStyle = () =>
@@ -305,6 +370,12 @@ export const editorActions: Pick<
   EditorState,
   | 'setClips'
   | 'setTracks'
+  | 'addTrack'
+  | 'removeTrack'
+  | 'toggleTrackMuted'
+  | 'toggleTrackLocked'
+  | 'setTrackHeight'
+  | 'renameTrack'
   | 'setClipGroups'
   | 'setTransitions'
   | 'setTextOverlays'

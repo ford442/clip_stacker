@@ -165,7 +165,9 @@ export function buildPipFilterComplex(
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
-    af += audioVolumeFilterSegment(clip.volume ?? 1);
+    // A muted lane contributes silence rather than being dropped, so the concat
+    // / amix graph keeps a stream per clip (#168 Phase A).
+    af += audioVolumeFilterSegment(clip.trackMuted ? 0 : (clip.volume ?? 1));
     parts.push(`${af}[a${i}]`);
   }
 
@@ -253,14 +255,31 @@ export function buildPipFilterComplex(
     const isLast = o === overlayEntries.length - 1;
     const outV = isLast ? "vout" : `vcomp${idx}`;
 
+    // Shift the overlay's PTS to its lane placement so it composites at its own
+    // output time rather than at 0 (#168 Phase B). `timelineStart` is derived
+    // from the track item by `toLegacyTimelineView`; legacy clips have none and
+    // keep the historical "start at 0" behaviour.
+    const overlayStart = clip.timelineStart ?? 0;
+    let overlayIn = `v${idx}`;
+    if (overlayStart > 0) {
+      overlayIn = `v${idx}d`;
+      parts.push(`[v${idx}]setpts=PTS-STARTPTS+${overlayStart}/TB[${overlayIn}]`);
+    }
+
     parts.push(
-      `[${currentV}][v${idx}]${buildOverlayFilter(clip, x, y)}[${outV}]`,
+      `[${currentV}][${overlayIn}]${buildOverlayFilter(clip, x, y)}[${outV}]`,
     );
     currentV = outV;
 
-    // Muted overlays are omitted from the final mix (volume is applied per-clip in phase 1).
-    if (getClipVolume(clip) > 0) {
-      audioStreams.push(`a${idx}`);
+    // Muted overlays are omitted from the final mix (volume is applied per-clip
+    // in phase 1); so are clips on a muted lane.
+    if (getClipVolume(clip) > 0 && !clip.trackMuted) {
+      if (overlayStart > 0) {
+        parts.push(`[a${idx}]adelay=${Math.round(overlayStart * 1000)}:all=1[a${idx}d]`);
+        audioStreams.push(`a${idx}d`);
+      } else {
+        audioStreams.push(`a${idx}`);
+      }
     }
   }
 

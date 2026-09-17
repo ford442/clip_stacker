@@ -11,7 +11,7 @@ import {
   useEditorCaptions,
   useEditorCaptionStyle,
   useEditorClipGroups,
-  useEditorTextOverlays,
+  useEditorVisibleTextOverlays,
   useEditorTimelineClips,
   useEditorTracks,
   useEditorTransitions,
@@ -49,7 +49,7 @@ function PreviewImpl({
   const tracks = useEditorTracks();
   const clipGroups = useEditorClipGroups();
   const transitions = useEditorTransitions();
-  const textOverlays = useEditorTextOverlays();
+  const textOverlays = useEditorVisibleTextOverlays();
   const captions = useEditorCaptions();
   const captionStyle = useEditorCaptionStyle();
   const selectedClipId = useSelectedClipId();

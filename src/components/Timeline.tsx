@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ClipTransition } from '../types';
-import { useEditorCaptions, useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedCaptionId, useSelectedClipId, editorActions, uiActions } from '../store';
+import { useEditorCaptions, useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTextOverlays, useEditorTransitions, useSelectedCaptionId, useSelectedClipId, useSelectedTextOverlayId, editorActions, uiActions } from '../store';
 import { editorStore } from '../store/editorStore';
 import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import {
@@ -27,11 +27,13 @@ import {
 } from '../utils/timelineMediaCache';
 import { computeTotalDuration } from '../utils/transitions';
 import {
+  acceptsClipKind,
   buildTrackClipLayouts,
   computeTracksDuration,
   DEFAULT_TRACK_HEIGHT,
   MAIN_VIDEO_TRACK_ID,
 } from '../utils/trackModel';
+import { TrackLaneHeader } from './TrackLaneHeader';
 import type { VirtualClipLayout } from './timelineClipTypes';
 import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
@@ -156,7 +158,9 @@ function TimelineImpl({
   const transitions = useEditorTransitions();
   const masterAudioMarkers = useEditorMasterAudioMarkers();
   const captions = useEditorCaptions();
+  const textOverlays = useEditorTextOverlays();
   const selectedCaptionId = useSelectedCaptionId();
+  const selectedTextOverlayId = useSelectedTextOverlayId();
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
   const [editingTransition, setEditingTransition] = useState<ClipTransition | null>(null);
@@ -189,6 +193,27 @@ function TimelineImpl({
   }, [trackLayouts]);
 
   const beatMarkers = useMemo(() => buildBeatMarkerLayouts(clipLayouts), [clipLayouts]);
+
+  const mainTrackLocked = useMemo(
+    () => tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID)?.locked ?? false,
+    [tracks],
+  );
+
+  /**
+   * Whether the dragged clip may land on `trackId` — a locked lane and a lane of
+   * the wrong kind (a video clip on an audio lane) both refuse it. Used to gate
+   * the drop highlight so the timeline never invites an edit the store rejects.
+   */
+  const canDropOn = useCallback(
+    (trackId: string | null): boolean => {
+      if (!trackId) return false;
+      const track = tracks.find((t) => t.id === trackId);
+      if (!track || track.locked) return false;
+      const clip = dragClipId ? allClips.find((c) => c.id === dragClipId) : null;
+      return clip ? acceptsClipKind(track, clip.kind) : true;
+    },
+    [tracks, allClips, dragClipId],
+  );
 
   const estimateSize = useCallback(
     (index: number) => clipLayouts[index]?.width ?? MIN_CLIP_PIXEL_WIDTH,
@@ -321,7 +346,10 @@ function TimelineImpl({
 
     const row = scrollRef.current?.querySelector<HTMLElement>(`[data-track-id="${targetTrackId}"]`);
     if (!row) return null;
-    const rect = row.getBoundingClientRect();
+    // Measure against the lane's clip strip, not the row: the row also contains
+    // the fixed-width lane header, which would offset every dropped start time.
+    const strip = row.querySelector<HTMLElement>('.timeline-track') ?? row;
+    const rect = strip.getBoundingClientRect();
     const x = clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0);
     const startTime = Math.max(0, x / pixelsPerSecond);
     return { trackId: targetTrackId, startTime };
@@ -377,9 +405,7 @@ function TimelineImpl({
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     const drop = calcDropOnTrack(e.clientX, e.clientY);
-    if (drop) {
-      setDropTargetTrackId(drop.trackId);
-    }
+    setDropTargetTrackId(drop && canDropOn(drop.trackId) ? drop.trackId : null);
     setDropTargetIndex(calcInsertIndex(e.clientX));
   };
 
@@ -390,8 +416,14 @@ function TimelineImpl({
     const insertBefore = calcInsertIndex(e.clientX);
 
     if (drop && dragClipId && drop.trackId !== MAIN_VIDEO_TRACK_ID) {
-      onMoveToTrack(dragClipId, drop.trackId, drop.startTime);
-    } else if (from !== insertBefore && from !== insertBefore - 1) {
+      if (canDropOn(drop.trackId)) {
+        onMoveToTrack(dragClipId, drop.trackId, drop.startTime);
+      }
+    } else if (
+      !mainTrackLocked
+      && from !== insertBefore
+      && from !== insertBefore - 1
+    ) {
       onReorder(from, insertBefore);
     }
 
@@ -473,6 +505,7 @@ function TimelineImpl({
         transition={transition}
         showTransition={showTransition}
         clipCount={clips.length}
+        locked={mainTrackLocked}
         onMoveUp={onMoveUp}
         onMoveDown={onMoveDown}
         onDelete={onDelete}
@@ -556,6 +589,32 @@ function TimelineImpl({
             →
           </button>
         </div>
+        <div className="timeline-add-track-controls" role="group" aria-label="Add track">
+          <button
+            type="button"
+            className="btn-secondary timeline-add-track-btn"
+            onClick={() => editorActions.addTrack('video')}
+            title="Add a video lane above the existing ones (composites on top)"
+          >
+            + Video track
+          </button>
+          <button
+            type="button"
+            className="btn-secondary timeline-add-track-btn"
+            onClick={() => editorActions.addTrack('audio')}
+            title="Add an audio lane for a concurrent music / SFX bed"
+          >
+            + Audio track
+          </button>
+          <button
+            type="button"
+            className="btn-secondary timeline-add-track-btn"
+            onClick={() => editorActions.addTrack('text')}
+            title="Add a titles lane — new text overlays land here and follow its mute / lock"
+          >
+            + Titles track
+          </button>
+        </div>
       </div>
       <p className="timeline-hint muted">
         Swipe left/right on a clip to swap with its neighbor. Long-press then drag to reorder freely
@@ -563,9 +622,9 @@ function TimelineImpl({
       </p>
       {hasOverlayClips && (
         <p className="timeline-hint timeline-hint--pip muted">
-          🖼 Clips marked <strong>PiP</strong> are Picture-in-Picture overlays — they composite on
-          top of the base video starting at the beginning of the output, regardless of where they
-          sit on their track.
+          🖼 Clips marked <strong>PiP</strong> sit on a video lane above <strong>Video 1</strong>.
+          Stacking order is lane order — the higher the lane, the closer to the front — and each
+          clip appears at its own position on the lane, not at the start of the output.
         </p>
       )}
 
@@ -613,6 +672,13 @@ function TimelineImpl({
           onAddAt={onCaptionAdd}
         />
 
+        <div
+          className={`timeline-track-row timeline-track-row--main${
+            dropTargetTrackId === MAIN_VIDEO_TRACK_ID ? ' timeline-track-row--drop-target' : ''
+          }`}
+          data-track-id={MAIN_VIDEO_TRACK_ID}
+        >
+          <TrackLaneHeader trackId={MAIN_VIDEO_TRACK_ID} showRemove={false} />
         <div
           className="timeline-track"
           ref={trackRef}
@@ -704,6 +770,7 @@ function TimelineImpl({
             )}
 
         </div>
+        </div>
 
         {tracks.filter((t) => t.id !== MAIN_VIDEO_TRACK_ID).map((track) => {
           const rowLayouts = trackLayouts.get(track.id) ?? [];
@@ -711,19 +778,35 @@ function TimelineImpl({
           return (
             <div
               key={track.id}
-              className={`timeline-track-row${dropTargetTrackId === track.id ? ' timeline-track-row--drop-target' : ''}`}
+              className={`timeline-track-row${dropTargetTrackId === track.id ? ' timeline-track-row--drop-target' : ''}${track.locked ? ' timeline-track-row--locked' : ''}`}
               data-track-id={track.id}
             >
-              <div
-                className="timeline-track-label"
-                title={
-                  track.kind === 'video'
-                    ? `${track.label ?? track.kind} — Picture-in-Picture overlay track. Clips here composite on top of Video 1 starting at output time 0, independent of their position on this row.`
-                    : track.label
-                }
-              >
-                {track.label ?? track.kind}
-              </div>
+              <TrackLaneHeader trackId={track.id} />
+              {track.kind === 'text' ? (
+                <div
+                  className="timeline-track timeline-track--titles"
+                  style={{ width: contentWidth, height: rowHeight }}
+                >
+                  {track.items.map((item) => {
+                    const overlay = textOverlays.find((o) => o.id === item.clipId);
+                    if (!overlay) return null;
+                    return (
+                      <button
+                        key={item.clipId}
+                        type="button"
+                        className={`timeline-title-chip${
+                          selectedTextOverlayId === overlay.id ? ' selected' : ''
+                        }`}
+                        style={{ left: item.startTime * pixelsPerSecond }}
+                        onClick={() => uiActions.setSelectedTextOverlayId(overlay.id)}
+                        title={`${overlay.text} @ ${item.startTime.toFixed(2)}s`}
+                      >
+                        T {overlay.text}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
               <div className="timeline-track timeline-track--overlay" style={{ width: contentWidth, height: rowHeight }}>
                 {rowLayouts.map((layout) => (
                   <VirtualClipBlock
@@ -746,6 +829,7 @@ function TimelineImpl({
                     thumbs={thumbMap[layout.clip.id]}
                     waves={waveMap[layout.clip.id]}
                     clipCount={rowLayouts.length}
+                    locked={track.locked ?? false}
                     showTransition={false}
                     onMoveUp={onMoveUp}
                     onMoveDown={onMoveDown}
@@ -760,6 +844,7 @@ function TimelineImpl({
                   />
                 ))}
               </div>
+              )}
             </div>
           );
         })}

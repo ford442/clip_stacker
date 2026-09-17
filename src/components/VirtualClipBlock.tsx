@@ -44,6 +44,12 @@ interface Props {
   transition?: ClipTransition;
   showTransition: boolean;
   clipCount: number;
+  /**
+   * Holding lane is locked (#168 Phase A): drag, swipe-swap and delete are
+   * disabled here as well as in the store, so the row never offers an edit that
+   * would be refused.
+   */
+  locked?: boolean;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onDelete: (id: string) => void;
@@ -67,6 +73,7 @@ function VirtualClipBlockImpl({
   transition,
   showTransition,
   clipCount,
+  locked = false,
   onMoveUp,
   onMoveDown,
   onDelete,
@@ -271,13 +278,19 @@ function VirtualClipBlockImpl({
         className={`timeline-clip-wrapper${isDragging ? ' is-dragging' : ''}`}
         style={style}
         data-clip-index={index}
-        draggable
-        onDragStart={(e) => onDragStart(e, index)}
+        draggable={!locked}
+        onDragStart={(e) => {
+          if (locked) {
+            e.preventDefault();
+            return;
+          }
+          onDragStart(e, index);
+        }}
         onDragEnd={onDragEnd}
-        onTouchStart={handleTouchStart}
-        onTouchMove={handleTouchMove}
-        onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchCancel}
+        onTouchStart={locked ? undefined : handleTouchStart}
+        onTouchMove={locked ? undefined : handleTouchMove}
+        onTouchEnd={locked ? undefined : handleTouchEnd}
+        onTouchCancel={locked ? undefined : handleTouchCancel}
       >
         <SyncMarkerLane
           markers={clip.syncMarkers ?? []}
@@ -290,12 +303,14 @@ function VirtualClipBlockImpl({
         <div
           className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
             isSelected ? ' selected' : ''
-          }${isOverlay ? ' timeline-clip--pip' : ''}`}
+          }${isOverlay ? ' timeline-clip--pip' : ''}${locked ? ' timeline-clip--locked' : ''}`}
           onClick={handleClick}
           title={
-            isOverlay
-              ? `${clip.title}\nPicture-in-Picture overlay (layer ${layerIndex}) — plays from the start of the output, not at its position on this row.\n\nSwipe left/right to swap with neighbor, or long-press then drag to reorder.`
-              : `${clip.title}\n\nSwipe left/right to swap with neighbor, or long-press then drag to reorder.`
+            locked
+              ? `${clip.title}\n🔒 This lane is locked — unlock it in the lane header to trim, drag or delete.`
+              : isOverlay
+                ? `${clip.title}\nOverlay on video lane ${layerIndex} — composites above the lanes below it, at ${(clip.timelineStart ?? 0).toFixed(2)}s on the output.\n\nSwipe left/right to swap with neighbor, or long-press then drag to reorder.`
+                : `${clip.title}\n\nSwipe left/right to swap with neighbor, or long-press then drag to reorder.`
           }
         >
           {clip.kind === 'video' ? (
@@ -344,7 +359,7 @@ function VirtualClipBlockImpl({
             {isOverlay && (
               <span
                 className="timeline-clip-badge"
-                title={`Picture-in-Picture overlay, layer ${layerIndex}. Overlay clips always play from the start of the output, independent of where they sit on this track.`}
+                title={`Overlay on video lane ${layerIndex}. Stacking order is lane order; this clip appears at ${(clip.timelineStart ?? 0).toFixed(2)}s on the output.`}
               >
                 PiP · L{layerIndex}
               </span>
@@ -375,7 +390,7 @@ function VirtualClipBlockImpl({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onMoveUp(index); }}
-                disabled={index === 0}
+                disabled={locked || index === 0}
                 aria-label="Move clip left"
               >
                 ←
@@ -383,7 +398,7 @@ function VirtualClipBlockImpl({
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onMoveDown(index); }}
-                disabled={index === clipCount - 1}
+                disabled={locked || index === clipCount - 1}
                 aria-label="Move clip right"
               >
                 →
@@ -392,7 +407,8 @@ function VirtualClipBlockImpl({
                 type="button"
                 className="project-delete-btn"
                 onClick={(e) => { e.stopPropagation(); onDelete(clip.id); }}
-                title="Delete clip"
+                disabled={locked}
+                title={locked ? 'Track is locked' : 'Delete clip'}
                 aria-label="Delete clip"
               >
                 ×

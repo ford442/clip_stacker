@@ -26,6 +26,8 @@ import type { UseEditHistoryResult } from "./useEditHistory";
 import { setClipStabilize } from "./useClipStabilization";
 
 import { settingsStore } from "../store/settingsStore";
+import { editorActions, editorStore } from "../store/editorStore";
+import { isClipLocked, moveClipToVideoLayer } from "../utils/trackModel";
 import { useStorageAuthToken, useStorageEndpoint } from "../store";
 
 type InspectorActionsDeps = Pick<
@@ -157,6 +159,20 @@ export function useInspectorActions({
         pushHistoryDebounced(`inspector:${selectedClipId}`);
       }
       const layoutCanvas = parseCanvasSize(settingsStore.getState().exportSettings.outputResolution);
+      // Stacking order is track order (#168 Phase B), so the layer field is a
+      // shortcut for "move this clip to video lane N" — the derived
+      // `layerIndex` then follows from where the clip actually sits.
+      const nextLayerIndex = Math.max(0, Math.round(Number(values.layerIndex || 0)));
+      // A locked lane keeps its clips' trim points and lane assignment; other
+      // inspector fields (title, volume, colour) stay editable (#168 Phase A).
+      const locked = selectedClipId
+        ? isClipLocked(editorStore.getState().tracks, selectedClipId)
+        : false;
+      if (selectedClipId && !locked) {
+        editorActions.setTracks((prev) =>
+          moveClipToVideoLayer(prev, selectedClipId, nextLayerIndex, editorStore.getState().clips),
+        );
+      }
       setClips((prev) =>
         prev.map((clip) => {
           if (clip.id !== selectedClipId) return clip;
@@ -172,13 +188,15 @@ export function useInspectorActions({
           const updated: Clip = {
             ...clip,
             title: values.title.trim() || clip.file.name,
-            trimStart: Number(values.trimStart || 0),
-            trimEnd: values.trimEnd === "" ? NaN : Number(values.trimEnd),
+            trimStart: locked ? clip.trimStart : Number(values.trimStart || 0),
+            trimEnd: locked
+              ? clip.trimEnd
+              : values.trimEnd === "" ? NaN : Number(values.trimEnd),
             videoFadeIn: Number(values.videoFadeIn || 0),
             videoFadeOut: Number(values.videoFadeOut || 0),
             audioFadeIn: Number(values.audioFadeIn || 0),
             audioFadeOut: Number(values.audioFadeOut || 0),
-            layerIndex: Math.max(0, Math.round(Number(values.layerIndex || 0))),
+            layerIndex: locked ? (clip.layerIndex ?? 0) : nextLayerIndex,
             x: layout.x,
             y: layout.y,
             width: layout.width,

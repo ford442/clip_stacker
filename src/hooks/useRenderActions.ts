@@ -1,8 +1,8 @@
-import { useCallback, useRef, useState } from "react";
-import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay } from "../types";
+import { useCallback, useMemo, useRef, useState } from "react";
+import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, Track } from "../types";
 import { editorStore } from "../store/editorStore";
 import type { RenderPlan } from "../types";
-import { getTimelineClips } from "../utils/timelineClips";
+import { getEffectiveTimelineClips } from "../utils/timelineClips";
 import { resolveTargetResolution } from "../utils/resolution";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
 import { hybridMergeClips } from "../utils/hybrid-encoder";
@@ -32,6 +32,12 @@ import { settingsStore } from "../store/settingsStore";
 
 type RenderActionsDeps = {
   clips: Clip[];
+  /**
+   * Timeline tracks. The render path resolves its clip list through them so the
+   * export sees the same stacking order and placement times the preview does
+   * (#168 Phase B) rather than the media pool's array order.
+   */
+  tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
@@ -40,10 +46,17 @@ type RenderActionsDeps = {
 export function useRenderActions(deps: RenderActionsDeps) {
   const {
     clips,
+    tracks,
     clipGroups,
     transitions,
     textOverlays,
   } = deps;
+
+  /** Clips as the tracks lay them out, carrying the derived placement fields. */
+  const effectiveClips = useMemo(
+    () => getEffectiveTimelineClips(tracks, clips, clipGroups),
+    [tracks, clips, clipGroups],
+  );
 
   const [renderFailureMessage, setRenderFailureMessage] = useState<string | null>(
     null,
@@ -54,7 +67,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
 
   const performRender = useCallback(async () => {
     // Resolve which clips are on the timeline (active variants for grouped clips)
-    const timelineClips = getTimelineClips(clips, clipGroups);
+    const timelineClips = effectiveClips;
     if (timelineClips.length === 0) {
       settingsStore.getState().setStatus("Upload clips before rendering.");
       return;
@@ -224,6 +237,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       });
     }
   }, [
+    effectiveClips,
     clips,
     clipGroups,
     transitions,
@@ -232,7 +246,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
 
   const handleMerge = useCallback(async () => {
     // Check if high memory usage is detected based on actual timeline clips
-    const timelineClipsForMemoryCheck = getTimelineClips(clips, clipGroups);
+    const timelineClipsForMemoryCheck = effectiveClips;
     if (isHighMemoryUsage(timelineClipsForMemoryCheck)) {
       // Show warning modal; actual render happens in handleMemoryWarningConfirm
       pendingRenderRef.current = performRender;
@@ -242,16 +256,14 @@ export function useRenderActions(deps: RenderActionsDeps) {
 
     // Otherwise, proceed directly
     await performRender();
-  }, [clips, clipGroups, performRender]);
+  }, [effectiveClips, performRender]);
 
   // GPU stitch: offload resolution-normalization + concat to the HuggingFace
   // space. Each clip is trimmed in-browser (cheap, lossless copy), then all
   // clips are uploaded and stitched at one resolution on the GPU. This path
   // ignores fades/transitions/PiP/overlays — use the normal Render for those.
   const handleGpuStitch = useCallback(async () => {
-    const timelineClips = getTimelineClips(clips, clipGroups).filter(
-      (clip) => clip.kind === "video",
-    );
+    const timelineClips = effectiveClips.filter((clip) => clip.kind === "video");
     if (clips.filter((c) => c.kind === "video").length === 0) {
       settingsStore.getState().setStatus("Add at least one video clip before GPU stitching.");
       return;
@@ -337,8 +349,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
       aggressiveCleanupFFmpegVFS().catch(() => {});
     }
   }, [
+    effectiveClips,
     clips,
-    clipGroups,
   ]);
 
   const handleMemoryWarningConfirm = useCallback(() => {
@@ -380,6 +392,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       );
     }
   }, [
+    effectiveClips,
     clips,
     clipGroups,
     transitions,

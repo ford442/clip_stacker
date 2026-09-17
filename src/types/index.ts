@@ -141,6 +141,21 @@ export interface Clip {
   // ---------------------------------------------------------------------------
   /** Stacking order: 0 = base layer (sequential), 1+ = overlay on top of base. */
   layerIndex?: number;
+  // ---------------------------------------------------------------------------
+  // Derived track placement (see `utils/trackStacking.ts`)
+  //
+  // These are stamped onto the flattened timeline view by `toLegacyTimelineView`
+  // from the clip's `TrackItem` and its holding `Track`. They are *derived*, not
+  // authored: `serializeProject` never writes them, and editing them on a pool
+  // clip has no effect. The track model in `editorStore.tracks` is the source of
+  // truth.
+  // ---------------------------------------------------------------------------
+  /** Output-timeline start of this placement in seconds (`TrackItem.startTime`). */
+  timelineStart?: number;
+  /** True when the holding track is muted — its audio is dropped from the mix. */
+  trackMuted?: boolean;
+  /** True when the holding track is locked — trim / drag / delete are blocked. */
+  trackLocked?: boolean;
   /** Overlay X position as a fraction of output width (0 = left edge). */
   x?: number;
   /** Overlay Y position as a fraction of output height (0 = top edge). */
@@ -542,7 +557,14 @@ export const PROJECT_SCHEMA_VERSION = 2;
 
 export type TrackKind = 'video' | 'audio' | 'text';
 
-/** A clip placement on a timeline track. */
+/**
+ * A placement on a timeline track.
+ *
+ * On `video` / `audio` tracks `clipId` is a {@link Clip} id. On a `text` track
+ * it is a {@link TextOverlay} id — the holding track's `kind` selects which
+ * pool the id resolves against, so no schema change was needed to add titles
+ * tracks (see AGENTS.md, "Text tracks vs the caption track").
+ */
 export interface TrackItem {
   clipId: string;
   /** Output-timeline position in seconds. */

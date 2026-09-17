@@ -7,6 +7,11 @@ import {
 } from "../utils/overlayCoords";
 import { DEFAULT_SCROLL_SPEED } from "../utils/textOverlay";
 import type { UseEditHistoryResult } from "./useEditHistory";
+import { editorActions, editorStore, playbackStore } from "../store";
+import {
+  placeTextOverlayOnTrack,
+  removeTextOverlayFromTracks,
+} from "../utils/trackModel";
 
 type TextOverlayActionsDeps = Pick<
   UseEditHistoryResult,
@@ -36,6 +41,22 @@ export function useTextOverlayActions({
       boxColor: "black@0.5",
     };
     setTextOverlays((prev) => [...prev, newOverlay]);
+    // When the project has a titles lane, the new overlay is placed on the first
+    // one at the playhead so it inherits that lane's mute / lock / ordering
+    // (#168 Phase C). Projects without a titles lane are unaffected — an overlay
+    // with no placement is always visible.
+    const { tracks } = editorStore.getState();
+    const titlesLane = tracks.find((t) => t.kind === 'text' && !t.locked);
+    if (titlesLane) {
+      editorActions.setTracks((prev) =>
+        placeTextOverlayOnTrack(
+          prev,
+          newOverlay.id,
+          titlesLane.id,
+          playbackStore.getState().playheadTime ?? 0,
+        ),
+      );
+    }
     return newOverlay.id;
   }, [pushHistory, setTextOverlays]);
 
@@ -50,6 +71,7 @@ export function useTextOverlayActions({
     (id: string) => {
       pushHistory();
       setTextOverlays((prev) => prev.filter((o) => o.id !== id));
+      editorActions.setTracks((prev) => removeTextOverlayFromTracks(prev, id));
       setSelectedTextOverlayId((prev) => (prev === id ? null : prev));
     },
     [pushHistory, setTextOverlays, setSelectedTextOverlayId],

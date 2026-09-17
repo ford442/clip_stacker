@@ -33,6 +33,143 @@
   background: rgba(8, 10, 18, 0.5);
 }
 
+/* ── Lane chrome (M / L toggles, rename, resize) ──────────── */
+.timeline-lane-header {
+  flex: 0 0 132px;
+  gap: 0.25rem;
+  position: relative;
+}
+
+.timeline-lane-header--muted .timeline-lane-name {
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.timeline-lane-header--locked {
+  background: rgba(40, 24, 8, 0.85);
+}
+
+.timeline-track-row--locked .timeline-track {
+  background-image: repeating-linear-gradient(
+    45deg,
+    rgba(255, 255, 255, 0.03) 0 6px,
+    transparent 6px 12px
+  );
+}
+
+.timeline-lane-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: text;
+}
+
+.timeline-lane-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.7rem;
+  padding: 1px 3px;
+}
+
+.timeline-lane-toggles {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.timeline-lane-toggle {
+  min-width: 18px;
+  height: 18px;
+  padding: 0;
+  font-size: 0.62rem;
+  line-height: 1;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.timeline-lane-toggle:hover {
+  color: var(--text, #fff);
+}
+
+.timeline-lane-toggle.is-active {
+  background: #c9a227;
+  border-color: #c9a227;
+  color: #12140c;
+  font-weight: 700;
+}
+
+.timeline-lane-remove:hover {
+  border-color: #ef5350;
+  color: #ef5350;
+}
+
+.timeline-lane-resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -2px;
+  height: 5px;
+  cursor: ns-resize;
+}
+
+.timeline-lane-resize:focus-visible {
+  outline: 1px solid #c9a227;
+}
+
+.timeline-add-track-controls {
+  display: flex;
+  gap: 0.35rem;
+  margin-left: auto;
+}
+
+.timeline-add-track-btn {
+  font-size: 0.7rem;
+  padding: 2px 8px;
+}
+
+/* ── Titles lane ─────────────────────────────────────────── */
+.timeline-track--titles {
+  position: relative;
+  background: rgba(14, 10, 22, 0.6);
+}
+
+.timeline-title-chip {
+  position: absolute;
+  top: 4px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid rgba(124, 77, 255, 0.5);
+  background: rgba(124, 77, 255, 0.18);
+  color: var(--text, #fff);
+  cursor: pointer;
+}
+
+.timeline-title-chip.selected {
+  border-color: #c9a227;
+  box-shadow: 0 0 0 1px #c9a227;
+}
+
+.timeline-clip--locked {
+  cursor: not-allowed;
+  opacity: 0.85;
+}
+
 .timeline-hint--pip {
   color: #26c6da;
   opacity: 0.85;

@@ -6,6 +6,7 @@ import {
 import { getClipDuration } from '../utils/project';
 import { getTimelineClips } from '../utils/timelineClips';
 import { audioTracks } from '../utils/trackModel';
+import { placementWindow } from '../utils/trackStacking';
 import { clampClipVolume } from '../utils/audioVolume';
 import type { Keyframe } from '../utils/keyframes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
@@ -107,8 +108,15 @@ function entryFromClip(
  * Build sample-accurate audio placements for every audible timeline clip.
  *
  * Base-layer clips follow xfade segment math (including transition overlaps so
- * adjacent clips share audio during dissolves — no hard gap). PiP overlays
- * begin at output time 0 (matches FFmpeg overlay timing).
+ * adjacent clips share audio during dissolves — no hard gap). Overlay-lane
+ * clips are placed at their track item's output time (`Clip.timelineStart`,
+ * derived in `utils/trackStacking.ts`).
+ *
+ * Lane mute is honored on every kind of lane: clips flattened from a muted
+ * video lane carry `trackMuted` and are skipped here, and muted audio lanes
+ * contribute no bed entries. Because the flag travels on the clip, the export
+ * premix (`utils/webcodecs-audio.ts`, which is handed the flattened view) drops
+ * the same entries the preview does.
  */
 export function buildAudioSchedule(
   clips: Clip[],
@@ -150,12 +158,16 @@ export function buildAudioSchedule(
       scheduleTimelineIndices,
     );
     for (const segment of segments) {
+      if (segment.clip.trackMuted) continue;
       entries.push(entryFromClip(segment.clip, segment.startTime, segment.duration));
     }
   }
 
   for (const clip of pipClips) {
-    entries.push(entryFromClip(clip, 0, getClipDuration(clip)));
+    if (clip.trackMuted) continue;
+    const duration = getClipDuration(clip);
+    const { start } = placementWindow(clip, duration);
+    entries.push(entryFromClip(clip, start, duration));
   }
 
   // Concurrent audio-bed clips from dedicated audio tracks.
