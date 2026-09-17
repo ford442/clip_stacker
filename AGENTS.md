@@ -170,7 +170,21 @@ Where the pieces live:
 - `src/components/CaptionLane.tsx` — the timeline's **CC** lane.
 - `src/components/CaptionsPanel.tsx` — the Inspector's *Captions* tab.
 - `src/hooks/useCaptionActions.ts` — CRUD, import, `.srt` export.
-- `src/utils/captionProvider.ts` — the (unimplemented) auto-caption interface.
+- `src/utils/captionProvider.ts` — the auto-caption provider registry.
+- `src/utils/captionSegments.ts` — `TranscriptSegment[]` → `CaptionEntry[]`
+  (offsets, clamps, blank/non-speech filtering) and `mergeCaptions`. Pure; this
+  is what the auto-caption unit tests cover.
+- `src/utils/autoCaptionAudio.ts` — renders the audio to transcribe through the
+  same `buildAudioSchedule` + `renderTimelineAudioMix` path as the export
+  premix, so transcription hears trims, mute and automation.
+- `src/wasm/whisperCaptionProvider.ts` + `whisperWorker.ts` + `whisperModule.ts`
+  — the in-browser Whisper provider. The WASM build is optional and not
+  committed (`npm run build:whisper`, `native/whisper/README.md`); missing =
+  feature hidden, never a boot failure.
+- `src/utils/whisperHttpCaptionProvider.ts` — the self-hosted endpoint provider.
+- `src/hooks/useAutoCaption.ts` — picks a provider, runs it, writes the cues in
+  one undo step. Providers are registered in `src/main.tsx` via
+  `initCaptionProviders()`, so tests can `__resetCaptionProvidersForTests()`.
 
 Two things to keep in mind when changing this:
 

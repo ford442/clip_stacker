@@ -3,6 +3,19 @@ import type { ExportSettings, RenderPlan } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import type { CaptionExportMode } from '../ffmpeg/captions';
+import type { AutoCaptionScope } from '../utils/autoCaptionAudio';
+
+/** localStorage key for the self-hosted transcription endpoint (#auto-caption). */
+export const AUTO_CAPTION_ENDPOINT_KEY = 'clipStacker.autoCaptionEndpoint';
+
+function readStoredEndpoint(): string {
+  try {
+    return localStorage.getItem(AUTO_CAPTION_ENDPOINT_KEY) ?? '';
+  } catch {
+    // Private windows can throw on access — the endpoint is a convenience.
+    return '';
+  }
+}
 
 export interface SettingsState {
   exportSettings: ExportSettings;
@@ -23,6 +36,17 @@ export interface SettingsState {
    * lane's cues never showed up.
    */
   showCaptionsInPreview: boolean;
+
+  /** Selected auto-caption provider id, or null for "first available". */
+  autoCaptionProviderId: string | null;
+  /** BCP-47 hint passed to the provider. Empty string = let it auto-detect. */
+  autoCaptionLanguage: string;
+  /** Transcribe the whole timeline or just the selected clip. */
+  autoCaptionScope: AutoCaptionScope;
+  /** Merge cues into the existing track instead of replacing it. */
+  autoCaptionMerge: boolean;
+  /** Self-hosted transcription endpoint for the `whisper-http` provider. */
+  autoCaptionEndpoint: string;
 
   status: string;
   progressStage: string;
@@ -46,6 +70,11 @@ export interface SettingsState {
   setForceReencode: (v: boolean) => void;
   setCaptionExportMode: (mode: CaptionExportMode) => void;
   setShowCaptionsInPreview: (v: boolean) => void;
+  setAutoCaptionProviderId: (id: string | null) => void;
+  setAutoCaptionLanguage: (language: string) => void;
+  setAutoCaptionScope: (scope: AutoCaptionScope) => void;
+  setAutoCaptionMerge: (v: boolean) => void;
+  setAutoCaptionEndpoint: (endpoint: string) => void;
 
   setStatus: (status: string) => void;
   setProgressStage: (stage: string) => void;
@@ -72,6 +101,12 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   captionExportMode: 'none',
   showCaptionsInPreview: true,
 
+  autoCaptionProviderId: null,
+  autoCaptionLanguage: '',
+  autoCaptionScope: 'timeline',
+  autoCaptionMerge: false,
+  autoCaptionEndpoint: readStoredEndpoint(),
+
   status: '',
   progressStage: '',
   progressValue: null,
@@ -94,6 +129,19 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   setForceReencode: (v) => set({ forceReencode: v }),
   setCaptionExportMode: (mode) => set({ captionExportMode: mode }),
   setShowCaptionsInPreview: (v) => set({ showCaptionsInPreview: v }),
+  setAutoCaptionProviderId: (id) => set({ autoCaptionProviderId: id }),
+  setAutoCaptionLanguage: (language) => set({ autoCaptionLanguage: language }),
+  setAutoCaptionScope: (scope) => set({ autoCaptionScope: scope }),
+  setAutoCaptionMerge: (v) => set({ autoCaptionMerge: v }),
+  setAutoCaptionEndpoint: (endpoint) => {
+    set({ autoCaptionEndpoint: endpoint });
+    try {
+      if (endpoint) localStorage.setItem(AUTO_CAPTION_ENDPOINT_KEY, endpoint);
+      else localStorage.removeItem(AUTO_CAPTION_ENDPOINT_KEY);
+    } catch {
+      // Not persisting is fine; the session still has the value.
+    }
+  },
 
   setStatus: (status) => set({ status }),
   setProgressStage: (stage) => set({ progressStage: stage }),

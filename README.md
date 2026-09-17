@@ -254,9 +254,27 @@ centre*, which is how subtitles are conventionally positioned. Burn-in
 generates an ASS document with one `Style:` row per distinct override, so
 per-cue styling survives.
 
-**Auto-captioning** is not implemented. `src/utils/captionProvider.ts` defines
-the `CaptionProvider` interface a Whisper-WASM or cloud speech-to-text adapter
-would implement, so the core feature stays decoupled from any model.
+**Auto-captioning** transcribes the timeline (or just the selected clip) into
+cues. *Auto-caption* in the Captions tab mixes the audio exactly as the export
+premix does — trims, mute, volume automation and speed remaps included — hands
+it to a `CaptionProvider`, and puts the result on the CC lane as one undo step.
+Choose *Merge with existing cues* to keep what is already there; otherwise the
+track is replaced. Cancelling leaves the previous track untouched.
+
+Two providers ship, both behind `src/utils/captionProvider.ts` so the caption
+feature knows nothing about any model:
+
+| id | Runs | Needs |
+|----|------|-------|
+| `whisper-wasm` | In the page, in a worker | `public/wasm/whisper.js` (`npm run build:whisper`) + a ggml model (`public/models/ggml-tiny-q5_1.bin` by default, cached in IndexedDB) |
+| `whisper-http` | Your own server | An `https://` endpoint typed into the Captions tab; audio is POSTed as a WAV |
+
+Neither is required. Both WASM build and weights are optional downloads and are
+not committed, so with nothing deployed the Captions tab shows a one-line reason
+instead of the button — the same "missing WASM disables the feature" rule the
+audio analysis module follows. Only `tiny`/`base` are realistic in a tab;
+`small`+ belongs on a server. No API key is stored in the client: the HTTP
+provider expects an endpoint you control. See `native/whisper/README.md`.
 
 Captions are **drawn in the preview** at their CC-lane timings, bottom-centre
 anchored with the resolved per-cue style. *Show captions in preview* in the

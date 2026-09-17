@@ -10,14 +10,17 @@
 import { memo, useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
 import type { CaptionEntry, TextOverlayStyle } from '../types';
+import type { AutoCaptionScope } from '../utils/autoCaptionAudio';
 import {
   settingsStore,
   uiActions,
   useEditorCaptions,
   useEditorCaptionStyle,
   useSelectedCaptionId,
+  useSelectedClipId,
 } from '../store';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
+import { useAutoCaption } from '../hooks/useAutoCaption';
 import { isValidFfmpegColor } from '../utils/color';
 import { BUNDLED_FONTS } from '../utils/textOverlay';
 import {
@@ -60,6 +63,13 @@ function CaptionsPanelImpl({
   onClear,
 }: CaptionsPanelProps) {
   const captions = useEditorCaptions();
+  const autoCaption = useAutoCaption();
+  const autoCaptionProviderId = useStore(settingsStore, (s) => s.autoCaptionProviderId);
+  const autoCaptionScope = useStore(settingsStore, (s) => s.autoCaptionScope);
+  const autoCaptionLanguage = useStore(settingsStore, (s) => s.autoCaptionLanguage);
+  const autoCaptionMerge = useStore(settingsStore, (s) => s.autoCaptionMerge);
+  const autoCaptionEndpoint = useStore(settingsStore, (s) => s.autoCaptionEndpoint);
+  const selectedClipId = useSelectedClipId();
   const captionStyle = useEditorCaptionStyle();
   const selectedCaptionId = useSelectedCaptionId();
   const playheadTime = usePlayheadTime() ?? 0;
@@ -248,6 +258,127 @@ function CaptionsPanelImpl({
           ))}
         </ul>
       )}
+
+      <div className="inspector-group-label">Auto-caption</div>
+      {autoCaption.providers.length === 0 ? (
+        <p className="inspector-hint">
+          {autoCaption.probing
+            ? 'Looking for a transcription backend…'
+            : autoCaption.unavailableReason}
+        </p>
+      ) : (
+        <>
+          <div className="captions-timing-row">
+            <label title="Which speech-to-text backend transcribes the audio">
+              Provider
+              <select
+                value={autoCaptionProviderId ?? autoCaption.providers[0].id}
+                onChange={(e) =>
+                  settingsStore.getState().setAutoCaptionProviderId(e.target.value)
+                }
+              >
+                {autoCaption.providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label title="What to transcribe. Clip scope uses the selected clip's audio at its timeline position.">
+              Scope
+              <select
+                value={autoCaptionScope}
+                onChange={(e) =>
+                  settingsStore
+                    .getState()
+                    .setAutoCaptionScope(e.target.value as AutoCaptionScope)
+                }
+              >
+                <option value="timeline">Whole timeline</option>
+                <option value="clip">Selected clip</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="captions-timing-row">
+            <label title="BCP-47 language code (e.g. en, fr, ja). Leave empty to let the model detect it.">
+              Language
+              <input
+                type="text"
+                value={autoCaptionLanguage}
+                placeholder="auto"
+                onChange={(e) =>
+                  settingsStore.getState().setAutoCaptionLanguage(e.target.value.trim())
+                }
+              />
+            </label>
+            <label
+              className="inspector-checkbox-label"
+              title="Keep the existing cues and add only the transcribed ranges they do not cover"
+            >
+              <input
+                type="checkbox"
+                checked={autoCaptionMerge}
+                onChange={(e) =>
+                  settingsStore.getState().setAutoCaptionMerge(e.target.checked)
+                }
+              />
+              Merge with existing cues
+            </label>
+          </div>
+
+          <div className="captions-actions">
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => void autoCaption.run()}
+              disabled={
+                autoCaption.running ||
+                (autoCaptionScope === 'clip' && !selectedClipId)
+              }
+              title={
+                autoCaptionScope === 'clip' && !selectedClipId
+                  ? 'Select a clip in the timeline first'
+                  : 'Transcribe the audio and put the cues on the CC lane (undoable)'
+              }
+            >
+              ✨ Auto-caption
+            </button>
+            {autoCaption.running && (
+              <button type="button" className="btn-secondary" onClick={autoCaption.cancel}>
+                Cancel
+              </button>
+            )}
+          </div>
+
+          {autoCaption.running && (
+            <p className="inspector-hint">
+              {autoCaption.stage || 'Transcribing…'}
+              {autoCaption.progress != null
+                ? ` ${Math.round(autoCaption.progress * 100)}%`
+                : ''}
+            </p>
+          )}
+          <p className="inspector-hint">
+            {autoCaptionMerge
+              ? 'Transcribed cues are added around the cues already on the lane.'
+              : 'Transcribing replaces the caption track. Undo restores it.'}
+          </p>
+        </>
+      )}
+
+      <label title="Optional self-hosted Whisper endpoint (https). Audio is POSTed as a WAV; no API key is stored in the app.">
+        Transcription endpoint
+        <input
+          type="url"
+          value={autoCaptionEndpoint}
+          placeholder="https://my-whisper-server/inference"
+          onChange={(e) =>
+            settingsStore.getState().setAutoCaptionEndpoint(e.target.value.trim())
+          }
+          onBlur={autoCaption.refresh}
+        />
+      </label>
 
       <div className="inspector-group-label">Style</div>
       <p className="inspector-hint">
