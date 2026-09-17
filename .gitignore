@@ -7,3 +7,11 @@ native/build/
 # Python bytecode (from local hf_space syntax checks)
 __pycache__/
 *.pyc
+
+# Auto-caption WASM build + weights (optional, built on demand — see
+# native/whisper/README.md). Too large to commit; the feature hides itself
+# when they are absent.
+native/whisper/third_party/
+public/wasm/whisper.js
+public/wasm/whisper.wasm
+public/models/

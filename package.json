@@ -14,6 +14,7 @@
     "build:time-stretch": "bash scripts/build-time-stretch.sh",
     "build:video-stabilize": "bash scripts/build-video-stabilize.sh",
     "build:media-engine": "bash scripts/build-media-engine.sh",
+    "build:whisper": "bash scripts/build-whisper.sh",
     "build:wasm": "bash scripts/build-wasm.sh",
     "build:wasm:debug": "WASM_DEBUG=1 bash scripts/build-wasm.sh",
     "test": "vitest",
