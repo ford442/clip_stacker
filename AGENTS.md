@@ -385,12 +385,34 @@ TypedArray image chores for clip import and library UX — luminance histogram, 
 ### Layout
 
 - `src/gpu-chores/` — local stub of the shared `runJob({ op, prefer: 'auto' })` API
-- Kernels: `luma_histogram_bt709` (256-bin Rec.709, Chromashift-compatible), `downsample_2d` (bilinear thumbs), `separable_blur` (UI soft masks)
+- Kernels: `luma_histogram_bt709` (256-bin Rec.709, Chromashift-compatible), `vectorscope_uv` (128² Rec.709 CbCr scatter, CPU golden in `cpu/vectorscope.ts`), `downsample_2d` (bilinear thumbs), `separable_blur` (UI soft masks)
 - Backend order: adopt the **existing** preview `GPUDevice` (never `requestDevice()` from chores). If that device lives in the OffscreenCanvas preview worker, main thread posts an `ImageBitmap` (`chore-jobs`) and reads back aggregates only. Then chores Worker (TS golden) → main-thread TS. WebGL2 is not used (one GPU API per working set).
-- Break-even: GPU only at ≥ 1 megapixel (`prefer: 'auto'`). Small stills stay CPU. Kill switch: `?no_gpu_compute`.
+- Break-even: GPU only at ≥ 1 megapixel (`prefer: 'auto'`); `vectorscope_uv` shares the histogram threshold (one atomic add per pixel, ≤ 64 KiB readback). Small stills stay CPU. Kill switch: `?no_gpu_compute`.
+- `GpuChoreJob.texture` passes an **already-resident** `GPUTexture` (the preview scopes' copy of the composed frame) instead of uploading pixels. WebGPU-only, borrowed — `runWebGpuJob` never destroys a caller-supplied texture.
 - Diagnostics: `gpuComputeAvailable()` / `formatGpuChoreDiagnostics()` (inspector + Copy Debug). **WebGPU is required for GPU preview**; a failed adapter/device probe hard-fails the preview pane (Canvas2D is not the GPU fallback). Chores never `requestDevice()` after a failed probe.
 
 Do not keep a second WebGL context for histograms. Keep COOP/COEP and the production CSP unchanged (workers already allowed via `worker-src 'self' blob:`).
+
+## Live preview frame sourcing and scopes
+
+The preview worker decodes its own frames. Main never seeks a hidden `<video>` on the happy path.
+
+### Decoder-backed preview (`src/webgpu/`)
+
+- `previewDecoderSource.ts` — worker-side `PreviewDecoderSource`. Main transfers each clip's `File` once (`clip-media`, structured-cloneable by reference — no byte copy); the worker opens one forward-only `DecoderFrameCursor` per **active** layer (`clipId::role::mediaObjectUrl`), exactly like GPU export.
+- `src/utils/decoderCursorPool.ts` — the shared cursor lifecycle: backward jump (> 1/60 s) closes and reopens from the previous sync sample, an exhausted cursor is freed immediately, and live cursors are hard-capped at `DEFAULT_MAX_DECODER_CURSORS` (8), matching `ClipMediaPool`. **Both** `TimelineDecoderFrameProvider` (export) and `PreviewDecoderSource` (preview) use it, so the two paths cannot drift apart again.
+- Per-layer fallback is per-layer, not global: stills, non-video clips, RIFE morph segments (their own blob URL) and anything mp4box cannot demux (WebM/alpha) come back in `need-frames` and are captured from the `<video>` pool as before. A render whose `fallback` list is empty never round-trips to main at all.
+- `render-complete` carries `frameSources: { decoder, element }`, mirrored into `previewMetrics`. `element > 0` during scrub means some layer still needs `HTMLVideoElement.currentTime`.
+- Feature detection + escape hatch: `previewDecodeFlags.ts`. `?legacy_preview_video` forces the old path (resolved on **main** and passed in `init` — a worker's `location.search` is the worker script's URL, not the page's).
+
+**Measuring scrub long tasks.** No headless harness runs WebGPU in CI, so this is a manual protocol: open a 1080p multi-layer project, record a Performance profile while dragging the timeline scrubber for ~10 s, and compare `?legacy_preview_video` against the default. On the decoder path the main thread should show no `video.currentTime` / `seeked` work and no task > 50 ms; `previewMetrics.snapshot()` reports `elementSourcedLayers: 0` and the rolling frame/seek times.
+
+### Scopes (waveform + vectorscope)
+
+- Off by default (each enabled scope is a compute dispatch plus a readback per composed frame). Toggles live in the preview controls; `set-scopes` tells the worker, which posts a `scopes` message with the bins.
+- `PreviewEngine.captureScopeTexture()` copies the composed canvas texture into a private offscreen texture (`COPY_DST | TEXTURE_BINDING`) and hands it to gpu-chores. The canvas configuration stays swapchain-only (`RENDER_ATTACHMENT | COPY_SRC`) — scopes never bind or copy *into* it. The copy must happen in the same task as the render that drew the frame.
+- Kernels are ordinary gpu-chores ops, so `?no_gpu_compute` disables them and the CPU goldens (`lumaHistogramBt709`, `vectorscopeUv`) are the reference in tests.
+- `src/components/PreviewScopes.tsx` draws both from the bins; a failed scope readback is logged and dropped, never failing the frame.
 
 ## Variable speed remapping (time stretch)
 

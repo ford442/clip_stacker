@@ -31,16 +31,21 @@ import {
 import {
   groupFrameRequestsByMedia,
   PREVIEW_WORKER_INIT_TIMEOUT_MS,
+  SCOPES_OFF,
   toWorkerClip,
   type CapturedFrame,
   type FrameRequest,
+  type FrameSourceStats,
   type PreviewWorkerInbound,
   type PreviewWorkerOutbound,
+  type ScopeData,
+  type ScopeSettings,
   type WorkerClip,
 } from './previewWorkerProtocol';
+import { isPreviewDecoderEnabled } from './previewDecodeFlags';
 import { publishWebGpuProbe, type WebGpuProbeResult } from './webgpuProbe';
 
-export type { FrameRequest, CapturedFrame };
+export type { FrameRequest, CapturedFrame, ScopeData, ScopeSettings };
 
 /** True after `transferControlToOffscreen()` — the element can no longer host a context. */
 export function isCanvasTransferred(canvas: HTMLCanvasElement): boolean {
@@ -138,6 +143,8 @@ export class PreviewWorkerRuntime {
   private lastRenderId = -1;
   private destroyed = false;
   private choresRunner: PreviewWorkerChoresRunner | null = null;
+  private scopesListener: ((scopes: ScopeData) => void) | null = null;
+  private lastFrameSources: FrameSourceStats = { decoder: 0, element: 0 };
 
   private constructor(worker: Worker) {
     this.worker = worker;
@@ -163,7 +170,10 @@ export class PreviewWorkerRuntime {
    * should detect that with `isCanvasTransferred` and swap in a fresh element
    * before attempting main-thread WebGPU (only when the worker probe was ok).
    */
-  static async create(canvas: HTMLCanvasElement): Promise<PreviewWorkerRuntime | null> {
+  static async create(
+    canvas: HTMLCanvasElement,
+    decoderEnabled: boolean = isPreviewDecoderEnabled(),
+  ): Promise<PreviewWorkerRuntime | null> {
     if (
       typeof OffscreenCanvas === 'undefined' ||
       typeof canvas.transferControlToOffscreen !== 'function'
@@ -215,6 +225,7 @@ export class PreviewWorkerRuntime {
         canvas: offscreen,
         width: canvas.clientWidth || 1280,
         height: canvas.clientHeight || 720,
+        decoderEnabled,
       };
 
       await withTimeout(
@@ -294,7 +305,13 @@ export class PreviewWorkerRuntime {
       case 'render-complete': {
         const pending = this.pendingRenders.get(msg.renderId);
         this.pendingRenders.delete(msg.renderId);
+        if (msg.frameSources) this.lastFrameSources = msg.frameSources;
         pending?.resolve(msg.plan);
+        break;
+      }
+
+      case 'scopes': {
+        this.scopesListener?.(msg.scopes);
         break;
       }
 
@@ -376,6 +393,30 @@ export class PreviewWorkerRuntime {
       const msg: PreviewWorkerInbound = { type: 'chore-jobs', id, jobs, source };
       this.worker.postMessage(msg, [source]);
     });
+  }
+
+  /**
+   * How the last completed frame's layers were sourced. `element > 0` means
+   * the main thread had to seek a hidden `<video>` for that many layers.
+   */
+  get frameSources(): FrameSourceStats {
+    return this.lastFrameSources;
+  }
+
+  /** Hand the worker the source bytes for clips it should decode itself. */
+  sendClipMedia(media: Array<{ clipId: string; blob: Blob }>): void {
+    if (this.destroyed || media.length === 0) return;
+    const msg: PreviewWorkerInbound = { type: 'clip-media', media };
+    this.worker.postMessage(msg);
+  }
+
+  /** Enable/disable scope computation and subscribe to the per-frame bins. */
+  setScopes(scopes: ScopeSettings, listener?: (data: ScopeData) => void): void {
+    if (this.destroyed) return;
+    if (listener) this.scopesListener = listener;
+    else if (!scopes.waveform && !scopes.vectorscope) this.scopesListener = null;
+    const msg: PreviewWorkerInbound = { type: 'set-scopes', scopes };
+    this.worker.postMessage(msg);
   }
 
   cancel(renderId: number): void {
@@ -472,6 +513,8 @@ async function captureStillVideoFrame(
 export class PreviewWorkerAdapter implements TimelineCompositor {
   private readonly runtime: PreviewWorkerRuntime;
   private readonly pool: ClipMediaPool;
+  /** Clip ids whose source File has already been handed to the worker. */
+  private readonly sentMedia = new Set<string>();
 
   private constructor(runtime: PreviewWorkerRuntime, pool: ClipMediaPool) {
     this.runtime = runtime;
@@ -485,11 +528,39 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
    */
   static async create(
     canvas: HTMLCanvasElement,
-    _clips: Clip[],
+    clips: Clip[],
   ): Promise<PreviewWorkerAdapter | null> {
     const runtime = await PreviewWorkerRuntime.create(canvas);
     if (!runtime) return null;
-    return new PreviewWorkerAdapter(runtime, new ClipMediaPool());
+    const adapter = new PreviewWorkerAdapter(runtime, new ClipMediaPool());
+    adapter.sendClipMedia(clips);
+    return adapter;
+  }
+
+  /** Scope bins for the composed preview frame (no-op when both toggles are off). */
+  setScopes(scopes: ScopeSettings, listener?: (data: ScopeData) => void): void {
+    this.runtime.setScopes(scopes, listener);
+  }
+
+  /** How the last frame's layers were sourced (decoder vs `<video>` seek). */
+  get frameSources(): FrameSourceStats {
+    return this.runtime.frameSources;
+  }
+
+  /**
+   * Transfer the source `File` for every decodable clip the worker has not
+   * seen yet. `File` is structured-cloneable by reference, so this hands over
+   * a handle, not the bytes.
+   */
+  private sendClipMedia(clips: Clip[]): void {
+    const media: Array<{ clipId: string; blob: Blob }> = [];
+    for (const clip of clips) {
+      if (clip.kind !== 'video' || clip.stillImage || !clip.file) continue;
+      if (this.sentMedia.has(clip.id)) continue;
+      this.sentMedia.add(clip.id);
+      media.push({ clipId: clip.id, blob: clip.file });
+    }
+    this.runtime.sendClipMedia(media);
   }
 
   async renderTimelineFrame(
@@ -598,6 +669,8 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
       captureFrames,
     );
 
+    previewMetrics.setFrameSources(this.runtime.frameSources);
+
     if (!plan) {
       // Render was cancelled — throw so the caller's catch block handles it.
       // The caller checks isCancelled() first, so this won't count as a failure.
@@ -608,7 +681,12 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   }
 
   syncClips(clips: Clip[]): void {
-    this.pool.pruneExcept(new Set(clips.map((c) => c.id)));
+    const ids = new Set(clips.map((c) => c.id));
+    this.pool.pruneExcept(ids);
+    for (const id of [...this.sentMedia]) {
+      if (!ids.has(id)) this.sentMedia.delete(id);
+    }
+    this.sendClipMedia(clips);
     previewMetrics.setDecoderCount(this.pool.size, this.pool.limit);
     this.runtime.syncClips(clips);
   }
@@ -624,6 +702,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
 
   destroy(): void {
     this.pool.destroy();
+    this.sentMedia.clear();
     this.runtime.destroy();
   }
 }

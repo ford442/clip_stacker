@@ -1,6 +1,7 @@
 import { downsample2d } from './downsample';
 import { lumaHistogramBt709, levelsFromHistogram } from './lumaHistogram';
 import { separableBlur } from './separableBlur';
+import { VECTORSCOPE_SIZE, vectorscopeUv } from './vectorscope';
 import type { GpuChoreJob, GpuChoreResult } from '../types';
 
 export function runCpuJob(job: GpuChoreJob, reason: string): GpuChoreResult {
@@ -12,6 +13,15 @@ export function runCpuJob(job: GpuChoreJob, reason: string): GpuChoreResult {
       reason,
       histogram,
       levels: levelsFromHistogram(histogram),
+    };
+  }
+  if (job.op === 'vectorscope_uv') {
+    const binSize = job.binSize ?? VECTORSCOPE_SIZE;
+    return {
+      backend: 'cpu',
+      reason,
+      vectorscope: vectorscopeUv(pixels, job.width, job.height, binSize),
+      binSize,
     };
   }
   if (job.op === 'downsample_2d') {
