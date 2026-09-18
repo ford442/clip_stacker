@@ -665,6 +665,24 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
             return boomerang_path
     return final_path
 
+def batch_interpolate_videos(video_files, multi_factor, progress=gr.Progress()):
+    """Run interpolate_video() independently on each uploaded clip.
+
+    Returns one output path per input clip, in input order. Each clip is
+    interpolated on its own — no boomerang, and outputs are never
+    concatenated/stitched together, unlike the "2. Stitch Videos" tab.
+    """
+    if not video_files:
+        return []
+    paths = [f.name if hasattr(f, "name") else str(f) for f in video_files]
+    count = len(paths)
+    results = []
+    for i, path in enumerate(paths):
+        progress(i / count, desc=f"Interpolating clip {i + 1}/{count}")
+        results.append(interpolate_video(path, multi_factor, create_boomerang=False))
+    progress(1.0, desc="Done")
+    return results
+
 @spaces.GPU(required=True)
 def morph_transition(frame_pair_video, frame_count, output_fps=30):
     """Generate a morph segment from a 2-frame clip (A_last, B_first) via RIFE.
@@ -1072,7 +1090,27 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                 inputs=audio_mode,
                 outputs=audio_volume
             )
-            
+
+        # ── Tab 3 ─────────────────────────────────────────────────────────────
+        with gr.TabItem("3. Batch RIFE"):
+            gr.Markdown(
+                "Upload multiple clips → RIFE each independently → download all. "
+                "No stitching (clips stay separate) and no boomerang."
+            )
+            batch_inputs = gr.File(
+                label="Input Videos (multiple)",
+                file_count="multiple",
+                file_types=["video"],
+            )
+            batch_multi = gr.Dropdown(["2", "4", "8"], value="2",
+                                      label="RIFE Multiplier")
+            batch_btn = gr.Button("▶ Process All", variant="primary")
+            batch_outputs = gr.File(label="Processed Videos", file_count="multiple")
+
+            batch_btn.click(batch_interpolate_videos,
+                            inputs=[batch_inputs, batch_multi],
+                            outputs=batch_outputs,
+                            api_name="batch_interpolate")
 
     _reorder_outs = [
         paths_state, thumbs_state, clip_gallery, sel_state, sel_label, move_to,
