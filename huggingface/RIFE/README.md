@@ -33,7 +33,7 @@ need to change the Space, change it here.
 
 ## Public endpoints
 
-These three `api_name` routes are the client's contract. Changing a signature
+These `api_name` routes are the client's contract. Changing a signature
 breaks `src/utils/huggingface.ts`:
 
 | `api_name`          | Inputs                                                  | Output |
@@ -41,6 +41,7 @@ breaks `src/utils/huggingface.ts`:
 | `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool)   | MP4    |
 | `stitch`            | videos or still images, resolution, audio, audio mode, overlay volume | MP4    |
 | `morph`             | 2-frame video, frame count, output fps                    | MP4    |
+| `batch_interpolate` | videos (multiple), multiplier (`"2"`/`"4"`/`"8"`)         | MP4 files (one per input, in order — no stitching, no boomerang) |
 
 ## Deploying
 
@@ -57,8 +58,9 @@ scripts/deploy-rife-space.sh
 ```
 
 The script clones the Space repo into a temp directory, copies the files from
-`RIFE/` over it, and pushes. It needs a HuggingFace token with write access to
-the Space in `HF_TOKEN` (or an existing git credential helper).
+this directory (`huggingface/RIFE/`) over it, and pushes. It needs a
+HuggingFace token with write access to the Space in `HF_TOKEN` (or an existing
+git credential helper).
 
 After deploying, confirm the Space rebuilt cleanly — the first boot runs
 `setup_environment()`, which pip-installs dependencies, clones Practical-RIFE
