@@ -92,11 +92,16 @@ export function syncClipGroups(groups: ClipGroup[], clips: Clip[]): ClipGroup[] 
   }));
 }
 
-/** Revoke blob URLs for clips removed from the timeline. */
+/**
+ * Revoke blob URLs for clips removed from the timeline. A URL still used by a
+ * surviving clip is kept: split pieces and edit-mode tails share their source's
+ * object URL, so undoing a split must not revoke the media the head still plays.
+ */
 export function revokeOrphanedUrls(previousClips: Clip[], nextClips: Clip[]): void {
   const nextIds = new Set(nextClips.map((clip) => clip.id));
+  const liveUrls = new Set(nextClips.map((clip) => clip.objectUrl));
   for (const clip of previousClips) {
-    if (!nextIds.has(clip.id)) {
+    if (!nextIds.has(clip.id) && !liveUrls.has(clip.objectUrl)) {
       URL.revokeObjectURL(clip.objectUrl);
     }
   }

@@ -237,6 +237,8 @@ export function App() {
     handleDuplicateClip: clipActions.handleDuplicateClip,
     handleDeleteClip: timelineActions.handleDeleteClip,
     handleReorder: timelineActions.handleReorder,
+    handleEditNudge: timelineActions.handleEditNudge,
+    handleRippleDelete: timelineActions.handleRippleDelete,
     handleAddCaptionAtPlayhead: captionActions.handleAddCaption,
     undo,
     redo,

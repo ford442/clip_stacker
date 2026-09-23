@@ -3,13 +3,23 @@ import { getTimelineClips } from "../utils/timelineClips";
 import { reindexTransitions } from "../utils/transitions";
 import {
   isClipLocked,
-  moveClipBetweenTracks,
   removeClipFromTracks,
   reorderMainTrackClips,
   MAIN_VIDEO_TRACK_ID,
 } from "../utils/trackModel";
 import { editorStore } from "../store/editorStore";
 import { settingsStore } from "../store/settingsStore";
+import { uiStore } from "../store/uiStore";
+import { playbackStore } from "../store/playbackStore";
+import {
+  dropEdit,
+  nudgeWithTool,
+  rippleDelete,
+  type EditResult,
+  type EditState,
+} from "../utils/editModes";
+import { collectSnapTargets, snapClipStart } from "../utils/timelineSnap";
+import { getClipDuration } from "../utils/project";
 
 /**
  * Guard every clip edit that a locked lane must reject (#168 Phase A).
@@ -30,6 +40,29 @@ function refuseWhenLocked(clipId: string, what: string): boolean {
   return true;
 }
 import { reindexAfterSwap } from "../app/helpers";
+
+function currentEditState(): EditState {
+  const { tracks, clips, transitions } = editorStore.getState();
+  return { tracks, clips, transitions };
+}
+
+/**
+ * Commit an edit-mode result as one undo step, or surface why it was refused.
+ * The pure edit already refuses locked lanes; this is where the reason reaches
+ * the status bar for every entry point (drop, keyboard nudge, ripple delete).
+ */
+function commitOrReport(result: EditResult, success?: string): boolean {
+  if (!result.ok) {
+    settingsStore.getState().setStatus(result.reason);
+    return false;
+  }
+  editorStore.getState().commitEdit(result.state);
+  if (success) settingsStore.getState().setStatus(success);
+  return true;
+}
+
+/** Nudge step for the edit tools: one frame at 30 fps. */
+export const EDIT_NUDGE_FRAME_SEC = 1 / 30;
 import type { UseEditHistoryResult } from "./useEditHistory";
 
 type TimelineActionsDeps = Pick<
@@ -127,27 +160,75 @@ export function useTimelineActions({
     [pushHistory, clips, transitions, clipGroups, setTracks, setClips],
   );
 
+  /**
+   * Drop a clip onto a lane at `startTime`, honouring the timeline's drop mode
+   * (overwrite covers what is underneath, insert pushes it later) and, when the
+   * magnet is on, snapping either clip edge to the playhead, clip edges,
+   * markers, caption edges or beats within `snapThresholdSec`.
+   */
   const handleMoveToTrack = useCallback(
-    (clipId: string, targetTrackId: string, startTime: number) => {
+    (clipId: string, targetTrackId: string, startTime: number, snapThresholdSec?: number) => {
       if (refuseWhenLocked(clipId, "move this clip")) return;
-      const { tracks, clips: poolClips } = editorStore.getState();
-      const next = moveClipBetweenTracks(tracks, clipId, targetTrackId, startTime, poolClips);
-      if (next === tracks) {
-        const target = tracks.find((t) => t.id === targetTrackId);
-        settingsStore
-          .getState()
-          .setStatus(
-            target?.locked
-              ? "Target track is locked."
-              : `Cannot place this clip on ${target?.label ?? "that track"}.`,
-          );
+      const { dropEditMode, snapEnabled, linkedRipple } = uiStore.getState();
+      const state = editorStore.getState();
+      const target = state.tracks.find((t) => t.id === targetTrackId);
+      const clip = state.clips.find((c) => c.id === clipId);
+      if (!target || !clip) return;
+      if (target.locked) {
+        settingsStore.getState().setStatus("Target track is locked.");
         return;
       }
-      pushHistory();
-      setTracks(next);
+
+      let at = startTime;
+      if (snapEnabled) {
+        const targets = collectSnapTargets({
+          tracks: state.tracks,
+          clips: state.clips,
+          playhead: playbackStore.getState().playheadTime,
+          captions: state.captions,
+          markers: state.masterAudioMarkers,
+          masterAudio: state.masterAudio,
+          excludeClipId: clipId,
+        });
+        at = snapClipStart(startTime, getClipDuration(clip), targets, snapThresholdSec).time;
+      }
+
+      commitOrReport(
+        dropEdit(currentEditState(), dropEditMode, clipId, targetTrackId, at, {
+          linked: linkedRipple,
+        }),
+      );
     },
-    [pushHistory, setTracks],
+    [],
   );
+
+  /**
+   * Apply the sticky tool (ripple / roll / slip / slide) to the selected clip,
+   * moving its edit by `deltaSec` output seconds. Bound to Alt+←/→.
+   */
+  const handleEditNudge = useCallback((deltaSec: number) => {
+    const { selectedClipId: clipId } = editorStore.getState();
+    if (!clipId) {
+      settingsStore.getState().setStatus("Select a clip to nudge its edit.");
+      return;
+    }
+    if (refuseWhenLocked(clipId, "edit this clip")) return;
+    const { timelineTool, linkedRipple } = uiStore.getState();
+    commitOrReport(
+      nudgeWithTool(currentEditState(), timelineTool, clipId, deltaSec, { linked: linkedRipple }),
+    );
+  }, []);
+
+  /** Delete a clip and close the gap it leaves (Shift+Delete). */
+  const handleRippleDelete = useCallback((clipId: string) => {
+    if (refuseWhenLocked(clipId, "delete this clip")) return;
+    const clip = editorStore.getState().clips.find((c) => c.id === clipId);
+    const { linkedRipple } = uiStore.getState();
+    commitOrReport(
+      rippleDelete(currentEditState(), clipId, { linked: linkedRipple }),
+      `Ripple-deleted "${clip?.title ?? "clip"}".`,
+    );
+  }, []);
 
   const handleDeleteClip = useCallback(
     (clipId: string) => {
@@ -225,5 +306,7 @@ export function useTimelineActions({
     handleReorder,
     handleMoveToTrack,
     handleDeleteClip,
+    handleEditNudge,
+    handleRippleDelete,
   };
 }

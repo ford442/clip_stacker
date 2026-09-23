@@ -81,7 +81,12 @@ export type AppShellProps = {
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
-  onMoveToTrack: (clipId: string, targetTrackId: string, startTime: number) => void;
+  onMoveToTrack: (
+    clipId: string,
+    targetTrackId: string,
+    startTime: number,
+    snapThresholdSec?: number,
+  ) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
   /** Caption-track callbacks, forwarded to the Inspector's Captions tab. */
   captions: CaptionsPanelProps;

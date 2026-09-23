@@ -34,6 +34,7 @@ import {
   type EditSnapshot,
 } from '../utils/editHistory';
 import { cloneTracks } from '../utils/trackModel';
+import type { EditState } from '../utils/editModes';
 import { normalizeCaptions } from '../utils/subtitles';
 
 /**
@@ -96,6 +97,13 @@ export interface EditorState {
   setTrackHeight: (trackId: string, height: number) => void;
   /** Rename a lane. */
   renameTrack: (trackId: string, label: string) => void;
+  /**
+   * Commit a pure edit-mode result (`utils/editModes.ts`) as one undo step:
+   * lane placements, clip trims and base-lane transitions change together, so a
+   * single undo restores all three. Clips the edit dropped leave their A/B
+   * groups and the selection.
+   */
+  commitEdit: (next: EditState) => void;
   setClipGroups: (action: StateUpdater<ClipGroup[]>) => void;
   setTransitions: (action: StateUpdater<ClipTransition[]>) => void;
   setTextOverlays: (action: StateUpdater<TextOverlay[]>) => void;
@@ -228,6 +236,28 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     renameTrack: (trackId, label) => {
       pushHistory();
       set((s) => ({ tracks: renameTrackInList(s.tracks, trackId, label) }));
+    },
+    commitEdit: (next) => {
+      pushHistory();
+      set((s) => {
+        const ids = new Set(next.clips.map((c) => c.id));
+        return {
+          tracks: next.tracks,
+          clips: next.clips,
+          transitions: next.transitions,
+          clipGroups: syncClipGroups(s.clipGroups, next.clips)
+            .map((group) => ({
+              ...group,
+              variants: {
+                A: group.variants.A && ids.has(group.variants.A.id) ? group.variants.A : null,
+                B: group.variants.B && ids.has(group.variants.B.id) ? group.variants.B : null,
+              },
+            }))
+            .filter((group) => group.variants.A !== null || group.variants.B !== null),
+          selectedClipId:
+            s.selectedClipId && !ids.has(s.selectedClipId) ? null : s.selectedClipId,
+        };
+      });
     },
     setClipGroups: (action) =>
       set((s) => ({ clipGroups: resolveUpdater(action, s.clipGroups) })),
@@ -376,6 +406,7 @@ export const editorActions: Pick<
   | 'toggleTrackLocked'
   | 'setTrackHeight'
   | 'renameTrack'
+  | 'commitEdit'
   | 'setClipGroups'
   | 'setTransitions'
   | 'setTextOverlays'

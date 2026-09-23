@@ -28,6 +28,10 @@ export {
   useSelectedTextOverlayId,
   useSelectedCaptionId,
   useShowKeyboardShortcuts,
+  useTimelineTool,
+  useDropEditMode,
+  useSnapEnabled,
+  useLinkedRipple,
   type UiState,
 } from './uiStore';
 export {

@@ -121,6 +121,30 @@ delete; the guards live in the action hooks (`useTimelineActions`,
 `useClipActions`, `useInspectorActions`), not in the components, so keyboard
 shortcuts and programmatic callers are blocked too.
 
+### Edit modes (overwrite / insert / ripple / roll / slip / slide / snap)
+
+- `src/utils/editModes.ts` — the pure NLE edits. Each takes
+  `{ tracks, clips, transitions }` and returns a new state or a refusal reason;
+  `editorStore.commitEdit` applies it behind one `pushHistory`, so one undo
+  restores placements, trims and transitions together. Deltas are output
+  seconds; speed-ramped or looped clips are refused rather than trimmed
+  approximately. Splitting an item duplicates the *placement* (new clip id,
+  same file / object URL); covering one drops it.
+- Ripple is **lane-local** by default; `linkedRipple` also shifts every other
+  non-base lane, and a locked lane that would have to move blocks the edit.
+- After any edit, base-lane start times are rewritten from
+  `buildClipTimelineSegments` and base xfades are re-keyed to the clip pairs
+  they joined (`remapBaseTransitions`), so `TrackItem.startTime` never drifts
+  from segment math.
+- `src/utils/timelineSnap.ts` — the magnet: `snapTimelineTime` /
+  `snapClipStart` over playhead, clip edges, markers, caption edges and beats,
+  using the beat-snap tolerance (widened to ~8px at low zoom).
+- Tool / drop-mode / snap / link state is view state in `uiStore`;
+  `TimelineTools.tsx` is the chrome, `useTimelineActions`
+  (`handleMoveToTrack`, `handleEditNudge`, `handleRippleDelete`) the entry
+  points, and the keys are in `useAppKeyboardShortcuts` /
+  `KeyboardShortcutsModal`.
+
 ### Text tracks vs the caption track
 
 Two decisions worth stating, because the type system allows other readings:
