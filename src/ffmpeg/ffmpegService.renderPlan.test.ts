@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
-import type { Clip, TextOverlay } from "../types";
+import type { Clip, ClipStabilization, TextOverlay } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { calculateRenderPlan } from "./ffmpegService";
+import { DEFAULT_FINISHING } from "../utils/finishing";
+import { createSecondaryGrade } from "../utils/secondaryColor";
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
@@ -140,5 +142,191 @@ describe("calculateRenderPlan", () => {
     const plan = calculateRenderPlan([clip], [], [solidOverlay], DEFAULT_EXPORT_SETTINGS);
 
     expect(plan.shaderTextOverlays).toBeUndefined();
+  });
+
+  describe('routing-honesty fields (encoderIntent / finishing / stabilize / keying / captions)', () => {
+    function makeStabilization(overrides: Partial<ClipStabilization> = {}): ClipStabilization {
+      return {
+        fps: 24,
+        matrices: new Float32Array([1, 0, 0, 0, 1, 0]),
+        frameCount: 1,
+        zoom: 1,
+        maxCorrection: 0.1,
+        smoothRadius: 24,
+        ...overrides,
+      };
+    }
+
+    it('estimates the FFmpeg encoder when forced', () => {
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+        webGpuAvailable: true,
+      });
+      expect(plan.encoderIntent).toBe('ffmpeg');
+    });
+
+    it('estimates the GPU encoder when WebGPU is available and nothing forces FFmpeg/Canvas', () => {
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        webGpuAvailable: true,
+      });
+      expect(plan.encoderIntent).toBe('webcodecs');
+    });
+
+    it('falls back to FFmpeg when WebGPU has not been confirmed available', () => {
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {});
+      expect(plan.encoderIntent).toBe('ffmpeg');
+    });
+
+    it('estimates canvas only when the timeline has nothing canvas cannot composite', () => {
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        useCanvasRenderer: true,
+      });
+      expect(plan.encoderIntent).toBe('canvas');
+    });
+
+    it('demotes canvas intent to GPU/FFmpeg when the timeline has active finishing', () => {
+      const activeFinishing = {
+        ...DEFAULT_FINISHING,
+        lut: { enabled: true, lutId: 'some-lut', intensity: 1 },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        useCanvasRenderer: true,
+        finishing: activeFinishing,
+        webGpuAvailable: true,
+      });
+      expect(plan.encoderIntent).not.toBe('canvas');
+      expect(plan.finishingActive).toBe(true);
+    });
+
+    it('demotes canvas intent to GPU/FFmpeg when a PiP lane is present', () => {
+      const clips = [makeClip(), makeClip({ id: 'clip-2', layerIndex: 1 })];
+      const plan = calculateRenderPlan(clips, [], [], DEFAULT_EXPORT_SETTINGS, {
+        useCanvasRenderer: true,
+      });
+      expect(plan.encoderIntent).not.toBe('canvas');
+    });
+
+    it('reports finishingActive from the finishing context, not from the clips/transitions', () => {
+      const inactive = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        finishing: DEFAULT_FINISHING,
+      });
+      expect(inactive.finishingActive).toBe(false);
+
+      const active = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        finishing: { ...DEFAULT_FINISHING, lut: { enabled: true, lutId: 'x', intensity: 1 } },
+      });
+      expect(active.finishingActive).toBe(true);
+    });
+
+    it('reports stabilizeActive when a clip has an active stabilization matrix', () => {
+      const stabilizedClip = makeClip({
+        stabilize: true,
+        stabilization: makeStabilization(),
+      });
+      const plan = calculateRenderPlan([stabilizedClip], [], [], DEFAULT_EXPORT_SETTINGS);
+      expect(plan.stabilizeActive).toBe(true);
+    });
+
+    it('reports stabilizeActive false when no clip has stabilization enabled', () => {
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS);
+      expect(plan.stabilizeActive).toBe(false);
+    });
+
+    it('estimates overlayKeying as gpu when a clip is keyed and the GPU encoder is expected', () => {
+      const keyedClip = makeClip({
+        overlayBlend: 'chroma',
+        chromaKey: { color: '#00ff00', similarity: 0.4, blend: 0.1 },
+      });
+      const plan = calculateRenderPlan([keyedClip], [], [], DEFAULT_EXPORT_SETTINGS, {
+        webGpuAvailable: true,
+      });
+      expect(plan.overlayKeying).toBe('gpu');
+    });
+
+    it('estimates overlayKeying as ffmpeg when a clip is keyed and FFmpeg is forced', () => {
+      const keyedClip = makeClip({
+        overlayBlend: 'chroma',
+        chromaKey: { color: '#00ff00', similarity: 0.4, blend: 0.1 },
+      });
+      const plan = calculateRenderPlan([keyedClip], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+      });
+      expect(plan.overlayKeying).toBe('ffmpeg');
+    });
+
+    it('never estimates overlayKeying as unsupported when a clip is keyed — canvas is demoted first', () => {
+      const keyedClip = makeClip({
+        overlayBlend: 'chroma',
+        chromaKey: { color: '#00ff00', similarity: 0.4, blend: 0.1 },
+      });
+      // A keyed clip demotes the canvas estimate to GPU/FFmpeg (see the
+      // 'canvas' branch of estimateEncoderIntent), so 'unsupported' should
+      // never appear on a pre-render estimate — only after the fact, if the
+      // caller ignores the estimate and runs canvas anyway.
+      const plan = calculateRenderPlan([keyedClip], [], [], DEFAULT_EXPORT_SETTINGS, {
+        useCanvasRenderer: true,
+      });
+      expect(plan.overlayKeying).toBe('ffmpeg');
+    });
+
+    it('omits overlayKeying when no clip is keyed', () => {
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        webGpuAvailable: true,
+      });
+      expect(plan.overlayKeying).toBeUndefined();
+    });
+
+    it('passes captionMode through from context', () => {
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        captionMode: 'burn',
+      });
+      expect(plan.captionMode).toBe('burn');
+    });
+
+    it('flags shaderTextFallbackRisk when shader text is present and FFmpeg is the estimated encoder', () => {
+      const shaderOverlay = makeOverlay({ id: 'shader-1', fill: 'shader', shaderId: 'plasma' });
+      const plan = calculateRenderPlan([makeClip()], [], [shaderOverlay], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+      });
+      expect(plan.shaderTextFallbackRisk).toBe(true);
+    });
+
+    it('does not flag shaderTextFallbackRisk when the GPU encoder is estimated (preserves shader fills)', () => {
+      const shaderOverlay = makeOverlay({ id: 'shader-1', fill: 'shader', shaderId: 'plasma' });
+      const plan = calculateRenderPlan([makeClip()], [], [shaderOverlay], DEFAULT_EXPORT_SETTINGS, {
+        webGpuAvailable: true,
+      });
+      expect(plan.shaderTextFallbackRisk).toBeUndefined();
+    });
+
+    it('lists creative LUT and secondary window grades as FFmpeg-only gaps when FFmpeg is estimated', () => {
+      const finishing = {
+        ...DEFAULT_FINISHING,
+        lut: { enabled: true, lutId: 'some-lut', intensity: 1 },
+        secondaryColor: {
+          ...DEFAULT_FINISHING.secondaryColor!,
+          grades: [
+            createSecondaryGrade({ enabled: true, maskType: 'window', satScale: 1.5 }),
+          ],
+        },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+        finishing,
+      });
+      expect(plan.ffmpegFinishingGaps).toContain('Creative LUT');
+    });
+
+    it('omits ffmpegFinishingGaps when the GPU encoder is estimated (nothing is skipped)', () => {
+      const finishing = {
+        ...DEFAULT_FINISHING,
+        lut: { enabled: true, lutId: 'some-lut', intensity: 1 },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        webGpuAvailable: true,
+        finishing,
+      });
+      expect(plan.ffmpegFinishingGaps).toBeUndefined();
+    });
   });
 });

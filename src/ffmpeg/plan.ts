@@ -19,6 +19,15 @@ import {
   usesFixedOutputResolution,
 } from "../utils/resolution";
 import {
+  isFinishingActive,
+  isLutFinishingPassActive,
+  type FinishingSettings,
+} from "../utils/finishing";
+import { secondaryHasWindowGrades } from "../utils/secondaryColor";
+import { isStabilizationActive } from "../utils/stabilization";
+import { resolveLayerKey } from "../utils/overlayKey";
+import { canUseGpuVideoEncoder, hasActiveTransitions } from "../utils/renderEligibility";
+import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
   recordFfmpegLog,
@@ -72,18 +81,105 @@ import {
   FFMPEG_LOAD_TIMEOUT_MS,
 } from "./core";
 
+/**
+ * Extra context `calculateRenderPlan` needs to estimate which encoder will
+ * actually run — none of it is derivable from `clips`/`transitions`/
+ * `textOverlays`/`settings` alone. All optional so existing callers (and
+ * tests) that only care about the FFmpeg concat/reencode strategy keep
+ * working unchanged.
+ */
+export interface RenderPlanContext {
+  finishing?: FinishingSettings;
+  forceFFmpeg?: boolean;
+  useCanvasRenderer?: boolean;
+  /** Result of `isWebGpuExportAvailable()` — undefined means "not probed yet". */
+  webGpuAvailable?: boolean;
+  captionMode?: 'none' | 'burn' | 'soft';
+}
+
+/**
+ * Mirrors the encoder selection in `utils/hybrid-encoder.ts` (`hybridMergeClips`)
+ * closely enough to predict, before encoding starts, which path it will pick.
+ * Kept intentionally conservative: anything this can't be sure about falls
+ * through to `'ffmpeg'`, same as the runtime fallback.
+ */
+function estimateEncoderIntent(
+  clips: Clip[],
+  transitions: ClipTransition[],
+  textOverlays: TextOverlay[],
+  context: RenderPlanContext,
+): RenderPlan['encoderIntent'] {
+  const { forceFFmpeg = false, useCanvasRenderer = false, webGpuAvailable, finishing } = context;
+
+  if (useCanvasRenderer) {
+    // Mirrors hybridMergeClips's canvas-compatibility guard: Canvas2D has no
+    // keying, transition, PiP, or finishing pass, so those demote it to the
+    // GPU/FFmpeg estimate below instead of silently dropping them.
+    const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
+    const hasPipClip = clips.some((clip) => (clip.layerIndex ?? 0) > 0);
+    if (!hasKeyedClip && !hasPipClip && !hasActiveTransitions(transitions) && !isFinishingActive(finishing)) {
+      return 'canvas';
+    }
+  }
+
+  if (forceFFmpeg) return 'ffmpeg';
+
+  const gpuEligible = canUseGpuVideoEncoder(clips, transitions, textOverlays, {
+    forceFFmpeg,
+    useCanvas: false,
+    webGpuAvailable,
+    finishing,
+  });
+  if (gpuEligible && webGpuAvailable) return 'webcodecs';
+  return 'ffmpeg';
+}
+
 export function calculateRenderPlan(
   clips: Clip[],
   transitions: ClipTransition[] = [],
   textOverlays: TextOverlay[] = [],
   settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
+  context: RenderPlanContext = {},
 ): RenderPlan {
   const plan = computeRenderPlanPath(clips, transitions, textOverlays, settings);
   const shaderOverlays = textOverlays.filter((o) => o.fill === "shader");
-  if (shaderOverlays.length === 0) return plan;
+
+  const encoderIntent = estimateEncoderIntent(clips, transitions, textOverlays, context);
+  const finishingActive = isFinishingActive(context.finishing);
+  const stabilizeActive = clips.some((clip) => isStabilizationActive(clip));
+  const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
+  const overlayKeying: RenderPlan['overlayKeying'] = hasKeyedClip
+    ? encoderIntent === 'canvas'
+      ? 'unsupported'
+      : encoderIntent === 'ffmpeg'
+        ? 'ffmpeg'
+        : 'gpu'
+    : undefined;
+  const shaderTextFallbackRisk =
+    shaderOverlays.length > 0 && (encoderIntent === 'ffmpeg' || encoderIntent === 'canvas');
+
+  const ffmpegFinishingGaps: string[] = [];
+  if (encoderIntent === 'ffmpeg') {
+    if (isLutFinishingPassActive(context.finishing?.lut)) {
+      ffmpegFinishingGaps.push('Creative LUT');
+    }
+    if (secondaryHasWindowGrades(context.finishing?.secondaryColor)) {
+      ffmpegFinishingGaps.push('Secondary color window grades');
+    }
+  }
+
   return {
     ...plan,
-    shaderTextOverlays: shaderOverlays.map((o) => ({ id: o.id, text: o.text })),
+    ...(shaderOverlays.length > 0
+      ? { shaderTextOverlays: shaderOverlays.map((o) => ({ id: o.id, text: o.text })) }
+      : {}),
+    encoderIntent,
+    finishingActive,
+    stabilizeActive,
+    ...(overlayKeying ? { overlayKeying } : {}),
+    ...(context.captionMode !== undefined ? { captionMode: context.captionMode } : {}),
+    ...(shaderTextFallbackRisk ? { shaderTextFallbackRisk: true } : {}),
+    ...(ffmpegFinishingGaps.length > 0 ? { ffmpegFinishingGaps } : {}),
   };
 }
 
