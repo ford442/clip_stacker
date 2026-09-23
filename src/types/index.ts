@@ -708,4 +708,33 @@ export interface RenderPlan {
    *   lost. Same class of limitation as its missing transitions/PiP.
    */
   overlayKeying?: 'gpu' | 'ffmpeg' | 'unsupported';
+  /**
+   * Which encoder is expected (pre-render estimate) or actually ran (resolved
+   * plan, overwritten after encoding) to produce this render. Lets the
+   * toolbar say up front whether Render will land on the GPU compositor,
+   * FFmpeg, or the Canvas/MediaRecorder path — the same shape as
+   * `EncoderPath` in `utils/hybrid-encoder.ts`.
+   */
+  encoderIntent?: 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
+  /** True when any finishing pass (noise reduction / color / LUT / sharpen / grain) is enabled. */
+  finishingActive?: boolean;
+  /** True when any clip has an active stabilization matrix that will be applied. */
+  stabilizeActive?: boolean;
+  /** Caption export mode this render will use, when the project has captions. */
+  captionMode?: 'none' | 'burn' | 'soft';
+  /**
+   * True when the project has shader-filled text overlays and `encoderIntent`
+   * is a path that can't preserve them (`ffmpeg` or `canvas`) — the pre-render
+   * counterpart to `shaderTextFallbackApplied`, which only fires after the
+   * fact.
+   */
+  shaderTextFallbackRisk?: boolean;
+  /**
+   * Finishing features present in the project that FFmpeg cannot apply:
+   * creative LUT and secondary-color window / power-window grades are
+   * WebGPU-only (FFmpeg only bakes hue-only secondary grades into a `lut3d`).
+   * Populated whenever `encoderIntent` is `'ffmpeg'` and one of these is
+   * active; absent otherwise.
+   */
+  ffmpegFinishingGaps?: string[];
 }

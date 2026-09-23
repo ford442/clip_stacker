@@ -147,9 +147,9 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             type="button"
             onClick={onGpuStitch}
             disabled={isRendering}
-            title="Stitch clips at one resolution on the HuggingFace GPU space (native FFmpeg, higher quality). Ignores fades/transitions/PiP/overlays — use Render for those."
+            title="Remote concat (ignores timeline compositing): sequences base-lane clips at one resolution on the HuggingFace GPU space via native FFmpeg. Refuses to run when the timeline has transitions, PiP/overlay lanes, finishing, keys, captions, or text overlays — use Render for those."
           >
-            ☁ GPU Stitch
+            ☁ Remote Concat
           </button>
         )}
         {onUndo && (
@@ -319,6 +319,24 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
               {renderPlan.shaderTextOverlays.length > 1 ? 'these overlays' : 'this overlay'}, or
               use the GPU render path (avoid Force FFmpeg / Canvas renderer) to preserve the
               shader look.
+            </p>
+          )}
+          {!renderPlan.shaderTextFallbackApplied &&
+            renderPlan.shaderTextFallbackRisk &&
+            renderPlan.shaderTextOverlays && (
+              <p className="render-plan-warning" role="alert">
+                ⚠ This render is expected to fall back to solid color for shader-filled text
+                overlay{renderPlan.shaderTextOverlays.length > 1 ? 's' : ''}{' '}
+                {renderPlan.shaderTextOverlays.map((o) => `"${o.text}"`).join(', ')} — avoid
+                Force FFmpeg / Canvas renderer to preserve the shader look.
+              </p>
+            )}
+          {renderPlan.ffmpegFinishingGaps && renderPlan.ffmpegFinishingGaps.length > 0 && (
+            <p className="render-plan-warning" role="alert">
+              ⚠ {renderPlan.ffmpegFinishingGaps.join(' and ')}{' '}
+              {renderPlan.ffmpegFinishingGaps.length > 1 ? 'are' : 'is'} WebGPU-only — the FFmpeg
+              render path skips {renderPlan.ffmpegFinishingGaps.length > 1 ? 'them' : 'it'}. Avoid
+              Force FFmpeg to keep this finishing.
             </p>
           )}
         </>

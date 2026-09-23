@@ -8,7 +8,7 @@ export function formatEncoderPathLabel(path: string): string {
     case 'webcodecs':
       return '⚡ GPU (WebCodecs + FFmpeg audio)';
     case 'gpu-stitch':
-      return '☁ GPU Stitch (remote concat — no finishing)';
+      return '☁ Remote concat (base lanes only — ignores timeline compositing)';
     case 'ffmpeg':
       return '🖥 FFmpeg';
     default:

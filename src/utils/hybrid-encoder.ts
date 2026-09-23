@@ -13,7 +13,7 @@
  */
 
 import type { CaptionEntry, Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, TextOverlayStyle, RenderPlan } from '../types';
-import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
+import { DEFAULT_FINISHING, isFinishingActive, type FinishingSettings } from '../utils/finishing';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
@@ -23,7 +23,7 @@ import {
   isAudioEncoderAvailable,
   prepareStreamingAudioMix,
 } from './webcodecs-audio';
-import { canUseGpuVideoEncoder } from './renderEligibility';
+import { canUseGpuVideoEncoder, hasActiveTransitions } from './renderEligibility';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { resolveLayerKey } from './overlayKey';
@@ -71,22 +71,50 @@ export async function hybridMergeClips(
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
 
-  const effectiveRenderPlan = renderPlan || calculateRenderPlan(clips, transitions, textOverlays, settings);
+  // Probed once, up front, so both the render-plan estimate and the GPU
+  // eligibility check below agree on whether WebGPU is actually there.
+  const webGpuAvailable = await isWebGpuExportAvailable();
+
+  const effectiveRenderPlan =
+    renderPlan ||
+    calculateRenderPlan(clips, transitions, textOverlays, settings, {
+      finishing,
+      forceFFmpeg,
+      useCanvasRenderer: useCanvas,
+      webGpuAvailable,
+      captionMode: captionBurnIn && captionBurnIn.captions.length > 0 ? 'burn' : undefined,
+    });
 
   // Chroma/luma keying now lives in the compositors (WGSL + Canvas2D), so the
   // GPU path keys the same way the preview does and never also runs FFmpeg's
   // `chromakey` — only the FFmpeg filter-graph path does. Recorded on the
   // resolved plan so the toolbar can say which one ran.
   const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
-  const planWithKeying = (
-    where: NonNullable<RenderPlan['overlayKeying']>,
-  ): RenderPlan =>
-    hasKeyedClip
-      ? { ...effectiveRenderPlan, overlayKeying: where }
-      : effectiveRenderPlan;
+  // `encoderIntent` is overwritten to the path actually taken (not just the
+  // pre-render estimate) so the toolbar's post-render line matches reality
+  // even when a guard below demoted the encoder the caller asked for.
+  const resolveFinalPlan = (
+    path: EncoderPath,
+    overlayKeying?: RenderPlan['overlayKeying'],
+  ): RenderPlan => ({
+    ...effectiveRenderPlan,
+    encoderIntent: path,
+    ...(hasKeyedClip && overlayKeying ? { overlayKeying } : {}),
+  });
 
   // -- Canvas renderer path --------------------------------------------------
-  if (useCanvas && typeof MediaRecorder !== 'undefined') {
+  // Canvas2D has no keying, transition, PiP, or finishing-pass step — it just
+  // plays clips back onto a canvas (see `overlayKeying: 'unsupported'` above).
+  // Rather than silently dropping compositing the timeline actually needs,
+  // fall straight through to the GPU/FFmpeg compositor for those cases.
+  const hasPipClip = clips.some((clip) => (clip.layerIndex ?? 0) > 0);
+  const canvasCantComposite =
+    hasKeyedClip || hasPipClip || hasActiveTransitions(transitions) || isFinishingActive(finishing);
+  if (useCanvas && canvasCantComposite) {
+    onStatus(
+      'Canvas renderer skipped — the timeline has keys, finishing, transitions, or PiP it can\'t composite; using the GPU/FFmpeg compositor instead.',
+    );
+  } else if (useCanvas && typeof MediaRecorder !== 'undefined') {
     try {
       onStatus('Canvas renderer path selected (audio-reactive compositing)...');
       onProgress?.({ stage: 'Canvas renderer selected', progress: 0, indeterminate: false });
@@ -94,7 +122,7 @@ export async function hybridMergeClips(
       return {
         blob,
         path: 'canvas',
-        renderPlan: planWithKeying('unsupported'),
+        renderPlan: resolveFinalPlan('canvas', 'unsupported'),
       };
     } catch (err) {
       canvasFailure = (err as Error).message;
@@ -103,7 +131,6 @@ export async function hybridMergeClips(
   }
 
   // -- GPU WebCodecs path (hardware video + WebCodecs AAC or FFmpeg audio mux) -
-  const webGpuAvailable = await isWebGpuExportAvailable();
   const gpuEligible = canUseGpuVideoEncoder(clips, transitions, textOverlays, {
     forceFFmpeg,
     useCanvas,
@@ -157,7 +184,7 @@ export async function hybridMergeClips(
           return {
             blob,
             path: 'webcodecs-av',
-            renderPlan: planWithKeying('gpu'),
+            renderPlan: resolveFinalPlan('webcodecs-av', 'gpu'),
             captionsBurnedIn,
           };
         }
@@ -175,7 +202,7 @@ export async function hybridMergeClips(
         return {
           blob: muxed,
           path: 'webcodecs',
-          renderPlan: planWithKeying('gpu'),
+          renderPlan: resolveFinalPlan('webcodecs', 'gpu'),
           captionsBurnedIn,
         };
       } catch (err) {
@@ -215,7 +242,7 @@ export async function hybridMergeClips(
       finishing,
       masterAudio,
     );
-    const keyedPlan = planWithKeying('ffmpeg');
+    const keyedPlan = resolveFinalPlan('ffmpeg', 'ffmpeg');
     const ffmpegRenderPlan: RenderPlan =
       shaderOverlays.length > 0
         ? {

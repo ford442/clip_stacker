@@ -26,7 +26,11 @@ import {
   getMemoryStatus,
 } from "../utils/memory";
 import { generateDebugReport } from "../utils/debugReport";
+import { isFinishingActive } from "../utils/finishing";
 import type { FinishingSettings } from "../utils/finishing";
+import { hasActiveTransitions } from "../utils/renderEligibility";
+import { resolveLayerKey } from "../utils/overlayKey";
+import { isWebGpuExportAvailable } from "../webgpu/exportCompositor";
 
 import { settingsStore } from "../store/settingsStore";
 
@@ -113,12 +117,36 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setProgressValue(0);
       setProgressIndeterminate(false);
 
-      // Calculate render plan before starting
+      // Caption cues are drawn into the composite by the GPU (WebCodecs)
+      // compositor when the export mode is burn-in — one pass instead of the
+      // FFmpeg post-pass's extra full re-encode. Every other case still falls
+      // through to `applyCaptionsToRenderedVideo` below: the soft mux (a
+      // stream copy), the MediaRecorder canvas path, and FFmpeg itself, none
+      // of which composite a plan. `result.captionsBurnedIn` says which
+      // happened, so the post-pass never burns a second copy.
+      const { captions, captionStyle } = editorStore.getState();
+      const captionBurnIn =
+        captionExportMode === 'burn' && captions.length > 0
+          ? { captions, captionStyle }
+          : null;
+
+      // Calculate render plan before starting. Probing WebGPU availability up
+      // front lets the pre-render estimate (`encoderIntent`, `overlayKeying`,
+      // `ffmpegFinishingGaps`) match what the toolbar shows after encoding —
+      // not just the FFmpeg concat/reencode strategy.
+      const webGpuAvailable = await isWebGpuExportAvailable();
       const plan = calculateRenderPlan(
         timelineClips,
         transitions,
         textOverlays,
         exportSettings,
+        {
+          finishing,
+          forceFFmpeg,
+          useCanvasRenderer,
+          webGpuAvailable,
+          captionMode: captions.length > 0 ? captionExportMode : undefined,
+        },
       );
       setRenderPlan(plan);
       setStatus(`Render plan: ${plan.description} (${plan.reason})`);
@@ -140,18 +168,6 @@ export function useRenderActions(deps: RenderActionsDeps) {
           actions.setProgressValue(null);
         }
       };
-      // Caption cues are drawn into the composite by the GPU (WebCodecs)
-      // compositor when the export mode is burn-in — one pass instead of the
-      // FFmpeg post-pass's extra full re-encode. Every other case still falls
-      // through to `applyCaptionsToRenderedVideo` below: the soft mux (a
-      // stream copy), the MediaRecorder canvas path, and FFmpeg itself, none
-      // of which composite a plan. `result.captionsBurnedIn` says which
-      // happened, so the post-pass never burns a second copy.
-      const { captions, captionStyle } = editorStore.getState();
-      const captionBurnIn =
-        captionExportMode === 'burn' && captions.length > 0
-          ? { captions, captionStyle }
-          : null;
 
       const result = await hybridMergeClips(
         timelineClips,
@@ -258,14 +274,36 @@ export function useRenderActions(deps: RenderActionsDeps) {
     await performRender();
   }, [effectiveClips, performRender]);
 
-  // GPU stitch: offload resolution-normalization + concat to the HuggingFace
-  // space. Each clip is trimmed in-browser (cheap, lossless copy), then all
-  // clips are uploaded and stitched at one resolution on the GPU. This path
-  // ignores fades/transitions/PiP/overlays — use the normal Render for those.
+  // Remote concat: offload resolution-normalization + concat to the
+  // HuggingFace space. Each clip is trimmed in-browser (cheap, lossless
+  // copy), then all clips are uploaded and stitched end to end at one
+  // resolution on native FFmpeg. There is no compositor on the other end —
+  // it only sequences base-lane clips — so it refuses to run whenever the
+  // timeline needs one: transitions, PiP/overlay lanes, finishing, chroma/
+  // luma keys, captions, and text overlays would all be silently dropped.
+  // Use the normal Render for those; this path is for a plain concat only.
   const handleGpuStitch = useCallback(async () => {
     const timelineClips = effectiveClips.filter((clip) => clip.kind === "video");
     if (clips.filter((c) => c.kind === "video").length === 0) {
-      settingsStore.getState().setStatus("Add at least one video clip before GPU stitching.");
+      settingsStore.getState().setStatus("Add at least one video clip before remote concat.");
+      return;
+    }
+
+    const { finishing } = settingsStore.getState();
+    const { captions } = editorStore.getState();
+    const hasNonBaseLane = effectiveClips.some((clip) => (clip.layerIndex ?? 0) > 0);
+    const hasKeyedClip = effectiveClips.some((clip) => resolveLayerKey(clip) !== null);
+    const skippedFeatures: string[] = [];
+    if (hasNonBaseLane) skippedFeatures.push("PiP/overlay lanes");
+    if (hasActiveTransitions(transitions)) skippedFeatures.push("transitions");
+    if (textOverlays.length > 0) skippedFeatures.push("text overlays");
+    if (isFinishingActive(finishing)) skippedFeatures.push("finishing");
+    if (hasKeyedClip) skippedFeatures.push("chroma/luma keys");
+    if (captions.length > 0) skippedFeatures.push("captions");
+    if (skippedFeatures.length > 0) {
+      settingsStore.getState().setStatus(
+        `Remote concat ignores the timeline compositor and would drop ${skippedFeatures.join(", ")} — use Render instead.`,
+      );
       return;
     }
 
@@ -292,13 +330,13 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setIsRendering(true);
       setProgressIndeterminate(true);
       setProgressValue(null);
-      setProgressStage("GPU stitch");
+      setProgressStage("Remote concat");
 
       // Step 1: trim each clip in timeline order (FFmpeg lossless copy).
       const clipBlobs: Blob[] = [];
       for (let i = 0; i < timelineClips.length; i++) {
         setStatus(
-          `Preparing clip ${i + 1}/${timelineClips.length} for GPU stitch…`,
+          `Preparing clip ${i + 1}/${timelineClips.length} for remote concat…`,
         );
         clipBlobs.push(
           await extractTrimmedVideoClip(timelineClips[i], setStatus),
@@ -315,7 +353,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       const { blob } = await stitchClipsOnGpu(
         clipBlobs,
         resolution,
-        (event) => setStatus(event.message ?? `GPU stitch: ${event.stage}…`),
+        (event) => setStatus(event.message ?? `Remote concat: ${event.stage}…`),
       );
 
       const nleBlob = await remuxStitchedMp4ForNle(blob, setStatus);
@@ -323,22 +361,26 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setOutputUrl(url);
       setEncoderPath("gpu-stitch");
       setStatus(
-        `✅ GPU stitch complete at ${resolution}. Download your merged MP4.`,
+        `✅ Remote concat complete at ${resolution}. Download your merged MP4.`,
       );
-      setProgressStage("GPU stitch complete");
+      setProgressStage("Remote concat complete");
       setProgressValue(1);
       setProgressIndeterminate(false);
     } catch (error) {
       const { setStatus } = settingsStore.getState();
       const errMsg = normalizeError(error);
-      console.error("GPU stitch error:", error);
+      console.error("Remote concat error:", error);
       const recentLogs = getLastFfmpegLogs(30).join("\n");
       if (recentLogs) {
         console.error("Last captured FFmpeg logs:\n" + recentLogs);
       }
-      const message = errMsg.startsWith("GPU stitch failed:")
+      // huggingface.ts still raises its own errors as "GPU stitch failed: …"
+      // (the library predates the button's "Remote concat" rename) — accept
+      // either prefix so this doesn't double up into "Remote concat failed:
+      // GPU stitch failed: …".
+      const message = /^(remote concat|gpu stitch) failed:/i.test(errMsg)
         ? errMsg
-        : `GPU stitch failed: ${errMsg}`;
+        : `Remote concat failed: ${errMsg}`;
       setStatus(message);
       setRenderFailureMessage(message);
       setLastRenderError(error);
@@ -351,6 +393,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
   }, [
     effectiveClips,
     clips,
+    transitions,
+    textOverlays,
   ]);
 
   const handleMemoryWarningConfirm = useCallback(() => {
