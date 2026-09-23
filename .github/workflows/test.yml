@@ -57,7 +57,21 @@ jobs:
       - name: Build all WASM modules
         run: npm run build:wasm
 
+      - name: compile_commands.json exported for clangd
+        run: test -s native/build/compile_commands.json && test -e native/compile_commands.json
+
       - name: Fail on committed-artifact drift
         run: |
           git --no-pager diff --stat -- public/wasm
           git --no-pager diff --exit-code -- public/wasm
+
+  native-host:
+    name: Native DSP host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # media_engine resampler / mix built with the host compiler (no Emscripten),
+      # ASan + UBSan, run through ctest. Includes the THD+N goldens.
+      - name: Build and run ctest
+        run: bash scripts/test-native.sh

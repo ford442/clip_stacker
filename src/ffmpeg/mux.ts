@@ -344,7 +344,7 @@ export async function muxVideoWithAudio(
   // Volume/pan automation cannot be expressed as FFmpeg volume filters —
   // offline-mix in the browser and mux the premixed WAV.
   if (timelineHasAudioAutomation(clips)) {
-    onStatus("Rendering automated audio mix (OfflineAudioContext)...");
+    onStatus("Rendering automated audio mix...");
     emitProgress(onProgress, "Premixing automated audio", 0.88, true);
     const wavBytes = await renderTimelineAudioMixWav(
       clips,

@@ -1,0 +1,14 @@
+# clangd config for the C++ under native/ (media_engine, audio_analysis,
+# time_stretch, video_stabilize).
+#
+# compile_commands.json is generated, never committed (it holds absolute paths):
+#   npm run build:wasm    configures $WASM_BUILD_DIR (default native/build) with
+#                         CMAKE_EXPORT_COMPILE_COMMANDS=ON and links its database
+#                         to native/compile_commands.json
+#   npm run test:native   host build in native/build-host; links its database
+#                         only when no WASM one exists yet (no emsdk needed)
+#
+# The WASM database invokes em++. Let clangd ask it for Emscripten's sysroot and
+# wasm32 target, e.g. VS Code: "clangd.arguments": ["--query-driver=**/em++"]
+CompileFlags:
+  CompilationDatabase: .

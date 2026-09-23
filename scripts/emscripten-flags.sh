@@ -3,6 +3,10 @@
 #
 # Source of truth for compiler/linker flags is native/toolchain.cmake.
 # This file is the shell entry: configure, build, optional debug.
+#
+# WASM_BUILD_DIR (default native/build) holds the CMake tree. Configure exports
+# compile_commands.json there and links it to native/compile_commands.json
+# (gitignored) for clangd — see native/.clangd.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -47,7 +51,18 @@ configure_wasm_cmake() {
   mkdir -p "$BUILD_DIR" "$ROOT/public/wasm"
   cmake_bin -S "$NATIVE" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DCLIP_STACKER_WASM_DEBUG="$CMAKE_DEBUG"
+    -DCLIP_STACKER_WASM_DEBUG="$CMAKE_DEBUG" \
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+  link_compile_commands
+}
+
+# Point native/compile_commands.json at this build tree (symlink; copy where
+# symlinks are unavailable). Machine-absolute paths stay out of git.
+link_compile_commands() {
+  local db="$BUILD_DIR/compile_commands.json"
+  [ -f "$db" ] || return 0
+  ln -sf "$db" "$NATIVE/compile_commands.json" 2>/dev/null \
+    || cp "$db" "$NATIVE/compile_commands.json"
 }
 
 build_wasm_targets() {
