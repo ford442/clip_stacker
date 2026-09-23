@@ -61,7 +61,7 @@ def is_still_image(path):
     return ext in IMAGE_EXTENSIONS
 
 
-def nle_friendly_h264_video_args(gop=None):
+def nle_friendly_h264_video_args(gop=None, fps=None):
     """libx264 flags aligned with clip_stacker buildStillImageFfmpegArgs.
 
     Editors are stricter than players. Beyond codec/profile they want a
@@ -70,9 +70,20 @@ def nle_friendly_h264_video_args(gop=None):
     variable-rate, colour-shifted, oddly-timed asset even though it plays fine
     in VLC. Everything here is emitted for every clip so the whole concat set
     is byte-level uniform.
+
+    `fps` defaults to STITCH_FPS (the "2. Stitch Videos" tab always concats
+    at that rate). Callers that produce a standalone clip — RIFE interpolation
+    in particular — pass their own target. The literal string "native" skips
+    forcing a constant output rate altogether, so an interpolated clip keeps
+    every frame RIFE generated instead of being resampled/dropped to a fixed
+    rate.
     """
-    gop = gop or STITCH_FPS
-    return [
+    is_native = fps == 'native'
+    fps = STITCH_FPS if fps is None or is_native else fps
+    fps_val = float(fps)
+    fps_str = str(int(fps_val)) if fps_val.is_integer() else str(fps_val)
+    gop = gop or int(fps_val)
+    args = [
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
         '-tune', 'stillimage',
         '-profile:v', 'high', '-level', '4.1',
@@ -83,8 +94,11 @@ def nle_friendly_h264_video_args(gop=None):
         # edit lists then show the clip off by a frame or two, and stills gain
         # nothing from B-frames anyway.
         '-bf', '0',
+    ]
+    if not is_native:
         # Constant frame rate, declared in both the stream and the container.
-        '-vsync', 'cfr', '-r', str(STITCH_FPS),
+        args += ['-vsync', 'cfr', '-r', fps_str]
+    args += [
         # Untagged H.264 makes editors guess bt601 vs bt709; a still rendered
         # through the shader path then reads as colour-shifted next to clips
         # that are tagged. Say it explicitly.
@@ -94,6 +108,7 @@ def nle_friendly_h264_video_args(gop=None):
         # what makes a concat-copied file report VFR / wrong duration.
         '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
     ]
+    return args
 
 
 def nle_friendly_aac_audio_args():
@@ -621,14 +636,27 @@ def create_boomerang_loop(input_path, output_path, fps):
                 pass
 
 @spaces.GPU(required=True)
-def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
+def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
+                       output_fps=30):
+    """RIFE-interpolate a clip and encode it at `output_fps`.
+
+    `output_fps` defaults to 30 (STITCH_FPS) so older clients that call this
+    with only 3 positional args keep today's behaviour. RIFE always generates
+    `source_fps * multi_factor` frames regardless of this value — it only
+    controls how those frames are resampled/tagged on the way out: "60" for
+    a true 60fps CFR result (the point of a 4x multiplier on a 24fps
+    source), "30" to match the old behaviour, or "native" to keep every
+    generated frame without resampling.
+    """
     if input_video_path is None:
         return None
-    
+
     safe_input = os.path.join(WORKSPACE_DIR, f"input_{uuid.uuid4().hex}.mp4")
     shutil.copy(input_video_path, safe_input)
 
     factor = str(multi_factor).strip().replace("x", "")
+    fps_arg = str(output_fps).strip().lower()
+    fps_arg = 'native' if fps_arg == 'native' else float(fps_arg)
     session_id = uuid.uuid4().hex
     output_path   = os.path.join(WORKSPACE_DIR, f"output_rife_{session_id}.mp4")
     final_path    = os.path.join(WORKSPACE_DIR, f"final_interp_{session_id}.mp4")
@@ -639,14 +667,14 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
 
     if r.returncode != 0:
         raise Exception(f"RIFE failed: {r.stderr}")
-    
+
     src = output_path if os.path.exists(output_path) else no_audio
     has_audio = probe_audio_codec(safe_input) != ''
     if has_audio:
         subprocess.run([
             'ffmpeg', '-i', src, '-i', safe_input,
             '-map', '0:v:0', '-map', '1:a:0?',
-            *nle_friendly_h264_video_args(),
+            *nle_friendly_h264_video_args(fps=fps_arg),
             *nle_friendly_aac_audio_args(),
             '-movflags', '+faststart',
             '-shortest', '-y', final_path,
@@ -654,14 +682,29 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
     else:
         subprocess.run([
             'ffmpeg', '-i', src,
-            *nle_friendly_h264_video_args(),
+            *nle_friendly_h264_video_args(fps=fps_arg),
             '-an', '-movflags', '+faststart',
             '-y', final_path,
         ], check=True, capture_output=True, text=True)
-    
+
+    # RIFE's raw output and the safe upload copy are no longer needed once
+    # final_path exists — leaving them behind fills WORKSPACE_DIR over a
+    # multi-clip batch, since each clip runs in its own GPU lease with no
+    # shared cleanup step.
+    for stale in (safe_input, output_path, no_audio):
+        try:
+            if stale != final_path and os.path.exists(stale):
+                os.remove(stale)
+        except OSError:
+            pass
+
     if create_boomerang:
         fps = get_fps(final_path)
         if create_boomerang_loop(final_path, boomerang_path, fps):
+            try:
+                os.remove(final_path)
+            except OSError:
+                pass
             return boomerang_path
     return final_path
 
@@ -687,13 +730,18 @@ def name_like_source(result_path, source_path, used_names):
     shutil.move(result_path, dest)
     return dest
 
-def batch_interpolate_videos(video_files, multi_factor, progress=gr.Progress()):
+def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
+                              progress=gr.Progress()):
     """Run interpolate_video() independently on each uploaded clip.
 
     Returns one output path per input clip, in input order. Each clip is
     interpolated on its own — no boomerang, and outputs are never
     concatenated/stitched together, unlike the "2. Stitch Videos" tab.
     Each output keeps the filename of the clip it came from.
+
+    Each interpolate_video() call is its own @spaces.GPU lease — this
+    function itself is not GPU-decorated, so the lease is acquired and
+    released per clip rather than held for the whole batch.
     """
     if not video_files:
         return []
@@ -703,7 +751,8 @@ def batch_interpolate_videos(video_files, multi_factor, progress=gr.Progress()):
     used_names = set()
     for i, path in enumerate(paths):
         progress(i / count, desc=f"Interpolating clip {i + 1}/{count}")
-        result = interpolate_video(path, multi_factor, create_boomerang=False)
+        result = interpolate_video(path, multi_factor, create_boomerang=False,
+                                    output_fps=output_fps)
         results.append(name_like_source(result, path, used_names))
     progress(1.0, desc="Done")
     return results
@@ -1016,6 +1065,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                     video_input     = gr.Video(label="Input Video")
                     multi_select    = gr.Dropdown(["2","4","8"], value="2",
                                                   label="RIFE Multiplier")
+                    fps_select      = gr.Dropdown(["30", "60", "native"], value="60",
+                                                  label="Output FPS")
                     boomerang_check = gr.Checkbox(label="Create Boomerang Loop",
                                                   value=False)
                     interp_btn      = gr.Button("▶ Process Video", variant="primary")
@@ -1023,7 +1074,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                     video_output    = gr.Video(label="Output Video")
 
             interp_btn.click(interpolate_video,
-                             inputs=[video_input, multi_select, boomerang_check],
+                             inputs=[video_input, multi_select, boomerang_check,
+                                     fps_select],
                              outputs=video_output,
                              api_name="interpolate_video")
 
@@ -1129,11 +1181,13 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             )
             batch_multi = gr.Dropdown(["2", "4", "8"], value="4",
                                       label="RIFE Multiplier")
+            batch_fps = gr.Dropdown(["30", "60", "native"], value="60",
+                                    label="Output FPS")
             batch_btn = gr.Button("▶ Process All", variant="primary")
             batch_outputs = gr.File(label="Processed Videos", file_count="multiple")
 
             batch_btn.click(batch_interpolate_videos,
-                            inputs=[batch_inputs, batch_multi],
+                            inputs=[batch_inputs, batch_multi, batch_fps],
                             outputs=batch_outputs,
                             api_name="batch_interpolate")
 

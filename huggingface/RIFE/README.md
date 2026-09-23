@@ -38,10 +38,22 @@ breaks `src/utils/huggingface.ts`:
 
 | `api_name`          | Inputs                                                  | Output |
 |---------------------|---------------------------------------------------------|--------|
-| `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool)   | MP4    |
+| `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool), output fps (`"30"`/`"60"`/`"native"`, default `"30"` for old callers) | MP4    |
 | `stitch`            | videos or still images, resolution, audio, audio mode, overlay volume | MP4    |
 | `morph`             | 2-frame video, frame count, output fps                    | MP4    |
-| `batch_interpolate` | videos (multiple), multiplier (`"2"`/`"4"`/`"8"`)         | MP4 files (one per input, in order — no stitching, no boomerang) |
+| `batch_interpolate` | videos (multiple), multiplier (`"2"`/`"4"`/`"8"`), output fps (`"30"`/`"60"`/`"native"`, default `"30"`) | MP4 files (one per input, in order — no stitching, no boomerang) |
+
+`interpolate_video`/`batch_interpolate` always generate `source_fps × multiplier`
+frames via RIFE; `output_fps` only controls how those frames are resampled on
+the way out. `"60"` is the point of the default 4x multiplier on a 24fps
+source (24 × 4 = 96 generated frames → true 60fps CFR); `"30"` matches the
+Space's old behaviour (most generated frames dropped back to 30); `"native"`
+skips resampling and tags the clip at however many frames RIFE produced. The
+`src/utils/huggingface.ts` client requests `"60"`. `batch_interpolate` itself
+is **not** `@spaces.GPU`-decorated — it loops over `interpolate_video()`,
+which is, so each clip acquires and releases its own GPU lease instead of one
+lease being held for the whole batch. `stitch`'s concat path stays fixed at
+30fps (`STITCH_FPS`) regardless.
 
 ## Deploying
 

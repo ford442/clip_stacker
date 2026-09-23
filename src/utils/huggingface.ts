@@ -35,6 +35,13 @@ export interface MorphTransitionResult {
 }
 
 const MORPH_OUTPUT_FPS = 30;
+/**
+ * Output frame rate requested from the Space's interpolate_video endpoint.
+ * 24fps sources at the 4x multiplier generate 96 interpolated frames; 60
+ * keeps a true 60fps CFR result instead of the endpoint's own default (30,
+ * kept for older callers), which would drop most of those frames.
+ */
+const RIFE_OUTPUT_FPS = "60";
 
 /**
  * Send a trimmed video Blob to the HuggingFace RIFE space and return
@@ -157,11 +164,13 @@ async function interpolateUploadedClip(
     });
 
     // The space's interpolate_video endpoint accepts:
-    //   [video (FileData), multiplier ("2"/"4"/"8"), boomerang (bool)]
+    //   [video (FileData), multiplier ("2"/"4"/"8"), boomerang (bool),
+    //    output fps ("30"/"60"/"native")]
     const data = await callSpaceEndpoint("interpolate_video", [
       { path, meta: { _type: "gradio.FileData" } },
       String(multiplier),
       isBoomerang,
+      RIFE_OUTPUT_FPS,
     ]);
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
