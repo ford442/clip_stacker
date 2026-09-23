@@ -138,6 +138,39 @@
   padding: 2px 8px;
 }
 
+/* ── Edit tools (TimelineTools.tsx) ─────────────────────── */
+.timeline-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.timeline-tools-group {
+  display: flex;
+  gap: 2px;
+}
+
+.timeline-tool-btn {
+  font-size: 0.68rem;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.timeline-tool-btn:hover {
+  color: var(--text, #fff);
+}
+
+.timeline-tool-btn.is-active {
+  background: #c9a227;
+  border-color: #c9a227;
+  color: #12140c;
+  font-weight: 700;
+}
+
 /* ── Titles lane ─────────────────────────────────────────── */
 .timeline-track--titles {
   position: relative;

@@ -311,7 +311,12 @@ export function appendClipToTracks(
   return next;
 }
 
-/** Insert a clip after another clip on the same track (overwrite edit mode). */
+/**
+ * Splice a clip into the lane right after another clip's out-point.
+ *
+ * This is a plain splice — it neither covers overlapping items nor shifts later
+ * ones. The NLE overwrite / insert edits live in `editModes.ts`.
+ */
 export function insertClipOnTrackAfter(
   tracks: Track[],
   afterClipId: string,

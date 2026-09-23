@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import type { StateUpdater } from './editorStore';
+import type { DropEditMode, TimelineEditTool } from '../utils/editModes';
 
 function resolveUpdater<T>(action: StateUpdater<T>, prev: T): T {
   return typeof action === 'function' ? (action as (prev: T) => T)(prev) : action;
@@ -24,17 +25,33 @@ export interface UiState {
   selectedCaptionId: string | null;
   /** Whether the keyboard shortcuts modal is open. */
   showKeyboardShortcuts: boolean;
+  /** Sticky timeline tool — what Alt+←/→ nudges do to the selected clip. */
+  timelineTool: TimelineEditTool;
+  /** Whether a drop onto a lane covers (overwrite) or pushes (insert) its items. */
+  dropEditMode: DropEditMode;
+  /** Timeline magnet: drops snap to the playhead, clip edges, markers, captions and beats. */
+  snapEnabled: boolean;
+  /** Ripple every unlocked lane together instead of only the edited lane. */
+  linkedRipple: boolean;
 
   /** Accepts a value or an updater, mirroring React's `SetStateAction`. */
   setSelectedTextOverlayId: (id: StateUpdater<string | null>) => void;
   setSelectedCaptionId: (id: StateUpdater<string | null>) => void;
   setShowKeyboardShortcuts: (open: StateUpdater<boolean>) => void;
+  setTimelineTool: (tool: TimelineEditTool) => void;
+  setDropEditMode: (mode: DropEditMode) => void;
+  setSnapEnabled: (enabled: StateUpdater<boolean>) => void;
+  setLinkedRipple: (linked: StateUpdater<boolean>) => void;
 }
 
 export const uiStore = createStore<UiState>()((set) => ({
   selectedTextOverlayId: null,
   selectedCaptionId: null,
   showKeyboardShortcuts: false,
+  timelineTool: 'select',
+  dropEditMode: 'overwrite',
+  snapEnabled: true,
+  linkedRipple: false,
 
   setSelectedTextOverlayId: (id) =>
     set((s) => ({ selectedTextOverlayId: resolveUpdater(id, s.selectedTextOverlayId) })),
@@ -42,6 +59,12 @@ export const uiStore = createStore<UiState>()((set) => ({
     set((s) => ({ selectedCaptionId: resolveUpdater(id, s.selectedCaptionId) })),
   setShowKeyboardShortcuts: (open) =>
     set((s) => ({ showKeyboardShortcuts: resolveUpdater(open, s.showKeyboardShortcuts) })),
+  setTimelineTool: (timelineTool) => set({ timelineTool }),
+  setDropEditMode: (dropEditMode) => set({ dropEditMode }),
+  setSnapEnabled: (enabled) =>
+    set((s) => ({ snapEnabled: resolveUpdater(enabled, s.snapEnabled) })),
+  setLinkedRipple: (linked) =>
+    set((s) => ({ linkedRipple: resolveUpdater(linked, s.linkedRipple) })),
 }));
 
 /**
@@ -50,7 +73,13 @@ export const uiStore = createStore<UiState>()((set) => ({
  */
 export const uiActions: Pick<
   UiState,
-  'setSelectedTextOverlayId' | 'setSelectedCaptionId' | 'setShowKeyboardShortcuts'
+  | 'setSelectedTextOverlayId'
+  | 'setSelectedCaptionId'
+  | 'setShowKeyboardShortcuts'
+  | 'setTimelineTool'
+  | 'setDropEditMode'
+  | 'setSnapEnabled'
+  | 'setLinkedRipple'
 > = uiStore.getState();
 
 export const useSelectedTextOverlayId = () =>
@@ -66,5 +95,14 @@ export function __resetUiStoreForTests(): void {
     selectedTextOverlayId: null,
     selectedCaptionId: null,
     showKeyboardShortcuts: false,
+    timelineTool: 'select',
+    dropEditMode: 'overwrite',
+    snapEnabled: true,
+    linkedRipple: false,
   });
 }
+
+export const useTimelineTool = () => useStore(uiStore, (s) => s.timelineTool);
+export const useDropEditMode = () => useStore(uiStore, (s) => s.dropEditMode);
+export const useSnapEnabled = () => useStore(uiStore, (s) => s.snapEnabled);
+export const useLinkedRipple = () => useStore(uiStore, (s) => s.linkedRipple);

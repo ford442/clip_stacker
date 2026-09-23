@@ -34,6 +34,8 @@ import {
   MAIN_VIDEO_TRACK_ID,
 } from '../utils/trackModel';
 import { TrackLaneHeader } from './TrackLaneHeader';
+import { TimelineTools } from './TimelineTools';
+import { snapThresholdForZoom } from '../utils/timelineSnap';
 import type { VirtualClipLayout } from './timelineClipTypes';
 import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
@@ -48,7 +50,13 @@ interface Props {
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
-  onMoveToTrack: (clipId: string, targetTrackId: string, startTime: number) => void;
+  /** Drop onto a lane; `snapThresholdSec` is the magnet radius at the current zoom. */
+  onMoveToTrack: (
+    clipId: string,
+    targetTrackId: string,
+    startTime: number,
+    snapThresholdSec?: number,
+  ) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
   onDelete: (id: string) => void;
   /** Retime one edge of a caption cue (drag on the CC lane). */
@@ -417,7 +425,12 @@ function TimelineImpl({
 
     if (drop && dragClipId && drop.trackId !== MAIN_VIDEO_TRACK_ID) {
       if (canDropOn(drop.trackId)) {
-        onMoveToTrack(dragClipId, drop.trackId, drop.startTime);
+        onMoveToTrack(
+          dragClipId,
+          drop.trackId,
+          drop.startTime,
+          snapThresholdForZoom(pixelsPerSecond),
+        );
       }
     } else if (
       !mainTrackLocked
@@ -589,6 +602,7 @@ function TimelineImpl({
             →
           </button>
         </div>
+        <TimelineTools />
         <div className="timeline-add-track-controls" role="group" aria-label="Add track">
           <button
             type="button"
