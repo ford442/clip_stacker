@@ -665,21 +665,46 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
             return boomerang_path
     return final_path
 
+def name_like_source(result_path, source_path, used_names):
+    """Move `result_path` to WORKSPACE_DIR under the source clip's own name.
+
+    Gradio's File output shows the returned path's basename as the download
+    name, and interpolate_video() always produces a randomly-named file, so
+    batch outputs would otherwise download as e.g. final_interp_<uuid>.mp4
+    instead of the name the clip was uploaded with. `used_names` de-dupes
+    across a single batch call in case two uploads share a stem.
+    """
+    if not result_path:
+        return result_path
+    stem = os.path.splitext(os.path.basename(source_path))[0]
+    name = f"{stem}.mp4"
+    n = 2
+    while name in used_names:
+        name = f"{stem}_{n}.mp4"
+        n += 1
+    used_names.add(name)
+    dest = os.path.join(WORKSPACE_DIR, name)
+    shutil.move(result_path, dest)
+    return dest
+
 def batch_interpolate_videos(video_files, multi_factor, progress=gr.Progress()):
     """Run interpolate_video() independently on each uploaded clip.
 
     Returns one output path per input clip, in input order. Each clip is
     interpolated on its own — no boomerang, and outputs are never
     concatenated/stitched together, unlike the "2. Stitch Videos" tab.
+    Each output keeps the filename of the clip it came from.
     """
     if not video_files:
         return []
     paths = [f.name if hasattr(f, "name") else str(f) for f in video_files]
     count = len(paths)
     results = []
+    used_names = set()
     for i, path in enumerate(paths):
         progress(i / count, desc=f"Interpolating clip {i + 1}/{count}")
-        results.append(interpolate_video(path, multi_factor, create_boomerang=False))
+        result = interpolate_video(path, multi_factor, create_boomerang=False)
+        results.append(name_like_source(result, path, used_names))
     progress(1.0, desc="Done")
     return results
 
@@ -1102,7 +1127,7 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                 file_count="multiple",
                 file_types=["video"],
             )
-            batch_multi = gr.Dropdown(["2", "4", "8"], value="2",
+            batch_multi = gr.Dropdown(["2", "4", "8"], value="4",
                                       label="RIFE Multiplier")
             batch_btn = gr.Button("▶ Process All", variant="primary")
             batch_outputs = gr.File(label="Processed Videos", file_count="multiple")

@@ -400,3 +400,35 @@ def test_capped_morph_still_yields_the_requested_frame_count(app, tmp_path):
          "default=noprint_wrappers=1:nokey=1", out],
         check=True, capture_output=True, text=True).stdout.strip()
     assert int(count) == frame_count
+
+
+def test_name_like_source_uses_the_upload_stem(app, tmp_path):
+    result = tmp_path / "output_rife_abc123.mp4"
+    result.write_text("stub")
+    source = tmp_path / "uploads" / "vacation clip.mov"
+    source.parent.mkdir()
+    source.write_text("stub")
+
+    dest = app.name_like_source(str(result), str(source), set())
+
+    assert os.path.basename(dest) == "vacation clip.mp4"
+    assert os.path.exists(dest)
+    assert not result.exists()
+
+
+def test_name_like_source_dedupes_within_a_batch(app, tmp_path):
+    used = set()
+    first_result = tmp_path / "output_rife_1.mp4"
+    second_result = tmp_path / "output_rife_2.mp4"
+    first_result.write_text("stub")
+    second_result.write_text("stub")
+
+    first = app.name_like_source(str(first_result), "/uploads/a/clip.mp4", used)
+    second = app.name_like_source(str(second_result), "/uploads/b/clip.mp4", used)
+
+    assert os.path.basename(first) == "clip.mp4"
+    assert os.path.basename(second) == "clip_2.mp4"
+
+
+def test_name_like_source_passes_through_a_missing_result(app):
+    assert app.name_like_source(None, "/uploads/clip.mp4", set()) is None
