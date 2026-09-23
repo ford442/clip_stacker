@@ -1,6 +1,6 @@
 ---
 title: RIFE
-emoji: 🐨
+emoji: 🤨
 colorFrom: purple
 colorTo: red
 sdk: gradio
@@ -33,15 +33,29 @@ need to change the Space, change it here.
 
 ## Public endpoints
 
-These `api_name` routes are the client's contract. Changing a signature
-breaks `src/utils/huggingface.ts`:
+These `api_name` routes are the client's contract. Changing existing
+positional arguments breaks `src/utils/huggingface.ts`. New trailing
+optionals (output fps, folder path) are backward compatible.
 
-| `api_name`          | Inputs                                                  | Output |
-|---------------------|---------------------------------------------------------|--------|
-| `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool)   | MP4    |
-| `stitch`            | videos or still images, resolution, audio, audio mode, overlay volume | MP4    |
-| `morph`             | 2-frame video, frame count, output fps                    | MP4    |
-| `batch_interpolate` | videos (multiple), multiplier (`"2"`/`"4"`/`"8"`)         | MP4 files (one per input, in order — no stitching, no boomerang) |
+| `api_name` | Inputs | Output |
+|---|---|---|
+| `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool), output fps (`"30"`/`"60"`/`"native"`, default `"30"`) | MP4 |
+| `stitch` | videos or still images, resolution, audio, audio mode, overlay volume | MP4 |
+| `morph` | 2-frame video, frame count, output fps | MP4 |
+| `batch_interpolate` | videos (optional), multiplier, output fps (`"30"`/`"60"`/`"native"`), folder path (optional) | MP4 files (one per input, in order — no stitching, no boomerang) |
+| `batch_interpolate_folder` | folder path on the Space, multiplier, output fps | MP4 files |
+
+`output_fps` values:
+
+- **30** — previous NLE remux. 4× of 24 fps still lands at 30 (extra frames dropped).
+- **60** — true 60 fps CFR. RIFE still emits `input × multiplier` frames (24×4 = 96), then ffmpeg resamples to 60 with duration unchanged.
+- **native** — remux at `input × multiplier` (24×4 = 96).
+
+## ZeroGPU / folder batch
+
+`interpolate_video` is the only interpolation entry that holds `@spaces.GPU` (180s lease). `batch_interpolate` and `batch_interpolate_folder` stay on CPU and call that function once per file so ZeroGPU is released between clips.
+
+For a large folder of mp4s, do **not** upload the whole directory through the Gradio File widget — that still ships every byte before work starts. Copy or mount the folder onto the Space (`workspace_temp/`, `/data/`, or `$RIFE_BATCH_ROOT`) and pass the path. A local script can also loop `interpolate_video` itself, one clip per request.
 
 ## Deploying
 
