@@ -91,7 +91,8 @@ export function clipHasAutomation(
 }
 
 /**
- * Volume / pan / playbackRate lanes that need OfflineAudioContext premix
+ * Volume / pan / playbackRate lanes that need a browser premix (media-engine
+ * WASM, or OfflineAudioContext without it)
  * (arbitrary curves aren't expressible as static FFmpeg filters; rate ramps
  * also need pitch-preserving WSOLA rather than chained atempo).
  */

@@ -51,6 +51,11 @@ export class ClipAudioCache {
     }
   }
 
+  /** Drop one clip's decoded buffer (streaming export frees PCM as it goes). */
+  delete(clipId: string): void {
+    this.entries.delete(clipId);
+  }
+
   has(clipId: string, objectUrl: string): boolean {
     const entry = this.entries.get(clipId);
     return Boolean(entry && entry.objectUrl === objectUrl);

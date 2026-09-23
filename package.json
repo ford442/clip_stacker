@@ -17,6 +17,7 @@
     "build:whisper": "bash scripts/build-whisper.sh",
     "build:wasm": "bash scripts/build-wasm.sh",
     "build:wasm:debug": "WASM_DEBUG=1 bash scripts/build-wasm.sh",
+    "test:native": "bash scripts/test-native.sh",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",

@@ -16,6 +16,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
 - `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, time-stretch, video stabilize, media-engine) via the shared CMake toolchain. Requires Emscripten (`emcmake` / `emcc`).
 - `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF).
+- `npm run test:native`: build the native DSP (media engine) with the host compiler and run ctest (ASan + UBSan). No Emscripten needed.
 - `npm run build:audio-analysis` / `build:time-stretch` / `build:video-stabilize` / `build:media-engine`: rebuild one module.
 
 ## Coding Style & Naming Conventions
@@ -270,21 +271,26 @@ Four Emscripten modules share one flag file. Do not copy-paste `emcc` invocation
 - `native/CMakeLists.txt` — builds all four targets into `public/wasm/`
 - `scripts/emscripten-flags.sh` — cmake driver (`WASM_DEBUG=1` for the debug target)
 - `scripts/wasm-size-check.sh` — **fails** if gzip(`.wasm`) exceeds 200 KB
-- CI `wasm` job runs `npm run build:wasm` and `git diff --exit-code -- public/wasm` (including `video_stabilize` and `media_engine`)
+- `native/host.cmake` + `-DCLIP_STACKER_HOST_TESTS=ON` — host (non-Emscripten) test build; `scripts/test-native.sh` drives it
+- Configure exports `compile_commands.json` (linked to `native/compile_commands.json`, gitignored); `native/.clangd` points clangd at it — run clangd with `--query-driver=**/em++`
+- CI `wasm` job runs `npm run build:wasm` and `git diff --exit-code -- public/wasm` (including `video_stabilize` and `media_engine`); the `native-host` job runs `scripts/test-native.sh`
 
 Keep WebGPU as the pixel owner. Do not fold video frames into this engine.
 
 ## Media engine (timeline PCM mix)
 
-Phase-1 C++ mix/resample for export premix. Live preview still uses the Web Audio graph; FFmpeg remains AAC/exotic-demux fallback.
+C++ owns the export premix DSP: polyphase resample, volume/pan automation curves, fades, streaming mix. Live preview still uses the Web Audio graph; FFmpeg remains AAC/exotic-demux fallback.
 
 ### Layout
 
-- `native/media_engine/` — `audio_mix.cpp` (schedule → stereo f32), `resampler.cpp` (linear; polyphase later), `bindings.cpp`
+- `native/media_engine/` — `audio_mix.cpp` (`mix_timeline_audio_range`: schedule chunk → stereo f32, curves, pan law), `resampler.cpp` (64-tap polyphase sinc, SIMD128; linear kept behind `MIX_FLAG_LINEAR_RESAMPLE`), `bindings.cpp`
+- `native/media_engine/tests/` — host ctest suite (THD+N goldens, chunk bit-equality, curve/pan parity)
 - `public/wasm/media_engine.{js,wasm}` — committed artifacts (gzip budget 200 KB)
-- `src/wasm/mediaEngine.ts` — `mixTimelineAudio(schedule, pcmByClipId)`; lazy load, graceful disable
-- `src/utils/webcodecs-audio.ts` — optional path in `renderTimelineAudioMix` / `encodeTimelineAudio`; OfflineAudioContext fallback
-- Kill switch: `?no_media_engine`. Volume/pan **automation curves** always stay on OfflineAudioContext.
+- `src/wasm/mediaEngine.ts` — `openTimelineMixStream` (chunked; uploads only the source frames each chunk reads, acquires/releases clip PCM lazily), `mixTimelineAudio` (whole buffer); lazy load, graceful disable
+- `src/utils/webcodecs-audio.ts` — `encodeScheduleAudioStreaming` feeds chunks straight to `AudioEncoder` (no length cap); `renderTimelineAudioMix` prefers WASM; OfflineAudioContext fallback (≤ `MAX_OFFLINE_AUDIO_SECONDS`)
+- Kill switch: `?no_media_engine` (curves and everything else go back to OfflineAudioContext). Debug: `?media_engine_resampler=linear`.
+- Keyframe semantics must match `sampleKeyframes` / `applyGainEnvelope` / `StereoPannerNode`; change both sides together. Packed strides in `audio_mix.h` are mirrored in `mediaEngine.ts`.
+- No pthreads until the mix is multi-threaded by design; COOP/COEP is already paid for FFmpeg.
 
 Do not add more DSP inside `canvas-renderer` or FFmpeg `filter_complex` for mix/fade/resample this engine should own.
 
@@ -442,7 +448,7 @@ The preview worker decodes its own frames. Main never seeks a hidden `<video>` o
 - `src/components/SpeedAutomationLane.tsx` — Cubase-style lane under the selected timeline clip
 - Inspector **Speed (time remap)** `KeyframeMiniEditor` — same lane as volume/pan
 
-When `playbackRate` automation is present, FFmpeg export uses the OfflineAudioContext premix path (same as volume/pan). Constant `clip.playbackRate` without a curve still uses `setpts` + chained `atempo` on the FFmpeg video path; export audio premix may use media-engine WASM (linear resample) when the module loads.
+When `playbackRate` automation is present, FFmpeg export uses the premix path (same as volume/pan: media-engine WASM when loaded, else OfflineAudioContext). Constant `clip.playbackRate` without a curve still uses `setpts` + chained `atempo` on the FFmpeg video path; export audio premix may use media-engine WASM (polyphase resample) when the module loads.
 
 ## Intercut generator (local FFmpeg)
 

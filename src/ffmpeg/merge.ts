@@ -379,7 +379,8 @@ export async function mergeClips(
   }
 
   // When volume/pan automation is present, replace FFmpeg-filter audio with a
-  // browser OfflineAudioContext premix (curves aren't expressible as filters).
+  // browser premix — media-engine WASM, else OfflineAudioContext (curves aren't
+  // expressible as filters).
   if (timelineHasAudioAutomation(workingClips)) {
     onStatus("Rendering automated audio mix for FFmpeg remux...");
     emitProgress(onProgress, "Premixing automated audio", 0.97, true);

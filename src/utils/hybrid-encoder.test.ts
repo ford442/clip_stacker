@@ -13,6 +13,7 @@ vi.mock('./webcodecs', () => ({
 vi.mock('./webcodecs-audio', () => ({
   isAudioEncoderAvailable: vi.fn(),
   assessWebCodecsAudioMix: vi.fn(),
+  prepareStreamingAudioMix: vi.fn(),
 }));
 
 vi.mock('./canvas-encoder', () => ({
@@ -26,7 +27,11 @@ vi.mock('../ffmpeg/ffmpegService', () => ({
 }));
 
 import { isWebCodecsAvailable, encodeVideoWithWebCodecs } from './webcodecs';
-import { isAudioEncoderAvailable, assessWebCodecsAudioMix } from './webcodecs-audio';
+import {
+  isAudioEncoderAvailable,
+  assessWebCodecsAudioMix,
+  prepareStreamingAudioMix,
+} from './webcodecs-audio';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { DEFAULT_FINISHING } from './finishing';
@@ -57,6 +62,7 @@ describe('utils/hybrid-encoder', () => {
     vi.clearAllMocks();
     (isAudioEncoderAvailable as any).mockResolvedValue(false);
     (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
+    (prepareStreamingAudioMix as any).mockResolvedValue(false);
     // Mock MediaRecorder for canvas tests
     (global as any).MediaRecorder = vi.fn();
   });
@@ -226,6 +232,43 @@ describe('utils/hybrid-encoder', () => {
       );
       expect(muxVideoWithAudio).not.toHaveBeenCalled();
       expect(result.blob).toBe(avBlob);
+    });
+
+    it('lifts the offline mix length cap when the streaming media engine is ready', async () => {
+      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      (isAudioEncoderAvailable as any).mockResolvedValue(true);
+      (prepareStreamingAudioMix as any).mockResolvedValue(true);
+      (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
+      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['av mp4']));
+      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+
+      const result = await hybridMergeClips(
+        testClips,
+        [],
+        testSettings,
+        mockStatusCallback,
+        mockProgressCallback,
+      );
+
+      expect(result.path).toBe('webcodecs-av');
+      expect(assessWebCodecsAudioMix).toHaveBeenCalledWith(testClips, [], [], {
+        streamingMix: true,
+      });
+    });
+
+    it('skips loading the media engine when AudioEncoder is unavailable', async () => {
+      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      (isAudioEncoderAvailable as any).mockResolvedValue(false);
+      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['video']));
+      (muxVideoWithAudio as any).mockResolvedValue(new Blob(['muxed']));
+      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+
+      await hybridMergeClips(testClips, [], testSettings, mockStatusCallback, mockProgressCallback);
+
+      expect(prepareStreamingAudioMix).not.toHaveBeenCalled();
+      expect(assessWebCodecsAudioMix).toHaveBeenCalledWith(testClips, [], [], {
+        streamingMix: false,
+      });
     });
 
     it('burns captions into the GPU composite and reports it', async () => {

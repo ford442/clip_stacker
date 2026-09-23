@@ -21,6 +21,7 @@ import { encodeVideoWithWebCodecs, isWebCodecsAvailable } from './webcodecs';
 import {
   assessWebCodecsAudioMix,
   isAudioEncoderAvailable,
+  prepareStreamingAudioMix,
 } from './webcodecs-audio';
 import { canUseGpuVideoEncoder } from './renderEligibility';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
@@ -116,7 +117,10 @@ export async function hybridMergeClips(
     const gpuAvailable = await isWebCodecsAvailable(width, height);
     if (gpuAvailable) {
       const audioEncoderOk = await isAudioEncoderAvailable();
-      const audioMix = assessWebCodecsAudioMix(clips, clipGroups, transitions);
+      // Media-engine streaming mix has no length cap; without it (load failure
+      // or ?no_media_engine) long timelines fall back to FFmpeg audio mux.
+      const streamingMix = audioEncoderOk && (await prepareStreamingAudioMix());
+      const audioMix = assessWebCodecsAudioMix(clips, clipGroups, transitions, { streamingMix });
       const useWebCodecsAudio = audioEncoderOk && audioMix.supported;
 
       try {

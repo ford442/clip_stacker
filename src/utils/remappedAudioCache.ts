@@ -57,6 +57,10 @@ export class RemappedAudioCache {
     this.entries.clear();
   }
 
+  delete(clipId: string): void {
+    this.entries.delete(clipId);
+  }
+
   prune(keepIds: ReadonlySet<string>): void {
     for (const id of this.entries.keys()) {
       if (!keepIds.has(id)) this.entries.delete(id);
