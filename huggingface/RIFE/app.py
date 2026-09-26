@@ -725,7 +725,36 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
     return _interpolate_single(input_video_path, multi_factor, create_boomerang,
                                 output_fps)
 
-@spaces.GPU(required=True)
+# ZeroGPU's documented default budget for an undecorated-duration @spaces.GPU
+# call is 60 seconds — calibrated for one clip. Running BATCH_GPU_CHUNK_SIZE
+# clips back-to-back inside one lease can comfortably exceed that, at which
+# point the platform reclaims the GPU mid-chunk and any further CUDA work
+# raises an "expired GPU token" error. `duration=` tells ZeroGPU how long to
+# actually reserve the lease for, so this needs to scale with the chunk
+# instead of relying on the single-clip default. Capped well under the
+# platform's own duration ceiling (undocumented exactly, but requesting too
+# much fails loudly with "requested GPU duration is larger than the maximum
+# allowed" rather than silently, so this errs generous).
+BATCH_CHUNK_DURATION_CAP_SECONDS = 290
+
+def _batch_chunk_duration(chunk_paths, multi_factor, output_fps):
+    """`duration=` estimator for `_interpolate_batch_chunk` (spaces.GPU calls
+    this with the same arguments as the decorated function itself)."""
+    try:
+        multi_val = max(1, int(str(multi_factor).strip().replace("x", "") or "2"))
+    except ValueError:
+        multi_val = 2
+    total = 0.0
+    for path in chunk_paths:
+        clip_duration = get_duration(path) or 10.0
+        # Deliberately overshoots real per-clip GPU time (model load + RIFE +
+        # re-encode) rather than matching it exactly — under-reserving is
+        # exactly what reproduces the "expired GPU token" failure this exists
+        # to avoid, whereas over-reserving only costs queue priority.
+        total += clip_duration * multi_val * 2 + 30
+    return min(total, BATCH_CHUNK_DURATION_CAP_SECONDS)
+
+@spaces.GPU(required=True, duration=_batch_chunk_duration)
 def _interpolate_batch_chunk(chunk_paths, multi_factor, output_fps):
     """Interpolate up to BATCH_GPU_CHUNK_SIZE clips inside one GPU lease.
 
