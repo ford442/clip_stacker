@@ -432,3 +432,64 @@ def test_name_like_source_dedupes_within_a_batch(app, tmp_path):
 
 def test_name_like_source_passes_through_a_missing_result(app):
     assert app.name_like_source(None, "/uploads/clip.mp4", set()) is None
+
+
+def test_name_like_source_preserves_parentheses(app, tmp_path):
+    # HuggingFace's own /upload route strips parentheses from the on-disk
+    # upload path before app.py runs, so this must be driven off orig_name
+    # (the filename exactly as the browser sent it), not that sanitized path.
+    result = tmp_path / "output_rife_xyz.mp4"
+    result.write_text("stub")
+
+    dest = app.name_like_source(str(result), "My Clip (1).mov", set())
+
+    assert os.path.basename(dest) == "My Clip (1).mp4"
+
+
+def test_resolve_batch_upload_entry_reads_orig_name_from_filedata(app):
+    # This is the shape batch_interpolate_videos receives per upload now that
+    # its button is wired with preprocess=False: `path` is the sanitized
+    # on-disk file, `orig_name` is the untouched browser-side filename.
+    entry = {
+        "path": "/gradio/cache/abcd/My Clip 1.mp4",
+        "orig_name": "My Clip (1).mp4",
+        "url": None,
+        "size": 123,
+        "mime_type": "video/mp4",
+        "is_stream": False,
+        "meta": {"_type": "gradio.FileData"},
+    }
+
+    path, orig_name = app._resolve_batch_upload_entry(entry)
+
+    assert path == "/gradio/cache/abcd/My Clip 1.mp4"
+    assert orig_name == "My Clip (1).mp4"
+
+
+def test_resolve_batch_upload_entry_falls_back_to_basename(app):
+    class Named:
+        name = "/tmp/whatever/clip.mp4"
+
+    path, orig_name = app._resolve_batch_upload_entry(Named())
+
+    assert path == "/tmp/whatever/clip.mp4"
+    assert orig_name == "clip.mp4"
+
+
+def test_batch_interpolate_videos_chunks_by_gpu_limit(app, monkeypatch):
+    calls = []
+
+    def fake_chunk(chunk_paths, multi_factor, output_fps):
+        calls.append(list(chunk_paths))
+        return [f"{p}.out.mp4" for p in chunk_paths]
+
+    monkeypatch.setattr(app, "_interpolate_batch_chunk", fake_chunk)
+    monkeypatch.setattr(app, "name_like_source", lambda result, orig_name, used: result)
+
+    files = [
+        {"path": f"/tmp/in{i}.mp4", "orig_name": f"clip{i}.mp4"} for i in range(7)
+    ]
+    results = app.batch_interpolate_videos(files, "4", output_fps=30)
+
+    assert [len(c) for c in calls] == [3, 3, 1]
+    assert len(results) == 7

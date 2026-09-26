@@ -49,11 +49,29 @@ the way out. `"60"` is the point of the default 4x multiplier on a 24fps
 source (24 × 4 = 96 generated frames → true 60fps CFR); `"30"` matches the
 Space's old behaviour (most generated frames dropped back to 30); `"native"`
 skips resampling and tags the clip at however many frames RIFE produced. The
-`src/utils/huggingface.ts` client requests `"60"`. `batch_interpolate` itself
-is **not** `@spaces.GPU`-decorated — it loops over `interpolate_video()`,
-which is, so each clip acquires and releases its own GPU lease instead of one
-lease being held for the whole batch. `stitch`'s concat path stays fixed at
-30fps (`STITCH_FPS`) regardless.
+`src/utils/huggingface.ts` client requests `"60"`. `stitch`'s concat path
+stays fixed at 30fps (`STITCH_FPS`) regardless.
+
+`batch_interpolate` (the "3. Batch RIFE" tab's "▶ Process All" button) is
+**not** `@spaces.GPU`-decorated itself. It chunks the upload into groups of
+`BATCH_GPU_CHUNK_SIZE` (3) clips and calls `_interpolate_batch_chunk()` — which
+is GPU-decorated — once per chunk, so one lease covers up to 3 clips and the
+loop simply re-acquires a fresh lease for the next chunk rather than either
+holding one lease for the whole batch or acquiring one per clip. This is
+tuned to HuggingFace's ZeroGPU quota, which is sensitive to how many GPU
+functions run, not just how long each one takes. The single-clip
+`interpolate_video` endpoint (used by `src/utils/huggingface.ts` and the "1.
+Smooth Video + Boomerang" tab) is unaffected — it still acquires one lease
+per call.
+
+The batch button is wired with `preprocess=False` so its callback receives
+each upload's raw FileData (including `orig_name`, the filename exactly as
+the browser sent it) instead of the bare, already-sanitized on-disk path
+Gradio's default File preprocessing would hand it — HuggingFace's own
+`/upload` route strips characters like parentheses from that on-disk
+filename before app.py ever runs. Batch outputs are named from `orig_name`
+(see `_resolve_batch_upload_entry` / `name_like_source`) so parentheses and
+other stripped characters survive in the downloaded result.
 
 ## Deploying
 
