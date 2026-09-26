@@ -493,3 +493,29 @@ def test_batch_interpolate_videos_chunks_by_gpu_limit(app, monkeypatch):
 
     assert [len(c) for c in calls] == [3, 3, 1]
     assert len(results) == 7
+
+
+def test_batch_chunk_duration_scales_with_clips_and_multiplier(app, monkeypatch):
+    # @spaces.GPU's default 60s budget is calibrated for one clip; a chunk
+    # running several RIFE passes back-to-back needs a bigger reservation or
+    # ZeroGPU reclaims the GPU mid-chunk with an "expired GPU token" error.
+    monkeypatch.setattr(app, "get_duration", lambda path: 10.0)
+
+    one_clip = app._batch_chunk_duration(["/tmp/a.mp4"], "2", 30)
+    three_clips = app._batch_chunk_duration(["/tmp/a.mp4", "/tmp/b.mp4", "/tmp/c.mp4"], "2", 30)
+    higher_multiplier = app._batch_chunk_duration(["/tmp/a.mp4"], "8", 30)
+
+    assert three_clips > one_clip
+    assert higher_multiplier > one_clip
+    # Comfortably above the 60s single-clip default this is replacing.
+    assert three_clips > 60
+
+
+def test_batch_chunk_duration_is_capped(app, monkeypatch):
+    monkeypatch.setattr(app, "get_duration", lambda path: 600.0)
+
+    duration = app._batch_chunk_duration(
+        ["/tmp/a.mp4", "/tmp/b.mp4", "/tmp/c.mp4"], "8", 30,
+    )
+
+    assert duration == app.BATCH_CHUNK_DURATION_CAP_SECONDS
