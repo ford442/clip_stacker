@@ -45,6 +45,12 @@ IMAGE_EXTENSIONS = frozenset({
 })
 # Recursion depth cap for morph interpolation; see morph_transition.
 MAX_MORPH_MULTI = 8
+# Max clips interpolated inside a single @spaces.GPU lease for the "3. Batch
+# RIFE" tab. HuggingFace's ZeroGPU quota is tied to how many GPU functions run
+# (not just how long each one takes), so batch_interpolate_videos re-acquires
+# a fresh lease per chunk of this size rather than either holding one lease
+# for the whole upload or acquiring one per clip.
+BATCH_GPU_CHUNK_SIZE = 3
 
 # Ensure our safe workspace directory exists
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
@@ -635,18 +641,13 @@ def create_boomerang_loop(input_path, output_path, fps):
             except OSError:
                 pass
 
-@spaces.GPU(required=True)
-def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
-                       output_fps=30):
-    """RIFE-interpolate a clip and encode it at `output_fps`.
+def _interpolate_single(input_video_path, multi_factor, create_boomerang=False,
+                         output_fps=30):
+    """Core single-clip RIFE pass. Must run inside an active @spaces.GPU lease.
 
-    `output_fps` defaults to 30 (STITCH_FPS) so older clients that call this
-    with only 3 positional args keep today's behaviour. RIFE always generates
-    `source_fps * multi_factor` frames regardless of this value — it only
-    controls how those frames are resampled/tagged on the way out: "60" for
-    a true 60fps CFR result (the point of a 4x multiplier on a 24fps
-    source), "30" to match the old behaviour, or "native" to keep every
-    generated frame without resampling.
+    Shared by `interpolate_video` (one lease per call) and
+    `_interpolate_batch_chunk` (one lease covers up to BATCH_GPU_CHUNK_SIZE
+    calls), so the GPU lease is never acquired twice for one clip.
     """
     if input_video_path is None:
         return None
@@ -708,18 +709,68 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
             return boomerang_path
     return final_path
 
-def name_like_source(result_path, source_path, used_names):
+@spaces.GPU(required=True)
+def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
+                       output_fps=30):
+    """RIFE-interpolate a clip and encode it at `output_fps`.
+
+    `output_fps` defaults to 30 (STITCH_FPS) so older clients that call this
+    with only 3 positional args keep today's behaviour. RIFE always generates
+    `source_fps * multi_factor` frames regardless of this value — it only
+    controls how those frames are resampled/tagged on the way out: "60" for
+    a true 60fps CFR result (the point of a 4x multiplier on a 24fps
+    source), "30" to match the old behaviour, or "native" to keep every
+    generated frame without resampling.
+    """
+    return _interpolate_single(input_video_path, multi_factor, create_boomerang,
+                                output_fps)
+
+@spaces.GPU(required=True)
+def _interpolate_batch_chunk(chunk_paths, multi_factor, output_fps):
+    """Interpolate up to BATCH_GPU_CHUNK_SIZE clips inside one GPU lease.
+
+    No boomerang — this backs the "3. Batch RIFE" tab only.
+    """
+    return [
+        _interpolate_single(path, multi_factor, create_boomerang=False,
+                             output_fps=output_fps)
+        for path in chunk_paths
+    ]
+
+def _resolve_batch_upload_entry(f):
+    """Extract (server path, original filename) from one uploaded-file entry.
+
+    The "Process All" button is wired with `preprocess=False` so this
+    function receives the raw Gradio FileData (as a dict, one per upload)
+    instead of a bare path string. That matters because HuggingFace's own
+    `/upload` route sanitizes the *on-disk* filename before app.py ever runs
+    (stripping characters like parentheses), but it leaves `orig_name` — the
+    filename exactly as the browser sent it — untouched. Using `orig_name`
+    for the output filename (rather than the upload path's basename) is what
+    keeps parentheses and other stripped characters in the downloaded result.
+    """
+    if isinstance(f, dict):
+        path = f.get("path")
+        orig_name = f.get("orig_name") or os.path.basename(path)
+        return path, orig_name
+    path = f.name if hasattr(f, "name") else str(f)
+    return path, os.path.basename(path)
+
+def name_like_source(result_path, orig_name, used_names):
     """Move `result_path` to WORKSPACE_DIR under the source clip's own name.
 
     Gradio's File output shows the returned path's basename as the download
     name, and interpolate_video() always produces a randomly-named file, so
     batch outputs would otherwise download as e.g. final_interp_<uuid>.mp4
-    instead of the name the clip was uploaded with. `used_names` de-dupes
-    across a single batch call in case two uploads share a stem.
+    instead of the name the clip was uploaded with. `orig_name` should be the
+    filename (or a path ending in it) exactly as the browser sent it, not the
+    sanitized on-disk upload path — see `_resolve_batch_upload_entry`.
+    `used_names` de-dupes across a single batch call in case two uploads
+    share a stem.
     """
     if not result_path:
         return result_path
-    stem = os.path.splitext(os.path.basename(source_path))[0]
+    stem = os.path.splitext(os.path.basename(orig_name))[0] or "clip"
     name = f"{stem}.mp4"
     n = 2
     while name in used_names:
@@ -732,28 +783,35 @@ def name_like_source(result_path, source_path, used_names):
 
 def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
                               progress=gr.Progress()):
-    """Run interpolate_video() independently on each uploaded clip.
+    """Run RIFE on each uploaded clip, chunked to respect ZeroGPU limits.
 
     Returns one output path per input clip, in input order. Each clip is
     interpolated on its own — no boomerang, and outputs are never
     concatenated/stitched together, unlike the "2. Stitch Videos" tab.
-    Each output keeps the filename of the clip it came from.
+    Each output keeps the original filename of the clip it came from
+    (including characters HuggingFace's own upload route would otherwise
+    strip from the on-disk path, like parentheses — see
+    `_resolve_batch_upload_entry`).
 
-    Each interpolate_video() call is its own @spaces.GPU lease — this
-    function itself is not GPU-decorated, so the lease is acquired and
-    released per clip rather than held for the whole batch.
+    This function is not itself GPU-decorated: `_interpolate_batch_chunk`
+    holds one @spaces.GPU lease per chunk of up to BATCH_GPU_CHUNK_SIZE
+    clips, and this loop simply re-acquires a fresh lease for each
+    subsequent chunk until the whole batch is done.
     """
     if not video_files:
         return []
-    paths = [f.name if hasattr(f, "name") else str(f) for f in video_files]
-    count = len(paths)
+    entries = [_resolve_batch_upload_entry(f) for f in video_files]
+    count = len(entries)
     results = []
     used_names = set()
-    for i, path in enumerate(paths):
-        progress(i / count, desc=f"Interpolating clip {i + 1}/{count}")
-        result = interpolate_video(path, multi_factor, create_boomerang=False,
-                                    output_fps=output_fps)
-        results.append(name_like_source(result, path, used_names))
+    for start in range(0, count, BATCH_GPU_CHUNK_SIZE):
+        chunk = entries[start:start + BATCH_GPU_CHUNK_SIZE]
+        end = start + len(chunk)
+        progress(start / count, desc=f"Interpolating clips {start + 1}-{end}/{count}")
+        chunk_paths = [path for path, _ in chunk]
+        chunk_results = _interpolate_batch_chunk(chunk_paths, multi_factor, output_fps)
+        for (_, orig_name), result in zip(chunk, chunk_results):
+            results.append(name_like_source(result, orig_name, used_names))
     progress(1.0, desc="Done")
     return results
 
@@ -1186,10 +1244,15 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             batch_btn = gr.Button("▶ Process All", variant="primary")
             batch_outputs = gr.File(label="Processed Videos", file_count="multiple")
 
+            # preprocess=False: batch_interpolate_videos needs the raw FileData
+            # (with `orig_name`) for each upload, not the bare sanitized path
+            # Gradio's default File preprocessing would collapse it to — see
+            # _resolve_batch_upload_entry.
             batch_btn.click(batch_interpolate_videos,
                             inputs=[batch_inputs, batch_multi, batch_fps],
                             outputs=batch_outputs,
-                            api_name="batch_interpolate")
+                            api_name="batch_interpolate",
+                            preprocess=False)
 
     _reorder_outs = [
         paths_state, thumbs_state, clip_gallery, sel_state, sel_label, move_to,
