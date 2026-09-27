@@ -164,10 +164,15 @@ async function interpolateUploadedClip(
     });
 
     // The space's interpolate_video endpoint accepts:
-    //   [video (FileData), multiplier ("2"/"4"/"8"), boomerang (bool),
+    //   [video (VideoData), multiplier ("2"/"4"/"8"), boomerang (bool),
     //    output fps ("30"/"60"/"native")]
+    // Its input is a gr.Video, whose data model is VideoData
+    // `{ video: FileData, subtitles }` — not a bare FileData like the gr.File
+    // inputs of /stitch and /morph. Gradio validates that shape before the
+    // function runs, so a bare FileData fails with "VideoData video Field
+    // required" on every clip.
     const data = await callSpaceEndpoint("interpolate_video", [
-      { path, meta: { _type: "gradio.FileData" } },
+      { video: { path, meta: { _type: "gradio.FileData" } }, subtitles: null },
       String(multiplier),
       isBoomerang,
       RIFE_OUTPUT_FPS,

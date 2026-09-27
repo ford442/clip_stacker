@@ -38,7 +38,7 @@ breaks `src/utils/huggingface.ts`:
 
 | `api_name`          | Inputs                                                  | Output |
 |---------------------|---------------------------------------------------------|--------|
-| `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool), output fps (`"30"`/`"60"`/`"native"`, default `"30"` for old callers) | MP4    |
+| `interpolate_video` | video (`gr.Video` → send VideoData `{video: FileData, subtitles: null}`, not a bare FileData), multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool), output fps (`"30"`/`"60"`/`"native"`, default `"30"` for old callers) | MP4    |
 | `stitch`            | videos or still images, resolution, audio, audio mode, overlay volume | MP4    |
 | `morph`             | 2-frame video, frame count, output fps                    | MP4    |
 | `batch_interpolate` | videos (multiple), multiplier (`"2"`/`"4"`/`"8"`), output fps (`"30"`/`"60"`/`"native"`, default `"30"`) | MP4 files (one per input, in order — no stitching, no boomerang) |
