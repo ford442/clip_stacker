@@ -299,9 +299,10 @@ describe("processClipWithRIFE", () => {
       String(u).endsWith("/call/interpolate_video"),
     );
     const body = JSON.parse((call![1] as RequestInit).body as string);
+    // gr.Video input: VideoData wrapping the FileData, not a bare FileData.
     expect(body.data[0]).toEqual({
-      path: "/tmp/in.mp4",
-      meta: { _type: "gradio.FileData" },
+      video: { path: "/tmp/in.mp4", meta: { _type: "gradio.FileData" } },
+      subtitles: null,
     });
     expect(body.data[1]).toBe("4");
     expect(body.data[2]).toBe(true);
