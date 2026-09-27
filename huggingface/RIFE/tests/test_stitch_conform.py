@@ -519,3 +519,88 @@ def test_batch_chunk_duration_is_capped(app, monkeypatch):
     )
 
     assert duration == app.BATCH_CHUNK_DURATION_CAP_SECONDS
+
+
+def _fake_chunk_recorder(app, monkeypatch):
+    calls = []
+
+    def fake_chunk(chunk_paths, multi_factor, output_fps):
+        calls.append(list(chunk_paths))
+        return [f"{p}.out.mp4" for p in chunk_paths]
+
+    monkeypatch.setattr(app, "_interpolate_batch_chunk", fake_chunk)
+    monkeypatch.setattr(app, "name_like_source",
+                        lambda result, orig_name, used: (used.add(orig_name), result)[1])
+    return calls
+
+
+def test_advance_batch_job_runs_one_gpu_chunk_per_call(app, monkeypatch):
+    # The "Process All" UI runs one advance per Gradio event so every
+    # @spaces.GPU call arrives with a fresh ZeroGPU proxy token; a single
+    # request running every chunk failed later chunks with "expired proxy
+    # token".
+    calls = _fake_chunk_recorder(app, monkeypatch)
+    files = [
+        {"path": f"/tmp/in{i}.mp4", "orig_name": f"clip ({i}).mp4"} for i in range(7)
+    ]
+    job = app.start_batch_job(files, "4", "60")
+    assert calls == []
+    assert job["total"] == 7
+
+    job = app.advance_batch_job(job)
+    assert len(calls) == 1 and len(calls[0]) == 3
+    assert len(job["results"]) == 3 and len(job["pending"]) == 4
+
+    job = app.advance_batch_job(job)
+    job = app.advance_batch_job(job)
+    assert [len(c) for c in calls] == [3, 3, 1]
+    assert job["results"] == [f"/tmp/in{i}.mp4.out.mp4" for i in range(7)]
+    assert job["pending"] == []
+    assert job["used_names"] == sorted(f"clip ({i}).mp4" for i in range(7))
+
+    assert app.advance_batch_job(job) is None
+    assert len(calls) == 3
+
+
+def test_advance_batch_job_does_not_mutate_its_input(app, monkeypatch):
+    _fake_chunk_recorder(app, monkeypatch)
+    job = app.start_batch_job([{"path": "/tmp/a.mp4", "orig_name": "a.mp4"}], "2", "30")
+    before = {k: (list(v) if isinstance(v, list) else v) for k, v in job.items()}
+    app.advance_batch_job(job)
+    assert job == before
+
+
+def test_batch_job_status_reports_progress_and_completion(app, monkeypatch):
+    _fake_chunk_recorder(app, monkeypatch)
+    files = [{"path": f"/tmp/in{i}.mp4", "orig_name": f"c{i}.mp4"} for i in range(4)]
+    job = app.start_batch_job(files, "4", "60")
+    assert "0/4" in app.batch_job_status(job)
+    job = app.advance_batch_job(job)
+    assert "3/4" in app.batch_job_status(job)
+    job = app.advance_batch_job(job)
+    assert app.batch_job_status(job).startswith("✅ Done: 4/4")
+
+
+def test_duplicate_trigger_does_not_rerun_a_chunk(app, monkeypatch):
+    # Gradio can deliver the same gr.State .change twice; the second event
+    # must not interpolate (and bill ZeroGPU for) the same clips again.
+    calls = _fake_chunk_recorder(app, monkeypatch)
+    files = [{"path": f"/tmp/in{i}.mp4", "orig_name": f"c{i}.mp4"} for i in range(5)]
+    job0 = app.start_batch_job(files, "4", "60")
+
+    job1 = app.advance_batch_job(job0)
+    assert app.advance_batch_job(job0) is None  # stale duplicate of step 1
+    job2 = app.advance_batch_job(job1)
+    assert app.advance_batch_job(job1) is None  # duplicate queued behind step 1
+    assert [len(c) for c in calls] == [3, 2]
+    assert job2["pending"] == [] and len(job2["results"]) == 5
+
+
+def test_separate_runs_claim_chunks_independently(app, monkeypatch):
+    calls = _fake_chunk_recorder(app, monkeypatch)
+    files = [{"path": "/tmp/a.mp4", "orig_name": "a.mp4"}]
+    first = app.start_batch_job(files, "2", "30")
+    second = app.start_batch_job(files, "2", "30")
+    assert app.advance_batch_job(first) is not None
+    assert app.advance_batch_job(second) is not None
+    assert len(calls) == 2

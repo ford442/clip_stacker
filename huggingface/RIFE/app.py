@@ -21,6 +21,9 @@ import sys
 import numpy as np
 import gradio as gr
 import uuid
+import traceback
+import threading
+from collections import OrderedDict
 
 # --- Constants ---
 BASE_DIR = os.getcwd()
@@ -810,6 +813,80 @@ def name_like_source(result_path, orig_name, used_names):
     shutil.move(result_path, dest)
     return dest
 
+def start_batch_job(video_files, multi_factor, output_fps):
+    """Build the job state for a batch run (no GPU work happens here).
+
+    The job is a plain dict so it can live in a `gr.State` between events:
+    `pending` holds the (server path, original filename) pairs still to be
+    interpolated, `results` the finished outputs in input order.
+    """
+    entries = [list(_resolve_batch_upload_entry(f)) for f in (video_files or [])]
+    return {
+        "run": uuid.uuid4().hex,
+        "pending": entries,
+        "results": [],
+        "used_names": [],
+        "multi": multi_factor,
+        "fps": output_fps,
+        "total": len(entries),
+    }
+
+# run id -> number of clips already handed to a GPU chunk. Gradio can deliver
+# the same gr.State `.change` more than once (and a duplicate queued behind a
+# running chunk then sees the job that chunk produced), so without this two
+# events would interpolate the same clips twice and burn ZeroGPU quota. Only
+# the event that claims a chunk's start index first runs it. Bounded: entries
+# are a few bytes and old runs are evicted.
+_BATCH_CLAIMS = OrderedDict()
+_BATCH_CLAIMS_LOCK = threading.Lock()
+_BATCH_CLAIMS_MAX_RUNS = 512
+
+def claim_batch_chunk(job):
+    """Atomically claim `job`'s next chunk; False if another event has it."""
+    start = len(job["results"])
+    with _BATCH_CLAIMS_LOCK:
+        if _BATCH_CLAIMS.get(job["run"], 0) > start:
+            return False
+        _BATCH_CLAIMS[job["run"]] = start + min(len(job["pending"]),
+                                                BATCH_GPU_CHUNK_SIZE)
+        _BATCH_CLAIMS.move_to_end(job["run"])
+        while len(_BATCH_CLAIMS) > _BATCH_CLAIMS_MAX_RUNS:
+            _BATCH_CLAIMS.popitem(last=False)
+    return True
+
+def advance_batch_job(job):
+    """Interpolate the next chunk of `job` and return the updated job.
+
+    Returns None when nothing is pending, or when another event already
+    claimed this chunk (see `claim_batch_chunk`). Each call acquires at most
+    one @spaces.GPU lease (via `_interpolate_batch_chunk`), which is the
+    point: the "Process All" UI runs one call per Gradio event, see
+    `batch_interpolate_videos`.
+    """
+    if not job or not job["pending"] or not claim_batch_chunk(job):
+        return None
+    chunk = job["pending"][:BATCH_GPU_CHUNK_SIZE]
+    chunk_paths = [path for path, _ in chunk]
+    chunk_results = _interpolate_batch_chunk(chunk_paths, job["multi"], job["fps"])
+    used_names = set(job["used_names"])
+    results = list(job["results"])
+    for (_, orig_name), result in zip(chunk, chunk_results):
+        results.append(name_like_source(result, orig_name, used_names))
+    return {
+        **job,
+        "pending": job["pending"][len(chunk):],
+        "results": results,
+        "used_names": sorted(used_names),
+    }
+
+def batch_job_status(job):
+    done = len(job["results"])
+    total = job["total"]
+    if not job["pending"]:
+        return f"✅ Done: {done}/{total} clips interpolated."
+    nxt = min(done + BATCH_GPU_CHUNK_SIZE, total)
+    return f"⏳ {done}/{total} clips done — interpolating clips {done + 1}-{nxt}…"
+
 def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
                               progress=gr.Progress()):
     """Run RIFE on each uploaded clip, chunked to respect ZeroGPU limits.
@@ -822,27 +899,25 @@ def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
     strip from the on-disk path, like parentheses — see
     `_resolve_batch_upload_entry`).
 
-    This function is not itself GPU-decorated: `_interpolate_batch_chunk`
-    holds one @spaces.GPU lease per chunk of up to BATCH_GPU_CHUNK_SIZE
-    clips, and this loop simply re-acquires a fresh lease for each
-    subsequent chunk until the whole batch is done.
+    This runs every chunk inside ONE request, so it only backs the
+    `batch_interpolate` API route. ZeroGPU authorizes each @spaces.GPU call
+    with the proxy token the browser sent with the *request*, and that token
+    expires a few minutes in — so on a long batch every chunk after the
+    first fails with "expired proxy token". The "Process All" button instead
+    runs one chunk per Gradio event (`advance_batch_job` driven by a
+    `gr.State` change loop in the UI), and each event arrives with a fresh
+    token.
     """
-    if not video_files:
-        return []
-    entries = [_resolve_batch_upload_entry(f) for f in video_files]
-    count = len(entries)
-    results = []
-    used_names = set()
-    for start in range(0, count, BATCH_GPU_CHUNK_SIZE):
-        chunk = entries[start:start + BATCH_GPU_CHUNK_SIZE]
-        end = start + len(chunk)
-        progress(start / count, desc=f"Interpolating clips {start + 1}-{end}/{count}")
-        chunk_paths = [path for path, _ in chunk]
-        chunk_results = _interpolate_batch_chunk(chunk_paths, multi_factor, output_fps)
-        for (_, orig_name), result in zip(chunk, chunk_results):
-            results.append(name_like_source(result, orig_name, used_names))
-    progress(1.0, desc="Done")
-    return results
+    job = start_batch_job(video_files, multi_factor, output_fps)
+    count = job["total"]
+    while job["pending"]:
+        done = len(job["results"])
+        end = min(done + BATCH_GPU_CHUNK_SIZE, count)
+        progress(done / count, desc=f"Interpolating clips {done + 1}-{end}/{count}")
+        job = advance_batch_job(job)
+    if count:
+        progress(1.0, desc="Done")
+    return job["results"]
 
 @spaces.GPU(required=True)
 def morph_transition(frame_pair_video, frame_count, output_fps=30):
@@ -1271,17 +1346,76 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             batch_fps = gr.Dropdown(["30", "60", "native"], value="60",
                                     label="Output FPS")
             batch_btn = gr.Button("▶ Process All", variant="primary")
+            batch_status = gr.Markdown()
             batch_outputs = gr.File(label="Processed Videos", file_count="multiple")
+            batch_job = gr.State(None)
+            batch_api_btn = gr.Button(visible=False)
 
-            # preprocess=False: batch_interpolate_videos needs the raw FileData
-            # (with `orig_name`) for each upload, not the bare sanitized path
+            # One @spaces.GPU chunk per Gradio event. ZeroGPU authorizes each
+            # GPU call with the proxy token the browser sent with the current
+            # request, and that token expires a few minutes in, so running
+            # every chunk inside the click handler failed every chunk after
+            # the first with "expired proxy token". Instead the click only
+            # builds the job; each chunk then runs in batch_job.change, and
+            # because that handler writes a new job back into the State, the
+            # browser fires .change again — a new request with a fresh token —
+            # until nothing is pending (gr.skip() leaves the State unchanged,
+            # which ends the loop). Finished clips appear as each chunk lands.
+            #
+            # preprocess=False: start_batch_job needs the raw FileData (with
+            # `orig_name`) for each upload, not the bare sanitized path
             # Gradio's default File preprocessing would collapse it to — see
             # _resolve_batch_upload_entry.
-            batch_btn.click(batch_interpolate_videos,
+            def start_batch_ui(video_files, multi_factor, output_fps):
+                if not video_files:
+                    raise gr.Error("Upload at least one video first.")
+                job = start_batch_job(video_files, multi_factor, output_fps)
+                return job, [], batch_job_status(job)
+
+            def step_batch_ui(job):
+                if not job or not job["pending"]:
+                    return gr.skip(), gr.skip(), gr.skip()
+                try:
+                    advanced = advance_batch_job(job)
+                except Exception as e:
+                    # Leave the State untouched (ends the loop) and keep the
+                    # clips that already finished; raising instead would
+                    # leave the status stuck on "interpolating…".
+                    traceback.print_exc()
+                    msg = (f"Batch stopped after {len(job['results'])}/"
+                           f"{job['total']} clips: {e}")
+                    gr.Warning(msg)
+                    return gr.skip(), gr.skip(), f"❌ {msg}"
+                if advanced is None:
+                    # Duplicate/stale trigger: the event that claimed this
+                    # chunk will write the job and fire the next step.
+                    return gr.skip(), gr.skip(), gr.skip()
+                return advanced, advanced["results"], batch_job_status(advanced)
+
+            batch_btn.click(start_batch_ui,
                             inputs=[batch_inputs, batch_multi, batch_fps],
-                            outputs=batch_outputs,
-                            api_name="batch_interpolate",
+                            outputs=[batch_job, batch_outputs, batch_status],
+                            api_name=False,
                             preprocess=False)
+            # trigger_mode="multiple": with the default "always_last", the
+            # frontend sees this listener as still pending when its own
+            # completion re-triggers it, parks the new trigger in
+            # `final_event` and only sends it on a later data message — so
+            # the loop either stalls after a chunk or re-sends a stale job.
+            # "multiple" sends exactly one request per State change;
+            # claim_batch_chunk still drops any duplicate that gets through.
+            batch_job.change(step_batch_ui,
+                             inputs=batch_job,
+                             outputs=[batch_job, batch_outputs, batch_status],
+                             api_name=False,
+                             trigger_mode="multiple")
+            # API callers keep the single-request route (all chunks in one
+            # call); see batch_interpolate_videos for its token caveat.
+            batch_api_btn.click(batch_interpolate_videos,
+                                inputs=[batch_inputs, batch_multi, batch_fps],
+                                outputs=batch_outputs,
+                                api_name="batch_interpolate",
+                                preprocess=False)
 
     _reorder_outs = [
         paths_state, thumbs_state, clip_gallery, sel_state, sel_label, move_to,
