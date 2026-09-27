@@ -22,13 +22,26 @@ HTTP API. Everything in `app.py` runs on the Space, not in the app bundle.
 ## Run on Colab
 
 Same Practical-RIFE v4.26 weights and `inference_video.py` path as `app.py`,
-without Gradio / ZeroGPU. Stitch, morph, and batch stay on the Space.
+without Gradio / ZeroGPU. Single-clip interpolate (+ boomerang) and batch;
+stitch and morph stay on the Space.
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ford442/clip_stacker/blob/main/huggingface/RIFE/RIFE_Colab.ipynb)
 
 Notebook: [`RIFE_Colab.ipynb`](RIFE_Colab.ipynb). Runtime → GPU. Multiplier
 `2` / `4` / `8`, output fps `30` / `60` / `native` (same meaning as
 `interpolate_video`).
+
+The batch section takes a folder (Google Drive is mounted automatically) or a
+multi-file upload and writes one `<stem>_rife<N>x_<fps>.mp4` per input. With
+the output folder on Drive, re-running the cell resumes after a disconnect:
+finished outputs are skipped, and results are only renamed into place once
+complete. A failing clip is reported and the batch carries on.
+
+The notebook patches two things into upstream `inference_video.py` that Colab
+needs: a `np.float` / `np.int` alias shim ahead of `import skvideo.io`
+(scikit-video still uses them; Colab ships NumPy 2), and dropping the unused
+`import moviepy.editor` in `transferAudio()` (gone in moviepy 2.x, and its
+failure path crashes on a missing `_noaudio` file).
 
 ## Do not make a second copy
 
