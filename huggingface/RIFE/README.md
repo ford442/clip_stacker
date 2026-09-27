@@ -52,17 +52,38 @@ skips resampling and tags the clip at however many frames RIFE produced. The
 `src/utils/huggingface.ts` client requests `"60"`. `stitch`'s concat path
 stays fixed at 30fps (`STITCH_FPS`) regardless.
 
-`batch_interpolate` (the "3. Batch RIFE" tab's "▶ Process All" button) is
-**not** `@spaces.GPU`-decorated itself. It chunks the upload into groups of
-`BATCH_GPU_CHUNK_SIZE` (3) clips and calls `_interpolate_batch_chunk()` — which
-is GPU-decorated — once per chunk, so one lease covers up to 3 clips and the
-loop simply re-acquires a fresh lease for the next chunk rather than either
-holding one lease for the whole batch or acquiring one per clip. This is
-tuned to HuggingFace's ZeroGPU quota, which is sensitive to how many GPU
-functions run, not just how long each one takes. The single-clip
-`interpolate_video` endpoint (used by `src/utils/huggingface.ts` and the "1.
-Smooth Video + Boomerang" tab) is unaffected — it still acquires one lease
-per call.
+The "3. Batch RIFE" tab's "▶ Process All" button runs **one GPU chunk per
+Gradio event**. ZeroGPU authorizes every `@spaces.GPU` call with the proxy
+token the browser sent with the current request, and that token expires a
+few minutes in — so running every chunk inside one request (the previous
+design) failed each chunk after the first with "expired proxy token".
+
+Now the click handler only builds a job (`start_batch_job`) into a
+`gr.State`. That State's `.change` listener runs `advance_batch_job`, which
+interpolates the next `BATCH_GPU_CHUNK_SIZE` (3) clips inside one
+`_interpolate_batch_chunk` lease and writes the updated job back. The State
+changing makes the browser fire `.change` again — a new request with a fresh
+token — until nothing is pending. Finished clips appear as each chunk lands,
+and a failed chunk stops the loop with the error in the status line while
+keeping the clips already done.
+
+Two details keep that loop honest:
+
+- The listener uses `trigger_mode="multiple"`. With Gradio's default
+  `"always_last"`, the frontend treats a self-retriggering listener as still
+  pending, parks the new trigger and either never sends it (the batch stalls
+  after one chunk) or re-sends a stale one later.
+- `claim_batch_chunk` records, per job run, which clips have been handed to
+  the GPU, so a duplicate or stale trigger is dropped instead of
+  interpolating (and billing ZeroGPU for) the same clips twice.
+
+The `batch_interpolate` API route still runs the whole batch in one request
+(`batch_interpolate_videos`, same helpers). That is fine for short batches,
+but a long one hits the same token expiry; API callers with many clips
+should call `interpolate_video` once per clip instead. The single-clip
+`interpolate_video` endpoint (used by `src/utils/huggingface.ts` and the
+"1. Smooth Video + Boomerang" tab) acquires one lease per call and is
+unaffected.
 
 The batch button is wired with `preprocess=False` so its callback receives
 each upload's raw FileData (including `orig_name`, the filename exactly as
