@@ -19,6 +19,17 @@ This directory is the **single source of truth** for the HuggingFace Space:
 The browser client (`src/utils/huggingface.ts`) calls it through the raw Gradio
 HTTP API. Everything in `app.py` runs on the Space, not in the app bundle.
 
+## Run on Colab
+
+Same Practical-RIFE v4.26 weights and `inference_video.py` path as `app.py`,
+without Gradio / ZeroGPU. Stitch, morph, and batch stay on the Space.
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ford442/clip_stacker/blob/main/huggingface/RIFE/RIFE_Colab.ipynb)
+
+Notebook: [`RIFE_Colab.ipynb`](RIFE_Colab.ipynb). Runtime → GPU. Multiplier
+`2` / `4` / `8`, output fps `30` / `60` / `native` (same meaning as
+`interpolate_video`).
+
 ## Do not make a second copy
 
 There used to be a duplicate at `src/hf_space/`. The two drifted: the live Space
