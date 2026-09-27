@@ -33,6 +33,15 @@ When you click "Render", the app automatically decides whether to use **lossless
 
 The app shows you the plan and reason before rendering starts, so you understand why a "simple" merge might take longer or look slightly different.
 
+## Hugging Face RIFE
+
+Frame interpolation for the app runs on the Space sourced from
+[`huggingface/RIFE/`](huggingface/RIFE/)
+([1inkusFace/RIFE](https://huggingface.co/spaces/1inkusFace/RIFE)).
+To run that same v4.26 pipeline on a Colab GPU:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ford442/clip_stacker/blob/main/huggingface/RIFE/RIFE_Colab.ipynb)
+
 ## Tech Stack
 
 - React 18 + TypeScript
