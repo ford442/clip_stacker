@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { Clip } from '../types';
+import type { IFfmpegRuntime } from './ffmpegRuntime';
 import {
-  buildIntercutConcatArgs,
-  buildNormalizeIntercutArgs,
-  buildReplaceAudioFromAArgs,
+  buildIntercutAudioExtractArgs,
+  buildIntercutRenderArgs,
+  buildIntercutSourceInputArgs,
   estimateIntercut,
+  generateIntercutFromVfs,
+  intercutAudioSlices,
   intercutNeedsNormalization,
 } from './intercutGenerator';
+import { encodeWavPcm16, parseWavPcm16, quantizeIntercutSlices } from '../utils/intercutRender';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
@@ -57,79 +61,6 @@ describe('intercutGenerator helpers', () => {
     expect(intercutNeedsNormalization(a, webm)).toBe(true);
   });
 
-  it('stream-copy concat args mux silent AAC instead of dropping audio', () => {
-    const args = buildIntercutConcatArgs('list.txt', 'out.mp4', true, 'silent');
-    expect(args).not.toContain('-an');
-    expect(args).toContain('silent_unit.m4a');
-    expect(args).toContain('-stream_loop');
-    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
-    expect(args).toContain('+faststart');
-    expect(args).toContain('+genpts');
-  });
-
-  it('re-encode concat args keep AAC and force CFR without B-frames', () => {
-    const both = buildIntercutConcatArgs('list.txt', 'out.mp4', false, 'both');
-    expect(both).toContain('libx264');
-    expect(both).toContain('aac');
-    expect(both).toContain('+genpts');
-    expect(both[both.indexOf('-r') + 1]).toBe('30');
-    expect(both[both.indexOf('-vsync') + 1]).toBe('cfr');
-    expect(both[both.indexOf('-bf') + 1]).toBe('0');
-
-    const silent = buildIntercutConcatArgs('list.txt', 'out.mp4', false, 'silent');
-    expect(silent).not.toContain('-an');
-    expect(silent).toContain('silent_unit.m4a');
-    expect(silent[silent.indexOf('-c:a') + 1]).toBe('copy');
-    expect(silent[silent.indexOf('-r') + 1]).toBe('30');
-    expect(silent[silent.indexOf('-bf') + 1]).toBe('0');
-  });
-
-  it('normalize args scale/pad and force 30fps', () => {
-    const clip = makeClip();
-    const args = buildNormalizeIntercutArgs(clip, 'in.mp4', 'norm.mp4', 1280, 720);
-    const filter = args[args.indexOf('-filter_complex') + 1];
-    expect(filter).toContain('scale=1280:720');
-    expect(filter).toContain('fps=30');
-    expect(filter).toContain('[0:a]aresample=44100');
-  });
-
-  it('normalize args can seek/trim to a source window', () => {
-    const clip = makeClip();
-    const args = buildNormalizeIntercutArgs(clip, 'in.mp4', 'norm.mp4', 1280, 720, {
-      seekSec: 1.5,
-      durationSec: 4,
-    });
-    expect(args.indexOf('-ss')).toBeLessThan(args.indexOf('-i'));
-    expect(args[args.indexOf('-ss') + 1]).toBe('1.5');
-    expect(args).toContain('-t');
-    expect(args[args.indexOf('-t') + 1]).toBe('4');
-  });
-
-  it('normalize args synthesize silent audio for video-only clips', () => {
-    const clip = makeClip({ hasAudio: false });
-    const args = buildNormalizeIntercutArgs(clip, 'intercut-a.mp4', 'norm.mp4', 1280, 720);
-    const filter = args[args.indexOf('-filter_complex') + 1];
-    expect(filter).toContain('[0:v]');
-    expect(filter).not.toContain('[0:a]');
-    expect(args).toContain('-stream_loop');
-    expect(args).toContain('silent_unit.m4a');
-    expect(args).toContain('-shortest');
-    expect(args).toContain('1:a');
-    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
-    expect(args).not.toContain('anullsrc=r=44100:cl=stereo');
-  });
-
-  it('normalize args can force silent audio even when clip metadata is unknown', () => {
-    const clip = makeClip();
-    const args = buildNormalizeIntercutArgs(clip, 'in.mp4', 'norm.mp4', 1280, 720, {
-      hasAudio: false,
-    });
-    expect(args.join(' ')).not.toContain('[0:a]');
-    expect(args).toContain('-stream_loop');
-    expect(args).toContain('silent_unit.m4a');
-    expect(args[args.indexOf('-c:a') + 1]).toBe('copy');
-  });
-
   it('detects audio-stream mismatch as needing normalization', () => {
     const withAudio = makeClip();
     const silent = makeClip({
@@ -152,20 +83,6 @@ describe('intercutGenerator helpers', () => {
     });
     expect(intercutNeedsNormalization(a, b, c)).toBe(true);
     expect(intercutNeedsNormalization(a, b, makeClip({ id: 'clip-c2' }))).toBe(false);
-  });
-
-  it('replace-audio args map video from concat and audio from A', () => {
-    const args = buildReplaceAudioFromAArgs(
-      'concat.mp4',
-      'a.mp4',
-      makeClip({ trimStart: 1.5 }),
-      4,
-      'out.mp4',
-    );
-    expect(args).toContain('0:v:0');
-    expect(args).toContain('1:a:0?');
-    expect(args).toContain('1.5');
-    expect(args).toContain('4');
   });
 
   it('estimate flags shortage and always reports re-encode', () => {
@@ -238,3 +155,195 @@ describe('intercutGenerator helpers', () => {
     expect(triple.slices.map((s) => s.slot)).toEqual(['A', 'B', 'C']);
   });
 });
+
+describe('intercut frame-grid render args', () => {
+  it('seeks video sources to their trim start and loops stills at 30fps', () => {
+    expect(buildIntercutSourceInputArgs(makeClip(), 'a.mp4', 1.5, 4)).toEqual([
+      '-ss',
+      '1.5',
+      '-t',
+      '4',
+      '-i',
+      'a.mp4',
+    ]);
+    expect(buildIntercutSourceInputArgs(makeClip(), 'a.mp4', 0, 2)).toEqual([
+      '-t',
+      '2',
+      '-i',
+      'a.mp4',
+    ]);
+    const still = makeClip({ stillImage: true, file: new File([], 's.png', { type: 'image/png' }) });
+    expect(buildIntercutSourceInputArgs(still, 's.png', 3, 2)).toEqual([
+      '-loop',
+      '1',
+      '-framerate',
+      '30',
+      '-t',
+      '2',
+      '-i',
+      's.png',
+    ]);
+  });
+
+  it('decodes audio to stereo 44.1k PCM starting at sample 0 of the trim window', () => {
+    const args = buildIntercutAudioExtractArgs('a.mp4', 'a.wav', 1.25, 3);
+    expect(args.indexOf('-ss')).toBeLessThan(args.indexOf('-i'));
+    expect(args[args.indexOf('-ss') + 1]).toBe('1.25');
+    expect(args[args.indexOf('-t') + 1]).toBe('3');
+    expect(args[args.indexOf('-af') + 1]).toBe('aresample=44100:async=1:first_pts=0');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('pcm_s16le');
+    expect(args[args.indexOf('-ac') + 1]).toBe('2');
+    expect(args.at(-1)).toBe('a.wav');
+  });
+
+  it('render args encode the graph and the spliced WAV in one CFR pass without concat', () => {
+    const args = buildIntercutRenderArgs({
+      sourceInputs: [
+        ['-t', '1', '-i', 'a.mp4'],
+        ['-t', '1', '-i', 'b.mp4'],
+      ],
+      audioName: 'audio.wav',
+      filterGraph: '[0:v]null[vout]',
+      totalFrames: 42,
+      outputName: 'out.mp4',
+    });
+    expect(args).not.toContain('concat');
+    expect(args).not.toContain('+genpts');
+    expect(args[args.indexOf('-map') + 1]).toBe('[vout]');
+    expect(args).toContain('2:a:0');
+    expect(args[args.indexOf('-frames:v') + 1]).toBe('42');
+    expect(args[args.indexOf('-r') + 1]).toBe('30');
+    expect(args[args.indexOf('-vsync') + 1]).toBe('cfr');
+    expect(args[args.indexOf('-bf') + 1]).toBe('0');
+    expect(args[args.indexOf('-c:a') + 1]).toBe('aac');
+  });
+
+  it('audio policy picks per-slice sound, continuous A, or nothing', () => {
+    const plan = quantizeIntercutSlices([
+      { slot: 'A', inpoint: 0, outpoint: 0.5 },
+      { slot: 'B', inpoint: 0, outpoint: 0.5 },
+    ]);
+    expect(intercutAudioSlices('both', plan)).toBe(plan.slices);
+    expect(intercutAudioSlices('aOnly', plan)).toEqual([
+      { slot: 'A', sourceFrame: 0, outputFrame: 0, frameCount: 30 },
+    ]);
+    expect(intercutAudioSlices('silent', plan)).toEqual([]);
+  });
+});
+
+/** In-memory FFmpeg double: audio decodes yield a constant per-source level. */
+function fakeRuntime(levels: Record<string, number | null>) {
+  const files = new Map<string, Uint8Array | string>();
+  const execs: string[][] = [];
+  const runtime: IFfmpegRuntime = {
+    async exec(args) {
+      execs.push(args);
+      const out = args.at(-1)!;
+      if (out.endsWith('.wav')) {
+        const input = args[args.indexOf('-i') + 1]!;
+        const level = levels[input];
+        if (level === null) throw new Error('Stream map 0:a:0 matches no streams.');
+        const seconds = Number(args[args.indexOf('-t') + 1]);
+        const pcm = new Int16Array(Math.round(seconds * 44100) * 2).fill(level ?? 0);
+        files.set(out, encodeWavPcm16(pcm, 44100, 2));
+      } else {
+        files.set(out, new Uint8Array(64));
+      }
+      return 0;
+    },
+    async writeFile(name, data) {
+      files.set(name, data);
+      return true;
+    },
+    async readFile(name) {
+      const data = files.get(name);
+      if (!data) throw new Error(`missing ${name}`);
+      return data;
+    },
+    async deleteFile(name) {
+      return files.delete(name);
+    },
+    async listDir() {
+      return [];
+    },
+    terminate() {},
+  };
+  return { runtime, files, execs };
+}
+
+describe('generateIntercutFromVfs', () => {
+  const clipA = makeClip({ duration: 10, trimStart: 1, trimEnd: 10 });
+  const clipB = makeClip({
+    id: 'clip-b',
+    title: 'b.mp4',
+    duration: 10,
+    trimEnd: 10,
+    file: new File([], 'b.mp4', { type: 'video/mp4' }),
+  });
+  const automation = { totalDurationSec: 2, startFrequencyHz: 2, endFrequencyHz: 2 };
+
+  async function run(
+    audioPolicy: 'both' | 'aOnly' | 'silent',
+    levels: Record<string, number | null> = { 'a.mp4': 1000, 'b.mp4': -2000 },
+  ) {
+    const fake = fakeRuntime(levels);
+    let writtenAudio: Uint8Array | undefined;
+    const writeFile = fake.runtime.writeFile.bind(fake.runtime);
+    fake.runtime.writeFile = async (name, data) => {
+      if (name === 'intercut-audio.wav') writtenAudio = data as Uint8Array;
+      return writeFile(name, data);
+    };
+    const result = await generateIntercutFromVfs(
+      fake.runtime,
+      'a.mp4',
+      'b.mp4',
+      { clipA, clipB, automation, audioPolicy },
+      () => {},
+      'out.mp4',
+    );
+    return { ...fake, result, audio: parseWavPcm16(writtenAudio!) };
+  }
+
+  it('splices each slice’s own sound on the frame grid and renders once', async () => {
+    const { execs, result, audio, files } = await run('both');
+    expect(result.outputDurationSec).toBe(2);
+    // Two audio decodes (seeked to each trim start) + one render; no concat demuxer.
+    expect(execs).toHaveLength(3);
+    expect(execs[0]).toEqual(expect.arrayContaining(['-ss', '1', '-i', 'a.mp4']));
+    expect(execs.flat()).not.toContain('concat');
+    const render = execs[2]!;
+    expect(render[render.indexOf('-frames:v') + 1]).toBe('60');
+    expect(render[render.indexOf('-filter_complex') + 1]).toContain('interleave=nb_inputs=2');
+
+    // Exactly 60 frames × 1470 samples, A's level then B's (2 Hz → 0.5 s slices).
+    expect(audio.samples.length).toBe(60 * 1470 * 2);
+    const at = (sec: number) => audio.samples[Math.round(sec * 44100) * 2]!;
+    expect(at(0.25)).toBe(1000);
+    expect(at(0.75)).toBe(-2000);
+    expect(at(1.25)).toBe(1000);
+    expect(at(1.75)).toBe(-2000);
+    // Scratch files are cleaned up.
+    expect([...files.keys()].filter((n) => n.endsWith('.wav'))).toEqual([]);
+  });
+
+  it('aOnly decodes only A and keeps it continuous', async () => {
+    const { execs, audio } = await run('aOnly');
+    expect(execs).toHaveLength(2);
+    expect(audio.samples.every((v) => v === 1000)).toBe(true);
+  });
+
+  it('silent renders a zero track without decoding any source audio', async () => {
+    const { execs, audio } = await run('silent');
+    expect(execs).toHaveLength(1);
+    expect(audio.samples.length).toBe(60 * 1470 * 2);
+    expect(audio.samples.every((v) => v === 0)).toBe(true);
+  });
+
+  it('a source without an audio stream contributes silence instead of failing', async () => {
+    const { audio } = await run('both', { 'a.mp4': 1000, 'b.mp4': null });
+    const at = (sec: number) => audio.samples[Math.round(sec * 44100) * 2]!;
+    expect(at(0.25)).toBe(1000);
+    expect(at(0.75)).toBe(0);
+  });
+});
+

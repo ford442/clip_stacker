@@ -494,4 +494,11 @@ Library macro that alternates two or three clips at a configurable (accelerating
 - Explicit hold durations (seconds) per slice, e.g. `2, 1, 1, 2, 3, 2`.
 - When set, slice lengths follow this list (cycled as needed) and override Hz ramp / beat-sync timing.
 
-`forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. `src/ffmpeg/intercutGenerator.ts` writes VFS files, optionally normalizes mismatched resolution/fps/codec, concatenates, then applies audio policy (`both` / `aOnly` / `silent`). Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz. Stream copy only when every slice is ≥ `INTERCUT_MIN_STREAM_COPY_SLICE_SEC` (0.5s). UI: `IntercutModal` from Clip Library **Create Intercut Clip** (optional Clip C cycles A → B → C).
+`forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz.
+
+Rendering (`src/ffmpeg/intercutGenerator.ts` + `src/utils/intercutRender.ts`) does **not** use the concat demuxer. Its `inpoint`/`outpoint` is packet-granular: each cut pulled in the GOP before the inpoint and the AAC frames around it, so the picture ran long and `+genpts` stacked dozens of audio packets on one timestamp at every cut (audibly out of sync, worse as the strobe sped up). Instead:
+
+1. `quantizeIntercutSlices` snaps slices (relative to each trim start) to a 30 fps output grid from cumulative time, so rounding never drifts; one source's slices never share a frame.
+2. Picture: one `filter_complex` — per source `fps=30` → `select` (source frame ranges) → `setpts` (output frame numbers) → scale/pad — merged with `interleave`. Mixed resolution / fps / stills are handled in-graph; there is no separate normalize pass.
+3. Sound: each audible source is decoded once to 16-bit PCM from its trim start (`aresample=async=1:first_pts=0`), then `assembleIntercutAudio` splices it in JS at `frame × 1470` samples (44100 / 30) with a 5 ms equal-power crossfade per cut. `aOnly` is A's continuous track; `silent` is zeros. Length is always exactly `totalFrames` of audio.
+4. One encode muxes both with `-frames:v totalFrames`; always a re-encode. UI: `IntercutModal` from Clip Library **Create Intercut Clip** (optional Clip C cycles A → B → C).
