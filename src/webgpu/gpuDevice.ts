@@ -76,6 +76,8 @@ const DESIRED_OPTIONAL_FEATURES: GPUFeatureName[] = [
   'bgra8unorm-storage',
   'rg11b10ufloat-renderable',
   'dual-source-blending',
+  // Optional half-precision math for the color-transform pass. Never required.
+  'shader-f16' as GPUFeatureName,
 ];
 
 function resolveRequiredLimits(adapter: GPUAdapter): Record<string, number> {

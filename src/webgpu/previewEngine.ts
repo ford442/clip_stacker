@@ -9,11 +9,22 @@ import {
 } from "./transitions/transitionPass";
 import type { TransitionRenderParams } from "./transitions/types";
 import { FinishingPassChain } from "./finishingPassChain";
+import {
+  DEFAULT_COLOR_MANAGEMENT,
+  isColorManagementActive,
+  normalizeColorManagement,
+  publishColorDebugSnapshot,
+  requestedCanvasColor,
+  resolveCanvasPresentation,
+  rgbaRowStride,
+  unpadRgbaRows,
+  type CanvasPresentation,
+  type ColorManagementSettings,
+} from "../utils/colorManagement";
 import { adoptGpuDevice } from "../gpu-chores/device";
 import type { ColorGradeSettings } from "../utils/lut";
 import { isColorGradeActive } from "../utils/lut";
-import type { FinishingSettings } from "../utils/finishing";
-import { isFinishingActive } from "../utils/finishing";
+import { isFinishingActive, type FinishingSettings } from "../utils/finishing";
 import {
   AUDIO_UNIFORM_OFFSET,
   ZERO_AUDIO_REACTIVE,
@@ -153,6 +164,13 @@ export class PreviewEngine {
   private format: GPUTextureFormat;
   private canvas: HTMLCanvasElement | OffscreenCanvas;
   private unsubscribeRecovered: (() => void) | null = null;
+  private colorManagement: ColorManagementSettings = { ...DEFAULT_COLOR_MANAGEMENT };
+  private presentation: CanvasPresentation = {
+    colorSpace: "srgb",
+    toneMapping: "standard",
+    present: "identity",
+    presentFallback: false,
+  };
 
   private constructor(
     device: GPUDevice,
@@ -187,7 +205,7 @@ export class PreviewEngine {
    */
   resize(): void {
     if (this.destroyed) return;
-    this.context.configure(canvasConfiguration(this.device, this.format));
+    this.configureCanvas();
   }
 
   /**
@@ -350,8 +368,68 @@ export class PreviewEngine {
     this.overlayPipeline = built.overlayPipeline;
     this.overlaySampler = built.overlaySampler;
 
-    this.context.configure(canvasConfiguration(this.device, this.format));
+    this.configureCanvas();
     adoptGpuDevice(this.device);
+  }
+
+  /**
+   * Apply the selected output color to the swapchain. Display P3 and extended
+   * HDR are attempted and, on failure, the canvas stays sRGB / standard.
+   */
+  private configureCanvas(): void {
+    const request = requestedCanvasColor(this.colorManagement.outputColor);
+    const isDefault = request.colorSpace === "srgb" && request.toneMapping === "standard";
+    const base = {
+      device: this.device,
+      format: this.format,
+      alphaMode: "premultiplied" as const,
+      usage: CANVAS_TEXTURE_USAGE,
+    };
+    let configured = request;
+    try {
+      this.context.configure({
+        ...base,
+        colorSpace: request.colorSpace,
+        toneMapping: { mode: request.toneMapping },
+      });
+    } catch (err) {
+      if (isDefault) throw err;
+      configured = { colorSpace: "srgb", toneMapping: "standard" };
+      this.context.configure({
+        ...base,
+        colorSpace: "srgb",
+        toneMapping: { mode: "standard" },
+      });
+    }
+    this.presentation = resolveCanvasPresentation(
+      this.colorManagement.outputColor,
+      configured,
+      this.format,
+    );
+    publishColorDebugSnapshot({
+      outputColor: this.colorManagement.outputColor,
+      workingSpace: this.colorManagement.workingSpace,
+      canvasColorSpace: this.presentation.colorSpace,
+      toneMapping: this.presentation.toneMapping,
+      canvasFormat: this.format,
+      present: this.presentation.present,
+      presentFallback: this.presentation.presentFallback,
+    });
+  }
+
+  /** Reconfigure when the user changes output color or working space. */
+  setColorManagement(settings: ColorManagementSettings | undefined): void {
+    if (this.destroyed) return;
+    const next = normalizeColorManagement(settings);
+    const changed =
+      next.outputColor !== this.colorManagement.outputColor ||
+      next.workingSpace !== this.colorManagement.workingSpace;
+    this.colorManagement = next;
+    if (changed) this.configureCanvas();
+  }
+
+  get canvasPresentation(): CanvasPresentation {
+    return this.presentation;
   }
 
   /**
@@ -571,17 +649,56 @@ export class PreviewEngine {
   /** Apply the finishing pass chain after compositing. */
   applyFinishing(
     settings: FinishingSettings,
-    opts?: { frameIndex?: number },
+    opts?: { frameIndex?: number; colorManagement?: ColorManagementSettings },
   ): void {
-    if (this.destroyed || !isFinishingActive(settings)) return;
+    if (this.destroyed) return;
+    if (opts?.colorManagement) this.setColorManagement(opts.colorManagement);
+    const managed = isColorManagementActive(this.colorManagement);
+    if (!isFinishingActive(settings) && !managed) return;
     this.finishingChain.apply(
       this.device,
       this.context,
       this.canvas.width,
       this.canvas.height,
       settings,
-      opts,
+      {
+        frameIndex: opts?.frameIndex,
+        colorManagement: this.colorManagement,
+        presentation: this.presentation,
+      },
     );
+  }
+
+  /**
+   * Tightly packed RGBA8 of the last HDR10 PQ image. Null when this engine
+   * has not rendered a managed HDR10 frame.
+   */
+  async readPqExportRgba(): Promise<Uint8Array | null> {
+    if (this.destroyed) return null;
+    const texture = this.finishingChain.getPqExportTexture();
+    if (!texture) return null;
+    const width = texture.width;
+    const height = texture.height;
+    if (width <= 0 || height <= 0) return null;
+    const stride = rgbaRowStride(width);
+    const buffer = this.device.createBuffer({
+      size: stride * height,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      { texture },
+      { buffer, bytesPerRow: stride, rowsPerImage: height },
+      { width, height, depthOrArrayLayers: 1 },
+    );
+    this.device.queue.submit([encoder.finish()]);
+    const done = this.device.queue.onSubmittedWorkDone?.();
+    if (done) await done;
+    await buffer.mapAsync(GPUMapMode.READ);
+    const copy = new Uint8Array(buffer.getMappedRange()).slice();
+    buffer.unmap();
+    buffer.destroy();
+    return unpadRgbaRows(copy, width, height, stride);
   }
 
   /** Clear temporal finishing buffers after seek or clip change. */

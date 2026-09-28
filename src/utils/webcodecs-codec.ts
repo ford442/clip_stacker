@@ -5,6 +5,14 @@
 import type { ExportSettings } from '../types';
 import { parseOutputResolution } from './resolution';
 import { TIMELINE_EXPORT_FPS } from './webcodecs-timeline';
+import {
+  ColorPipelineExportError,
+  colorSpaceForOutput,
+  displayP3UnavailableReason,
+  hdr10UnavailableReason,
+  type OutputColor,
+  type OutputVideoColorSpace,
+} from './colorManagement';
 
 /** Frame rate used for sequential clip WebCodecs export (matches timeline export). */
 export const TARGET_FPS = TIMELINE_EXPORT_FPS;
@@ -31,7 +39,7 @@ export interface ResolvedEncoderCodec {
  * this field.
  */
 export interface VideoEncoderConfigWithColorSpace extends VideoEncoderConfig {
-  colorSpace?: VideoColorSpaceInit;
+  colorSpace?: OutputVideoColorSpace;
 }
 
 /** Export favors quality/size over encode latency (VBR); live capture would want CBR instead. */
@@ -58,6 +66,12 @@ const H264_PROFILE_IDC: Record<H264Profile, string> = {
   baseline: '42',
 };
 
+/** HEVC Main 10, level 4.1 — HDR10 candidate. Not an 8-bit Main fallback. */
+export const HEVC_MAIN10_CODEC = 'hvc1.2.4.L123.B0';
+
+/** AV1 Main, 10-bit. HDR10 candidate. The 8-bit string stays `av01.0.08M.08`. */
+export const AV1_10BIT_CODEC = 'av01.0.08M.10';
+
 /**
  * H.264 codec string with a level adequate for the target resolution.
  * Defaults to Constrained Baseline (`42`) for callers that don't care about
@@ -81,7 +95,14 @@ export function codecCandidates(
   preference: ExportVideoCodec | undefined,
   width: number,
   height: number,
+  outputColor: OutputColor = 'rec709-sdr',
 ): ResolvedEncoderCodec[] {
+  if (outputColor === 'hdr10') {
+    return [
+      { codec: HEVC_MAIN10_CODEC, muxerCodec: 'hevc' },
+      { codec: AV1_10BIT_CODEC, muxerCodec: 'av1' },
+    ];
+  }
   const h264: ResolvedEncoderCodec[] = (['high', 'main', 'baseline'] as const).map((profile) => ({
     codec: h264CodecString(width, height, profile),
     muxerCodec: 'avc' as const,
@@ -109,6 +130,7 @@ export function buildVideoEncoderConfig(
   height: number,
   bitrate: number,
   framerate: number = TARGET_FPS,
+  outputColor: OutputColor = 'rec709-sdr',
 ): VideoEncoderConfigWithColorSpace {
   return {
     codec: candidate.codec,
@@ -119,17 +141,23 @@ export function buildVideoEncoderConfig(
     framerate,
     hardwareAcceleration: 'prefer-hardware',
     latencyMode: VIDEO_ENCODER_LATENCY_MODE,
-    colorSpace: REC709_COLOR_SPACE,
+    colorSpace: colorSpaceForOutput(outputColor),
     // mp4-muxer expects length-prefixed (avc) samples, not Annex B.
     ...(candidate.muxerCodec === 'avc' ? { avc: { format: 'avc' } } : {}),
   };
 }
 
 let lastResolvedCodec: ResolvedEncoderCodec | null = null;
+let lastEncoderColorSpace: OutputVideoColorSpace | null = null;
 
 /** The codec `resolveEncoderCodec` last resolved to — surfaced in Copy Debug. */
 export function getLastResolvedEncoderCodec(): ResolvedEncoderCodec | null {
   return lastResolvedCodec;
+}
+
+/** Color tags from the last successful `resolveEncoderCodec` / probe. */
+export function getLastEncoderColorSpace(): OutputVideoColorSpace | null {
+  return lastEncoderColorSpace;
 }
 
 export function __setLastResolvedEncoderCodecForTests(codec: ResolvedEncoderCodec | null): void {
@@ -143,29 +171,72 @@ export function __setLastResolvedEncoderCodecForTests(codec: ResolvedEncoderCode
  * must match what the real `configure()` call will use — an unmatched probe
  * can report a config supported that the real encoder then rejects.
  */
+async function firstSupportedCandidate(
+  preference: ExportVideoCodec | undefined,
+  width: number,
+  height: number,
+  bitrate: number,
+  outputColor: OutputColor,
+): Promise<ResolvedEncoderCodec | null> {
+  const candidates = codecCandidates(preference, width, height, outputColor);
+  for (const candidate of candidates) {
+    try {
+      const config = buildVideoEncoderConfig(candidate, width, height, bitrate, TARGET_FPS, outputColor);
+      const support = await VideoEncoder.isConfigSupported(config);
+      if (support.supported === true) return candidate;
+    } catch {
+      // Unparseable codec string on this browser — try the next candidate.
+    }
+  }
+  return null;
+}
+
 export async function resolveEncoderCodec(
   preference: ExportVideoCodec | undefined,
   width: number,
   height: number,
   bitrate: number,
+  outputColor: OutputColor = 'rec709-sdr',
 ): Promise<ResolvedEncoderCodec> {
-  const candidates = codecCandidates(preference, width, height);
-  for (const candidate of candidates) {
-    try {
-      const support = await VideoEncoder.isConfigSupported(
-        buildVideoEncoderConfig(candidate, width, height, bitrate),
-      );
-      if (support.supported === true) {
-        lastResolvedCodec = candidate;
-        return candidate;
-      }
-    } catch {
-      // Unparseable codec string on this browser — try the next candidate.
-    }
+  const supported = await firstSupportedCandidate(preference, width, height, bitrate, outputColor);
+  if (supported) {
+    lastResolvedCodec = supported;
+    lastEncoderColorSpace = colorSpaceForOutput(outputColor);
+    return supported;
   }
-  const fallback = candidates[candidates.length - 1];
+  if (outputColor === 'hdr10') {
+    throw new ColorPipelineExportError(hdr10UnavailableReason());
+  }
+  if (outputColor === 'display-p3') {
+    throw new ColorPipelineExportError(displayP3UnavailableReason());
+  }
+  const fallback = codecCandidates(preference, width, height, outputColor).at(-1)!;
   lastResolvedCodec = fallback;
+  lastEncoderColorSpace = colorSpaceForOutput(outputColor);
   return fallback;
+}
+
+/**
+ * Whether this browser can encode `output` with tags that match the picture.
+ * Does not record the result as the last export codec.
+ */
+export async function probeOutputColorSupport(
+  output: OutputColor,
+  width: number,
+  height: number,
+  bitrate: number,
+  preference?: ExportVideoCodec,
+): Promise<{ supported: boolean; reason: string }> {
+  if (output === 'rec709-sdr') return { supported: true, reason: '' };
+  if (typeof VideoEncoder === 'undefined' || typeof VideoEncoder.isConfigSupported !== 'function') {
+    return { supported: false, reason: 'VideoEncoder is not available in this browser.' };
+  }
+  const supported = await firstSupportedCandidate(preference, width, height, bitrate, output);
+  if (supported) return { supported: true, reason: '' };
+  return {
+    supported: false,
+    reason: output === 'hdr10' ? hdr10UnavailableReason() : displayP3UnavailableReason(),
+  };
 }
 
 /**

@@ -15,6 +15,7 @@ import type {
   Track,
 } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
+import type { ColorManagementSettings } from '../utils/colorManagement';
 import { computeTotalDuration } from '../utils/transitions';
 import { useTimelineAudioPlayback } from '../hooks/useTimelineAudioPlayback';
 import { usePlaybackAnalyserLevels } from '../hooks/usePlaybackAnalyserLevels';
@@ -63,6 +64,7 @@ export interface TimelinePreviewProps {
   captionStyle?: Partial<TextOverlayStyle>;
   exportSettings?: ExportSettings;
   finishing?: FinishingSettings;
+  colorManagement?: ColorManagementSettings;
   selectedClipId?: string | null;
   selectedTextOverlayId?: string | null;
   onSelectClip?: (clipId: string | null) => void;
@@ -86,6 +88,7 @@ export function TimelineCompositorPreview({
   captionStyle,
   exportSettings,
   finishing,
+  colorManagement,
   selectedClipId = null,
   selectedTextOverlayId = null,
   onSelectClip,
@@ -170,6 +173,7 @@ export function TimelineCompositorPreview({
             maxHeight: size?.canvasHeight,
             maxWidth: size?.canvasWidth,
             finishing,
+            colorManagement,
             captions,
             captionStyle,
           },
@@ -221,6 +225,7 @@ export function TimelineCompositorPreview({
       captionStyle,
       exportSettings,
       finishing,
+      colorManagement,
     ],
   );
 

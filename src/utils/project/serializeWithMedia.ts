@@ -12,6 +12,7 @@ import type {
 } from '../../types';
 import type { ColorGradeSettings } from '../lut';
 import type { FinishingSettings } from '../finishing';
+import type { ColorManagementSettings } from '../colorManagement';
 import {
   DEFAULT_FINISHING,
   colorGradeToLutPass,
@@ -46,6 +47,8 @@ export interface SerializeProjectOptions {
   captions?: CaptionEntry[];
   /** Project-wide caption style overrides. */
   captionStyle?: Partial<TextOverlayStyle>;
+  /** Output color / working space. Omitted from the file when left at the default. */
+  colorManagement?: ColorManagementSettings;
 }
 
 function sanitizeUploadFileName(fileName: string): string {
@@ -216,6 +219,7 @@ export async function serializeProjectWithMedia(
     masterAudio,
     options.captions ?? [],
     options.captionStyle ?? {},
+    options.colorManagement,
   );
   if (mediaMode === 'metadata') return project;
 

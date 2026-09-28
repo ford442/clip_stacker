@@ -17,6 +17,8 @@ import type {
   TextOverlayStyle,
 } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
+import type { ColorManagementSettings } from '../utils/colorManagement';
+import { publishColorDebugSnapshot } from '../utils/colorManagement';
 import { resolveTimelineFinishing } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan, TimelineCompositor, TimelineRenderOptions } from '../utils/previewComposition';
@@ -88,6 +90,7 @@ export interface RenderTimelineParams {
   maxWidth?: number;
   maxHeight?: number;
   finishing?: FinishingSettings;
+  colorManagement?: ColorManagementSettings;
   /** @deprecated Prefer `finishing`. */
   colorGrade?: ColorGradeSettings;
   captions?: CaptionEntry[];
@@ -315,6 +318,11 @@ export class PreviewWorkerRuntime {
         break;
       }
 
+      case 'color-state': {
+        publishColorDebugSnapshot(msg.snapshot);
+        break;
+      }
+
       case 'render-cancelled': {
         const pending = this.pendingRenders.get(msg.renderId);
         this.pendingRenders.delete(msg.renderId);
@@ -374,6 +382,7 @@ export class PreviewWorkerRuntime {
         maxWidth: params.maxWidth,
         maxHeight: params.maxHeight,
         finishing: resolveTimelineFinishing(params),
+        colorManagement: params.colorManagement,
         captions: params.captions,
         captionStyle: params.captionStyle,
       };
@@ -663,6 +672,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         maxWidth: options?.maxWidth,
         maxHeight: options?.maxHeight,
         finishing: resolveTimelineFinishing(options),
+        colorManagement: options?.colorManagement,
         captions: options?.captions,
         captionStyle: options?.captionStyle,
       },

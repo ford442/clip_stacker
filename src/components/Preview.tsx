@@ -55,11 +55,12 @@ function PreviewImpl({
   const selectedClipId = useSelectedClipId();
   const clip = useEditorClip(selectedClipId);
   const selectedTextOverlayId = useSelectedTextOverlayId();
-  const { exportSettings, finishing, outputUrl, showCaptionsInPreview } = useStore(
+  const { exportSettings, finishing, colorManagement, outputUrl, showCaptionsInPreview } = useStore(
     settingsStore,
     useShallow((s) => ({
       exportSettings: s.exportSettings,
       finishing: s.finishing,
+      colorManagement: s.colorManagement,
       outputUrl: s.outputUrl,
       showCaptionsInPreview: s.showCaptionsInPreview,
     })),
@@ -107,6 +108,7 @@ function PreviewImpl({
           captionStyle={captionStyle}
           exportSettings={exportSettings}
           finishing={finishing}
+          colorManagement={colorManagement}
           selectedClipId={selectedClipId}
           selectedTextOverlayId={selectedTextOverlayId}
           onSelectClip={onSelectClip}
@@ -135,6 +137,7 @@ function PreviewImpl({
         <WebGPUVideoPreview
           clip={clip}
           finishing={finishing}
+          colorManagement={colorManagement}
         />
       </section>
     );

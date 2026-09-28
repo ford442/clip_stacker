@@ -2,6 +2,8 @@
 @group(0) @binding(1) var inputTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> u: SharpenUniforms;
 
+const SCENE_LINEAR: bool = false;
+
 struct SharpenUniforms {
   // vec4 0
   amount: f32,
@@ -119,6 +121,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   // Midtone detail: local contrast (reuse high-pass) weighted to midtones only.
   outY = outY + midtone * midtoneWeight(y) * detail;
 
+  if (SCENE_LINEAR) {
+    let linearRgb = yuvToRgb(vec3<f32>(outY, yuv.y, yuv.z));
+    return vec4<f32>(linearRgb, src.a);
+  }
   outY = clamp(outY, 0.0, 1.0);
   let rgb = clamp(yuvToRgb(vec3<f32>(outY, yuv.y, yuv.z)), vec3<f32>(0.0), vec3<f32>(1.0));
   return vec4<f32>(rgb, src.a);

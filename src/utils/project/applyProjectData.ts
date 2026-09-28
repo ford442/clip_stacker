@@ -21,6 +21,7 @@ import {
   getColorGradeFromFinishing,
   resolveFinishingFromProject,
 } from '../finishing';
+import { normalizeColorManagement } from '../colorManagement';
 import { resolveProjectTracks, syncTracksWithClips } from '../trackModel';
 import { sanitizeClipAdjustments } from './clipHelpers';
 import { downloadRemoteMedia } from './remoteMedia';
@@ -412,6 +413,7 @@ export async function applyProjectData(
 
   const finishing = resolveFinishingFromProject(project);
   const colorGrade = getColorGradeFromFinishing(finishing);
+  const colorManagement = normalizeColorManagement(project.colorManagement);
 
   const savedTracks = Array.isArray(project.tracks)
     ? project.tracks.map(
@@ -449,6 +451,7 @@ export async function applyProjectData(
     masterAudioMarkers: project.masterAudioMarkers ?? [],
     colorGrade,
     finishing,
+    colorManagement,
     skippedClipCount: skippedCount,
     skippedClipFileNames,
     invalidColorWarnings,

@@ -2,8 +2,12 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { setPlayheadTime } from '../store/playbackStore';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
 import type { Clip } from '../types';
-import type { FinishingSettings } from '../utils/finishing';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import { isFinishingActive } from '../utils/finishing';
+import {
+  isColorManagementActive,
+  type ColorManagementSettings,
+} from '../utils/colorManagement';
 import { grainFrameSeedFromTime } from '../utils/grain';
 import { useMediaVolume } from '../hooks/useMediaVolume';
 import {
@@ -19,6 +23,7 @@ import { displayedWebGpuProbe, WebGpuHardFailBanner } from './previewWebGpuFail'
 interface VideoPreviewProps {
   clip: Clip;
   finishing?: FinishingSettings;
+  colorManagement?: ColorManagementSettings;
 }
 
 /** Hidden but still decodable — `display:none` stops frame delivery in Chromium. */
@@ -36,6 +41,7 @@ const SEEK_SYNC_THRESHOLD_SEC = 0.05;
 export function WebGPUVideoPreview({
   clip,
   finishing,
+  colorManagement,
 }: VideoPreviewProps) {
   const playheadTime = usePlayheadTime();
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -47,6 +53,8 @@ export function WebGPUVideoPreview({
   // Keep finishing in a ref so slider edits don't tear down/recreate the GPU engine.
   const finishingRef = useRef(finishing);
   finishingRef.current = finishing;
+  const colorRef = useRef(colorManagement);
+  colorRef.current = colorManagement;
   // Clip fade/opacity used by the draw loop — updated without remounting the engine.
   const clipDrawRef = useRef(clip);
   clipDrawRef.current = clip;
@@ -123,9 +131,14 @@ export function WebGPUVideoPreview({
           drawClip.opacity ?? 1,
         );
         const activeFinishing = finishingRef.current;
-        if (activeFinishing && isFinishingActive(activeFinishing)) {
-          engine.applyFinishing(activeFinishing, {
+        const activeColor = colorRef.current;
+        if (
+          (activeFinishing && isFinishingActive(activeFinishing)) ||
+          isColorManagementActive(activeColor)
+        ) {
+          engine.applyFinishing(activeFinishing ?? DEFAULT_FINISHING, {
             frameIndex: grainFrameSeedFromTime(elapsed),
+            colorManagement: activeColor,
           });
         }
         frame.close();

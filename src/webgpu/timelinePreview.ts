@@ -3,8 +3,12 @@
  */
 
 import type { Clip, ClipTransition, TextOverlay } from '../types';
-import type { FinishingSettings } from '../utils/finishing';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import { resolveTimelineFinishing } from '../utils/finishing';
+import {
+  isColorManagementActive,
+  type ColorManagementSettings,
+} from '../utils/colorManagement';
 import { grainFrameSeedFromTime } from '../utils/grain';
 import { projectHasKeyframeAnimation } from '../utils/animatedLayout';
 import {
@@ -450,10 +454,14 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     if (options?.isCancelled?.()) return;
 
     const finishing = resolveTimelineFinishing(options);
-    if (finishing) {
+    const colorManagement = options?.colorManagement;
+    if (finishing || isColorManagementActive(colorManagement)) {
       const frameIndex =
         options?.frameIndex ?? grainFrameSeedFromTime(plan.globalTime);
-      this.engine.applyFinishing(finishing, { frameIndex });
+      this.engine.applyFinishing(finishing ?? DEFAULT_FINISHING, {
+        frameIndex,
+        colorManagement,
+      });
     }
 
     this.mediaPool.enforceBudget(drawnClipIds);
@@ -504,6 +512,14 @@ export class TimelinePreviewEngine implements TimelineCompositor {
   /** Ensure GPU work is complete before capturing the canvas for VideoEncoder. */
   async flush(): Promise<void> {
     await this.engine.flush();
+  }
+
+  get canvasPresentation() {
+    return this.engine.canvasPresentation;
+  }
+
+  readPqExportRgba(): Promise<Uint8Array | null> {
+    return this.engine.readPqExportRgba();
   }
 
   /**
@@ -649,6 +665,7 @@ export class WorkerTimelineRenderer {
     finishing?: FinishingSettings,
     isCancelled?: () => boolean,
     frameIndex?: number,
+    colorManagement?: ColorManagementSettings,
   ): Promise<void> {
     if (isCancelled?.()) {
       frames.forEach((f) => f.frame.close());
@@ -795,10 +812,13 @@ export class WorkerTimelineRenderer {
       this.engine.clearToBlack();
     }
 
-    if (!isCancelled?.() && finishing) {
+    if (!isCancelled?.() && (finishing || isColorManagementActive(colorManagement))) {
       const seed =
         frameIndex ?? grainFrameSeedFromTime(plan.globalTime);
-      this.engine.applyFinishing(finishing, { frameIndex: seed });
+      this.engine.applyFinishing(finishing ?? DEFAULT_FINISHING, {
+        frameIndex: seed,
+        colorManagement,
+      });
     }
   }
 

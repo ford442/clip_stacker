@@ -2,14 +2,18 @@ import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type Expor
 import { sanitizeFilename } from '../../utils/filename';
 import type { FinishingSettings } from '../../utils/finishing';
 import { FinishingPanel } from '../FinishingPanel';
+import { OutputColorFields } from './OutputColorFields';
+import type { ColorManagementSettings } from '../../utils/colorManagement';
 import { PRESETS } from './helpers';
 
 interface InspectorExportTabProps {
   exportSettings: ExportSettings;
   finishing: FinishingSettings | undefined;
+  colorManagement: ColorManagementSettings;
   currentPresetName: string;
   onExportSettingsChange: (settings: ExportSettings) => void;
   onFinishingChange: ((settings: FinishingSettings) => void) | undefined;
+  onColorManagementChange: (settings: ColorManagementSettings) => void;
   updateExport: (field: keyof ExportSettings, value: string | number) => void;
   updateResolutionPreset: (preset: ResolutionPreset) => void;
 }
@@ -17,9 +21,11 @@ interface InspectorExportTabProps {
 export function InspectorExportTab({
   exportSettings,
   finishing,
+  colorManagement,
   currentPresetName,
   onExportSettingsChange,
   onFinishingChange,
+  onColorManagementChange,
   updateExport,
   updateResolutionPreset,
 }: InspectorExportTabProps) {
@@ -126,6 +132,12 @@ export function InspectorExportTab({
       {finishing && onFinishingChange && (
         <FinishingPanel settings={finishing} onChange={onFinishingChange} />
       )}
+
+      <OutputColorFields
+        colorManagement={colorManagement}
+        exportSettings={exportSettings}
+        onChange={onColorManagementChange}
+      />
 
       <div className="inspector-group-label">WebCodecs (GPU path)</div>
       <label title="Hardware encoder codec. HEVC/AV1 fall back to H.264 when unsupported.">

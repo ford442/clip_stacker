@@ -17,7 +17,8 @@ import { getGpuErrorLog, peekGpuFeatures } from '../webgpu/gpuDevice';
 import { getPublishedWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
 import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
-import { getLastResolvedEncoderCodec } from './webcodecs-codec';
+import { getLastEncoderColorSpace, getLastResolvedEncoderCodec } from './webcodecs-codec';
+import { getColorDebugSnapshot, type ColorManagementSettings } from './colorManagement';
 import { getAudioPlaybackManager } from '../audio/playbackManager';
 
 export interface DebugReportContext {
@@ -29,6 +30,7 @@ export interface DebugReportContext {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   exportSettings: ExportSettings;
+  colorManagement?: ColorManagementSettings;
   error?: unknown;
 }
 
@@ -222,6 +224,27 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   lines.push('```json');
   lines.push(JSON.stringify(getPublishedWebGpuProbe(), null, 2));
   lines.push('```');
+  lines.push('');
+
+  const colorDebug = getColorDebugSnapshot();
+  const selected = ctx.colorManagement;
+  lines.push('## Color');
+  lines.push(
+    `- Output: ${selected?.outputColor ?? colorDebug.outputColor}; working space: ${selected?.workingSpace ?? colorDebug.workingSpace}`,
+  );
+  lines.push(
+    `- Canvas: colorSpace ${colorDebug.canvasColorSpace}, toneMapping ${colorDebug.toneMapping}, format ${colorDebug.canvasFormat || '(not configured)'}, present ${colorDebug.present}${colorDebug.presentFallback ? ' (fallback)' : ''}`,
+  );
+  const encoderColor = getLastEncoderColorSpace();
+  lines.push(
+    encoderColor
+      ? `- Encoder colorSpace: ${JSON.stringify(encoderColor)}`
+      : '- Encoder colorSpace: (no WebCodecs configure yet this session)',
+  );
+  const gpuFeaturesForColor = peekGpuFeatures();
+  const adopted = (name: string) => (gpuFeaturesForColor?.has(name as GPUFeatureName) ? 'yes' : 'no');
+  lines.push(`- shader-f16 adopted: ${adopted('shader-f16')}`);
+  lines.push(`- rg11b10ufloat-renderable adopted: ${adopted('rg11b10ufloat-renderable')}`);
   lines.push('');
 
   const gpuFeatures = peekGpuFeatures();

@@ -4,6 +4,8 @@ import {
   REC709_COLOR_SPACE,
   VIDEO_ENCODER_LATENCY_MODE,
   WEBCODECS_PROGRESS_STAGES,
+  AV1_10BIT_CODEC,
+  HEVC_MAIN10_CODEC,
   buildVideoEncoderConfig,
   codecCandidates,
   crfToBitsPerPixel,
@@ -11,6 +13,7 @@ import {
   resolveEncoderBitrate,
   resolveEncoderCodec,
 } from './webcodecs';
+import { HDR10_COLOR_SPACE } from './colorManagement';
 
 describe('h264CodecString', () => {
   it('picks level 3.0 for 720p and below (defaults to Constrained Baseline)', () => {
@@ -48,6 +51,13 @@ describe('codecCandidates', () => {
     ]);
   });
 
+  it('probes only HEVC Main10 and AV1 10-bit for HDR10, with no H.264 fallback', () => {
+    const codecs = codecCandidates('h264', 1920, 1080, 'hdr10');
+    expect(codecs.map((c) => c.codec)).toEqual([HEVC_MAIN10_CODEC, AV1_10BIT_CODEC]);
+    expect(codecs.some((c) => c.codec.startsWith('avc1'))).toBe(false);
+    expect(codecs.map((c) => c.muxerCodec)).toEqual(['hevc', 'av1']);
+  });
+
   it('prefers HEVC/AV1 with the same High -> Main -> Baseline H.264 fallback', () => {
     expect(codecCandidates('hevc', 1280, 720).map((c) => c.muxerCodec)).toEqual([
       'hevc',
@@ -79,6 +89,43 @@ describe('buildVideoEncoderConfig', () => {
     expect(config.avc).toEqual({ format: 'avc' });
     expect(config.hardwareAcceleration).toBe('prefer-hardware');
     expect(config.latencyMode).toBe(VIDEO_ENCODER_LATENCY_MODE);
+  });
+
+  it('tags a Rec.2020 PQ candidate and keeps the Rec.709 default', () => {
+    const hdr = buildVideoEncoderConfig(
+      { codec: HEVC_MAIN10_CODEC, muxerCodec: 'hevc' },
+      1920,
+      1080,
+      8_000_000,
+      30,
+      'hdr10',
+    );
+    expect(hdr.codec).toBe(HEVC_MAIN10_CODEC);
+    expect(hdr.colorSpace).toEqual(HDR10_COLOR_SPACE);
+    expect(hdr.colorSpace).toMatchObject({
+      primaries: 'bt2020',
+      transfer: 'pq',
+      matrix: 'bt2020-ncl',
+    });
+
+    const av1 = buildVideoEncoderConfig(
+      { codec: AV1_10BIT_CODEC, muxerCodec: 'av1' },
+      1920,
+      1080,
+      8_000_000,
+      30,
+      'hdr10',
+    );
+    expect(av1.codec).toBe('av01.0.08M.10');
+    expect(av1.colorSpace?.transfer).toBe('pq');
+
+    const sdr = buildVideoEncoderConfig(
+      { codec: 'avc1.640028', muxerCodec: 'avc' },
+      1920,
+      1080,
+      8_000_000,
+    );
+    expect(sdr.colorSpace).toEqual(REC709_COLOR_SPACE);
   });
 
   it('omits the avc field for non-H.264 candidates', () => {
@@ -176,6 +223,22 @@ describe('resolveEncoderCodec', () => {
     const resolved = await resolveEncoderCodec('av1', 1280, 720, 4_000_000);
     expect(resolved.muxerCodec).toBe('avc');
     expect(resolved.codec).toBe('avc1.42001e'); // last candidate: Baseline
+  });
+
+  it('returns Main10 for HDR10 when the probe accepts it and does not fall through to H.264', async () => {
+    isConfigSupported.mockResolvedValueOnce({ supported: true });
+    const resolved = await resolveEncoderCodec('h264', 1920, 1080, 8_000_000, 'hdr10');
+    expect(resolved.codec).toBe(HEVC_MAIN10_CODEC);
+    expect(isConfigSupported).toHaveBeenCalledTimes(1);
+    const probed = isConfigSupported.mock.calls[0][0] as { colorSpace?: { transfer?: string } };
+    expect(probed.colorSpace?.transfer).toBe('pq');
+  });
+
+  it('refuses HDR10 when neither 10-bit candidate is supported', async () => {
+    isConfigSupported.mockResolvedValue({ supported: false });
+    await expect(resolveEncoderCodec('hevc', 1920, 1080, 8_000_000, 'hdr10')).rejects.toThrow(
+      /Main10|AV1 10-bit/,
+    );
   });
 
   it('probes with the same bitrate/latencyMode/bitrateMode the real configure() will use', async () => {

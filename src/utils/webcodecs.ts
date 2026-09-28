@@ -33,6 +33,10 @@ import {
   shouldUseTimelineGpuExport,
 } from './renderEligibility';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
+import {
+  DEFAULT_COLOR_MANAGEMENT,
+  type ColorManagementSettings,
+} from './colorManagement';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import {
   TARGET_FPS,
@@ -59,9 +63,12 @@ export {
   REC709_COLOR_SPACE,
   VIDEO_ENCODER_LATENCY_MODE,
   WEBCODECS_PROGRESS_STAGES,
+  AV1_10BIT_CODEC,
+  HEVC_MAIN10_CODEC,
   buildVideoEncoderConfig,
   codecCandidates,
   crfToBitsPerPixel,
+  getLastEncoderColorSpace,
   getLastResolvedEncoderCodec,
   h264CodecString,
   isWebCodecsAvailable,
@@ -91,6 +98,7 @@ export async function encodeVideoWithWebCodecs(
    * a separate stream (see `ffmpeg/captions.ts`).
    */
   captionBurnIn: CaptionPlanOptions = {},
+  colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
 ): Promise<Blob> {
   const { width, height } = parseOutputResolution(settings.outputResolution);
 
@@ -112,6 +120,7 @@ export async function encodeVideoWithWebCodecs(
       finishing,
       includeWebCodecsAudio,
       captionBurnIn,
+      colorManagement,
     );
   }
 
@@ -130,7 +139,14 @@ export async function encodeVideoWithWebCodecs(
   );
 
   const bitrate = resolveEncoderBitrate(settings, width, height);
-  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height, bitrate);
+  const outputColor = colorManagement.outputColor;
+  const encoderCodec = await resolveEncoderCodec(
+    settings.videoCodec,
+    width,
+    height,
+    bitrate,
+    outputColor,
+  );
   const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
@@ -139,7 +155,10 @@ export async function encodeVideoWithWebCodecs(
     error: (e) => { videoError = e; },
   });
 
-  videoEncoder.configure(buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TARGET_FPS));
+  videoEncoder.configure(
+    buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TARGET_FPS, outputColor),
+  );
+  compositor.colorManagement = colorManagement;
 
   let videoTimeUs = 0;
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);

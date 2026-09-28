@@ -311,6 +311,12 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
               Canvas renderer to key on the GPU, or use Force FFmpeg.
             </p>
           )}
+          {renderPlan.wideColor === 'ignored' && (
+            <p className="render-plan-warning" role="alert">
+              ⚠ Display P3 and HDR10 are GPU-only. This encode is Rec.709 SDR — turn off
+              Force FFmpeg and the Canvas renderer to keep the chosen output.
+            </p>
+          )}
           {renderPlan.shaderTextFallbackApplied && renderPlan.shaderTextOverlays && (
             <p className="render-plan-warning" role="alert">
               ⚠ Shader-filled text overlay{renderPlan.shaderTextOverlays.length > 1 ? 's' : ''}{' '}

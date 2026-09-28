@@ -22,7 +22,8 @@ struct PrimaryColorUniforms {
   // vec4 4
   gain: vec3<f32>,
   _pad3: f32,
-  // vec4 5
+  // vec4 5 — x is 1 when the sample is already scene-linear (managed path).
+  // Default 0 keeps the encoded Rec.709 grade below.
   _pad4: vec4<f32>,
 };
 
@@ -109,9 +110,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return src;
   }
 
-  let linearIn = srgbToLinear(src.rgb);
+  let alreadyLinear = u._pad4.x > 0.5;
+  let linearIn = select(srgbToLinear(src.rgb), src.rgb, alreadyLinear);
   let gradedLinear = gradeLinear(linearIn);
-  let graded = clamp(linearToSrgb(gradedLinear), vec3<f32>(0.0), vec3<f32>(1.0));
+  let encoded = clamp(linearToSrgb(gradedLinear), vec3<f32>(0.0), vec3<f32>(1.0));
+  let graded = select(encoded, gradedLinear, alreadyLinear);
   let rgb = mix(src.rgb, graded, mixAmt);
   return vec4<f32>(rgb, src.a);
 }

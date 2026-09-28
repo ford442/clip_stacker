@@ -20,6 +20,10 @@ import {
   isFinishingActive,
 } from '../finishing';
 import type { FinishingSettings } from '../finishing';
+import {
+  isColorManagementActive,
+  type ColorManagementSettings,
+} from '../colorManagement';
 import { normalizeClipAutomation } from '../clipAutomation';
 import { normalizeCaptions } from '../subtitles';
 export function serializeProject(
@@ -33,6 +37,7 @@ export function serializeProject(
   masterAudio: MasterAudio | null = null,
   captions: CaptionEntry[] = [],
   captionStyle: Partial<TextOverlayStyle> = {},
+  colorManagement?: ColorManagementSettings,
 ): Project {
   const serializedTracks: SerializedTrack[] = tracks.map((track) => ({
     id: track.id,
@@ -166,6 +171,7 @@ export function serializeProject(
       : {}),
     ...(Object.keys(captionStyle).length > 0 ? { captionStyle: { ...captionStyle } } : {}),
     ...(isFinishingActive(finishing) ? { finishing } : {}),
+    ...(isColorManagementActive(colorManagement) ? { colorManagement } : {}),
     ...(masterAudio
       ? {
           masterAudio: {

@@ -11,6 +11,11 @@ import {
 } from './previewComposition';
 import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { TARGET_FPS } from './webcodecs-codec';
+import {
+  ColorPipelineExportError,
+  HDR10_COLOR_SPACE,
+  isColorManagementActive,
+} from './colorManagement';
 
 export type GpuCompositorKind = 'auto' | 'webgpu' | 'canvas';
 
@@ -19,6 +24,7 @@ export interface ResolvedCompositor {
   gpuCompositor: ExportCompositor | null;
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D | null;
+  colorManagement?: import('./colorManagement').ColorManagementSettings;
 }
 
 export async function resolveCompositor(
@@ -109,6 +115,41 @@ export async function captureCompositedFrame(
   if (compositor.gpuCompositor) {
     await compositor.gpuCompositor.flush();
   }
+  const color = compositor.colorManagement;
+  if (color?.outputColor === 'hdr10') {
+    if (!compositor.gpuCompositor) {
+      throw new ColorPipelineExportError(
+        'HDR10 export needs the WebGPU compositor. This file was not tagged Rec.709.',
+      );
+    }
+    const rgba = await compositor.gpuCompositor.readPqExportRgba();
+    if (!rgba) {
+      throw new ColorPipelineExportError(
+        'HDR10 frame readback produced no image. This file was not tagged Rec.709.',
+      );
+    }
+    try {
+      return new VideoFrame(rgba, {
+        format: 'RGBA',
+        codedWidth: compositor.canvas.width,
+        codedHeight: compositor.canvas.height,
+        timestamp,
+        duration: durationUs,
+        colorSpace: HDR10_COLOR_SPACE as VideoColorSpaceInit,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'VideoFrame rejected the PQ buffer';
+      throw new ColorPipelineExportError(`${message} This file was not tagged Rec.709.`);
+    }
+  }
+  if (
+    color?.outputColor === 'display-p3' &&
+    compositor.gpuCompositor?.canvasPresentation.presentFallback
+  ) {
+    throw new ColorPipelineExportError(
+      'Display P3 canvas is not available in this browser. Export was not tagged as Display P3.',
+    );
+  }
   const frameCanvas = overlayPass
     ? overlayPass.compositeFrame(compositor, globalTimeSec)
     : compositor.canvas;
@@ -140,6 +181,9 @@ export function drawCompositedVideoFrame(
     );
     compositor.gpuCompositor.applyFinishing(finishing, {
       frameIndex: frameIndex ?? 0,
+      colorManagement: isColorManagementActive(compositor.colorManagement)
+        ? compositor.colorManagement
+        : undefined,
     });
     return;
   }
@@ -189,6 +233,9 @@ export function drawCompositedFrame(
     frame.close();
     compositor.gpuCompositor.applyFinishing(finishing, {
       frameIndex: frameIndex ?? Math.max(0, Math.round(elapsed * TARGET_FPS)),
+      colorManagement: isColorManagementActive(compositor.colorManagement)
+        ? compositor.colorManagement
+        : undefined,
     });
     return;
   }

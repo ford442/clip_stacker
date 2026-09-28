@@ -3,6 +3,15 @@
 @group(0) @binding(2) var prevTex: texture_2d<f32>;
 @group(0) @binding(3) var<uniform> u: NoiseReductionUniforms;
 
+const SCENE_LINEAR: bool = false;
+
+fn clip01(c: vec3<f32>) -> vec3<f32> {
+  if (SCENE_LINEAR) {
+    return c;
+  }
+  return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 struct NoiseReductionUniforms {
   // vec4 0
   amount: f32,
@@ -129,14 +138,14 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   let filteredY = bilateralLuma(in.uv, center);
   let yuv = rgbToYuv(center);
   if (u.lumaOnly > 0.5) {
-    result = clamp(yuvToRgb(vec3<f32>(filteredY, yuv.y, yuv.z)), vec3<f32>(0.0), vec3<f32>(1.0));
+    result = clip01(yuvToRgb(vec3<f32>(filteredY, yuv.y, yuv.z)));
   } else {
     // Mild chroma blur toward neighbor average when not luma-only.
     let neighbor = textureSample(inputTex, inputSampler, in.uv + u.texelSize).rgb;
     let neighborYuv = rgbToYuv(neighbor);
     let softU = mix(yuv.y, neighborYuv.y, u.spatialStrength * 0.35);
     let softV = mix(yuv.z, neighborYuv.z, u.spatialStrength * 0.35);
-    result = clamp(yuvToRgb(vec3<f32>(filteredY, softU, softV)), vec3<f32>(0.0), vec3<f32>(1.0));
+    result = clip01(yuvToRgb(vec3<f32>(filteredY, softU, softV)));
   }
 
   // Temporal blend with motion gate (no motion vectors in v1).
@@ -151,7 +160,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
       let rYuv = rgbToYuv(result);
       let pYuv = rgbToYuv(prev);
       let blendedY = mix(rYuv.x, pYuv.x, tMix);
-      result = clamp(yuvToRgb(vec3<f32>(blendedY, rYuv.y, rYuv.z)), vec3<f32>(0.0), vec3<f32>(1.0));
+      result = clip01(yuvToRgb(vec3<f32>(blendedY, rYuv.y, rYuv.z)));
     } else {
       result = mix(result, prev, tMix);
     }

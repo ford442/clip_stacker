@@ -4,6 +4,7 @@
  */
 
 import lutShader from './shaders/lut.wgsl?raw';
+import { shaderForSceneLinear } from '../utils/colorManagement';
 import type { LutData } from '../utils/lut';
 import { uploadLutTexture } from '../utils/lut';
 
@@ -30,8 +31,10 @@ export class LutPass {
     this.uniformBuffer = uniformBuffer;
   }
 
-  static create(device: GPUDevice, format: GPUTextureFormat): LutPass {
-    const shaderModule = device.createShaderModule({ code: lutShader });
+  static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): LutPass {
+    const shaderModule = device.createShaderModule({
+      code: shaderForSceneLinear(lutShader, sceneLinear),
+    });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',

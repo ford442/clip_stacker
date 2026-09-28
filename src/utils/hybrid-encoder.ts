@@ -27,6 +27,13 @@ import { canUseGpuVideoEncoder, hasActiveTransitions } from './renderEligibility
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { resolveLayerKey } from './overlayKey';
+import {
+  DEFAULT_COLOR_MANAGEMENT,
+  isColorManagementActive,
+  isColorPipelineExportError,
+  stampWideColor,
+  type ColorManagementSettings,
+} from './colorManagement';
 
 export type EncoderPath = 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
 
@@ -67,6 +74,7 @@ export async function hybridMergeClips(
   finishing: FinishingSettings = DEFAULT_FINISHING,
   masterAudio: MasterAudio | null = null,
   captionBurnIn: CaptionBurnInRequest | null = null,
+  colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
@@ -96,11 +104,17 @@ export async function hybridMergeClips(
   const resolveFinalPlan = (
     path: EncoderPath,
     overlayKeying?: RenderPlan['overlayKeying'],
-  ): RenderPlan => ({
-    ...effectiveRenderPlan,
-    encoderIntent: path,
-    ...(hasKeyedClip && overlayKeying ? { overlayKeying } : {}),
-  });
+    wideColorWhere?: 'gpu' | 'ignored',
+  ): RenderPlan => {
+    const keyed: RenderPlan = {
+      ...effectiveRenderPlan,
+      encoderIntent: path,
+      ...(hasKeyedClip && overlayKeying ? { overlayKeying } : {}),
+    };
+    return wideColorWhere
+      ? stampWideColor(keyed, wideColorWhere, colorManagement)
+      : keyed;
+  };
 
   // -- Canvas renderer path --------------------------------------------------
   // Canvas2D has no keying, transition, PiP, or finishing-pass step — it just
@@ -122,7 +136,7 @@ export async function hybridMergeClips(
       return {
         blob,
         path: 'canvas',
-        renderPlan: resolveFinalPlan('canvas', 'unsupported'),
+        renderPlan: resolveFinalPlan('canvas', 'unsupported', 'ignored'),
       };
     } catch (err) {
       canvasFailure = (err as Error).message;
@@ -177,6 +191,7 @@ export async function hybridMergeClips(
           finishing,
           useWebCodecsAudio,
           burnCaptions ?? {},
+          colorManagement,
         );
         const captionsBurnedIn = Boolean(burnCaptions);
 
@@ -184,7 +199,7 @@ export async function hybridMergeClips(
           return {
             blob,
             path: 'webcodecs-av',
-            renderPlan: resolveFinalPlan('webcodecs-av', 'gpu'),
+            renderPlan: resolveFinalPlan('webcodecs-av', 'gpu', 'gpu'),
             captionsBurnedIn,
           };
         }
@@ -202,10 +217,20 @@ export async function hybridMergeClips(
         return {
           blob: muxed,
           path: 'webcodecs',
-          renderPlan: resolveFinalPlan('webcodecs', 'gpu'),
+          renderPlan: resolveFinalPlan('webcodecs', 'gpu', 'gpu'),
           captionsBurnedIn,
         };
       } catch (err) {
+        if (
+          isColorManagementActive(colorManagement) &&
+          colorManagement.outputColor !== 'rec709-sdr'
+        ) {
+          if (isColorPipelineExportError(err)) throw err;
+          const message = err instanceof Error ? err.message : 'GPU encode failed';
+          throw new Error(
+            `${message} Display P3 / HDR10 was not written as a Rec.709 file.`,
+          );
+        }
         gpuFailure = (err as Error).message;
         onStatus(`GPU encode failed (${gpuFailure}). Falling back to FFmpeg...`);
       }
@@ -242,7 +267,7 @@ export async function hybridMergeClips(
       finishing,
       masterAudio,
     );
-    const keyedPlan = resolveFinalPlan('ffmpeg', 'ffmpeg');
+    const keyedPlan = resolveFinalPlan('ffmpeg', 'ffmpeg', 'ignored');
     const ffmpegRenderPlan: RenderPlan =
       shaderOverlays.length > 0
         ? {

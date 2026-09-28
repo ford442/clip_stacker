@@ -4,6 +4,7 @@
  */
 
 import denoiseShader from './shaders/denoise.wgsl?raw';
+import { shaderForSceneLinear } from '../utils/colorManagement';
 import type { NoiseReductionPass } from '../utils/finishing';
 import {
   NOISE_REDUCTION_UNIFORM_FLOATS,
@@ -32,8 +33,10 @@ export class NoiseReductionGpuPass {
     this.dummyPrevTexture = dummyPrevTexture;
   }
 
-  static create(device: GPUDevice, format: GPUTextureFormat): NoiseReductionGpuPass {
-    const shaderModule = device.createShaderModule({ code: denoiseShader });
+  static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): NoiseReductionGpuPass {
+    const shaderModule = device.createShaderModule({
+      code: shaderForSceneLinear(denoiseShader, sceneLinear),
+    });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',

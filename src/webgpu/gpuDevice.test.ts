@@ -129,7 +129,8 @@ describe('gpuDevice registry', () => {
     const adapter = makeFakeAdapter(device, {}, [
       'timestamp-query',
       'float32-filterable',
-      'shader-f16', // supported by the adapter but not in our desired list
+      'shader-f16',
+      'texture-compression-bc', // supported, but not in the desired list
     ]);
     stubGpu(adapter);
 
@@ -137,12 +138,13 @@ describe('gpuDevice registry', () => {
 
     expect(adapter.requestDevice).toHaveBeenCalledWith(
       expect.objectContaining({
-        requiredFeatures: ['timestamp-query', 'float32-filterable'],
+        requiredFeatures: ['timestamp-query', 'float32-filterable', 'shader-f16'],
       }),
     );
     expect(ctx.features.has('timestamp-query')).toBe(true);
     expect(ctx.features.has('float32-filterable')).toBe(true);
-    expect(ctx.features.has('shader-f16' as GPUFeatureName)).toBe(false);
+    expect(ctx.features.has('shader-f16' as GPUFeatureName)).toBe(true);
+    expect(ctx.features.has('texture-compression-bc' as GPUFeatureName)).toBe(false);
   });
 
   it('never requires an optional feature the adapter lacks (boots with an empty feature set)', async () => {

@@ -99,6 +99,7 @@ export class PrimaryColorGpuPass {
       this.inputTexture!,
       canvasTexture.createView(),
       settings,
+      false,
     );
     device.queue.submit([encoder.finish()]);
   }
@@ -115,12 +116,13 @@ export class PrimaryColorGpuPass {
     height: number,
     settings: PrimaryColorPass,
     commandEncoder?: GPUCommandEncoder,
+    workingIsLinear = false,
   ): void {
     if (width <= 0 || height <= 0) return;
     if (!settings.enabled || (settings.amount ?? 1) <= 0) return;
 
     const encoder = commandEncoder ?? device.createCommandEncoder();
-    this.encodePass(device, encoder, inputTexture, outputView, settings);
+    this.encodePass(device, encoder, inputTexture, outputView, settings, workingIsLinear);
     if (!commandEncoder) device.queue.submit([encoder.finish()]);
   }
 
@@ -130,8 +132,10 @@ export class PrimaryColorGpuPass {
     inputTexture: GPUTexture,
     outputView: GPUTextureView,
     settings: PrimaryColorPass,
+    workingIsLinear = false,
   ): void {
     packPrimaryColorUniforms(settings, this.uniformData);
+    this.uniformData[20] = workingIsLinear ? 1 : 0;
     device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
     const bindGroup = device.createBindGroup({

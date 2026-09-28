@@ -18,6 +18,8 @@
 
 import type { Clip } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
+import type { ColorManagementSettings } from '../utils/colorManagement';
+import { getColorDebugSnapshot } from '../utils/colorManagement';
 import { resolveTimelineFinishing } from '../utils/finishing';
 import {
   buildPreviewCompositionPlan,
@@ -52,6 +54,7 @@ let scopeSettings: ScopeSettings = SCOPES_OFF;
 interface PendingRender {
   plan: PreviewCompositionPlan;
   finishing?: FinishingSettings;
+  colorManagement?: ColorManagementSettings;
   /** Frames the worker's own decoder already produced for this render. */
   decoded: CapturedFrame[];
 }
@@ -125,7 +128,10 @@ async function completeRender(
     entries,
     pending.finishing,
     () => cancelledIds.has(renderId),
+    undefined,
+    pending.colorManagement,
   );
+  post({ type: 'color-state', snapshot: getColorDebugSnapshot() });
 
   if (cancelledIds.has(renderId)) {
     cancelledIds.delete(renderId);
@@ -238,6 +244,7 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         maxWidth,
         maxHeight,
         finishing,
+        colorManagement,
         colorGrade,
         captions,
         captionStyle,
@@ -295,7 +302,12 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         fallback = split.fallback;
       }
 
-      const pending: PendingRender = { plan, finishing: resolvedFinishing, decoded };
+      const pending: PendingRender = {
+        plan,
+        finishing: resolvedFinishing,
+        colorManagement,
+        decoded,
+      };
 
       if (cancelledIds.has(renderId)) {
         cancelledIds.delete(renderId);

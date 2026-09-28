@@ -141,6 +141,8 @@ export interface TimelineRenderOptions {
   maxWidth?: number;
   /** Project finishing pass chain (WebGPU path only). */
   finishing?: import('./finishing').FinishingSettings;
+  /** Output color and working space. Omitted keeps the Rec.709 SDR chain. */
+  colorManagement?: import('./colorManagement').ColorManagementSettings;
   /** @deprecated Prefer `finishing`. */
   colorGrade?: import('./lut').ColorGradeSettings;
   /** Decoder-cursor frame source for export; omitted for live preview. */

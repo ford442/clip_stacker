@@ -64,16 +64,18 @@ function InspectorImpl({
   onStabilizeChange,
   captions,
 }: InspectorProps) {
-  const { exportSettings, finishing, rifeProcessing } = useStore(
+  const { exportSettings, finishing, colorManagement, rifeProcessing } = useStore(
     settingsStore,
     useShallow((s) => ({
       exportSettings: s.exportSettings,
       finishing: s.finishing,
+      colorManagement: s.colorManagement,
       rifeProcessing: s.rifeProcessingClipId !== null,
     })),
   );
   const onExportSettingsChange = settingsActions.setExportSettings;
   const onFinishingChange = settingsActions.setFinishing;
+  const onColorManagementChange = settingsActions.setColorManagement;
   const selectedClipId = useSelectedClipId();
   const clip = useEditorClip(selectedClipId);
   const clips = useEditorClips();
@@ -493,9 +495,11 @@ function InspectorImpl({
           <InspectorExportTab
             exportSettings={exportSettings}
             finishing={finishing}
+            colorManagement={colorManagement}
             currentPresetName={currentPresetName}
             onExportSettingsChange={onExportSettingsChange}
             onFinishingChange={onFinishingChange}
+            onColorManagementChange={onColorManagementChange}
             updateExport={updateExport}
             updateResolutionPreset={updateResolutionPreset}
           />

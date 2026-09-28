@@ -29,6 +29,7 @@ import type {
   TextOverlayStyle,
 } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
+import type { ColorDebugSnapshot, ColorManagementSettings } from '../utils/colorManagement';
 import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan } from '../utils/previewComposition';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
@@ -184,6 +185,8 @@ export type PreviewWorkerInbound =
       maxWidth?: number;
       maxHeight?: number;
       finishing?: FinishingSettings;
+      /** Output color / working space for the managed pipeline. */
+      colorManagement?: ColorManagementSettings;
       /** @deprecated Prefer `finishing`. */
       colorGrade?: ColorGradeSettings;
       /** Caption cues to plan for; omitted or empty means no caption layers. */
@@ -266,6 +269,10 @@ export type PreviewWorkerOutbound =
       id: number;
       ok: false;
       message: string;
+    }
+  | {
+      type: 'color-state';
+      snapshot: ColorDebugSnapshot;
     }
   | {
       type: 'error';

@@ -656,6 +656,11 @@ export interface Project {
   /** Ordered finishing pass chain (noise → primary → secondary → LUT → sharpen → grain). */
   finishing?: import('../utils/finishing').FinishingSettings;
   /**
+   * Output color and working space. Omitted when both are the Rec.709 SDR
+   * default, so older projects load unchanged.
+   */
+  colorManagement?: import('../utils/colorManagement').ColorManagementSettings;
+  /**
    * How source media was stored when this project was saved. Used on load
    * to pick between `sourceMediaDataUrl` and `sourceMediaUrl` authoritatively,
    * rather than falling back through whichever happens to be present (a
@@ -737,4 +742,10 @@ export interface RenderPlan {
    * active; absent otherwise.
    */
   ffmpegFinishingGaps?: string[];
+  /**
+   * Where a non-default output color (Display P3 / HDR10 / scene-linear
+   * working space) was honored. `ignored` means the encode is Rec.709 SDR
+   * because the path was FFmpeg or the MediaRecorder canvas.
+   */
+  wideColor?: 'gpu' | 'ignored';
 }

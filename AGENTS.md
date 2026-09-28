@@ -235,6 +235,10 @@ Two things to keep in mind when changing this:
 before captions existed still load (as an empty track). `applyProjectData`
 coerces and drops malformed cues rather than throwing.
 
+## Color pipeline
+
+Default pixels stay Rec.709 SDR. Managed mode (Display P3, HDR10, or scene-linear Rec.2020) is `src/utils/colorManagement.ts` plus the finishing-chain path in `src/webgpu/finishingPassChain.ts`. Matrices, pass order (output transform, then display-referred grain), and the PQ-file vs SDR-preview split are in `docs/color-pipeline.md`. Force FFmpeg / canvas export sets `RenderPlan.wideColor: 'ignored'` and does not relabel the file. `shader-f16` is optional and never required.
+
 ## Overlay keying (chroma / luma)
 
 `src/utils/overlayKey.ts` owns the key maths for **every** compositor. Add a

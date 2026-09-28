@@ -68,6 +68,7 @@ export function useAutoSave({
       tracks,
       editorStore.getState().captions,
       editorStore.getState().captionStyle,
+      settingsStore.getState().colorManagement,
     );
     if (stateHash === lastSavedHashRef.current) return;
 
@@ -89,7 +90,7 @@ export function useAutoSave({
         textOverlays,
         clipGroups,
         tracks,
-        {},
+        { colorManagement: settingsStore.getState().colorManagement },
         editorStore.getState().captions,
         editorStore.getState().captionStyle,
       );
@@ -103,7 +104,10 @@ export function useAutoSave({
           textOverlays,
           clipGroups,
           tracks,
-          { forceMetadataOnly: true },
+          {
+            forceMetadataOnly: true,
+            colorManagement: settingsStore.getState().colorManagement,
+          },
           editorStore.getState().captions,
           editorStore.getState().captionStyle,
         );
@@ -175,6 +179,7 @@ export function useAutoSave({
         skippedClipFileNames,
         invalidColorWarnings,
         mediaDownloadWarnings,
+        colorManagement: restoredColor,
       } = await applyProjectData(session.project, []);
 
       const selectedId =
@@ -185,6 +190,7 @@ export function useAutoSave({
             ? restoredClips[restoredClips.length - 1].id
             : null;
 
+      settingsStore.getState().setColorManagement(restoredColor);
       resetHistory({
         clips: restoredClips,
         tracks: restoredTracks,
@@ -222,6 +228,10 @@ export function useAutoSave({
         restoredGroups,
         selectedId,
         session.exportSettings ?? exportSettings,
+        restoredTracks,
+        restoredCaptions,
+        restoredCaptionStyle,
+        restoredColor,
       );
     } catch (error) {
       settingsStore.getState().setStatus(`Could not recover autosave: ${(error as Error).message}`);

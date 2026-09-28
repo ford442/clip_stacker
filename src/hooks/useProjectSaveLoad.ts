@@ -102,6 +102,7 @@ export function useProjectSaveLoad({
           finishing,
           captions: editorStore.getState().captions,
           captionStyle: editorStore.getState().captionStyle,
+          colorManagement: settingsStore.getState().colorManagement,
         },
         tracks,
         editorStore.getState().masterAudio,
@@ -126,7 +127,7 @@ export function useProjectSaveLoad({
 
   const handleLoadProject = useCallback(
     async (file: File) => {
-      const { setFinishing, setStatus } = settingsStore.getState();
+      const { setFinishing, setColorManagement, setStatus } = settingsStore.getState();
       try {
         const parsed = JSON.parse(await file.text());
         const {
@@ -139,6 +140,7 @@ export function useProjectSaveLoad({
           captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           finishing: loadedFinishing,
+          colorManagement: loadedColorManagement,
           masterAudio: loadedMasterAudio,
           skippedClipCount,
           skippedClipFileNames,
@@ -160,6 +162,7 @@ export function useProjectSaveLoad({
           masterAudio: loadedMasterAudio,
         });
         setFinishing(loadedFinishing);
+        setColorManagement(loadedColorManagement);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
@@ -277,6 +280,7 @@ export function useProjectSaveLoad({
               });
             },
             finishing,
+            colorManagement: settingsStore.getState().colorManagement,
           },
           tracks,
         );
@@ -295,7 +299,7 @@ export function useProjectSaveLoad({
 
   const handleLoadRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
-      const { setStatus, setFinishing } = settingsStore.getState();
+      const { setStatus, setFinishing, setColorManagement } = settingsStore.getState();
       try {
         setIsRemoteLoading(true);
         setStatus("Loading project from remote storage...");
@@ -310,6 +314,7 @@ export function useProjectSaveLoad({
           captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           finishing: loadedFinishing,
+          colorManagement: loadedColorManagement,
           masterAudio: loadedMasterAudio,
           skippedClipCount,
           skippedClipFileNames,
@@ -343,6 +348,7 @@ export function useProjectSaveLoad({
           masterAudio: loadedMasterAudio,
         });
         setFinishing(loadedFinishing);
+        setColorManagement(loadedColorManagement);
 
         let msg = `Remote project loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {

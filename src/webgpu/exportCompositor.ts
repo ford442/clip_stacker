@@ -131,9 +131,17 @@ export class ExportCompositor {
 
   applyFinishing(
     settings: import('../utils/finishing').FinishingSettings,
-    opts?: { frameIndex?: number },
+    opts?: { frameIndex?: number; colorManagement?: import('../utils/colorManagement').ColorManagementSettings },
   ): void {
     this.engine.applyFinishing(settings, opts);
+  }
+
+  get canvasPresentation(): import('../utils/colorManagement').CanvasPresentation {
+    return this.engine.canvasPresentation;
+  }
+
+  readPqExportRgba(): Promise<Uint8Array | null> {
+    return this.engine.readPqExportRgba();
   }
 
   /** @deprecated Use applyFinishing(). */

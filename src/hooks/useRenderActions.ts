@@ -80,7 +80,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
     try {
       const { 
         exportSettings, 
-        finishing, 
+        finishing,
+        colorManagement,
         forceFFmpeg, 
         useCanvasRenderer, 
         audioReactive, 
@@ -185,6 +186,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         finishing,
         editorStore.getState().masterAudio,
         captionBurnIn,
+        colorManagement,
       );
       // Captions the compositor could not burn are attached after the encode,
       // so every remaining encoder path gets the same result — see
@@ -413,7 +415,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
 
   /** Copy rich diagnostics (status + render plan + last FFmpeg logs + browser info) to clipboard. */
   const handleCopyDebugInfo = useCallback(async () => {
-    const { status, renderPlan, encoderPath, exportSettings, setStatus } = settingsStore.getState();
+    const { status, renderPlan, encoderPath, exportSettings, colorManagement, setStatus } =
+      settingsStore.getState();
     const text = generateDebugReport({
       status,
       renderPlan,
@@ -423,6 +426,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       transitions,
       textOverlays,
       exportSettings,
+      colorManagement,
       error: lastRenderError ?? undefined,
     });
     try {
