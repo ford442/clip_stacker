@@ -1,5 +1,6 @@
 /**
- * Intercut (strobe / flash-cut) slice planning for FFmpeg concat demuxer.
+ * Intercut (strobe / flash-cut) slice planning. `intercutRender.ts` snaps
+ * these slices to the output frame grid for rendering.
  *
  * Each slice references a source inpoint/outpoint on clip A, B, or optional C.
  *
@@ -313,7 +314,7 @@ function entireMaterialBudget(
 }
 
 /**
- * Build alternating A/B (or A/B/C) slices for concat demuxer `inpoint` / `outpoint`.
+ * Build alternating A/B (or A/B/C) slices as source `inpoint` / `outpoint` ranges.
  *
  * `sourceClock` controls whether offscreen clips freeze (`freezeHidden`) or
  * all playheads track output wall time (`parallel`).
@@ -468,34 +469,6 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
 }
 
 /**
- * FFmpeg concat demuxer v2 playlist (file + inpoint + outpoint per slice).
- */
-export function buildConcatPlaylist(
-  slices: IntercutSlice[],
-  fileA: string,
-  fileB: string,
-  fileC?: string,
-): string {
-  const files: Record<IntercutSlot, string | undefined> = {
-    A: fileA,
-    B: fileB,
-    C: fileC,
-  };
-  const lines: string[] = [];
-  for (const slice of slices) {
-    const file = files[slice.slot];
-    if (!file) {
-      throw new Error(`Intercut playlist is missing a file for clip ${slice.slot}.`);
-    }
-    const escaped = file.replace(/'/g, "'\\''");
-    lines.push(`file '${escaped}'`);
-    lines.push(`inpoint ${slice.inpoint.toFixed(6)}`);
-    lines.push(`outpoint ${slice.outpoint.toFixed(6)}`);
-  }
-  return `${lines.join('\n')}\n`;
-}
-
-/**
  * True when every slice is long enough that stream-copy *might* be keyframe-safe.
  * Intercut generation still re-encodes: alternating multi-source `inpoint` cuts
  * are almost never on keyframes, and stream-copy outputs often fail to load in
@@ -508,7 +481,7 @@ export function canUseStreamCopyForIntercut(slices: IntercutSlice[]): boolean {
   );
 }
 
-/** Shift slice times so 0 is each source's trimStart (after trim-window normalize). */
+/** Shift slice times so 0 is each source's trimStart (the generator reads every source from there). */
 export function remapIntercutSlicesToTrimOrigin(
   slices: IntercutSlice[],
   trimStartA: number,
