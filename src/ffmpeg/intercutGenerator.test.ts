@@ -228,6 +228,33 @@ describe('intercut frame-grid render args', () => {
       { slot: 'A', sourceFrame: 0, outputFrame: 0, frameCount: 30 },
     ]);
     expect(intercutAudioSlices('silent', plan)).toEqual([]);
+    expect(intercutAudioSlices('steadyStreams', plan)).toEqual([]);
+  });
+
+  it('steady streams map a mix plus one AAC track per source', () => {
+    const args = buildIntercutRenderArgs({
+      sourceInputs: [
+        ['-t', '1', '-i', 'a.mp4'],
+        ['-t', '1', '-i', 'b.mp4'],
+      ],
+      audioTracks: [
+        { name: 'mix.wav', title: 'All (mix)' },
+        { name: 'a.wav', title: 'A — one' },
+        { name: 'b.wav', title: 'B — two' },
+      ],
+      filterGraph: '[0:v]null[vout]',
+      totalFrames: 30,
+      outputName: 'out.mp4',
+    });
+    expect(args).toContain('2:a:0');
+    expect(args).toContain('3:a:0');
+    expect(args).toContain('4:a:0');
+    expect(args).toContain('title=All (mix)');
+    expect(args).toContain('title=A — one');
+    expect(args).toContain('title=B — two');
+    expect(args[args.indexOf('-disposition:a:0') + 1]).toBe('default');
+    expect(args[args.indexOf('-disposition:a:1') + 1]).toBe('0');
+    expect(args.filter((arg) => arg === '-c:a').length).toBe(1);
   });
 });
 

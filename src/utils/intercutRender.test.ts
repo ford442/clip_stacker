@@ -4,8 +4,10 @@ import {
   buildIntercutVideoFilterGraph,
   encodeWavPcm16,
   INTERCUT_SAMPLES_PER_FRAME,
+  mixSteadyStreams,
   parseWavPcm16,
   quantizeIntercutSlices,
+  steadyStreamPcm,
   toStereo,
 } from './intercutRender';
 
@@ -199,5 +201,24 @@ describe('assembleIntercutAudio', () => {
     expect(left(out, 0)).toBe(500);
     expect(left(out, spf)).toBe(0);
     expect(left(out, 2 * spf)).toBe(0);
+  });
+});
+
+describe('steady streams', () => {
+  it('pads each bed to the output and mixes them without cutting', () => {
+    const spf = INTERCUT_SAMPLES_PER_FRAME;
+    const a = new Int16Array(spf * 2).fill(1000);
+    const b = new Int16Array(spf * 4).fill(-2000);
+    const steadyA = steadyStreamPcm(a, 3);
+    const steadyB = steadyStreamPcm(b, 3);
+    expect(steadyA.length).toBe(3 * spf * 2);
+    expect(steadyA[0]).toBe(1000);
+    expect(steadyA[spf * 2]).toBe(0);
+    expect(steadyB[spf * 2]).toBe(-2000);
+    expect(steadyB[spf * 4]).toBe(0);
+    const mix = mixSteadyStreams([steadyA, steadyB]);
+    const gain = 1 / Math.sqrt(2);
+    expect(mix[0]).toBe(Math.round((1000 - 2000) * gain));
+    expect(mix.length).toBe(steadyA.length);
   });
 });

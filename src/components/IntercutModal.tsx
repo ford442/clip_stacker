@@ -601,10 +601,19 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                 aria-label="Audio"
               >
                 <option value="both">Intercut with picture</option>
+                <option value="steadyStreams">Steady streams (all play through)</option>
                 <option value="aOnly">Keep audio from A only</option>
                 <option value="silent">Silent</option>
               </select>
             </label>
+            {audioPolicy === 'steadyStreams' && (
+              <p className="inspector-hint">
+                Picture still cuts. Each source's audio runs from its trim start
+                for the whole output (silence-padded if shorter) and is muxed as its
+                own AAC track. The default track is an equal-power mix so the library
+                player hears every bed; A/B/C stay as separate streams for an NLE.
+              </p>
+            )}
             <label className="inspector-checkbox-label">
               <input
                 type="checkbox"

@@ -90,6 +90,38 @@ export interface IntercutVideoInput {
  * output pts is the output frame number. Selecting before `scale` keeps
  * hidden frames from being scaled at all.
  */
+/**
+ * One source's soundtrack from its trim origin, silence-padded to the output.
+ * Used by the steady-streams policy: the bed does not cut or freeze with picture.
+ */
+export function steadyStreamPcm(
+  source: Int16Array | undefined,
+  totalFrames: number,
+  samplesPerFrame = INTERCUT_SAMPLES_PER_FRAME,
+): Int16Array {
+  const out = new Int16Array(Math.max(0, totalFrames) * samplesPerFrame * 2);
+  if (!source || out.length === 0) return out;
+  out.set(source.subarray(0, out.length));
+  return out;
+}
+
+/**
+ * Equal-power sum of steady beds (gain 1/sqrt(n)) so the library player, which
+ * only plays the default track, still hears every source. Clipped to int16.
+ */
+export function mixSteadyStreams(streams: Int16Array[]): Int16Array {
+  if (streams.length === 0) return new Int16Array(0);
+  const len = streams[0]!.length;
+  const out = new Int16Array(len);
+  const gain = 1 / Math.sqrt(streams.length);
+  for (let i = 0; i < len; i++) {
+    let sum = 0;
+    for (const stream of streams) sum += (stream[i] ?? 0) * gain;
+    out[i] = Math.max(-32768, Math.min(32767, Math.round(sum)));
+  }
+  return out;
+}
+
 export function buildIntercutVideoFilterGraph(
   plan: IntercutFramePlan,
   inputs: IntercutVideoInput[],
