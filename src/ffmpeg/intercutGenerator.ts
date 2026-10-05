@@ -30,8 +30,10 @@ import {
   INTERCUT_AUDIO_CHANNELS,
   INTERCUT_AUDIO_SAMPLE_RATE,
   INTERCUT_OUTPUT_FPS,
+  mixSteadyStreams,
   parseWavPcm16,
   quantizeIntercutSlices,
+  steadyStreamPcm,
   toStereo,
   type IntercutFramePlan,
   type IntercutFrameSlice,
@@ -45,7 +47,7 @@ import {
   type StatusCallback,
 } from './ffmpegCommon';
 
-export type IntercutAudioPolicy = 'both' | 'aOnly' | 'silent';
+export type IntercutAudioPolicy = 'both' | 'aOnly' | 'silent' | 'steadyStreams';
 
 export interface IntercutGeneratorConfig {
   clipA: Clip;
@@ -55,7 +57,12 @@ export interface IntercutGeneratorConfig {
   automation: FrequencyAutomationConfig;
   /** When true, always re-encode (needed for strobe / short slices). */
   forceReencode?: boolean;
-  /** Default `both` — A/B audio follows picture. */
+  /**
+   * Default `both` — audio follows picture.
+   * `steadyStreams` keeps every source's audio running from its trim start
+   * for the whole output, muxed as its own AAC track (plus an equal-power mix
+   * as the default track so the library player hears all beds).
+   */
   audioPolicy?: IntercutAudioPolicy;
   /** Snap slice lengths to the reference clip's beat grid when metadata exists. */
   snapCutsToBeats?: boolean;
@@ -267,32 +274,50 @@ export function buildIntercutAudioExtractArgs(
   ];
 }
 
+export interface IntercutAudioTrackInput {
+  name: string;
+  /** Stream title written into the MP4 (`metadata:s:a:N title=`). */
+  title: string;
+}
+
 export interface IntercutRenderArgsOptions {
   /** Per-source input args, in input-index order (see `buildIntercutSourceInputArgs`). */
   sourceInputs: string[][];
-  /** Pre-spliced PCM soundtrack (always the last input). */
-  audioName: string;
+  /** Pre-spliced PCM soundtrack (last input) when `audioTracks` is omitted. */
+  audioName?: string;
+  /**
+   * Continuous beds muxed as separate AAC streams. The first track is the
+   * default (what the library player plays). Used by `steadyStreams`.
+   */
+  audioTracks?: IntercutAudioTrackInput[];
   filterGraph: string;
   totalFrames: number;
   outputName: string;
 }
 
 /**
- * Single encode: the frame-grid video graph plus the pre-spliced WAV. Both
- * are exactly `totalFrames` long, so nothing is left for the muxer to guess.
+ * Single encode: the frame-grid video graph plus one or more WAVs that are
+ * exactly `totalFrames` long, so nothing is left for the muxer to guess.
  */
 export function buildIntercutRenderArgs(options: IntercutRenderArgsOptions): string[] {
-  const audioIndex = options.sourceInputs.length;
+  const tracks = options.audioTracks?.length
+    ? options.audioTracks
+    : [{ name: options.audioName ?? 'intercut-audio.wav', title: 'Audio' }];
+  const firstAudioIndex = options.sourceInputs.length;
+  const audioArgs: string[] = [];
+  tracks.forEach((track, i) => {
+    audioArgs.push('-map', `${firstAudioIndex + i}:a:0`);
+    audioArgs.push(`-metadata:s:a:${i}`, `title=${track.title}`);
+    audioArgs.push(`-disposition:a:${i}`, i === 0 ? 'default' : '0');
+  });
   return [
     ...options.sourceInputs.flat(),
-    '-i',
-    options.audioName,
+    ...tracks.flatMap((track) => ['-i', track.name]),
     '-filter_complex',
     options.filterGraph,
     '-map',
     '[vout]',
-    '-map',
-    `${audioIndex}:a:0`,
+    ...audioArgs,
     '-frames:v',
     String(options.totalFrames),
     '-c:v',
@@ -328,7 +353,7 @@ export function intercutAudioSlices(
   policy: IntercutAudioPolicy,
   plan: IntercutFramePlan,
 ): IntercutFrameSlice[] {
-  if (policy === 'silent') return [];
+  if (policy === 'silent' || policy === 'steadyStreams') return [];
   if (policy === 'aOnly') {
     // A's soundtrack runs continuously from its trim start, whatever is on screen.
     return [{ slot: 'A', sourceFrame: 0, outputFrame: 0, frameCount: plan.totalFrames }];
@@ -466,32 +491,73 @@ export async function generateIntercutFromVfs(
     sources.push({ slot: 'C', clip: config.clipC, vfsName: vfsNameC, trimStart: boundsC.trimStart });
   }
 
-  // Sound first: decode each audible source once, splice on the frame grid.
+  // Sound first: decode each audible source once. Picture-following policies
+  // splice on the frame grid; steadyStreams keeps each bed running straight
+  // through and muxes it as its own track.
+  const steady = audioPolicy === 'steadyStreams';
   const audioSlices = intercutAudioSlices(audioPolicy, plan);
   const pcmBySlot: Partial<Record<IntercutSlot, Int16Array>> = {};
-  const audibleSources = sources.filter((s) => framesNeeded(audioSlices, s.slot) > 0);
+  const audibleSources = steady
+    ? sources
+    : sources.filter((s) => framesNeeded(audioSlices, s.slot) > 0);
   for (const [i, source] of audibleSources.entries()) {
     onStatus(`Intercut: decoding audio from "${source.clip.title}"…`);
-    emitProgress(onProgress, 'Intercut audio', 0.1 + (0.2 * i) / audibleSources.length, false);
-    // One frame of slack covers the crossfade tail read past the last slice.
-    const needSec = (framesNeeded(audioSlices, source.slot) + 1) / INTERCUT_OUTPUT_FPS;
+    emitProgress(onProgress, 'Intercut audio', 0.1 + (0.2 * i) / Math.max(1, audibleSources.length), false);
+    // One frame of slack covers the crossfade tail, or a short source ending early.
+    const needSec = steady
+      ? outputDurationSec + 1 / INTERCUT_OUTPUT_FPS
+      : (framesNeeded(audioSlices, source.slot) + 1) / INTERCUT_OUTPUT_FPS;
     pcmBySlot[source.slot] = await extractSourcePcm(ffmpeg, source, needSec, onStatus);
   }
   const audioName = 'intercut-audio.wav';
-  await safeWriteFile(
-    ffmpeg,
-    audioName,
-    encodeWavPcm16(
-      assembleIntercutAudio({
-        slices: audioSlices,
-        totalFrames: plan.totalFrames,
-        sources: pcmBySlot,
-      }),
-      INTERCUT_AUDIO_SAMPLE_RATE,
-      INTERCUT_AUDIO_CHANNELS,
-    ),
-    'intercut write audio',
-  );
+  const audioTracks: { name: string; title: string }[] = [];
+  const writtenAudio: string[] = [];
+  if (steady) {
+    const beds = sources.map((source) => ({
+      name: `intercut-audio-${source.slot.toLowerCase()}.wav`,
+      title: `${source.slot} — ${source.clip.title}`,
+      pcm: steadyStreamPcm(pcmBySlot[source.slot], plan.totalFrames),
+    }));
+    const mixName = 'intercut-audio-mix.wav';
+    await safeWriteFile(
+      ffmpeg,
+      mixName,
+      encodeWavPcm16(
+        mixSteadyStreams(beds.map((bed) => bed.pcm)),
+        INTERCUT_AUDIO_SAMPLE_RATE,
+        INTERCUT_AUDIO_CHANNELS,
+      ),
+      'intercut write mix',
+    );
+    writtenAudio.push(mixName);
+    audioTracks.push({ name: mixName, title: 'All (mix)' });
+    for (const bed of beds) {
+      await safeWriteFile(
+        ffmpeg,
+        bed.name,
+        encodeWavPcm16(bed.pcm, INTERCUT_AUDIO_SAMPLE_RATE, INTERCUT_AUDIO_CHANNELS),
+        `intercut write audio ${bed.title}`,
+      );
+      writtenAudio.push(bed.name);
+      audioTracks.push({ name: bed.name, title: bed.title });
+    }
+  } else {
+    await safeWriteFile(
+      ffmpeg,
+      audioName,
+      encodeWavPcm16(
+        assembleIntercutAudio({
+          slices: audioSlices,
+          totalFrames: plan.totalFrames,
+          sources: pcmBySlot,
+        }),
+        INTERCUT_AUDIO_SAMPLE_RATE,
+        INTERCUT_AUDIO_CHANNELS,
+      ),
+      'intercut write audio',
+    );
+    writtenAudio.push(audioName);
+  }
 
   const visibleSources = sources.filter((s) => framesNeeded(plan.slices, s.slot) > 0);
   const { width, height } = resolveTargetResolution(
@@ -523,7 +589,8 @@ export async function generateIntercutFromVfs(
       ffmpeg,
       buildIntercutRenderArgs({
         sourceInputs,
-        audioName,
+        audioName: steady ? undefined : audioName,
+        audioTracks: steady ? audioTracks : undefined,
         filterGraph,
         totalFrames: plan.totalFrames,
         outputName,
@@ -538,7 +605,7 @@ export async function generateIntercutFromVfs(
       `intercut generate (${plan.slices.length} slices)`,
     );
   } finally {
-    await deleteQuiet(ffmpeg, audioName);
+    for (const name of writtenAudio) await deleteQuiet(ffmpeg, name);
   }
 
   emitProgress(onProgress, 'Intercut render', 1, false);
