@@ -15,7 +15,7 @@ import type {
   TextOverlay,
   TextOverlayStyle,
 } from '../types';
-import type { StabMatrix } from '../wasm/videoStabilize';
+import type { Affine2x3 } from './clipTransform';
 import type { LayerKeyUniforms } from './overlayKey';
 
 export type PreviewLayerKind = 'base' | 'pip' | 'text' | 'caption';
@@ -63,10 +63,18 @@ export interface PreviewClipLayer {
   uvScale?: [number, number];
   uvOffset?: [number, number];
   /**
-   * Camera-shake correction sampled at this layer's `sourceTime`
-   * (`[a, b, tx, c, d, ty]`). Omitted when the clip is not stabilized.
+   * The one inverse warp this layer is sampled through (`[a, b, tx, c, d, ty]`
+   * in the rect's centred UV): stabilization at `sourceTime` composed with
+   * the authored picture transform at `localElapsed` — see `clipTransform.ts`.
+   * Omitted when both are identity.
    */
-  stabMatrix?: StabMatrix;
+  warpMatrix?: Affine2x3;
+  /**
+   * Forward authored picture transform, present only when it is not
+   * identity. Tells the compositor to grow the quad past `rect` and mask
+   * samples that fall outside the picture.
+   */
+  pictureMatrix?: Affine2x3;
   /**
    * Chroma / luma key from the clip's `overlayBlend` + `chromaKey`. Omitted
    * when the clip is not keyed, so unkeyed layers stay structurally identical

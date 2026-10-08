@@ -11,6 +11,7 @@ import {
 } from '../utils/colorManagement';
 import { grainFrameSeedFromTime } from '../utils/grain';
 import { projectHasKeyframeAnimation } from '../utils/animatedLayout';
+import { layerWarpDrawParams, transitionWarpParams } from '../utils/clipTransform';
 import {
   buildPreviewCompositionPlan,
   captionPlanOptions,
@@ -302,8 +303,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
               toUvOffset: [toLetterbox.uvOffset[0], toLetterbox.uvOffset[1]],
               destRect: { x: 0, y: 0, w: 1, h: 1 },
               custom: layer.crossfade.params,
-              fromStabMatrix: layer.stabMatrix,
-              toStabMatrix: nextLayer.stabMatrix,
+              ...transitionWarpParams(layer, nextLayer),
               clear: isFirstLayer,
             };
 
@@ -364,7 +364,6 @@ export class TimelinePreviewEngine implements TimelineCompositor {
             opacity: layer.opacity,
             uvScale,
             uvOffset,
-            stabMatrix: layer.stabMatrix,
             key: layer.key,
             destRect: { x: 0, y: 0, w: 1, h: 1 },
             clear: isFirstLayer,
@@ -435,7 +434,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
           opacity: layer.opacity,
           uvScale,
           uvOffset,
-          stabMatrix: layer.stabMatrix,
+          ...layerWarpDrawParams(layer, destRect),
           key: layer.key,
           destRect,
           clear: isFirstLayer,
@@ -741,8 +740,7 @@ export class WorkerTimelineRenderer {
             toUvOffset: [toLetterbox.uvOffset[0], toLetterbox.uvOffset[1]],
             destRect: { x: 0, y: 0, w: 1, h: 1 },
             custom: layer.crossfade.params,
-            fromStabMatrix: layer.stabMatrix,
-            toStabMatrix: nextLayer.stabMatrix,
+            ...transitionWarpParams(layer, nextLayer),
             clear: isFirstLayer,
           };
 
@@ -794,7 +792,7 @@ export class WorkerTimelineRenderer {
           opacity: layer.opacity,
           uvScale,
           uvOffset,
-          stabMatrix: layer.stabMatrix,
+          ...layerWarpDrawParams(layer, destRect),
           key: layer.key,
           destRect,
           clear: isFirstLayer,

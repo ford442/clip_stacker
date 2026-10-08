@@ -15,22 +15,30 @@ import { isMorphSegmentReady, isMorphTransition, morphClipId } from './morphTran
 import { placementWindow } from './trackStacking';
 import { resolveTransitionShaderId } from '../webgpu/transitions/registry';
 import { isStabilizationActive, stabMatrixForClip } from './stabilization';
-import type { StabMatrix } from '../wasm/videoStabilize';
+import { layerWarpFields, type LayerWarpFields } from './clipTransform';
+import { resolveAnimatedPictureTransform } from './animatedLayout';
 import { layerKeyEntry } from './overlayKey';
 import type { CanvasGeometry, ClipTimelineSegment, PreviewClipLayer, PreviewTransitionCrossfade } from './previewCompositionTypes';
 import { isActiveTransition, isBaseClip, isClipActiveAtTime, resolveClipRectAtTime } from './previewCompositionSegments';
 
 /**
- * Spread-in `stabMatrix` for a clip, or nothing at all when it is not
- * stabilized — an absent key keeps unstabilized layers structurally identical
- * to what they were before stabilization existed.
+ * Spread-in warp for a clip layer: stabilization sampled at the source time,
+ * composed with the picture transform sampled at the clip-local time, built
+ * over the layer's own rect. Nothing at all when both are identity.
  */
-function stabMatrixEntry(
+function layerWarpEntry(
   clip: Clip,
   sourceTime: number,
-): { stabMatrix?: StabMatrix } {
-  if (!isStabilizationActive(clip)) return {};
-  return { stabMatrix: stabMatrixForClip(clip, sourceTime) };
+  localElapsed: number,
+  rect: PreviewClipLayer['rect'],
+  geom: CanvasGeometry,
+): LayerWarpFields {
+  return layerWarpFields(
+    isStabilizationActive(clip) ? stabMatrixForClip(clip, sourceTime) : undefined,
+    resolveAnimatedPictureTransform(clip, localElapsed),
+    rect,
+    { width: geom.canvasWidth, height: geom.canvasHeight },
+  );
 }
 
 function buildCrossfadeForSegment(
@@ -190,7 +198,7 @@ function buildScheduledClipLayer(
     crossfade,
     uvScale,
     uvOffset,
-    ...stabMatrixEntry(segment.clip, sourceTime),
+    ...layerWarpEntry(segment.clip, sourceTime, localElapsed, rect, geom),
     ...layerKeyEntry(segment.clip),
   };
 }
@@ -235,7 +243,7 @@ function buildOutgoingCrossfadeLayer(
     crossfade: outgoingCrossfade,
     uvScale,
     uvOffset,
-    ...stabMatrixEntry(segment.clip, outgoingSourceTime),
+    ...layerWarpEntry(segment.clip, outgoingSourceTime, outgoingElapsed, rect, geom),
     ...layerKeyEntry(segment.clip),
   };
 }
@@ -413,7 +421,7 @@ export function buildPipLayers(
         crossfade: null,
         uvScale,
         uvOffset,
-        ...stabMatrixEntry(clip, sourceTime),
+        ...layerWarpEntry(clip, sourceTime, localElapsed, rect, geom),
         ...layerKeyEntry(clip),
       };
     });

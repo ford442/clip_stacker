@@ -20,6 +20,12 @@ import {
   buildOverlayAlphaFilters,
   buildOverlayFilter,
 } from "../utils/overlayBlend";
+import { resolveAnimatedPictureTransform } from "../utils/animatedLayout";
+import {
+  buildFfmpegFramePictureFilters,
+  buildFfmpegPictureFilters,
+  isIdentityPictureTransform,
+} from "../utils/clipTransform";
 import { appendPrimaryColorFilters, type PrimaryColorSettings } from "../utils/primaryColor";
 import {
   appendNoiseReductionFilters,
@@ -101,10 +107,18 @@ export function buildPipFilterComplex(
   onWarning?: (message: string) => void,
 ): string {
   const parts: string[] = [];
+  // Overlay positions moved by a picture transform (bounding-box top-left).
+  const transformedOverlayPos = new Map<number, { x: number; y: number }>();
 
   // ── Phase 1: per-clip pre-processing ────────────────────────────────────────
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i];
+    // Picture transform: `scale` + `rotate` only. Keyframed transforms hold
+    // their first value (this graph has no per-frame layout), and there is no
+    // libvidstab, so the optical-flow warp is not composed in — the render
+    // plan's `pictureTransformGaps` says so rather than pretending.
+    const picture = resolveAnimatedPictureTransform(clip, 0);
+    const transformed = !isIdentityPictureTransform(picture);
     const dur = getClipDuration(clip);
     const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     const isBase = (clip.layerIndex ?? 0) === 0;
@@ -121,6 +135,10 @@ export function buildPipFilterComplex(
         // Normalise to output canvas size
         vf += `,scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`;
         vf += `,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
+        if (transformed) {
+          const frame = { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
+          vf += `,${buildFfmpegFramePictureFilters(picture, frame).join(",")},format=yuv420p`;
+        }
       } else {
         // Scale overlay to requested dimensions (0 means keep original)
         const layout = resolveClipLayoutPixels(clip, {
@@ -142,6 +160,22 @@ export function buildPipFilterComplex(
         const alphaFilters = buildOverlayAlphaFilters(clip);
         if (alphaFilters.length > 0) {
           vf += `,${alphaFilters.join(",")}`;
+        }
+        // After the key, so the rotated corners stay transparent (`c=none`
+        // needs the rgba plane the alpha filters leave behind).
+        if (transformed && w > 0 && h > 0) {
+          const { x, y } = clampOverlayPosition(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+          const placed = buildFfmpegPictureFilters(
+            picture,
+            { x, y, width: w, height: h },
+            { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT },
+          );
+          vf += `,${placed.filters.join(",")}`;
+          transformedOverlayPos.set(i, { x: placed.x, y: placed.y });
+        } else if (transformed) {
+          onWarning?.(
+            `Overlay clip ${i + 1} has a picture transform but no resolved size; the FFmpeg path renders it untransformed.`,
+          );
         }
       }
 
@@ -251,7 +285,9 @@ export function buildPipFilterComplex(
         `Overlay clip ${idx + 1} is positioned fully off-canvas (x=${clip.x ?? 0}, y=${clip.y ?? 0}) and will not be visible. Its position has been clamped back into view.`,
       );
     }
-    const { x, y } = clampOverlayPosition(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+    const { x, y } =
+      transformedOverlayPos.get(idx) ??
+      clampOverlayPosition(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT);
     const isLast = o === overlayEntries.length - 1;
     const outV = isLast ? "vout" : `vcomp${idx}`;
 

@@ -311,6 +311,23 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
               Canvas renderer to key on the GPU, or use Force FFmpeg.
             </p>
           )}
+          {renderPlan.pictureTransform === 'gpu' && (
+            <p className="render-plan-info">
+              Rotation / scale applied on the GPU compositor — matches the preview, transitions
+              included.
+            </p>
+          )}
+          {renderPlan.pictureTransform === 'ffmpeg' && (
+            <p
+              className={renderPlan.pictureTransformGaps ? 'render-plan-warning' : 'render-plan-info'}
+              role={renderPlan.pictureTransformGaps ? 'alert' : undefined}
+            >
+              {renderPlan.pictureTransformGaps ? '⚠ ' : ''}Rotation / scale applied via the FFmpeg{' '}
+              <code>scale</code> + <code>rotate</code> fallback.
+              {renderPlan.pictureTransformGaps &&
+                ` Not reproduced: ${renderPlan.pictureTransformGaps.join('; ')}. Turn off Force FFmpeg to render it as previewed.`}
+            </p>
+          )}
           {renderPlan.wideColor === 'ignored' && (
             <p className="render-plan-warning" role="alert">
               ⚠ Display P3 and HDR10 are GPU-only. This encode is Rec.709 SDR — turn off

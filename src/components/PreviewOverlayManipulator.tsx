@@ -41,7 +41,8 @@ import {
   type SnapGuide,
 } from '../utils/overlayCoords';
 import { textOverlayHasKeyframes } from '../utils/animatedLayout';
-import { clipHasKeyframes } from '../utils/animatedLayout';
+import { clipHasKeyframes, setPictureTransformValue } from '../utils/animatedLayout';
+import { sampleKeyframes } from '../utils/keyframes';
 
 type ManipulableTarget =
   | { kind: 'pip'; clipId: string; rect: PixelRect; zIndex: number }
@@ -71,6 +72,10 @@ interface Props {
 }
 
 const HANDLE_SIZE = 8;
+/** Screen px between the selected overlay's top edge and its rotate handle. */
+const ROTATE_HANDLE_OFFSET = 22;
+/** Shift-drag snaps rotation to this many degrees. */
+const ROTATE_SNAP_DEG = 15;
 
 function estimateTextRect(
   layer: PreviewTextLayer,
@@ -159,13 +164,17 @@ export function PreviewOverlayManipulator({
 }: Props) {
   const overlayRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<{
-    mode: 'move' | 'resize';
+    mode: 'move' | 'resize' | 'rotate';
     target: ManipulableTarget;
     handle?: ResizeHandle;
     startPointer: { x: number; y: number };
     startRect: PixelRect;
     aspectRatio: number;
     editedKeyframe: boolean;
+    /** Rotate mode: pivot (canvas px), pointer angle and rotation at grab. */
+    pivot?: { x: number; y: number };
+    startAngle?: number;
+    startRotation?: number;
   } | null>(null);
   const [hoverTarget, setHoverTarget] = useState<ManipulableTarget | null>(null);
   const [snapGuides, setSnapGuides] = useState<SnapGuide[]>([]);
@@ -244,6 +253,19 @@ export function PreviewOverlayManipulator({
     return null;
   }, [targets, selectedClipId, selectedTextOverlayId]);
 
+  const localTimeOf = useCallback(
+    (clipId: string) =>
+      resolveClipLocalTimeAtGlobal(timelineClips, clipGroups, transitions, clipId, playheadTime)
+        ?.localTime ?? 0,
+    [timelineClips, clipGroups, transitions, playheadTime],
+  );
+
+  /** Rotate handle centre (canvas px) above a PiP outline's top edge. */
+  const rotateHandleAt = (rect: PixelRect) => ({
+    x: rect.x + rect.width / 2,
+    y: rect.y - ROTATE_HANDLE_OFFSET / scaleY,
+  });
+
   const commitRect = useCallback(
     (target: ManipulableTarget, rect: PixelRect, editedKeyframe: boolean) => {
       const outputRect = {
@@ -257,18 +279,11 @@ export function PreviewOverlayManipulator({
       if (target.kind === 'pip') {
         const clip = timelineClips.find((item) => item.id === target.clipId);
         if (!clip) return;
-        const local = resolveClipLocalTimeAtGlobal(
-          timelineClips,
-          clipGroups,
-          transitions,
-          clip.id,
-          playheadTime,
-        );
         const result = applyClipLayoutAtPlayhead(
           clip,
           clamped,
           outputCanvas,
-          local?.localTime ?? 0,
+          localTimeOf(clip.id),
         );
         onClipLayoutCommit(clip.id, result.value, result.editedKeyframe || editedKeyframe);
       } else {
@@ -291,8 +306,7 @@ export function PreviewOverlayManipulator({
       plan.scale,
       outputCanvas,
       timelineClips,
-      clipGroups,
-      transitions,
+      localTimeOf,
       playheadTime,
       textOverlays,
       onClipLayoutCommit,
@@ -303,6 +317,37 @@ export function PreviewOverlayManipulator({
   const handlePointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     const pointer = pointerToCanvas(event.clientX, event.clientY);
+    if (activeTarget?.kind === 'pip') {
+      const handle = rotateHandleAt(activeTarget.rect);
+      if (Math.hypot(pointer.x - handle.x, pointer.y - handle.y) <= HANDLE_SIZE / scaleX) {
+        const clip = timelineClips.find((item) => item.id === activeTarget.clipId);
+        if (!clip) return;
+        event.preventDefault();
+        event.stopPropagation();
+        onDragStart();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        const kf = clip.keyframes;
+        const rect = activeTarget.rect;
+        // The anchor is the fixed point of the transform, so it is the pivot.
+        const pivot = {
+          x: rect.x + rect.width * sampleKeyframes(kf?.anchorX, localTimeOf(clip.id), 0.5),
+          y: rect.y + rect.height * sampleKeyframes(kf?.anchorY, localTimeOf(clip.id), 0.5),
+        };
+        setKeyframeHint('Drag to rotate. Hold Shift to snap to 15°.');
+        dragRef.current = {
+          mode: 'rotate',
+          target: activeTarget,
+          startPointer: pointer,
+          startRect: { ...rect },
+          aspectRatio: 1,
+          editedKeyframe: false,
+          pivot,
+          startAngle: Math.atan2(pointer.y - pivot.y, pointer.x - pivot.x),
+          startRotation: sampleKeyframes(kf?.rotation, localTimeOf(clip.id), 0),
+        };
+        return;
+      }
+    }
     const target = findTargetAt(pointer.x, pointer.y);
 
     if (!target) {
@@ -373,6 +418,27 @@ export function PreviewOverlayManipulator({
     }
 
     event.preventDefault();
+    const dragTarget = drag.target;
+    if (drag.mode === 'rotate' && dragTarget.kind === 'pip' && drag.pivot) {
+      const clip = timelineClips.find((item) => item.id === dragTarget.clipId);
+      if (!clip) return;
+      const angle = Math.atan2(pointer.y - drag.pivot.y, pointer.x - drag.pivot.x);
+      let degrees = (drag.startRotation ?? 0) + ((angle - (drag.startAngle ?? 0)) * 180) / Math.PI;
+      degrees = ((((degrees + 180) % 360) + 360) % 360) - 180;
+      degrees = event.shiftKey
+        ? Math.round(degrees / ROTATE_SNAP_DEG) * ROTATE_SNAP_DEG
+        : Math.round(degrees * 10) / 10;
+      const animated = (clip.keyframes?.rotation?.length ?? 0) > 1;
+      onClipLayoutCommit(
+        clip.id,
+        {
+          ...clip,
+          keyframes: setPictureTransformValue(clip.keyframes, 'rotation', degrees, localTimeOf(clip.id)),
+        },
+        animated,
+      );
+      return;
+    }
     const disableSnap = event.altKey;
     const constrainAspect = event.shiftKey;
     let nextRect: PixelRect;
@@ -452,6 +518,11 @@ export function PreviewOverlayManipulator({
       >
         {selected && target.kind === 'pip' && (
           <>
+            <span
+              className="preview-overlay-handle rotate"
+              style={{ top: `${-ROTATE_HANDLE_OFFSET - 5}px` }}
+              title="Drag to rotate (Shift snaps to 15°)"
+            />
             <span className="preview-overlay-handle nw" />
             <span className="preview-overlay-handle ne" />
             <span className="preview-overlay-handle sw" />

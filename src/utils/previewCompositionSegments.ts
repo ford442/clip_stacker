@@ -8,7 +8,7 @@
 import type { Clip, ClipTransition, ExportSettings } from '../types';
 import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH, getClipDuration } from './project';
 import { parseOutputResolution } from './resolution';
-import { clipHasKeyframes, resolveAnimatedClipLayout } from './animatedLayout';
+import { clipHasLayoutKeyframes, resolveAnimatedClipLayout } from './animatedLayout';
 import { capPreviewResolution, DEFAULT_PREVIEW_MAX_HEIGHT } from './previewBudget';
 import type { CanvasGeometry, ClipTimelineSegment, PreviewPipRect } from './previewCompositionTypes';
 
@@ -152,7 +152,7 @@ export function resolveClipRectAtTime(
   localTime: number,
 ): { rect: PreviewPipRect; uvScale: [number, number]; uvOffset: [number, number] } {
   const isBase = (clip.layerIndex ?? 0) === 0;
-  const hasAnimation = clip.stillImage || clipHasKeyframes(clip) || !isBase;
+  const hasAnimation = clip.stillImage || clipHasLayoutKeyframes(clip) || !isBase;
 
   if (isBase && !hasAnimation) {
     return {
@@ -170,7 +170,7 @@ export function resolveClipRectAtTime(
     geom.scale,
   );
 
-  if (isBase && !clip.stillImage && !clipHasKeyframes(clip)) {
+  if (isBase && !clip.stillImage && !clipHasLayoutKeyframes(clip)) {
     return {
       rect: { x: 0, y: 0, width: geom.canvasWidth, height: geom.canvasHeight },
       uvScale: layout.uvScale,

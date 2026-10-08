@@ -96,19 +96,27 @@ export function drawClipLayer(
   const prevAlpha = ctx.globalAlpha;
   ctx.globalAlpha = clampOpacity(layer.opacity);
 
-  // Camera-shake correction. drawImage's crop rectangle can only translate and
-  // scale, so the rotation component has to ride on the context transform;
-  // the stored matrix is an inverse warp, hence the flip to a forward one.
-  const stab = layer.stabMatrix;
-  const warped = Boolean(stab) && !isIdentityStabMatrix(stab!);
+  // The layer warp (stabilization ∘ inverse picture transform, see
+  // clipTransform.ts). drawImage's crop rectangle can only translate and
+  // scale, so rotation has to ride on the context transform; the stored
+  // matrix is an inverse warp, hence the flip to a forward one.
+  //
+  // A picture transform is defined over the layer rect, as on the GPU (where
+  // the quad is the rect); stabilization alone keeps the letterboxed inner
+  // rect it has always used here.
+  const warp = layer.warpMatrix;
+  const warped = Boolean(warp) && !isIdentityStabMatrix(warp!);
   const originX = layer.rect.x + inner.x;
   const originY = layer.rect.y + inner.y;
   if (warped) {
-    const t = stabMatrixToCanvasTransform(stab!, inner.width, inner.height);
+    const box = layer.pictureMatrix
+      ? layer.rect
+      : { x: originX, y: originY, width: inner.width, height: inner.height };
+    const t = stabMatrixToCanvasTransform(warp!, box.width, box.height);
     ctx.save();
-    ctx.translate(originX, originY);
+    ctx.translate(box.x, box.y);
     ctx.transform(t[0], t[3], t[1], t[4], t[2], t[5]);
-    ctx.translate(-originX, -originY);
+    ctx.translate(-box.x, -box.y);
   }
 
   ctx.drawImage(

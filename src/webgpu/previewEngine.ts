@@ -30,10 +30,7 @@ import {
   ZERO_AUDIO_REACTIVE,
   type AudioReactiveState,
 } from "../wasm/audioReactiveUniforms";
-import {
-  IDENTITY_STAB_MATRIX,
-  type StabMatrix,
-} from "../wasm/videoStabilize";
+import { packWarpUniforms, type Affine2x3 } from "../utils/clipTransform";
 import { packKeyUniforms, type LayerKeyUniforms } from "../utils/overlayKey";
 
 /**
@@ -51,11 +48,14 @@ import { packKeyUniforms, type LayerKeyUniforms } from "../utils/overlayKey";
  *   engine.destroy();
  */
 
-/** Must match WGSL Uniforms (32 floats = 128 bytes, 16-byte aligned). */
-const UNIFORM_FLOATS = 32;
+/** Must match WGSL Uniforms (36 floats = 144 bytes, 16-byte aligned). */
+const UNIFORM_FLOATS = 36;
 
-/** First slot of the stabilization affine in `Uniforms` (must match preview.wgsl). */
-const STAB_UNIFORM_OFFSET = 17;
+/** First slot of the layer warp affine in `Uniforms` (must match preview.wgsl). */
+const WARP_UNIFORM_OFFSET = 17;
+
+/** `warpMask` then `quadX/Y/W/H` in `Uniforms` (must match preview.wgsl). */
+const WARP_QUAD_UNIFORM_OFFSET = 29;
 
 /** First slot of the chroma/luma key block in `Uniforms` (must match preview.wgsl). */
 const KEY_UNIFORM_OFFSET = 23;
@@ -119,10 +119,13 @@ export interface LayerRenderParams {
   uvScale: [number, number];
   uvOffset: [number, number];
   /**
-   * Camera-shake correction as an inverse-warp 2x3 affine in normalized UV,
-   * `[a, b, tx, c, d, ty]`. Omit (or pass identity) for unstabilized clips.
+   * The layer warp (stabilization ∘ inverse picture transform) as one inverse
+   * 2x3 affine in the dest rect's normalized UV, `[a, b, tx, c, d, ty]` —
+   * see `utils/clipTransform.ts`. Omit (or pass identity) for plain clips.
    */
-  stabMatrix?: StabMatrix;
+  warpMatrix?: Affine2x3;
+  /** Quad to draw when a picture transform can leave `destRect` (masked outside). */
+  warpQuad?: NormalizedDestRect;
   /**
    * Chroma / luma key for this layer. Omit for unkeyed layers — the shader
    * then samples the source as-is.
@@ -794,13 +797,9 @@ export class PreviewEngine {
     this.uniformData[AUDIO_UNIFORM_OFFSET.mid] = this.audioReactive.mid;
     this.uniformData[AUDIO_UNIFORM_OFFSET.treble] = this.audioReactive.treble;
     this.uniformData[AUDIO_UNIFORM_OFFSET.beat] = this.audioReactive.beat;
-    const stab = params.stabMatrix ?? IDENTITY_STAB_MATRIX;
-    this.uniformData[STAB_UNIFORM_OFFSET] = stab[0];
-    this.uniformData[STAB_UNIFORM_OFFSET + 1] = stab[1];
-    this.uniformData[STAB_UNIFORM_OFFSET + 2] = stab[2];
-    this.uniformData[STAB_UNIFORM_OFFSET + 3] = stab[3];
-    this.uniformData[STAB_UNIFORM_OFFSET + 4] = stab[4];
-    this.uniformData[STAB_UNIFORM_OFFSET + 5] = stab[5];
+    packWarpUniforms(this.uniformData, WARP_UNIFORM_OFFSET, params.warpMatrix);
+    const quad = params.warpQuad ?? dest;
+    this.uniformData.set([params.warpQuad ? 1 : 0, quad.x, quad.y, quad.w, quad.h], WARP_QUAD_UNIFORM_OFFSET);
     packKeyUniforms(this.uniformData, KEY_UNIFORM_OFFSET, params.key);
 
     const uniformBuffer = this.uniformBufferForLayer(index);

@@ -55,6 +55,32 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     expect(result.transitions[0].params).toEqual({ amount: 0.5 });
   });
 
+  it("should roundtrip picture-transform keyframes and add none when absent", async () => {
+    const keyframes = {
+      rotation: [
+        { t: 0, value: 0 },
+        { t: 2, value: 90 },
+      ],
+      scaleX: [{ t: 0, value: 1.5 }],
+      scaleY: [{ t: 0, value: 0.75 }],
+      anchorX: [{ t: 0, value: 0 }],
+      anchorY: [{ t: 0, value: 1 }],
+    };
+    const clips = [
+      { ...createTestClip("a", 5, "Clip A"), keyframes },
+      createTestClip("b", 3, "Clip B"),
+    ];
+
+    const serialized = serializeProject(clips, [], [], []);
+    expect(serialized.clips[0].keyframes).toEqual(keyframes);
+    // An untransformed clip stays exactly as it was: no keyframes key at all.
+    expect(serialized.clips[1]).not.toHaveProperty("keyframes");
+
+    const result = await applyProjectData(serialized, clips);
+    expect(result.clips[0].keyframes).toEqual(keyframes);
+    expect(result.clips[1].keyframes).toBeUndefined();
+  });
+
   it("should roundtrip the stabilize toggle without its matrices", async () => {
     const clips = [
       { ...createTestClip("a", 5, "Clip A"), stabilize: true },
