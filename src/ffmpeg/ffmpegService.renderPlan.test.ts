@@ -276,6 +276,72 @@ describe("calculateRenderPlan", () => {
       expect(plan.overlayKeying).toBeUndefined();
     });
 
+    describe('picture transforms', () => {
+      const rotated = { keyframes: { rotation: [{ t: 0, value: 90 }] } };
+      const stabilization: ClipStabilization = {
+        fps: 24,
+        matrices: new Float32Array([1, 0, 0, 0, 1, 0]),
+        frameCount: 1,
+        zoom: 1.05,
+        maxCorrection: 0.1,
+        smoothRadius: 12,
+      };
+
+      it('routes a transformed clip through the compositing graph', () => {
+        const plan = calculateRenderPlan([makeClip(rotated)], [], [], DEFAULT_EXPORT_SETTINGS);
+        expect(plan.path).toBe('pip');
+        expect(plan.reason).toContain('picture transform');
+      });
+
+      it('records the GPU compositor when it is expected to run', () => {
+        const plan = calculateRenderPlan([makeClip(rotated)], [], [], DEFAULT_EXPORT_SETTINGS, {
+          webGpuAvailable: true,
+        });
+        expect(plan.encoderIntent).toBe('webcodecs');
+        expect(plan.pictureTransform).toBe('gpu');
+        expect(plan.pictureTransformGaps).toBeUndefined();
+      });
+
+      it('says Force FFmpeg drops the stabilization warp on a rotated clip', () => {
+        const clip = makeClip({ ...rotated, stabilize: true, stabilization });
+        const plan = calculateRenderPlan([clip], [], [], DEFAULT_EXPORT_SETTINGS, {
+          forceFFmpeg: true,
+        });
+        expect(plan.pictureTransform).toBe('ffmpeg');
+        expect(plan.pictureTransformGaps).toEqual([
+          expect.stringContaining('libvidstab'),
+        ]);
+      });
+
+      it('says Force FFmpeg holds an animated transform at its first keyframe', () => {
+        const clip = makeClip({
+          keyframes: { scaleX: [{ t: 0, value: 1 }, { t: 2, value: 2 }] },
+        });
+        const plan = calculateRenderPlan([clip], [], [], DEFAULT_EXPORT_SETTINGS, {
+          forceFFmpeg: true,
+        });
+        expect(plan.pictureTransformGaps).toEqual([
+          expect.stringContaining('first keyframe'),
+        ]);
+      });
+
+      it('demotes the canvas encoder rather than drop the transform', () => {
+        const plan = calculateRenderPlan([makeClip(rotated)], [], [], DEFAULT_EXPORT_SETTINGS, {
+          useCanvasRenderer: true,
+        });
+        expect(plan.encoderIntent).not.toBe('canvas');
+      });
+
+      it('omits both fields for an untransformed project (anchor alone is not a move)', () => {
+        const plan = calculateRenderPlan(
+          [makeClip({ keyframes: { anchorX: [{ t: 0, value: 0 }] } })],
+          [], [], DEFAULT_EXPORT_SETTINGS, { forceFFmpeg: true },
+        );
+        expect(plan).not.toHaveProperty('pictureTransform');
+        expect(plan).not.toHaveProperty('pictureTransformGaps');
+      });
+    });
+
     it('passes captionMode through from context', () => {
       const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
         captionMode: 'burn',

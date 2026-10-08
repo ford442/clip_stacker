@@ -26,7 +26,12 @@ import {
 import { secondaryHasWindowGrades } from "../utils/secondaryColor";
 import { isStabilizationActive } from "../utils/stabilization";
 import { resolveLayerKey } from "../utils/overlayKey";
-import { canUseGpuVideoEncoder, hasActiveTransitions } from "../utils/renderEligibility";
+import {
+  canUseGpuVideoEncoder,
+  hasActiveTransitions,
+  pictureTransformPlanFields,
+} from "../utils/renderEligibility";
+import { clipHasPictureTransform } from "../utils/animatedLayout";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -116,7 +121,7 @@ function estimateEncoderIntent(
     // keying, transition, PiP, or finishing pass, so those demote it to the
     // GPU/FFmpeg estimate below instead of silently dropping them.
     const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
-    const hasPipClip = clips.some((clip) => (clip.layerIndex ?? 0) > 0);
+    const hasPipClip = clips.some((clip) => (clip.layerIndex ?? 0) > 0 || clipHasPictureTransform(clip));
     if (!hasKeyedClip && !hasPipClip && !hasActiveTransitions(transitions) && !isFinishingActive(finishing)) {
       return 'canvas';
     }
@@ -177,6 +182,7 @@ export function calculateRenderPlan(
     finishingActive,
     stabilizeActive,
     ...(overlayKeying ? { overlayKeying } : {}),
+    ...pictureTransformPlanFields(clips, encoderIntent),
     ...(context.captionMode !== undefined ? { captionMode: context.captionMode } : {}),
     ...(shaderTextFallbackRisk ? { shaderTextFallbackRisk: true } : {}),
     ...(ffmpegFinishingGaps.length > 0 ? { ffmpegFinishingGaps } : {}),
@@ -197,6 +203,16 @@ function computeRenderPlanPath(
       reason: "Picture-in-Picture compositing detected",
       willReencode: true,
       description: "Re-encoding with PiP compositing (re-encode)",
+    };
+  }
+
+  // A rotated / scaled clip goes through the same compositing graph.
+  if (clips.some(clipHasPictureTransform)) {
+    return {
+      path: "pip",
+      reason: "Clip picture transform (rotation / scale) detected",
+      willReencode: true,
+      description: "Re-encoding with picture transforms (re-encode)",
     };
   }
 

@@ -387,7 +387,7 @@ affine. Enabled per clip with the Inspector's **Stabilize** toggle.
 - `src/utils/stabilizePipeline.ts` — decode → downscale → analyse; `computeAnalysisPlan` picks the resolution and sampling rate
 - `src/utils/stabilization.ts` — pure helpers: sampling, pixel-affine conversion, `.trf` serialization
 - `src/hooks/useClipStabilization.ts` — runs analysis once per toggled-on clip in the background
-- `src/webgpu/shaders/preview.wgsl` — `applyStabilization()` on the source UV
+- `src/webgpu/shaders/preview.wgsl` — `applyLayerWarp()` on the source UV (the matrix is composed with the picture transform first — see *Clip picture transform* below)
 - `src/webgpu/transitions/shaderTemplate.ts` — the same warp inside `sampleFrom`/`sampleTo`
 - `src/utils/canvas-renderer-layers.ts` — the Canvas2D equivalent via `ctx.transform`
 
@@ -425,6 +425,49 @@ input file, but **`@ffmpeg/core` is not built with libvidstab**, so that path
 only works against a custom core. The shipped export paths warp on the GPU
 (WebGPU export reuses the preview renderer) or through the Canvas2D transform,
 which is why stabilization survives whichever encoder `hybridMergeClips` picks.
+
+## Clip picture transform (rotation / scale / anchor)
+
+One inverse 2x3 per layer sample. `src/utils/clipTransform.ts` composes the
+stabilization matrix with the authored picture transform into a single
+`warpMatrix` in the layer rect's centred UV — the same `[a, b, tx, c, d, ty]`
+convention as stabilization. Preview, GPU export, transitions and Canvas2D all
+consume that one array; identity is still `[1, 0, 0, 0, 1, 0]`, and a plain
+layer carries no warp fields at all.
+
+- **Authoring.** `rotation` (degrees, clockwise), `scaleX` / `scaleY`,
+  `anchorX` / `anchorY` (pivot, 0–1 of the rect) are keyframe-only lanes on
+  `ClipAnimatableProp`; an omitted lane is identity, so old projects do not
+  move and no schema bump was needed. `x` / `y` / `width` / `height` remain
+  the rect letterboxing and PiP use; the transform moves the picture within
+  it. Sampled by `resolveAnimatedPictureTransform` (`animatedLayout.ts`);
+  `setPictureTransformValue` is the one edit helper (Inspector fields and the
+  preview's round rotate handle).
+- **Multiply order.** Stabilize first, then the authored move — as an inverse
+  lookup, `warp = stab ∘ picture⁻¹` (`composeLayerWarp`). The forward matrix
+  is built in pixels and normalized back, so rotation stays rigid on a
+  non-square rect.
+- **Leaving the rect.** When the authored transform is not identity the layer
+  also carries `pictureMatrix` (forward). The preview shader then rasterizes
+  `pictureBounds` instead of the dest rect and masks samples outside the
+  picture (`warpMask`, 1 px fwidth edge); the transition template masks per
+  side with a hard edge (bodies may sample from non-uniform control flow).
+  Stabilization alone keeps its clamp-to-edge.
+- **Canvas2D** applies `stabMatrixToCanvasTransform(warpMatrix)` over the
+  layer rect when a picture transform is present (the inner letterbox rect
+  otherwise, as before).
+- **Base-lane rects.** Transform lanes are not layout lanes
+  (`clipHasLayoutKeyframes`), so rotating a base clip does not shrink its rect
+  to the source size.
+- **FFmpeg fallback.** `scale` + `rotate` only (`buildFfmpegPictureFilters`,
+  `buildFfmpegFramePictureFilters`), routed through the compositing graph,
+  at the first keyframe. `RenderPlan.pictureTransform` records `gpu` vs
+  `ffmpeg`, and `pictureTransformGaps` lists what FFmpeg loses — notably the
+  stabilization warp on a rotated clip (no libvidstab). The MediaRecorder
+  canvas encoder is demoted for transformed clips rather than dropping them.
+- **Not here.** Morph (RIFE) transition segments are drawn unwarped. Nested
+  sequences, corner-pin and crop should add rows to this warp, not a new
+  layout language.
 
 ## gpu-chores (import / library pixel work)
 

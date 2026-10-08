@@ -84,6 +84,7 @@ import {
   FFMPEG_LOAD_TIMEOUT_MS,
 } from "./core";
 import { mergeClipsWithCompositing } from "./video";
+import { clipHasPictureTransform } from "../utils/animatedLayout";
 import { calculateRenderPlan } from "./plan";
 import { remuxVideoWithPremixWav, remuxVideoWithMasterAudio } from "./mux";
 
@@ -219,7 +220,11 @@ export async function mergeClips(
     (t) => t.type !== "none" && t.duration > 0,
   );
   const effectClips = workingClips.filter(clipNeedsEffects);
-  const hasPipClips = workingClips.some((c) => (c.layerIndex ?? 0) > 0);
+  // A picture transform needs the compositing graph too (its per-clip
+  // `scale` + `rotate` lives there), even with no overlay lanes.
+  const hasPipClips = workingClips.some(
+    (c) => (c.layerIndex ?? 0) > 0 || clipHasPictureTransform(c),
+  );
   const transitionFilterComplex =
     activeTransitions.length > 0
       ? buildTransitionFilterComplex(workingClips, activeTransitions)

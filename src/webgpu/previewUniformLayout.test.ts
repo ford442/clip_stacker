@@ -6,15 +6,16 @@ import { KEY_UNIFORM_FLOATS } from '../utils/overlayKey';
 /**
  * `previewEngine.ts` packs `Uniforms` by hand from flat float offsets, so a
  * field inserted into the WGSL struct silently shifts everything after it —
- * stabilization reading the audio slots, the key reading the stab matrix, and
+ * the layer warp reading the audio slots, the key reading the warp matrix, and
  * so on. These checks pin the layout from the shader source itself.
  *
  * The constants mirrored here are the private ones in `previewEngine.ts`;
  * changing either side without the other is what this test is for.
  */
-const UNIFORM_FLOATS = 32;
-const STAB_UNIFORM_OFFSET = 17;
+const UNIFORM_FLOATS = 36;
+const WARP_UNIFORM_OFFSET = 17;
 const KEY_UNIFORM_OFFSET = 23;
+const WARP_QUAD_UNIFORM_OFFSET = 29;
 
 /** Field names of the `Uniforms` struct, in declaration order. */
 function uniformFields(): string[] {
@@ -47,14 +48,24 @@ describe('preview.wgsl uniform layout', () => {
     expect(fields[AUDIO_UNIFORM_OFFSET.beat]).toBe('beat');
   });
 
-  it('keeps the stabilization affine at its offset', () => {
-    expect(fields.slice(STAB_UNIFORM_OFFSET, STAB_UNIFORM_OFFSET + 6)).toEqual([
-      'stabA',
-      'stabB',
-      'stabTx',
-      'stabC',
-      'stabD',
-      'stabTy',
+  it('keeps the layer warp affine at its offset', () => {
+    expect(fields.slice(WARP_UNIFORM_OFFSET, WARP_UNIFORM_OFFSET + 6)).toEqual([
+      'warpA',
+      'warpB',
+      'warpTx',
+      'warpC',
+      'warpD',
+      'warpTy',
+    ]);
+  });
+
+  it('keeps the warp mask + quad where previewEngine writes them', () => {
+    expect(fields.slice(WARP_QUAD_UNIFORM_OFFSET, WARP_QUAD_UNIFORM_OFFSET + 5)).toEqual([
+      'warpMask',
+      'quadX',
+      'quadY',
+      'quadW',
+      'quadH',
     ]);
   });
 
@@ -72,11 +83,7 @@ describe('preview.wgsl uniform layout', () => {
   });
 
   it('pads the tail rather than leaving the struct unaligned', () => {
-    expect(fields.slice(KEY_UNIFORM_OFFSET + KEY_UNIFORM_FLOATS)).toEqual([
-      '_pad0',
-      '_pad1',
-      '_pad2',
-    ]);
+    expect(fields.slice(WARP_QUAD_UNIFORM_OFFSET + 5)).toEqual(['_pad0', '_pad1']);
   });
 });
 
@@ -88,5 +95,13 @@ describe('preview.wgsl keying', () => {
     const fadeIndex = previewShader.indexOf('var fadeAlpha = 1.0;');
     expect(keyIndex).toBeGreaterThan(-1);
     expect(keyIndex).toBeLessThan(fadeIndex);
+  });
+});
+
+describe('preview.wgsl layer warp', () => {
+  it('has exactly one warp function, and no separate stabilization step', () => {
+    expect(previewShader).toContain('fn applyLayerWarp(');
+    expect(previewShader).not.toContain('applyStabilization');
+    expect(previewShader.match(/applyLayerWarp\(/g)).toHaveLength(2);
   });
 });

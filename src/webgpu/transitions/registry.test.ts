@@ -199,7 +199,7 @@ describe('webgpu/transitions smoke render', () => {
     cache.destroy();
   });
 
-  it('packs both clips\' stabilization matrices into the transition uniforms', () => {
+  it('packs both clips\' layer warps into the transition uniforms', () => {
     const gpu = createFakeGpu();
     const cache = createTransitionPipelineCache(gpu.device, 'bgra8unorm');
     const uniformData = new Float32Array(TRANSITION_UNIFORM_FLOATS);
@@ -215,8 +215,9 @@ describe('webgpu/transitions smoke render', () => {
       'dissolve',
       {
         ...fakeRenderParams(0.5),
-        fromStabMatrix: [1, 0, 0.1, 0, 1, 0.2],
-        toStabMatrix: [0.9, 0.01, -0.3, -0.01, 0.9, -0.4],
+        fromWarpMatrix: [1, 0, 0.1, 0, 1, 0.2],
+        toWarpMatrix: [0.9, 0.01, -0.3, -0.01, 0.9, -0.4],
+        toWarpMasked: true,
       },
       1920,
       1080,
@@ -227,15 +228,20 @@ describe('webgpu/transitions smoke render', () => {
     [0.9, 0.01, -0.3, -0.01, 0.9, -0.4].forEach((v, i) =>
       expect(u[26 + i]).toBeCloseTo(v, 6),
     );
-    // The shader reads these through sampleFrom/sampleTo, not the body.
-    expect(gpu.shaderCodes.at(-1)).toContain('fn stabilize(');
+    // Only the side with a picture transform masks outside the picture.
+    expect(Array.from(u.subarray(32, 36))).toEqual([0, 1, 0, 0]);
+    // The shader reads these through sampleFrom/sampleTo, not the body —
+    // the same applyLayerWarp() the preview shader uses, not a second warp.
+    expect(gpu.shaderCodes.at(-1)).toContain('fn applyLayerWarp(');
+    expect(gpu.shaderCodes.at(-1)).not.toContain('fn stabilize(');
   });
 
-  it('defaults both stabilization slots to identity', () => {
+  it('defaults both warp slots to identity and leaves them unmasked', () => {
     const { gpu } = smokeRender('dissolve', 0.5);
     const u = gpu.writtenUniforms[0]!;
     expect(Array.from(u.subarray(20, 26))).toEqual([1, 0, 0, 0, 1, 0]);
     expect(Array.from(u.subarray(26, 32))).toEqual([1, 0, 0, 0, 1, 0]);
+    expect(Array.from(u.subarray(32, 36))).toEqual([0, 0, 0, 0]);
   });
 
   it('renders a user WGSL expression under its own shader id', () => {

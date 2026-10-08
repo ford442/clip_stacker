@@ -1,6 +1,11 @@
 import { type SyntheticEvent } from 'react';
 import type { Clip, ClipAnimatableProp, ClipKeyframes } from '../../types';
-import { clipHasKeyframes } from '../../utils/animatedLayout';
+import {
+  clipHasKeyframes,
+  clipHasPictureTransform,
+  setPictureTransformValue,
+} from '../../utils/animatedLayout';
+import { sampleKeyframes } from '../../utils/keyframes';
 import {
   layoutNormToPixelValue,
   layoutPixelToNormValue,
@@ -9,7 +14,13 @@ import {
 import { getClipDuration } from '../../utils/project';
 import type { PipCorner } from '../../utils/pipPreset';
 import { KeyframeMiniEditor } from '../KeyframeMiniEditor';
-import { DEFAULT_LAYOUT_VALUES, KEN_BURNS_PROPS, parseNumber, PIP_KEYFRAME_PROPS } from './helpers';
+import {
+  DEFAULT_LAYOUT_VALUES,
+  KEN_BURNS_PROPS,
+  parseNumber,
+  PIP_KEYFRAME_PROPS,
+  TRANSFORM_KEYFRAME_PROPS,
+} from './helpers';
 import type { ClipValues } from './types';
 
 interface InspectorClipVideoToolsSectionProps {
@@ -347,6 +358,47 @@ export function InspectorClipVideoToolsSection({
         </div>
       </details>
       {onKeyframesChange && (
+        <details className="inspector-disclosure" open={clipHasPictureTransform(clip) || undefined}>
+          <summary>Transform{clipHasPictureTransform(clip) ? ' • active' : ''}</summary>
+          <div className="inspector-disclosure-content inspector-transform">
+            <label title="Horizontal position of the layout rect in pixels from the left edge of the canvas.">
+              Position X (px)
+              <input type="number" step="1" value={values.x} onChange={(e) => update('x', e.target.value)} />
+            </label>
+            <label title="Vertical position of the layout rect in pixels from the top edge of the canvas.">
+              Position Y (px)
+              <input type="number" step="1" value={values.y} onChange={(e) => update('y', e.target.value)} />
+            </label>
+            {TRANSFORM_KEYFRAME_PROPS.map((meta) => (
+              <label key={meta.prop} title={meta.title}>
+                {meta.label}
+                <input
+                  type="number"
+                  step={meta.step}
+                  min={meta.min}
+                  max={meta.max}
+                  value={Number(
+                    sampleKeyframes(clip.keyframes?.[meta.prop], clipLocalTime, meta.defaultValue).toFixed(3),
+                  )}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    if (e.target.value === '' || !Number.isFinite(value)) return;
+                    onKeyframesChange(
+                      setPictureTransformValue(clip.keyframes, meta.prop, value, clipLocalTime),
+                    );
+                  }}
+                />
+              </label>
+            ))}
+            <p className="inspector-hint">
+              Moves the picture inside its layout rect, the same way in preview, GPU export,
+              transitions and the Canvas fallback. Animate any field from the Keyframe animation
+              lane below; drag the round handle above a selected overlay to rotate it.
+            </p>
+          </div>
+        </details>
+      )}
+      {onKeyframesChange && (
         <details
           className="inspector-disclosure"
           open={clip.stillImage || clipHasKeyframes(clip) || parseNumber(values.layerIndex, 0) > 0}
@@ -382,8 +434,8 @@ export function InspectorClipVideoToolsSection({
                 }
               >
                 {(clip.stillImage
-                  ? [...PIP_KEYFRAME_PROPS, ...KEN_BURNS_PROPS]
-                  : PIP_KEYFRAME_PROPS
+                  ? [...PIP_KEYFRAME_PROPS, ...TRANSFORM_KEYFRAME_PROPS, ...KEN_BURNS_PROPS]
+                  : [...PIP_KEYFRAME_PROPS, ...TRANSFORM_KEYFRAME_PROPS]
                 ).map((item) => (
                   <option key={item.prop} value={item.prop}>
                     {item.label}
@@ -393,7 +445,7 @@ export function InspectorClipVideoToolsSection({
             </label>
             {(() => {
               const meta =
-                [...PIP_KEYFRAME_PROPS, ...KEN_BURNS_PROPS].find(
+                [...PIP_KEYFRAME_PROPS, ...TRANSFORM_KEYFRAME_PROPS, ...KEN_BURNS_PROPS].find(
                   (item) => item.prop === activeKeyframeProp,
                 ) ?? PIP_KEYFRAME_PROPS[0];
               const isLayoutProp =

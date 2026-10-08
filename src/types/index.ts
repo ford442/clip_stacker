@@ -27,7 +27,16 @@ export interface ChromaKeySettings {
   blend: number;
 }
 
-/** Animatable scalar properties on clips (PiP layout + Ken Burns UV). */
+/**
+ * Animatable scalar properties on clips: PiP layout, Ken Burns UV, and the
+ * picture transform (`src/utils/clipTransform.ts`).
+ *
+ * `x` / `y` / `width` / `height` stay the rect letterboxing and PiP use. The
+ * transform props move the picture *within* that rect and are keyframe-only —
+ * an omitted lane means identity, so older projects do not move:
+ * `rotation` (degrees, clockwise, default 0), `scaleX` / `scaleY` (default 1),
+ * `anchorX` / `anchorY` (pivot, 0–1 of the rect, default 0.5).
+ */
 export type ClipAnimatableProp =
   | 'x'
   | 'y'
@@ -37,7 +46,12 @@ export type ClipAnimatableProp =
   | 'uvScaleX'
   | 'uvScaleY'
   | 'uvOffsetX'
-  | 'uvOffsetY';
+  | 'uvOffsetY'
+  | 'rotation'
+  | 'scaleX'
+  | 'scaleY'
+  | 'anchorX'
+  | 'anchorY';
 
 export type ClipKeyframes = Partial<Record<ClipAnimatableProp, Keyframe[]>>;
 
@@ -748,4 +762,21 @@ export interface RenderPlan {
    * because the path was FFmpeg or the MediaRecorder canvas.
    */
   wideColor?: 'gpu' | 'ignored';
+  /**
+   * Where clip picture transforms (rotation / scale / anchor) were applied,
+   * when any clip has one.
+   *
+   * - `gpu` — the compositor sampled every layer through the composed warp
+   *   (`clipTransform.ts`), matching the preview, transitions included.
+   * - `ffmpeg` — the Force-FFmpeg / no-WebGPU fallback approximated it with
+   *   `scale` + `rotate`. See `pictureTransformGaps` for what that loses.
+   */
+  pictureTransform?: 'gpu' | 'ffmpeg';
+  /**
+   * What the FFmpeg picture-transform fallback cannot reproduce (e.g. the
+   * optical-flow stabilization warp on a rotated clip — `@ffmpeg/core` has no
+   * libvidstab). Present only when `pictureTransform` is `ffmpeg` and
+   * something is actually lost.
+   */
+  pictureTransformGaps?: string[];
 }

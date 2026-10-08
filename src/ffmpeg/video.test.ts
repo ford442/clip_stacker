@@ -240,6 +240,41 @@ describe("buildPipFilterComplex", () => {
   });
 });
 
+describe("buildPipFilterComplex picture transforms", () => {
+  it("rotates a base clip and places it back on the full frame", () => {
+    const clips = [createTestClip("a", 5, { keyframes: { rotation: [{ t: 0, value: 90 }] } })];
+    const filterComplex = buildPipFilterComplex(clips);
+    expect(filterComplex).toContain(
+      `pad=${NW}:${NH}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,scale=${NW}:${NH},rotate=1.570796:ow=${NH}:oh=${NW}:c=black`,
+    );
+    expect(filterComplex).toContain(`pad=${NW}:${NH}:280:0:black,format=yuv420p[v0]`);
+  });
+
+  it("rotates a PiP after its key and overlays its bounding box at the GPU position", () => {
+    const clips = [
+      createTestClip("a", 5),
+      createTestClip("pip", 4, {
+        layerIndex: 1,
+        x: 100 / NW,
+        y: 100 / NH,
+        width: 320 / NW,
+        height: 180 / NH,
+        keyframes: { rotation: [{ t: 0, value: 90 }] },
+      }),
+    ];
+    const filterComplex = buildPipFilterComplex(clips);
+    expect(filterComplex).toContain(
+      "format=rgba,scale=320:180,rotate=1.570796:ow=180:oh=320:c=none",
+    );
+    expect(filterComplex).toContain("overlay=170:30:eof_action=pass");
+  });
+
+  it("leaves untransformed clips' filters untouched", () => {
+    const filterComplex = buildPipFilterComplex([createTestClip("a", 5)]);
+    expect(filterComplex).not.toContain("rotate=");
+  });
+});
+
 describe("appendTextOverlayFilters", () => {
   it("returns the filter_complex unchanged when there are no text overlays", () => {
     const filterComplex = "[0:v]null[vout];[0:a]anull[aout]";

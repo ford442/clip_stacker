@@ -23,7 +23,12 @@ import {
   isAudioEncoderAvailable,
   prepareStreamingAudioMix,
 } from './webcodecs-audio';
-import { canUseGpuVideoEncoder, hasActiveTransitions } from './renderEligibility';
+import {
+  canUseGpuVideoEncoder,
+  hasActiveTransitions,
+  pictureTransformPlanFields,
+} from './renderEligibility';
+import { clipHasPictureTransform } from './animatedLayout';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { resolveLayerKey } from './overlayKey';
@@ -111,6 +116,10 @@ export async function hybridMergeClips(
       encoderIntent: path,
       ...(hasKeyedClip && overlayKeying ? { overlayKeying } : {}),
     };
+    // Re-derived for the path actually taken, like `encoderIntent`.
+    delete keyed.pictureTransform;
+    delete keyed.pictureTransformGaps;
+    Object.assign(keyed, pictureTransformPlanFields(clips, path));
     return wideColorWhere
       ? stampWideColor(keyed, wideColorWhere, colorManagement)
       : keyed;
@@ -121,12 +130,14 @@ export async function hybridMergeClips(
   // plays clips back onto a canvas (see `overlayKeying: 'unsupported'` above).
   // Rather than silently dropping compositing the timeline actually needs,
   // fall straight through to the GPU/FFmpeg compositor for those cases.
-  const hasPipClip = clips.some((clip) => (clip.layerIndex ?? 0) > 0);
+  const hasPipClip = clips.some(
+    (clip) => (clip.layerIndex ?? 0) > 0 || clipHasPictureTransform(clip),
+  );
   const canvasCantComposite =
     hasKeyedClip || hasPipClip || hasActiveTransitions(transitions) || isFinishingActive(finishing);
   if (useCanvas && canvasCantComposite) {
     onStatus(
-      'Canvas renderer skipped — the timeline has keys, finishing, transitions, or PiP it can\'t composite; using the GPU/FFmpeg compositor instead.',
+      'Canvas renderer skipped — the timeline has keys, finishing, transitions, PiP, or picture transforms it can\'t composite; using the GPU/FFmpeg compositor instead.',
     );
   } else if (useCanvas && typeof MediaRecorder !== 'undefined') {
     try {

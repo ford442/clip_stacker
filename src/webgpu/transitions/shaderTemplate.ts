@@ -22,21 +22,29 @@ struct TransitionUniforms {
   custom1: f32,
   custom2: f32,
   custom3: f32,
-  // Per-side camera-shake corrections (inverse-warp 2x3 affines in normalized
-  // UV, centred on the frame). Identity when the clip is not stabilized, so a
-  // stabilized clip stays steady through a crossfade instead of popping.
-  fromStabA: f32,
-  fromStabB: f32,
-  fromStabTx: f32,
-  fromStabC: f32,
-  fromStabD: f32,
-  fromStabTy: f32,
-  toStabA: f32,
-  toStabB: f32,
-  toStabTx: f32,
-  toStabC: f32,
-  toStabD: f32,
-  toStabTy: f32,
+  // Per-side layer warps: the same inverse 2x3 the preview shader's
+  // applyLayerWarp() uses (stabilization composed with the authored picture
+  // transform, centred normalized UV). Identity when the clip is neither
+  // stabilized nor transformed, so a warped clip stays warped through a
+  // crossfade instead of snapping back for its length.
+  fromWarpA: f32,
+  fromWarpB: f32,
+  fromWarpTx: f32,
+  fromWarpC: f32,
+  fromWarpD: f32,
+  fromWarpTy: f32,
+  toWarpA: f32,
+  toWarpB: f32,
+  toWarpTx: f32,
+  toWarpC: f32,
+  toWarpD: f32,
+  toWarpTy: f32,
+  // 1 when that side has an authored picture transform: samples landing
+  // outside the picture are transparent rather than clamped to its edge.
+  fromWarpMask: f32,
+  toWarpMask: f32,
+  _pad0: f32,
+  _pad1: f32,
 };
 
 struct VertexOutput {
@@ -50,7 +58,8 @@ struct VertexOutput {
 @group(0) @binding(3) var<uniform> u: TransitionUniforms;
 @group(0) @binding(4) var maskTexture: texture_2d<f32>;
 
-fn stabilize(uv: vec2<f32>, m0: vec3<f32>, m1: vec3<f32>) -> vec2<f32> {
+// Same maths as applyLayerWarp() in preview.wgsl — one warp, not a second one.
+fn applyLayerWarp(uv: vec2<f32>, m0: vec3<f32>, m1: vec3<f32>) -> vec2<f32> {
   let centered = uv - vec2<f32>(0.5, 0.5);
   return vec2<f32>(
     m0.x * centered.x + m0.y * centered.y + m0.z,
@@ -58,26 +67,35 @@ fn stabilize(uv: vec2<f32>, m0: vec3<f32>, m1: vec3<f32>) -> vec2<f32> {
   ) + vec2<f32>(0.5, 0.5);
 }
 
+// Hard-edged (no fwidth): bodies may call the samplers from non-uniform
+// control flow, where derivatives are not allowed.
+fn insidePicture(warped: vec2<f32>, mask: f32) -> f32 {
+  let inside = all(warped >= vec2<f32>(0.0)) && all(warped <= vec2<f32>(1.0));
+  return select(1.0, select(0.0, 1.0, inside), mask > 0.5);
+}
+
 fn sampleFrom(uv: vec2<f32>) -> vec4<f32> {
-  let steady = stabilize(
+  let warped = applyLayerWarp(
     uv,
-    vec3<f32>(u.fromStabA, u.fromStabB, u.fromStabTx),
-    vec3<f32>(u.fromStabC, u.fromStabD, u.fromStabTy),
+    vec3<f32>(u.fromWarpA, u.fromWarpB, u.fromWarpTx),
+    vec3<f32>(u.fromWarpC, u.fromWarpD, u.fromWarpTy),
   );
-  let mapped = steady * vec2<f32>(u.fromUvScaleX, u.fromUvScaleY)
+  let mapped = warped * vec2<f32>(u.fromUvScaleX, u.fromUvScaleY)
     + vec2<f32>(u.fromUvOffsetX, u.fromUvOffsetY);
-  return textureSampleBaseClampToEdge(fromTexture, videoSampler, mapped);
+  return textureSampleBaseClampToEdge(fromTexture, videoSampler, mapped)
+    * insidePicture(warped, u.fromWarpMask);
 }
 
 fn sampleTo(uv: vec2<f32>) -> vec4<f32> {
-  let steady = stabilize(
+  let warped = applyLayerWarp(
     uv,
-    vec3<f32>(u.toStabA, u.toStabB, u.toStabTx),
-    vec3<f32>(u.toStabC, u.toStabD, u.toStabTy),
+    vec3<f32>(u.toWarpA, u.toWarpB, u.toWarpTx),
+    vec3<f32>(u.toWarpC, u.toWarpD, u.toWarpTy),
   );
-  let mapped = steady * vec2<f32>(u.toUvScaleX, u.toUvScaleY)
+  let mapped = warped * vec2<f32>(u.toUvScaleX, u.toUvScaleY)
     + vec2<f32>(u.toUvOffsetX, u.toUvOffsetY);
-  return textureSampleBaseClampToEdge(toTexture, videoSampler, mapped);
+  return textureSampleBaseClampToEdge(toTexture, videoSampler, mapped)
+    * insidePicture(warped, u.toWarpMask);
 }
 
 fn sampleMask(uv: vec2<f32>) -> vec4<f32> {
@@ -147,10 +165,13 @@ export function buildTransitionShader(def: TransitionDef): string {
 }
 
 /** Number of f32 values in TransitionUniforms (must match WGSL struct). */
-export const TRANSITION_UNIFORM_FLOATS = 32;
+export const TRANSITION_UNIFORM_FLOATS = 36;
 
-/** First slot of the outgoing clip's stabilization affine. */
-export const FROM_STAB_UNIFORM_OFFSET = 20;
+/** First slot of the outgoing clip's layer warp affine. */
+export const FROM_WARP_UNIFORM_OFFSET = 20;
 
-/** First slot of the incoming clip's stabilization affine. */
-export const TO_STAB_UNIFORM_OFFSET = 26;
+/** First slot of the incoming clip's layer warp affine. */
+export const TO_WARP_UNIFORM_OFFSET = 26;
+
+/** `fromWarpMask`, then `toWarpMask`. */
+export const WARP_MASK_UNIFORM_OFFSET = 32;

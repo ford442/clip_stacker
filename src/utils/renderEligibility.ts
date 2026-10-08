@@ -1,7 +1,12 @@
-import type { Clip, ClipTransition, TextOverlay } from '../types';
+import type { Clip, ClipTransition, RenderPlan, TextOverlay } from '../types';
 import { clipHasVolumeAdjustment } from './audioVolume';
 import { clipHasLoop, clipHasPlaybackRateAdjustment } from './playbackRate';
-import { clipHasKeyframes } from './animatedLayout';
+import {
+  clipHasAnimatedPictureTransform,
+  clipHasKeyframes,
+  clipHasPictureTransform,
+} from './animatedLayout';
+import { isStabilizationActive } from './stabilization';
 import { clipHasRateAutomation } from './timeRemap';
 import { isFinishingActive, type FinishingSettings } from './finishing';
 
@@ -127,4 +132,37 @@ export function canUseGpuVideoEncoder(
   }
   if (clips.some((clip) => clip.rifeProcessed)) return false;
   return true;
+}
+
+/**
+ * Render-plan fields for clip picture transforms, for the encoder that ran
+ * (or is expected to). Empty when no clip is transformed.
+ *
+ * The compositors (WebGPU and Canvas2D) sample through the composed layer
+ * warp, so they match the preview. FFmpeg only gets `scale` + `rotate`, and
+ * says what that loses instead of exporting a different picture silently.
+ * The MediaRecorder canvas encoder is never chosen for a transformed clip
+ * (see `hybridMergeClips`), so it maps to nothing here.
+ */
+export function pictureTransformPlanFields(
+  clips: Clip[],
+  encoder: RenderPlan['encoderIntent'],
+): Pick<RenderPlan, 'pictureTransform' | 'pictureTransformGaps'> {
+  const transformed = clips.filter(clipHasPictureTransform);
+  if (transformed.length === 0 || encoder === 'canvas' || !encoder) return {};
+  if (encoder !== 'ffmpeg') return { pictureTransform: 'gpu' };
+
+  const gaps: string[] = [];
+  if (transformed.some((clip) => isStabilizationActive(clip))) {
+    gaps.push(
+      'Stabilization on rotated / scaled clips (FFmpeg has no libvidstab, so the optical-flow warp is dropped)',
+    );
+  }
+  if (transformed.some(clipHasAnimatedPictureTransform)) {
+    gaps.push('Animated rotation / scale (FFmpeg holds the first keyframe)');
+  }
+  return {
+    pictureTransform: 'ffmpeg',
+    ...(gaps.length > 0 ? { pictureTransformGaps: gaps } : {}),
+  };
 }

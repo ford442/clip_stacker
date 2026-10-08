@@ -118,6 +118,8 @@ audio {
 .preview-overlay-handle.ne { right: -5px; top: -5px; }
 .preview-overlay-handle.sw { left: -5px; bottom: -5px; }
 .preview-overlay-handle.se { right: -5px; bottom: -5px; }
+/* Centred on the point PreviewOverlayManipulator hit-tests (`top` is inline). */
+.preview-overlay-handle.rotate { left: calc(50% - 5px); border-radius: 50%; cursor: grab; }
 
 .preview-snap-guide {
   position: absolute;
