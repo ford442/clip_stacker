@@ -25,6 +25,8 @@ export interface EditSnapshot {
   captionStyle: Partial<TextOverlayStyle>;
   masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
+  /** Multi-select ids (includes the primary selectedClipId when set). */
+  selectedClipIds: string[];
   masterAudio: MasterAudio | null;
 }
 
@@ -53,6 +55,7 @@ export function cloneSnapshot(snapshot: EditSnapshot): EditSnapshot {
     captionStyle: { ...(snapshot.captionStyle ?? {}) },
     masterAudioMarkers: snapshot.masterAudioMarkers ? snapshot.masterAudioMarkers.map(m => ({...m})) : [],
     selectedClipId: snapshot.selectedClipId,
+    selectedClipIds: [...(snapshot.selectedClipIds ?? [])],
     masterAudio: snapshot.masterAudio
       ? { ...snapshot.masterAudio }
       : null,
