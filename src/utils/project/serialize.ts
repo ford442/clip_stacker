@@ -83,6 +83,7 @@ export function serializeProject(
       ...(clip.loopCount != null && clip.loopCount !== 1
         ? { loopCount: clip.loopCount }
         : {}),
+      ...(clip.reversed ? { reversed: true } : {}),
       ...(automation ? { automation } : {}),
       fileName: clip.file.name,
       fileType: clip.file.type || undefined,
