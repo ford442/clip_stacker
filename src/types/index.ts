@@ -770,6 +770,12 @@ export interface RenderPlan {
    * `EncoderPath` in `utils/hybrid-encoder.ts`.
    */
   encoderIntent?: 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
+  /**
+   * The WebCodecs video encoder a `webcodecs*` render actually configured:
+   * the codec string and the acceleration rung the probe accepted
+   * (`no-preference` on a machine with no hardware encoder). Resolved plans only.
+   */
+  videoEncoder?: { codec: string; hardwareAcceleration: HardwareAcceleration };
   /** True when any finishing pass (noise reduction / color / LUT / sharpen / grain) is enabled. */
   finishingActive?: boolean;
   /** True when any clip has an active stabilization matrix that will be applied. */

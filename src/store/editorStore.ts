@@ -332,6 +332,17 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     },
 
     resetHistory: (snapshot) => {
+      // Master-audio blob URLs are owned by the editing session, not by any
+      // clip, so `revokeOrphanedUrls` never sees them. Once the stacks are
+      // cleared nothing can bring the outgoing ones back — revoke them.
+      const outgoingMasterUrls = new Set(
+        [get().masterAudio, ...undoStack.map((s) => s.masterAudio), ...redoStack.map((s) => s.masterAudio)]
+          .map((audio) => audio?.objectUrl)
+          .filter((url): url is string => Boolean(url)),
+      );
+      outgoingMasterUrls.delete(snapshot.masterAudio?.objectUrl ?? '');
+      for (const url of outgoingMasterUrls) URL.revokeObjectURL(url);
+
       undoStack.length = 0;
       redoStack.length = 0;
       debounceSessions.clear();

@@ -11,7 +11,8 @@
 
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { ClipFrameDecoder } from './webcodecs-decoder';
-import { h264CodecString, waitForEncoderDequeue } from './webcodecs-codec';
+import { h264CodecString } from './webcodecs-codec';
+import { encodeAndClose, waitForQueueBelow } from './codecQueue';
 import { PROXY_PROFILE, ProxyFrameSelector, type ProxyProfile } from './proxyMedia';
 
 /** Encoded frames allowed in flight before the loop waits on `dequeue`. */
@@ -138,20 +139,16 @@ export async function encodeProxy(source: Blob, options: EncodeProxyOptions): Pr
         const keyFrame = t + 5e-4 >= nextKeyframeSec;
         if (keyFrame) nextKeyframeSec = t + profile.keyframeIntervalSec;
         const scaled = blitter.frameFrom(frame, frame.timestamp, frame.duration ?? frameDurationUs);
-        try {
-          encoder.encode(scaled, { keyFrame });
-        } finally {
-          scaled.close();
-        }
+        encodeAndClose(encoder, scaled, { keyFrame });
         if (Number.isFinite(durationSec)) {
           options.onProgress?.(Math.min(0.99, t / durationSec));
         }
       } finally {
         frame.close();
       }
-      while (encoder.encodeQueueSize > MAX_ENCODE_QUEUE) {
-        await waitForEncoderDequeue(encoder);
-      }
+      await waitForQueueBelow(encoder, MAX_ENCODE_QUEUE + 1).catch((err: unknown) => {
+        throw encodeError ?? err;
+      });
     }
     throwIfCancelled();
     await encoder.flush();

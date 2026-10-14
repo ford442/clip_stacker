@@ -18,6 +18,7 @@ import { getPublishedWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
 import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
 import { getLastEncoderColorSpace, getLastResolvedEncoderCodec } from './webcodecs-codec';
+import { getLastDecoderAcceleration } from './webcodecs-decoder';
 import { getColorDebugSnapshot, type ColorManagementSettings } from './colorManagement';
 import { getAudioPlaybackManager } from '../audio/playbackManager';
 
@@ -260,8 +261,12 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   lines.push('## Export Encoder');
   lines.push(
     lastCodec
-      ? `- Codec: \`${lastCodec.codec}\` (${lastCodec.muxerCodec})`
+      ? `- Codec: \`${lastCodec.codec}\` (${lastCodec.muxerCodec}), acceleration: ${lastCodec.hardwareAcceleration ?? 'prefer-hardware'}`
       : '- (no WebCodecs export run yet this session)',
+  );
+  const decoderAcceleration = getLastDecoderAcceleration();
+  lines.push(
+    `- Decoder acceleration: ${decoderAcceleration ?? '(no WebCodecs decode yet this session)'}`,
   );
   lines.push('');
 

@@ -223,14 +223,17 @@ export function drawCompositedFrame(
 ): void {
   if (compositor.kind === 'webgpu' && compositor.gpuCompositor) {
     const frame = new VideoFrame(video, { timestamp: Math.round(elapsed * 1_000_000) });
-    compositor.gpuCompositor.renderFrame(
-      frame,
-      elapsed,
-      duration,
-      clip.videoFadeIn,
-      clip.videoFadeOut,
-    );
-    frame.close();
+    try {
+      compositor.gpuCompositor.renderFrame(
+        frame,
+        elapsed,
+        duration,
+        clip.videoFadeIn,
+        clip.videoFadeOut,
+      );
+    } finally {
+      frame.close();
+    }
     compositor.gpuCompositor.applyFinishing(finishing, {
       frameIndex: frameIndex ?? Math.max(0, Math.round(elapsed * TARGET_FPS)),
       colorManagement: isColorManagementActive(compositor.colorManagement)

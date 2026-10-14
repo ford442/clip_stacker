@@ -13,6 +13,13 @@ import {
   resolveEncoderBitrate,
   resolveEncoderCodec,
 } from './webcodecs';
+import {
+  av1CodecString,
+  getLastResolvedEncoderCodec,
+  hevcCodecString,
+  isWebCodecsAvailable,
+  NoSupportedEncoderError,
+} from './webcodecs-codec';
 import { HDR10_COLOR_SPACE } from './colorManagement';
 
 describe('h264CodecString', () => {
@@ -33,6 +40,41 @@ describe('h264CodecString', () => {
     expect(h264CodecString(1920, 1080, 'high')).toBe('avc1.640028');
     expect(h264CodecString(1920, 1080, 'main')).toBe('avc1.4d0028');
     expect(h264CodecString(1920, 1080, 'baseline')).toBe('avc1.420028');
+  });
+});
+
+describe('hevcCodecString / av1CodecString', () => {
+  it('keeps level 4.1 / 4.0 at 1080p', () => {
+    expect(hevcCodecString(1920, 1080)).toBe('hvc1.1.6.L123.B0');
+    expect(hevcCodecString(1920, 1080, 'main10')).toBe('hvc1.2.4.L123.B0');
+    expect(av1CodecString(1920, 1080)).toBe('av01.0.08M.08');
+    expect(av1CodecString(1920, 1080, 10)).toBe('av01.0.08M.10');
+  });
+
+  it('picks level 5.0 (HEVC L150, AV1 seq_level_idx 12) for 2160p at 30 fps', () => {
+    expect(hevcCodecString(3840, 2160)).toBe('hvc1.1.6.L150.B0');
+    expect(hevcCodecString(3840, 2160, 'main10')).toBe('hvc1.2.4.L150.B0');
+    expect(av1CodecString(3840, 2160)).toBe('av01.0.12M.08');
+    expect(av1CodecString(3840, 2160, 10)).toBe('av01.0.12M.10');
+  });
+
+  it('picks level 5.1 (HEVC L153, AV1 13) for 2160p above 30 fps', () => {
+    expect(hevcCodecString(3840, 2160, 'main', 60)).toBe('hvc1.1.6.L153.B0');
+    expect(av1CodecString(3840, 2160, 8, 60)).toBe('av01.0.13M.08');
+  });
+
+  it('sizes portrait frames by picture area', () => {
+    expect(hevcCodecString(1080, 1920)).toBe('hvc1.1.6.L123.B0');
+    expect(hevcCodecString(2160, 3840)).toBe('hvc1.1.6.L150.B0');
+  });
+
+  it('feeds the resolution-aware strings into codecCandidates', () => {
+    expect(codecCandidates('hevc', 3840, 2160)[0].codec).toBe('hvc1.1.6.L150.B0');
+    expect(codecCandidates('av1', 3840, 2160)[0].codec).toBe('av01.0.12M.08');
+    expect(codecCandidates(undefined, 3840, 2160, 'hdr10').map((c) => c.codec)).toEqual([
+      'hvc1.2.4.L150.B0',
+      'av01.0.12M.10',
+    ]);
   });
 });
 
@@ -218,11 +260,45 @@ describe('resolveEncoderCodec', () => {
     expect(resolved.codec).toBe('avc1.4d0028');
   });
 
-  it('falls back to Baseline when the probe throws for every candidate', async () => {
+  it('never returns an unprobed config when the probe throws for every candidate', async () => {
     isConfigSupported.mockRejectedValue(new TypeError('bad codec string'));
-    const resolved = await resolveEncoderCodec('av1', 1280, 720, 4_000_000);
+    await expect(resolveEncoderCodec('av1', 1280, 720, 4_000_000)).rejects.toBeInstanceOf(
+      NoSupportedEncoderError,
+    );
+  });
+
+  it('falls back to a software encoder when prefer-hardware is rejected', async () => {
+    isConfigSupported.mockImplementation(async (config: VideoEncoderConfig) => ({
+      supported: config.hardwareAcceleration !== 'prefer-hardware',
+    }));
+    const resolved = await resolveEncoderCodec(undefined, 1920, 1080, 8_000_000);
+    expect(resolved).toEqual({
+      codec: 'avc1.640028',
+      muxerCodec: 'avc',
+      hardwareAcceleration: 'no-preference',
+    });
+    // The real configure() gets exactly the config the probe accepted.
+    const config = buildVideoEncoderConfig(resolved, 1920, 1080, 8_000_000);
+    expect(config.hardwareAcceleration).toBe('no-preference');
+    expect(getLastResolvedEncoderCodec()?.hardwareAcceleration).toBe('no-preference');
+  });
+
+  it('prefers hardware H.264 over a software HEVC encode', async () => {
+    isConfigSupported.mockImplementation(async (config: VideoEncoderConfig) => ({
+      supported:
+        config.hardwareAcceleration === 'prefer-hardware'
+          ? config.codec.startsWith('avc1')
+          : true,
+    }));
+    const resolved = await resolveEncoderCodec('hevc', 1920, 1080, 8_000_000);
     expect(resolved.muxerCodec).toBe('avc');
-    expect(resolved.codec).toBe('avc1.42001e'); // last candidate: Baseline
+    expect(resolved.hardwareAcceleration).toBe('prefer-hardware');
+  });
+
+  it('configures a 4K HDR10 export with a level-5 HEVC Main10 string', async () => {
+    isConfigSupported.mockResolvedValue({ supported: true });
+    const resolved = await resolveEncoderCodec('hevc', 3840, 2160, 40_000_000, 'hdr10');
+    expect(resolved.codec).toBe('hvc1.2.4.L150.B0');
   });
 
   it('returns Main10 for HDR10 when the probe accepts it and does not fall through to H.264', async () => {
@@ -250,6 +326,25 @@ describe('resolveEncoderCodec', () => {
         bitrateMode: EXPORT_BITRATE_MODE,
         latencyMode: VIDEO_ENCODER_LATENCY_MODE,
       }),
+    );
+  });
+});
+
+describe('isWebCodecsAvailable', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('reports a software-only H.264 encoder as available', async () => {
+    const isConfigSupported = vi.fn(async (config: VideoEncoderConfig) => ({
+      supported: config.hardwareAcceleration === 'no-preference',
+    }));
+    vi.stubGlobal('VideoEncoder', { isConfigSupported });
+    vi.stubGlobal('VideoFrame', class {});
+    await expect(isWebCodecsAvailable(1920, 1080)).resolves.toBe(true);
+    // Probed at a level that fits the size (4.0), not a fixed 3.0.
+    expect(isConfigSupported).toHaveBeenCalledWith(
+      expect.objectContaining({ codec: 'avc1.420028', hardwareAcceleration: 'prefer-hardware' }),
     );
   });
 });
