@@ -24,6 +24,8 @@ import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan, TimelineCompositor, TimelineRenderOptions } from '../utils/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
 import { previewMetrics } from '../utils/previewMetrics';
+import { resolvePreviewMedia, type PreviewMediaSource } from '../utils/proxyMedia';
+import { proxyStore } from '../store/proxyStore';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
 import {
   clearPreviewWorkerChoresRunner,
@@ -412,8 +414,8 @@ export class PreviewWorkerRuntime {
     return this.lastFrameSources;
   }
 
-  /** Hand the worker the source bytes for clips it should decode itself. */
-  sendClipMedia(media: Array<{ clipId: string; blob: Blob }>): void {
+  /** Hand the worker the preview bytes (proxy or original) for clips it should decode itself. */
+  sendClipMedia(media: Array<{ clipId: string; blob: Blob; source?: PreviewMediaSource }>): void {
     if (this.destroyed || media.length === 0) return;
     const msg: PreviewWorkerInbound = { type: 'clip-media', media };
     this.worker.postMessage(msg);
@@ -522,8 +524,12 @@ async function captureStillVideoFrame(
 export class PreviewWorkerAdapter implements TimelineCompositor {
   private readonly runtime: PreviewWorkerRuntime;
   private readonly pool: ClipMediaPool;
-  /** Clip ids whose source File has already been handed to the worker. */
-  private readonly sentMedia = new Set<string>();
+  /**
+   * Clip id → the preview blob last handed to the worker. A proxy finishing,
+   * or the proxy toggle flipping, changes the resolved blob and re-sends it;
+   * the worker drops that clip's cursors and reopens on the new bytes.
+   */
+  private readonly sentMedia = new Map<string, Blob>();
 
   private constructor(runtime: PreviewWorkerRuntime, pool: ClipMediaPool) {
     this.runtime = runtime;
@@ -557,17 +563,20 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   }
 
   /**
-   * Transfer the source `File` for every decodable clip the worker has not
-   * seen yet. `File` is structured-cloneable by reference, so this hands over
-   * a handle, not the bytes.
+   * Transfer the preview blob — the ready proxy, else the source `File` — for
+   * every decodable clip whose blob the worker does not already hold. Blobs
+   * are structured-cloneable by reference, so this hands over a handle, not
+   * the bytes.
    */
   private sendClipMedia(clips: Clip[]): void {
-    const media: Array<{ clipId: string; blob: Blob }> = [];
+    const lookup = proxyStore.getState();
+    const media: Array<{ clipId: string; blob: Blob; source: PreviewMediaSource }> = [];
     for (const clip of clips) {
       if (clip.kind !== 'video' || clip.stillImage || !clip.file) continue;
-      if (this.sentMedia.has(clip.id)) continue;
-      this.sentMedia.add(clip.id);
-      media.push({ clipId: clip.id, blob: clip.file });
+      const resolved = resolvePreviewMedia(clip, lookup);
+      if (this.sentMedia.get(clip.id) === resolved.blob) continue;
+      this.sentMedia.set(clip.id, resolved.blob);
+      media.push({ clipId: clip.id, blob: resolved.blob, source: resolved.source });
     }
     this.runtime.sendClipMedia(media);
   }
@@ -627,7 +636,10 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
 
       if (clip.kind !== 'video') return null;
 
-      const video = this.pool.getVideo(clip);
+      // The <video> fallback reads the same bytes the worker decoder would.
+      const media = resolvePreviewMedia(clip, proxyStore.getState());
+      const fromProxy = media.source === 'proxy' && Boolean(media.objectUrl);
+      const video = this.pool.getVideoForUrl(clip.id, fromProxy ? media.objectUrl : clip.objectUrl);
       const seekStart = performance.now();
       await seekVideoTo(video, req.sourceTime);
       previewMetrics.recordSeek(performance.now() - seekStart);
@@ -640,6 +652,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         frame,
         videoWidth: video.videoWidth,
         videoHeight: video.videoHeight,
+        ...(fromProxy ? { proxy: true } : {}),
       };
     };
 
@@ -693,7 +706,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   syncClips(clips: Clip[]): void {
     const ids = new Set(clips.map((c) => c.id));
     this.pool.pruneExcept(ids);
-    for (const id of [...this.sentMedia]) {
+    for (const id of [...this.sentMedia.keys()]) {
       if (!ids.has(id)) this.sentMedia.delete(id);
     }
     this.sendClipMedia(clips);

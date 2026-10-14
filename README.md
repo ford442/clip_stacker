@@ -192,6 +192,28 @@ Remote save/load expects an endpoint compatible with:
 
 Example full URL: `https://storage.example.com/webhook/clip-stacker`
 
+### Preview proxies
+
+Big camera files (4K, multicam stacks) can get a **preview proxy**: click
+**Build proxy** on a library row. One clip builds at a time in the background
+(badge: *Original* → *Building n%* → *Proxy*). A proxy is H.264, short side
+960 px, the source frame rate capped at 30 (a 24 fps source stays 24), long
+GOP, no audio — the preview's audio graph still reads the original's sound.
+
+- Scrub, playback and stabilization analysis read the proxy. **Export, Force
+  FFmpeg and every path that writes the deliverable always read the original
+  file**, so the output resolution never comes from the proxy.
+- *Use proxies for playback* (in the Library, shown once a proxy exists) turns
+  them off for the session; preview then decodes originals and looks the same.
+- Saved projects keep a small `proxy` record per clip (`profile`, source
+  `hash`, `width`, `height`) — never the bytes. The bytes live in the
+  working-media store keyed by `(sourceHash, profile)`; deleting the last clip
+  that uses a proxy deletes it, and an undo writes it back while it is still
+  in memory.
+- **Until the persistent media store (#279) lands, that store is in memory**:
+  proxies do not survive a reload, and a reloaded project falls back to the
+  original (badge *Original*) until the proxy is rebuilt.
+
 ### Authentication
 
 Auth is optional and handled via `Authorization: Bearer <token>` header. If your deployment requires authentication, provide an API key or bearer token in the app's optional auth token field. The client automatically prefixes the token with `Bearer` if not already present.

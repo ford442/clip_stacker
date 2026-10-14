@@ -3,6 +3,7 @@ import type {
   Clip,
   ClipGroup,
   ClipKind,
+  ClipProxy,
   ClipTransition,
   MasterAudio,
   Project,
@@ -354,6 +355,12 @@ export async function applyProjectData(
       // matrices from the source on load.
       liveClip.stabilize = true;
     }
+    const proxy = sanitizeClipProxy(savedClip.proxy);
+    if (proxy) {
+      // useProxyBuilder looks the bytes up in the media store; a miss leaves
+      // the clip on its original, never broken.
+      liveClip.proxy = proxy;
+    }
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
   }
@@ -462,4 +469,16 @@ export async function applyProjectData(
     invalidColorWarnings,
     mediaDownloadWarnings,
   };
+}
+
+/** Coerce a saved proxy record; anything malformed is dropped rather than thrown on. */
+export function sanitizeClipProxy(value: unknown): ClipProxy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const width = Number(v.width);
+  const height = Number(v.height);
+  if (typeof v.profile !== 'string' || !v.profile) return undefined;
+  if (typeof v.hash !== 'string' || !/^[0-9a-f]{16,128}$/i.test(v.hash)) return undefined;
+  if (!(width > 0 && height > 0)) return undefined;
+  return { profile: v.profile, hash: v.hash, width: Math.round(width), height: Math.round(height) };
 }

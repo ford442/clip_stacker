@@ -133,6 +133,8 @@ export function serializeProject(
         : {}),
       ...(clip.lumaLevels ? { lumaLevels: { ...clip.lumaLevels } } : {}),
       ...(clip.stabilize ? { stabilize: true } : {}),
+      // The record only — proxy bytes live in the media store, never in JSON.
+      ...(clip.proxy ? { proxy: { ...clip.proxy } } : {}),
     };
     }),
     transitions: transitions.map((t): SerializedTransition => ({

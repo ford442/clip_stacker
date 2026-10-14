@@ -86,6 +86,16 @@ export interface SyncMarker {
  * resolution. Deliberately NOT serialized with the project — see
  * `SerializedClip.stabilize`.
  */
+/** A clip's preview proxy: which profile, keyed by which source hash, at what size. */
+export interface ClipProxy {
+  /** `PROXY_PROFILE.id` the proxy was encoded with. */
+  profile: string;
+  /** Source content hash (`fingerprintMedia`) — half of the store key. */
+  hash: string;
+  width: number;
+  height: number;
+}
+
 export interface ClipStabilization {
   /** Rate the analysis sampled the source at (frames per second). */
   fps: number;
@@ -250,6 +260,15 @@ export interface Clip {
   stabilization?: ClipStabilization;
   /** Why analysis could not run for this clip (WASM disabled, undecodable, …). */
   stabilizeError?: string;
+  // ---------------------------------------------------------------------------
+  // Preview proxy (see `utils/proxyMedia.ts`)
+  // ---------------------------------------------------------------------------
+  /**
+   * The preview proxy built for this clip's source. Only the record travels;
+   * the bytes live in the working-media store under `proxyStoreKey(hash, profile)`.
+   * Preview and stabilization read the proxy; export always reads `file`.
+   */
+  proxy?: ClipProxy;
 }
 
 export interface SerializedClip {
@@ -327,6 +346,8 @@ export interface SerializedClip {
    * recomputes them instead of bloating every project file.
    */
   stabilize?: boolean;
+  /** Preview proxy record — no bytes, no data URL. */
+  proxy?: ClipProxy;
 }
 
 export type TransitionType = 'none' | (string & {});

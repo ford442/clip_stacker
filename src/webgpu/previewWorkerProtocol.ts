@@ -34,6 +34,7 @@ import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan } from '../utils/previewComposition';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
 import type { WebGpuProbeResult } from './webgpuProbe';
+import type { PreviewMediaSource } from '../utils/proxyMedia';
 
 /**
  * Clip descriptor sent to the worker — identical to Clip but without the
@@ -118,6 +119,8 @@ export interface CapturedFrame {
   /** Video element dimensions at the time of capture (for letterbox UV). */
   videoWidth: number;
   videoHeight: number;
+  /** True when main captured this from the clip's preview proxy, not the original. */
+  proxy?: boolean;
 }
 
 /** Which scopes the worker should compute from the composed preview texture. */
@@ -144,6 +147,11 @@ export interface ScopeData {
 export interface FrameSourceStats {
   decoder: number;
   element: number;
+  /**
+   * Layers (of `decoder` + `element`) served from a preview proxy rather than
+   * the original file. Omitted by older senders — treat as 0.
+   */
+  proxy?: number;
 }
 
 /** How long main waits for the worker GPU probe / init before falling back. */
@@ -171,7 +179,8 @@ export type PreviewWorkerInbound =
        * `Blob`/`File` is structured-cloneable by reference — no copy.
        */
       type: 'clip-media';
-      media: Array<{ clipId: string; blob: Blob }>;
+      /** `source` says whether `blob` is the clip's proxy or its original (default). */
+      media: Array<{ clipId: string; blob: Blob; source?: PreviewMediaSource }>;
     }
   | {
       type: 'render';

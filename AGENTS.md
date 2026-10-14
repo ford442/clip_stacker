@@ -507,6 +507,39 @@ The preview worker decodes its own frames. Main never seeks a hidden `<video>` o
 - Kernels are ordinary gpu-chores ops, so `?no_gpu_compute` disables them and the CPU goldens (`lumaHistogramBt709`, `vectorscopeUv`) are the reference in tests.
 - `src/components/PreviewScopes.tsx` draws both from the bins; a failed scope readback is logged and dropped, never failing the frame.
 
+## Preview proxies
+
+A proxy is a 960p H.264 mezzanine that preview reads instead of a big camera
+file. Export never reads it.
+
+- `src/utils/proxyMedia.ts` — `PROXY_PROFILE` (a constant, not a codec panel),
+  `planProxy`, `proxyDimensions`, `ProxyFrameSelector` (caps at 30 fps without
+  inventing frames), `proxyStoreKey(sourceHash, profile)`,
+  `resolvePreviewMedia` (proxy vs original for one clip). Pure.
+- `src/utils/proxyEncoder.ts` — `encodeProxy`: `ClipFrameDecoder` → canvas
+  blit → `VideoEncoder` → `mp4-muxer`. Source timestamps are kept, so a proxy
+  cursor opened on a trim window lands on the same source times. No FFmpeg.
+- `src/utils/mediaStore.ts` — the async `MediaStore` interface and
+  `fingerprintMedia`. **In-memory only until #279** swaps in OPFS/IndexedDB
+  (`setMediaStore`); nothing here survives a reload yet.
+- `src/store/proxyStore.ts` — runtime state: the toggle, the build queue,
+  per-clip progress/errors, and ready blobs keyed by store key (a split shares
+  one proxy).
+- `src/hooks/useProxyBuilder.ts` — the queue (one at a time, cancelled when the
+  clip leaves) and `ProxyReconciler` (evict + delete when no clip references a
+  key; an undo writes a recently evicted blob back).
+- Preview: `PreviewWorkerAdapter.sendClipMedia` resolves each clip and re-sends
+  when the resolved blob changes; the worker's `PreviewDecoderSource` tags it
+  `proxy`/`original`, and `render-complete.frameSources.proxy` lands in
+  `previewMetrics` as `proxySourcedLayers` / `originalSourcedLayers`.
+- Stabilization: `useClipStabilization` passes the proxy as
+  `StabilizeOptions.source`. The plan is still sized from the original's
+  dimensions and matrices are normalized UV, so export never re-analyses.
+
+Never route a proxy into `TimelineDecoderFrameProvider`, the FFmpeg paths or
+the canvas export. `Clip.proxy` is the only serialized part; replacing a
+clip's `file` (RIFE) must clear it.
+
 ## Variable speed remapping (time stretch)
 
 `automation.playbackRate` keyframes (existing `Keyframe` type — output-local seconds) remap timeline time to source time via ∫ rate(τ) dτ (`src/utils/timeRemap.ts`). Preview video samples frames at the remapped `sourceTime`; audio is pitch-preserved with a small WSOLA WASM module (not SoundTouch / LGPL).
