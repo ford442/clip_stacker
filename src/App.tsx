@@ -4,6 +4,7 @@ import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { useClipBeatAnalysis } from "./hooks/useClipBeatAnalysis";
 import { useClipStabilization } from "./hooks/useClipStabilization";
+import { useProxyBuilder } from "./hooks/useProxyBuilder";
 import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
 import { getEffectiveTimelineClips } from "./utils/timelineClips";
@@ -53,6 +54,7 @@ export function App() {
   } = useEditHistory();
   useClipBeatAnalysis(clips, setClips);
   useClipStabilization(clips, setClips);
+  useProxyBuilder(clips, setClips);
   useMasterAudioBeatAnalysis();
   useClipImportChores(clips, setClips);
 

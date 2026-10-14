@@ -48,6 +48,7 @@ import {
 import { evaluatePreviewBudget } from '../utils/previewBudget';
 import { shouldResetFinishingTemporal } from '../utils/noiseReduction';
 import { previewMetrics } from '../utils/previewMetrics';
+import { useProxyState } from '../store/proxyStore';
 import { parseOutputResolution } from '../utils/resolution';
 import { createRenderScheduler } from '../utils/seekCoalescer';
 import { PreviewOverlayManipulator } from './PreviewOverlayManipulator';
@@ -369,6 +370,11 @@ export function TimelineCompositorPreview({
     if (!showWaveform && !showVectorscope) setScopeData(null);
   }, [showWaveform, showVectorscope, backend, canvasGeneration]);
 
+  // A proxy becoming ready (or the proxy toggle flipping) changes which bytes
+  // a layer decodes, so it re-syncs clip media like a clip edit does.
+  const proxiesEnabled = useProxyState((s) => s.enabled);
+  const readyProxies = useProxyState((s) => s.ready);
+
   useEffect(() => {
     engineRef.current?.syncClips(timelineClips);
     const time = playheadTime ?? globalTimeRef.current;
@@ -386,6 +392,8 @@ export function TimelineCompositorPreview({
     exportSettings,
     playheadTime,
     requestRender,
+    proxiesEnabled,
+    readyProxies,
   ]);
 
   useEffect(() => {

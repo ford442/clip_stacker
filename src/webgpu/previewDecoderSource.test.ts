@@ -168,4 +168,33 @@ describe('PreviewDecoderSource', () => {
     expect(source.activeCount).toBe(0);
     expect(source.hasClipMedia('a')).toBe(true);
   });
+
+  it('decodes the proxy blob — never opening the original — and counts proxy layers', async () => {
+    const factory = cursorFactory();
+    const source = new PreviewDecoderSource(factory);
+    const original = new Blob([new Uint8Array([1])]);
+    const proxy = new Blob([new Uint8Array([2])]);
+    source.setClipMedia('a', original);
+    source.setClipMedia('a', proxy, 'proxy');
+
+    const split = await source.split([request('a')], new Map([['a', videoClip('a')]]));
+
+    expect(split.proxyDecoded).toBe(1);
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect((factory.mock.calls[0] as unknown[])[0]).toBe(proxy);
+  });
+
+  it('reopens on the original when proxies are switched off', async () => {
+    const factory = cursorFactory();
+    const source = new PreviewDecoderSource(factory);
+    const original = new Blob([new Uint8Array([1])]);
+    source.setClipMedia('a', new Blob([new Uint8Array([2])]), 'proxy');
+    await source.split([request('a')], new Map([['a', videoClip('a')]]));
+
+    source.setClipMedia('a', original, 'original');
+    const split = await source.split([request('a', { sourceTime: 0.1 })], new Map([['a', videoClip('a')]]));
+
+    expect(split.proxyDecoded).toBe(0);
+    expect((factory.mock.calls.at(-1) as unknown[])[0]).toBe(original);
+  });
 });

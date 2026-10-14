@@ -2,6 +2,18 @@ import { useEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Clip } from '../types';
 import { stabilizeClip } from '../utils/stabilizePipeline';
+import { clipProxyKey } from '../utils/proxyMedia';
+import { proxyStore } from '../store/proxyStore';
+
+/**
+ * Analysis input for a clip: its preview proxy when one is ready (a 960p
+ * decode instead of a 4K one), the original otherwise. Independent of the
+ * playback toggle — the matrices are the same either way.
+ */
+export function stabilizationSourceFor(clip: Clip): Blob {
+  const key = clipProxyKey(clip);
+  return (key && proxyStore.getState().ready[key]?.blob) || clip.file;
+}
 
 /**
  * Computes stabilization matrices for clips the user has toggled `stabilize`
@@ -42,6 +54,7 @@ export function useClipStabilization(
         analyzing.current.add(clip.id);
         try {
           const result = await stabilizeClip(clip, {
+            source: stabilizationSourceFor(clip),
             isCancelled: () => cancelled,
           });
           if (cancelled) break;

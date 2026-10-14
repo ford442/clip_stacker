@@ -372,6 +372,8 @@ export function useInspectorActions({
               rifeMode: mode,
               // Preserve originalFps if it was already set (e.g. from a previous run)
               originalFps: c.originalFps,
+              // New source bytes: the old proxy shows the wrong picture.
+              proxy: undefined,
             };
           }),
         );
