@@ -1,5 +1,6 @@
 import type { ClipAutomation, ClipKeyframes } from '../../types';
 import type { CaptionsPanelProps } from '../CaptionsPanel';
+import type { ClipAudioEffects } from '../../utils/audioEffects';
 
 export interface ClipValues {
   title: string;
@@ -30,6 +31,8 @@ export interface InspectorProps {
   onChange: (values: ClipValues) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onAutomationChange?: (automation: ClipAutomation | undefined) => void;
+  /** Replace a clip's insert chain (EQ bands + compressor). Takes the id: commits are debounced. */
+  onAudioEffectsChange?: (clipId: string, effects: ClipAudioEffects | undefined) => void;
   onApplyKenBurns?: () => void;
   onExtractAudio?: () => void;
   onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;

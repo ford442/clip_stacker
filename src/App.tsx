@@ -286,6 +286,7 @@ export function App() {
       onInspectorChange={inspectorActions.handleInspectorChange}
       onKeyframesChange={inspectorActions.handleClipKeyframesChange}
       onAutomationChange={inspectorActions.handleClipAutomationChange}
+      onAudioEffectsChange={inspectorActions.handleClipAudioEffectsChange}
       onApplyKenBurns={inspectorActions.handleApplyKenBurns}
       onExtractAudio={inspectorActions.handleExtractAudio}
       onRife={inspectorActions.handleRife}

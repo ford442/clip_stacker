@@ -25,6 +25,7 @@ import {
   type ColorManagementSettings,
 } from '../colorManagement';
 import { normalizeClipAutomation } from '../clipAutomation';
+import { normalizeClipAudioEffects } from '../audioEffects';
 import { normalizeCaptions } from '../subtitles';
 export function serializeProject(
   clips: Clip[],
@@ -60,6 +61,8 @@ export function serializeProject(
     ...(serializedTracks.length > 0 ? { tracks: serializedTracks } : {}),
     clips: clips.map((clip): SerializedClip => {
       const automation = normalizeClipAutomation(clip.automation);
+      // Bypassed blocks round-trip too: the settings survive a toggle.
+      const audioEffects = normalizeClipAudioEffects(clip.audioEffects);
       return {
       id: clip.id,
       title: clip.title,
@@ -85,6 +88,7 @@ export function serializeProject(
         : {}),
       ...(clip.reversed ? { reversed: true } : {}),
       ...(automation ? { automation } : {}),
+      ...(audioEffects ? { audioEffects } : {}),
       fileName: clip.file.name,
       fileType: clip.file.type || undefined,
       ...(clip.groupId ? { groupId: clip.groupId } : {}),

@@ -36,6 +36,7 @@ import {
 import { deserializeTextOverlays, usesPixelLayoutForProject } from './applyTextOverlays';
 import type { AppliedProjectData, ApplyProjectDataOptions } from './types';
 import { normalizeClipAutomation } from '../clipAutomation';
+import { normalizeClipAudioEffects } from '../audioEffects';
 import { createCaptionId, normalizeCaptions } from '../subtitles';
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
@@ -304,6 +305,10 @@ export async function applyProjectData(
     const automation = normalizeClipAutomation(savedClip.automation);
     if (automation) liveClip.automation = automation;
     else delete liveClip.automation;
+    // Malformed bands are dropped rather than failing the load.
+    const audioEffects = normalizeClipAudioEffects(savedClip.audioEffects);
+    if (audioEffects) liveClip.audioEffects = audioEffects;
+    else delete liveClip.audioEffects;
     if (usesPixelLayout && (savedClip.layerIndex ?? 0) > 0) {
       const migrated = migratePixelClipLayout(liveClip, layoutReference);
       liveClip.x = migrated.x;

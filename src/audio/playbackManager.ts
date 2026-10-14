@@ -15,6 +15,7 @@ import {
 import { sampleKeyframes } from '../utils/keyframes';
 import { clampClipVolume } from '../utils/audioVolume';
 import { RemappedAudioCache } from '../utils/remappedAudioCache';
+import { ProcessedAudioCache } from './processedAudioCache';
 import { createAudioContext } from './context';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
@@ -80,6 +81,7 @@ export class AudioPlaybackManager {
   private analyser: AnalyserNode | null = null;
   private readonly cache = new ClipAudioCache();
   private readonly remapCache = new RemappedAudioCache();
+  private readonly processedCache = new ProcessedAudioCache();
   private schedule: AudioScheduleEntry[] = [];
   private active: ActiveSource[] = [];
   private state: PlaybackState = 'stopped';
@@ -270,6 +272,7 @@ export class AudioPlaybackManager {
     const keepIds = new Set(this.schedule.map((e) => e.clipId));
     this.cache.prune(keepIds);
     this.remapCache.prune(keepIds);
+    this.processedCache.prune(keepIds);
 
     if (!this.isAvailable) return;
     const ok = await this.ensureContext();
@@ -277,9 +280,7 @@ export class AudioPlaybackManager {
 
     const generation = ++this.syncGeneration;
     const ctx = this.ctx;
-    await Promise.all(
-      this.schedule.map((entry) => this.remapCache.get(entry, this.cache, ctx)),
-    );
+    await Promise.all(this.schedule.map((entry) => this.resolveBuffer(entry, ctx)));
     if (generation !== this.syncGeneration) return;
 
     if (this.state === 'playing') {
@@ -369,6 +370,7 @@ export class AudioPlaybackManager {
     this.stopSources();
     this.cache.clear();
     this.remapCache.clear();
+    this.processedCache.clear();
     this.schedule = [];
     this.listeners.clear();
     this.state = 'stopped';
@@ -397,6 +399,16 @@ export class AudioPlaybackManager {
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /** Decoded → rate-remapped → insert-processed buffer for one entry. */
+  private async resolveBuffer(
+    entry: AudioScheduleEntry,
+    ctx: BaseAudioContext,
+  ): Promise<AudioBuffer | null> {
+    const buffer = await this.remapCache.get(entry, this.cache, ctx);
+    if (!buffer) return null;
+    return this.processedCache.get(entry, buffer, ctx);
+  }
 
   private emit(): void {
     const status = this.getStatus();
@@ -481,9 +493,7 @@ export class AudioPlaybackManager {
 
     // Prefetch all buffers in parallel so later clips aren't delayed by
     // earlier decodes (keeps multi-clip starts gapless).
-    await Promise.all(
-      remaining.map((entry) => this.remapCache.get(entry, this.cache, ctx)),
-    );
+    await Promise.all(remaining.map((entry) => this.resolveBuffer(entry, ctx)));
     if (
       generation !== this.scheduleGeneration ||
       this.state !== 'playing' ||
@@ -495,7 +505,7 @@ export class AudioPlaybackManager {
     for (const entry of remaining) {
       if (generation !== this.scheduleGeneration) return;
 
-      const buffer = await this.remapCache.get(entry, this.cache, ctx);
+      const buffer = await this.resolveBuffer(entry, ctx);
       if (
         !buffer ||
         this.state !== 'playing' ||

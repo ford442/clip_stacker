@@ -74,6 +74,7 @@ export type AppShellProps = {
   onInspectorChange: (values: ClipValues) => void;
   onKeyframesChange: (keyframes: Clip["keyframes"]) => void;
   onAutomationChange: (automation: Clip["automation"]) => void;
+  onAudioEffectsChange: (clipId: string, effects: Clip["audioEffects"]) => void;
   onApplyKenBurns: () => void;
   onExtractAudio: () => Promise<void>;
   onRife: (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => Promise<void>;
@@ -141,6 +142,7 @@ export function AppShell(props: AppShellProps) {
     onInspectorChange,
     onKeyframesChange,
     onAutomationChange,
+    onAudioEffectsChange,
     onApplyKenBurns,
     onExtractAudio,
     onRife,
@@ -241,6 +243,7 @@ export function AppShell(props: AppShellProps) {
           onChange={onInspectorChange}
           onKeyframesChange={onKeyframesChange}
           onAutomationChange={onAutomationChange}
+          onAudioEffectsChange={onAudioEffectsChange}
           onApplyKenBurns={onApplyKenBurns}
           onExtractAudio={onExtractAudio}
           onRife={onRife}

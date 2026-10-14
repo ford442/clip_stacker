@@ -58,6 +58,7 @@ function InspectorImpl({
   onChange,
   onKeyframesChange,
   onAutomationChange,
+  onAudioEffectsChange,
   onApplyKenBurns,
   onExtractAudio,
   onRife,
@@ -480,6 +481,7 @@ function InspectorImpl({
               applyLogoPreset={applyLogoPreset}
               useAsBaseLayer={useAsBaseLayer}
               onAutomationChange={onAutomationChange}
+              onAudioEffectsChange={onAudioEffectsChange}
               onExtractAudio={onExtractAudio}
               onStabilizeChange={onStabilizeChange}
               onRife={onRife}
