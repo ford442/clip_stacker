@@ -17,7 +17,7 @@
  */
 
 import textFillShader from '../shaders/textFill.wgsl?raw';
-import { acquireGpuContext, peekGpuDevice } from '../gpuDevice';
+import { acquireGpuContext, onGpuDeviceLost, onGpuDeviceRecovered } from '../gpuDevice';
 import { ffmpegColorToRgb01 } from '../../utils/color';
 import { getTextShader, resolveShaderColors, resolveShaderParams } from './registry';
 
@@ -322,11 +322,6 @@ export class TextFillRenderer {
     return this.outputCanvas;
   }
 
-  /** True while this renderer's pipeline/buffers still belong to the live shared device. */
-  isBoundToCurrentDevice(): boolean {
-    return this.device === peekGpuDevice();
-  }
-
   /** Releases this renderer's own textures/buffers. The shared `GPUDevice` is untouched. */
   destroy(): void {
     if (this.destroyed) return;
@@ -336,16 +331,46 @@ export class TextFillRenderer {
   }
 }
 
-let cached: TextFillRenderer | null = null;
+let cached: Promise<TextFillRenderer> | null = null;
+let watchingDevice = false;
 
-export async function getTextFillRenderer(): Promise<TextFillRenderer> {
-  // A device-lost + automatic-recreate cycle (see gpuDevice.ts) leaves this
-  // singleton's pipeline/buffers bound to the now-destroyed device — its
-  // render() calls would silently no-op onto whatever the output canvas last
-  // held. Drop and rebuild against the current shared device instead of
-  // reusing a stale renderer.
-  if (cached && !cached['destroyed'] && cached.isBoundToCurrentDevice()) return cached;
-  cached?.destroy();
-  cached = await TextFillRenderer.create();
+/**
+ * A device loss strands the cached renderer's pipeline/buffers on a dead
+ * device — its render() calls would silently no-op onto whatever the output
+ * canvas last held. Drop it as soon as the device is lost, and rebuild on the
+ * recreated device as soon as there is one, so the next shader-text frame
+ * does not pay for the pipeline compile.
+ */
+function watchDevice(): void {
+  if (watchingDevice) return;
+  watchingDevice = true;
+  const drop = () => {
+    const stale = cached;
+    cached = null;
+    void stale?.then((renderer) => renderer.destroy(), () => undefined);
+  };
+  onGpuDeviceLost(drop);
+  onGpuDeviceRecovered(() => {
+    drop();
+    void getTextFillRenderer().catch(() => undefined);
+  });
+}
+
+export function getTextFillRenderer(): Promise<TextFillRenderer> {
+  watchDevice();
+  if (!cached) {
+    const created = TextFillRenderer.create();
+    cached = created;
+    // A failed create must not be cached — the next call retries.
+    created.catch(() => {
+      if (cached === created) cached = null;
+    });
+  }
   return cached;
+}
+
+/** Test-only: forget the cached renderer and device subscriptions. */
+export function __resetTextFillRendererForTests(): void {
+  cached = null;
+  watchingDevice = false;
 }

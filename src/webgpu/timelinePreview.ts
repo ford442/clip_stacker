@@ -16,6 +16,7 @@ import {
   captionPlanOptions,
   type PreviewClipLayer,
   type PreviewCompositionPlan,
+  type PreviewDeviceState,
   type TimelineCompositor,
   type TimelineRenderOptions,
 } from '../utils/previewComposition';
@@ -28,6 +29,11 @@ import {
 import { PreviewEngine, type LayerDraw, type NormalizedDestRect } from './previewEngine';
 import { isRegisteredTransitionType } from './transitions/registry';
 import { captureStillFrame, captureVideoFrame } from './captureFrame';
+import {
+  onGpuDeviceLost,
+  onGpuDeviceRecovered,
+  onGpuDeviceRecoveryFailed,
+} from './gpuDevice';
 import type { TransitionRenderParams } from './transitions/types';
 
 // Re-exported for backwards compatibility — the pool now lives in utils so the
@@ -154,6 +160,16 @@ export class TimelinePreviewEngine implements TimelineCompositor {
   ): Promise<TimelinePreviewEngine> {
     const engine = await PreviewEngine.create(canvas);
     return new TimelinePreviewEngine(engine, new ClipMediaPool(), canvas, clips);
+  }
+
+  /** This engine draws with main's device, so main's registry is the one to watch. */
+  onDeviceState(listener: (state: PreviewDeviceState, message?: string) => void): () => void {
+    const unsubscribers = [
+      onGpuDeviceLost((info) => listener('lost', info.message)),
+      onGpuDeviceRecovered(() => listener('recovered')),
+      onGpuDeviceRecoveryFailed((error) => listener('failed', error.message)),
+    ];
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
   }
 
   resizeCanvas(width: number, height: number): void {

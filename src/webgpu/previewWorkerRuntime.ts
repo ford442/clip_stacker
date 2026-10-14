@@ -21,7 +21,12 @@ import type { ColorManagementSettings } from '../utils/colorManagement';
 import { publishColorDebugSnapshot } from '../utils/colorManagement';
 import { resolveTimelineFinishing } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
-import type { PreviewCompositionPlan, TimelineCompositor, TimelineRenderOptions } from '../utils/previewComposition';
+import type {
+  PreviewCompositionPlan,
+  PreviewDeviceState,
+  TimelineCompositor,
+  TimelineRenderOptions,
+} from '../utils/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
 import { previewMetrics } from '../utils/previewMetrics';
 import { resolvePreviewMedia, type PreviewMediaSource } from '../utils/proxyMedia';
@@ -49,6 +54,7 @@ import {
 import { isPreviewDecoderEnabled } from './previewDecodeFlags';
 import { publishWebGpuProbe, type WebGpuProbeResult } from './webgpuProbe';
 import { captureStillFrame, captureVideoFrame } from './captureFrame';
+import { recordRemoteGpuError } from './gpuDevice';
 
 export type { FrameRequest, CapturedFrame, ScopeData, ScopeSettings };
 
@@ -151,6 +157,9 @@ export class PreviewWorkerRuntime {
   private choresRunner: PreviewWorkerChoresRunner | null = null;
   private scopesListener: ((scopes: ScopeData) => void) | null = null;
   private lastFrameSources: FrameSourceStats = { decoder: 0, element: 0 };
+  private readonly deviceListeners = new Set<
+    (state: PreviewDeviceState, message?: string) => void
+  >();
 
   private constructor(worker: Worker) {
     this.worker = worker;
@@ -326,6 +335,40 @@ export class PreviewWorkerRuntime {
         break;
       }
 
+      // The worker's device is not main's: record its health for Copy Debug
+      // and tell the preview, which must not watch main's registry for it.
+      case 'gpu-error': {
+        recordRemoteGpuError({ ...msg.entry, realm: 'preview-worker' });
+        break;
+      }
+
+      case 'gpu-lost': {
+        recordRemoteGpuError({
+          type: 'lost',
+          message: msg.message,
+          timestamp: msg.timestamp,
+          realm: 'preview-worker',
+        });
+        this.emitDeviceState('lost', msg.message);
+        break;
+      }
+
+      case 'gpu-recovered': {
+        this.emitDeviceState('recovered');
+        break;
+      }
+
+      case 'gpu-recovery-failed': {
+        recordRemoteGpuError({
+          type: 'lost',
+          message: `Device recreate failed: ${msg.message}`,
+          timestamp: msg.timestamp,
+          realm: 'preview-worker',
+        });
+        this.emitDeviceState('failed', msg.message);
+        break;
+      }
+
       case 'render-cancelled': {
         const pending = this.pendingRenders.get(msg.renderId);
         this.pendingRenders.delete(msg.renderId);
@@ -352,6 +395,16 @@ export class PreviewWorkerRuntime {
         break;
       }
     }
+  }
+
+  private emitDeviceState(state: PreviewDeviceState, message?: string): void {
+    for (const listener of this.deviceListeners) listener(state, message);
+  }
+
+  /** Follow the worker device's loss / recovery. Returns unsubscribe. */
+  onDeviceState(listener: (state: PreviewDeviceState, message?: string) => void): () => void {
+    this.deviceListeners.add(listener);
+    return () => this.deviceListeners.delete(listener);
   }
 
   /**
@@ -533,6 +586,10 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   /** How the last frame's layers were sourced (decoder vs `<video>` seek). */
   get frameSources(): FrameSourceStats {
     return this.runtime.frameSources;
+  }
+
+  onDeviceState(listener: (state: PreviewDeviceState, message?: string) => void): () => void {
+    return this.runtime.onDeviceState(listener);
   }
 
   /**

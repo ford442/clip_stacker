@@ -16,7 +16,12 @@
  *                sync-clips, pause-decoders, reset-finishing, set-scopes,
  *                chore-jobs, destroy
  * Worker → Main: ready, initialized, need-frames, render-complete,
- *                render-cancelled, scopes, chore-jobs-result, error
+ *                render-cancelled, scopes, chore-jobs-result, error,
+ *                gpu-error, gpu-lost, gpu-recovered, gpu-recovery-failed
+ *
+ * The worker owns its own `GPUDevice` (see `gpuDevice.ts`), so the `gpu-*`
+ * messages are the only way main learns the preview's device died or
+ * misbehaved.
  */
 
 import type {
@@ -34,6 +39,7 @@ import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan } from '../utils/previewComposition';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
 import type { WebGpuProbeResult } from './webgpuProbe';
+import type { GpuErrorLogEntry } from './gpuDevice';
 import type { PreviewMediaSource } from '../utils/proxyMedia';
 
 /**
@@ -236,6 +242,27 @@ export type PreviewWorkerInbound =
 // --------------------------------------------------------------------------
 
 export type PreviewWorkerOutbound =
+  | {
+      /** An uncaptured error on the worker's device (validation / OOM / internal). */
+      type: 'gpu-error';
+      entry: GpuErrorLogEntry;
+    }
+  | {
+      /** The worker's device was lost; it is recreating one. */
+      type: 'gpu-lost';
+      message: string;
+      timestamp: number;
+    }
+  | {
+      /** The worker's compositor is running on a freshly recreated device. */
+      type: 'gpu-recovered';
+    }
+  | {
+      /** Recreating the worker's device failed — the preview cannot draw. */
+      type: 'gpu-recovery-failed';
+      message: string;
+      timestamp: number;
+    }
   | {
       /** GPU probe result — posted before any canvas is transferred. */
       type: 'ready';

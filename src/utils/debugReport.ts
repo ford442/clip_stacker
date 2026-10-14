@@ -285,7 +285,9 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   } else {
     lines.push('```');
     gpuErrors.forEach((e) => {
-      lines.push(`[${new Date(e.timestamp).toISOString()}] ${e.type}: ${e.message}`);
+      lines.push(
+        `[${new Date(e.timestamp).toISOString()}] (${e.realm ?? 'main'}) ${e.type}: ${e.message}`,
+      );
     });
     lines.push('```');
   }
