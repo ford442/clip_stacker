@@ -11,9 +11,13 @@ import {
   isAudioEncoderAvailable,
   MAX_OFFLINE_AUDIO_SECONDS,
   prepareStreamingAudioMix,
+  exportMasterLimiter,
   renderTimelineAudioMix,
   timelineHasAudioAutomation,
+  timelineNeedsAudioPremix,
 } from './webcodecs-audio';
+import { settingsStore } from '../store/settingsStore';
+import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import {
   __setMediaEngineKillSwitchForTests,
   _resetMediaEngineLoadStateForTests,
@@ -259,6 +263,53 @@ describe('webcodecs-audio', () => {
         const x = (sampleKeyframes(panAutomation, t, 0) + 1) / 2; // mono source → StereoPanner law
         expect(left[frame]).toBeCloseTo(0.5 * gain * Math.cos((x * Math.PI) / 2), 6);
         expect(right[frame]).toBeCloseTo(0.5 * gain * Math.sin((x * Math.PI) / 2), 6);
+      }
+    });
+
+    it('applies a clip insert chain and the bus limiter in the WASM premix', async () => {
+      await loadMediaEngineModule({ baseUrl: WASM_BASE });
+      stubOfflineAudioContext();
+      const source = new Float32Array(48_000);
+      for (let i = 0; i < source.length; i++) source[i] = 0.9 * Math.sin((2 * Math.PI * 1000 * i) / 48_000);
+      const cache = { get: async () => fakeAudioBuffer([source, source]), delete: () => {} };
+      const entry = scheduleEntry({
+        volume: 2,
+        audioEffects: { eq: [{ type: 'peaking', frequency: 1000, gainDb: 6, q: 1, enabled: true }] },
+      });
+      const limiter = { enabled: true, ceilingDb: -1, lookahead: 0.005, release: 0.1 };
+
+      const mixed = await renderTimelineAudioMix([entry], 1, cache as never, [entry], { limiter });
+
+      const ceiling = Math.fround(10 ** (-1 / 20));
+      let peak = 0;
+      for (const ch of [0, 1]) for (const v of mixed.getChannelData(ch)) peak = Math.max(peak, Math.abs(v));
+      expect(peak).toBeLessThanOrEqual(ceiling);
+      expect(peak).toBeGreaterThan(ceiling * 0.97);
+    });
+
+    it('routes FFmpeg exports through the premix for inserts and the limiter', () => {
+      const eq = { type: 'peaking' as const, frequency: 1000, gainDb: 6, q: 1, enabled: true };
+      expect(timelineNeedsAudioPremix([makeClip('a', 2)], null)).toBe(false);
+      expect(timelineNeedsAudioPremix([makeClip('a', 2, { audioEffects: { eq: [eq] } })], null)).toBe(true);
+      expect(
+        timelineNeedsAudioPremix([makeClip('a', 2, { audioEffects: { eq: [{ ...eq, enabled: false }] } })], null),
+      ).toBe(false);
+      const limiter = { enabled: true, ceilingDb: -1, lookahead: 0.005, release: 0.1 };
+      expect(timelineNeedsAudioPremix([makeClip('a', 2)], limiter)).toBe(true);
+    });
+
+    it('reads the master limiter from the export settings', () => {
+      const previous = settingsStore.getState().exportSettings;
+      try {
+        expect(exportMasterLimiter()).toBeNull();
+        settingsStore.getState().setExportSettings({
+          ...DEFAULT_EXPORT_SETTINGS,
+          masterLimiter: { enabled: true, ceilingDb: -2, lookahead: 0.004, release: 0.2 },
+        });
+        expect(exportMasterLimiter()).toEqual({ enabled: true, ceilingDb: -2, lookahead: 0.004, release: 0.2 });
+        expect(timelineNeedsAudioPremix([makeClip('a', 2)])).toBe(true);
+      } finally {
+        settingsStore.getState().setExportSettings(previous);
       }
     });
 

@@ -10,6 +10,7 @@ import { sanitizeClipAdjustments, getClipDuration, ContaboStorageManagerClient }
 import { clampClipVolume } from "../utils/audioVolume";
 import { clampClipLoopCount, clampClipPlaybackRate } from "../utils/playbackRate";
 import { normalizeClipAutomation } from "../utils/clipAutomation";
+import { normalizeClipAudioEffects, type ClipAudioEffects } from "../utils/audioEffects";
 import { clipDisplayPixelsToNormalized } from "../utils/overlayCoords";
 import { parseCanvasSize } from "../utils/pipPreset";
 import { createKenBurnsKeyframes } from "../utils/animatedLayout";
@@ -249,6 +250,24 @@ export function useInspectorActions({
     [selectedClipId, pushHistoryDebounced, setClips],
   );
 
+  const handleClipAudioEffectsChange = useCallback(
+    (clipId: string, effects: ClipAudioEffects | undefined) => {
+      pushHistoryDebounced(`audioEffects:${clipId}`);
+      const next = normalizeClipAudioEffects(effects);
+      setClips((prev) =>
+        prev.map((clip) => {
+          if (clip.id !== clipId) return clip;
+          if (!next) {
+            const { audioEffects: _removed, ...rest } = clip;
+            return rest;
+          }
+          return { ...clip, audioEffects: next };
+        }),
+      );
+    },
+    [pushHistoryDebounced, setClips],
+  );
+
   const handleApplyKenBurns = useCallback(() => {
     if (!selectedClipId) return;
     pushHistory();
@@ -381,6 +400,7 @@ export function useInspectorActions({
     handleInspectorChange,
     handleClipKeyframesChange,
     handleClipAutomationChange,
+    handleClipAudioEffectsChange,
     handleApplyKenBurns,
     handleRife,
     handleStabilizeChange,

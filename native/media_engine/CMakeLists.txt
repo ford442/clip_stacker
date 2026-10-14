@@ -1,5 +1,7 @@
 set(MEDIA_ENGINE_DSP_SOURCES
   src/resampler.cpp
+  src/eq.cpp
+  src/dynamics.cpp
   src/audio_mix.cpp
 )
 
@@ -26,4 +28,11 @@ clip_stacker_wasm_module(media_engine
   EXPORTED_FUNCTIONS
     _mix_timeline_audio
     _mix_timeline_audio_range
+    _mix_fx_session_create
+    _mix_fx_session_destroy
+    _mix_fx_session_latency
+    _mix_fx_session_range
+    _insert_chain_create
+    _insert_chain_process
+    _insert_chain_destroy
 )

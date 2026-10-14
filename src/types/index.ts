@@ -208,6 +208,11 @@ export interface Clip {
    * Audio fades and bed ducking still multiply on top of the sampled level.
    */
   automation?: ClipAutomation;
+  /**
+   * Insert effects (EQ bands → compressor), constant over the clip. Run in
+   * the media-engine C++ on both the export premix and the preview buffers.
+   */
+  audioEffects?: import('../utils/audioEffects').ClipAudioEffects;
   /** Optional per-property keyframe animation (local clip time in seconds). */
   keyframes?: ClipKeyframes;
   /** True when the source is a still image (Ken Burns / UV keyframes). */
@@ -301,6 +306,8 @@ export interface SerializedClip {
   /** Play the remapped trim window this many times. 1 = once. Omit in old projects. */
   loopCount?: number;
   automation?: ClipAutomation;
+  /** Insert effects; omitted when the clip has none (old projects load dry). */
+  audioEffects?: import('../utils/audioEffects').ClipAudioEffects;
   keyframes?: ClipKeyframes;
   stillImage?: boolean;
   /** Beat onset times in seconds (source media), from audio analysis. */
@@ -395,6 +402,11 @@ export interface ExportSettings {
    * unavailable. FFmpeg exports ignore this and always use libx264.
    */
   videoCodec?: 'h264' | 'hevc' | 'av1';
+  /**
+   * Look-ahead limiter on the export mix bus (media engine only). Omitted =
+   * off, so exports without it keep their exact samples.
+   */
+  masterLimiter?: import('../utils/audioEffects').MasterLimiterSettings;
 }
 
 export type ResolutionPreset = 'original' | '720p' | '1080p' | '1440p' | '4k' | 'custom';
