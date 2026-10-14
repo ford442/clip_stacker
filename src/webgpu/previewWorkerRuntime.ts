@@ -48,6 +48,7 @@ import {
 } from './previewWorkerProtocol';
 import { isPreviewDecoderEnabled } from './previewDecodeFlags';
 import { publishWebGpuProbe, type WebGpuProbeResult } from './webgpuProbe';
+import { captureStillFrame, captureVideoFrame } from './captureFrame';
 
 export type { FrameRequest, CapturedFrame, ScopeData, ScopeSettings };
 
@@ -488,34 +489,6 @@ export class PreviewWorkerRuntime {
 // all GPU work to the off-thread worker via PreviewWorkerRuntime.
 // ---------------------------------------------------------------------------
 
-async function captureVideoFrameFromElement(
-  video: HTMLVideoElement,
-): Promise<VideoFrame | null> {
-  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
-  try {
-    return new VideoFrame(video);
-  } catch {
-    return null;
-  }
-}
-
-async function captureStillVideoFrame(
-  img: HTMLImageElement,
-): Promise<VideoFrame | null> {
-  if (!img.complete || img.naturalWidth <= 0) return null;
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0);
-    return new VideoFrame(canvas, { timestamp: 0 });
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Implements the TimelineCompositor interface backed by the off-thread worker.
  * Frame capture (seek + VideoFrame) stays on the main thread; GPU compositing
@@ -600,7 +573,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         await seekVideoTo(video, req.sourceTime);
         previewMetrics.recordSeek(performance.now() - seekStart);
         if (options?.isCancelled?.()) return null;
-        const frame = await captureVideoFrameFromElement(video);
+        const frame = await captureVideoFrame(video);
         if (!frame) return null;
         return {
           clipId: req.clipId,
@@ -623,7 +596,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
           });
         }
         if (options?.isCancelled?.()) return null;
-        const frame = await captureStillVideoFrame(img);
+        const frame = await captureStillFrame(img);
         if (!frame) return null;
         return {
           clipId: req.clipId,
@@ -644,7 +617,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
       await seekVideoTo(video, req.sourceTime);
       previewMetrics.recordSeek(performance.now() - seekStart);
       if (options?.isCancelled?.()) return null;
-      const frame = await captureVideoFrameFromElement(video);
+      const frame = await captureVideoFrame(video);
       if (!frame) return null;
       return {
         clipId: req.clipId,

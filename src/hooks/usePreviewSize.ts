@@ -27,12 +27,6 @@ export const DEFAULT_PREVIEW_CONSTRAINTS: PreviewSizeConstraints = {
   maxHeightPct: 0.75,
 };
 
-/** Single-clip preview: size from viewport, not the panel column. */
-export const VIEWPORT_PREVIEW_CONSTRAINTS: PreviewSizeConstraints = {
-  ...DEFAULT_PREVIEW_CONSTRAINTS,
-  preferViewport: true,
-};
-
 const DEFAULT_MAX_WIDTH_PCT = 0.9;
 const DEFAULT_MAX_HEIGHT_PCT = 0.75;
 const DEFAULT_MAX_PIXEL_AREA = 1920 * 1080;

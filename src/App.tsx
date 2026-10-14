@@ -9,7 +9,8 @@ import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
 import { getEffectiveTimelineClips } from "./utils/timelineClips";
 import { visibleTextOverlays } from "./utils/trackModel";
-import { setPlayheadTime, settingsActions, uiActions } from "./store";
+import { editorStore, playbackStore, setPlayheadTime, settingsActions, uiActions } from "./store";
+import { playheadForSelectedClip, resolveClipOutputWindow } from "./utils/previewComposition";
 import { useClipActions } from "./hooks/useClipActions";
 import { useIntercutActions } from "./hooks/useIntercutActions";
 import { useRenderActions } from "./hooks/useRenderActions";
@@ -103,15 +104,25 @@ export function App() {
 
   const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null!);
 
+  // Selecting a clip parks the (output-time) playhead on it, unless the
+  // playhead is already inside the clip — then it stays put.
   useEffect(() => {
     if (!selectedClipId) {
       setPlayheadTime(null);
       return;
     }
-    const clip = clips.find((c) => c.id === selectedClipId);
-    if (!clip) return;
-    setPlayheadTime(clip.trimStart);
-  }, [selectedClipId, clips]);
+    const state = editorStore.getState();
+    const placed = resolveClipOutputWindow(
+      getEffectiveTimelineClips(state.tracks, state.clips, state.clipGroups),
+      state.clipGroups,
+      state.transitions,
+      selectedClipId,
+    );
+    if (!placed) return;
+    setPlayheadTime(
+      playheadForSelectedClip(playbackStore.getState().playheadTime, placed),
+    );
+  }, [selectedClipId]);
 
   const clipActions = useClipActions({
     clips,

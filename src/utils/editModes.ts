@@ -140,7 +140,8 @@ function transitionAt(transitions: ClipTransition[], index: number): number {
   return isActiveTransition(t) ? t.duration : 0;
 }
 
-function baseOrder(tracks: Track[]): string[] {
+/** Clip ids on the base lane, in play order. */
+export function baseLaneOrder(tracks: Track[]): string[] {
   const base = videoTracks(tracks)[0];
   return base ? sortedItems(base).map((i) => i.clipId) : [];
 }
@@ -212,8 +213,8 @@ function baseDurationsValid(
 ): boolean {
   const byId = clipMap(clips);
   const prevById = clipMap(prev.clips);
-  const prevOrder = baseOrder(prev.tracks);
-  return baseOrder(tracks).every((id, index) => {
+  const prevOrder = baseLaneOrder(prev.tracks);
+  return baseLaneOrder(tracks).every((id, index) => {
     const clip = byId.get(id);
     if (!clip) return true;
     if (prevById.get(id) === clip && prevOrder[index] === id) return true;
@@ -232,8 +233,8 @@ function finalize(
   clips: Clip[],
   alias?: Map<string, string>,
 ): EditResult {
-  const prevOrder = baseOrder(prev.tracks);
-  const nextOrder = baseOrder(tracks);
+  const prevOrder = baseLaneOrder(prev.tracks);
+  const nextOrder = baseLaneOrder(tracks);
   const orderChanged =
     prevOrder.length !== nextOrder.length || prevOrder.some((id, i) => id !== nextOrder[i]);
   const transitions = orderChanged
@@ -544,8 +545,8 @@ function prepareDrop(
   // Lifting a clip out of the gapless base lane closes its slot first, so the
   // drop position is measured against where the base clips will actually play.
   if (source && isBaseLane(state.tracks, source.track.id)) {
-    const prevOrder = baseOrder(state.tracks);
-    const transitions = remapBaseTransitions(prevOrder, baseOrder(tracks), state.transitions);
+    const prevOrder = baseLaneOrder(state.tracks);
+    const transitions = remapBaseTransitions(prevOrder, baseLaneOrder(tracks), state.transitions);
     tracks = normalizeBaseLane(tracks, state.clips, transitions);
   }
   return {

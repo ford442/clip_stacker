@@ -21,6 +21,7 @@ import {
 import { duplicateClip } from '../utils/clipOperations';
 import { uiStore } from './uiStore';
 import { settingsStore } from './settingsStore';
+import { setPlayheadTime } from './playbackStore';
 import { useClipActions } from '../hooks/useClipActions';
 
 function trimmed(id: string, trimStart: number, len: number): Clip {
@@ -267,6 +268,27 @@ describe('duplicateItem', () => {
       expect(copyId).not.toBe('b');
       expect(lane(MAIN_VIDEO_TRACK_ID).map((i) => i.clipId)).toEqual(['a', 'b', copyId, 'c']);
       expect(state.undoDepth).toBe(1);
+    });
+
+    it('splits at the source time under the output playhead', () => {
+      seedBase();
+      editorStore.setState({ selectedClipId: 'b' });
+      // b plays output 3–5s from source 2–4s; output 3.5s is source 2.5s.
+      setPlayheadTime(3.5);
+      mountActions().handleSplitClip();
+      const state = editorStore.getState();
+      const left = state.clips.find((c) => c.id === 'b')!;
+      const right = state.clips.find((c) => c.id === state.selectedClipId)!;
+      expect(left.trimEnd).toBeCloseTo(2.5);
+      expect(right.trimStart).toBeCloseTo(2.5);
+      expect(lane(MAIN_VIDEO_TRACK_ID).map((i) => [i.clipId, i.startTime])).toEqual([
+        ['a', 0],
+        ['b', 3],
+        [right.id, 3.5],
+        ['c', 4],
+      ]);
+      // The b→c crossfade now leaves the right half.
+      expect(state.transitions).toEqual([{ afterClipIndex: 3, type: 'fade', duration: 1 }]);
     });
 
     it('reports a locked lane and changes nothing', () => {

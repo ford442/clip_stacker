@@ -11,10 +11,16 @@ import {
   isClipLocked,
   replaceClipOnTrackAfterSplit,
 } from "../utils/trackModel";
-import { shiftTransitionsForInsert } from "../utils/transitions";
 import { downloadRemoteMedia, type MediaLibraryItem } from "../utils/project";
 import { editorStore, playbackStore, setPlayheadTime } from "../store";
-import { duplicateItem } from "../utils/editModes";
+import { baseLaneOrder, duplicateItem, remapBaseTransitions } from "../utils/editModes";
+import { getEffectiveTimelineClips } from "../utils/timelineClips";
+import { resolveClipOutputWindow } from "../utils/previewComposition";
+import {
+  outputLocalAtSourceOffset,
+  sourceTimeAtOutputLocal,
+  wrapOutputLocalToCycle,
+} from "../utils/timeRemap";
 import { uiStore } from "../store/uiStore";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
@@ -93,13 +99,29 @@ export function useClipActions({
     if (index < 0) return;
 
     // A split retimes the lane's items, so a locked lane refuses it (#168 Phase A).
-    if (isClipLocked(editorStore.getState().tracks, selectedClipId)) {
+    const state = editorStore.getState();
+    if (isClipLocked(state.tracks, selectedClipId)) {
       setStatus("Track is locked — unlock the lane to split this clip.");
       return;
     }
 
+    // The playhead is output (timeline) time; the cut is made in source time.
+    const placed = resolveClipOutputWindow(
+      getEffectiveTimelineClips(state.tracks, state.clips, state.clipGroups),
+      state.clipGroups,
+      state.transitions,
+      selectedClipId,
+    );
+    if (!placed || currentPlayheadTime < placed.start || currentPlayheadTime >= placed.end) {
+      setStatus("Move the playhead over the selected clip to split it.");
+      return;
+    }
     const source = clips[index];
-    const snappedTime = snapSplitTimeToBeat(source, currentPlayheadTime);
+    const sourcePlayhead = sourceTimeAtOutputLocal(
+      source,
+      wrapOutputLocalToCycle(source, currentPlayheadTime - placed.start).cycleLocalT,
+    );
+    const snappedTime = snapSplitTimeToBeat(source, sourcePlayhead);
     const split = splitClipAt(source, snappedTime);
     if (!split) {
       setStatus(
@@ -110,24 +132,41 @@ export function useClipActions({
 
     pushHistory();
     const [left, right] = split;
+    const rightOutputStart =
+      placed.start + outputLocalAtSourceOffset(source, snappedTime - source.trimStart);
+    const prevBaseOrder = baseLaneOrder(state.tracks);
+    const nextTracks = replaceClipOnTrackAfterSplit(
+      state.tracks,
+      source.id,
+      left.id,
+      right.id,
+      rightOutputStart,
+    );
     setClips((prev) => {
       const next = [...prev];
       next.splice(index, 1, left, right);
       return next;
     });
-    setTracks((prev) =>
-      replaceClipOnTrackAfterSplit(prev, source.id, left.id, right.id, snappedTime),
+    setTracks(nextTracks);
+    // Base xfades are keyed by lane slot: the one out of the source now
+    // leaves the right half (aliased to the source, like an overwrite tail).
+    setTransitions((prev) =>
+      remapBaseTransitions(
+        prevBaseOrder,
+        baseLaneOrder(nextTracks),
+        prev,
+        new Map([[right.id, source.id]]),
+      ),
     );
-    setTransitions((prev) => shiftTransitionsForInsert(prev, index + 1));
     if (source.groupId) {
       setClipGroups((prev) => removeClipFromGroups(prev, source));
     }
     setSelectedClipId(right.id);
-    setPlayheadTime(right.trimStart);
+    setPlayheadTime(rightOutputStart);
     setOutputUrl(null);
     setStatus(
       `Split "${source.title}" at ${snappedTime.toFixed(2)}s${
-        snappedTime !== currentPlayheadTime ? " (snapped to beat)" : ""
+        snappedTime !== sourcePlayhead ? " (snapped to beat)" : ""
       }.`,
     );
   }, [

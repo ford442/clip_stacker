@@ -2,7 +2,7 @@
  * WebGPU timeline preview — renders transition pairs via the shared WGSL registry.
  */
 
-import type { Clip, ClipTransition, TextOverlay } from '../types';
+import type { Clip } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import { resolveTimelineFinishing } from '../utils/finishing';
 import {
@@ -10,7 +10,6 @@ import {
   type ColorManagementSettings,
 } from '../utils/colorManagement';
 import { grainFrameSeedFromTime } from '../utils/grain';
-import { projectHasKeyframeAnimation } from '../utils/animatedLayout';
 import { layerWarpDrawParams, transitionWarpParams } from '../utils/clipTransform';
 import {
   buildPreviewCompositionPlan,
@@ -28,6 +27,7 @@ import {
 } from './exportCompositor';
 import { PreviewEngine, type LayerDraw, type NormalizedDestRect } from './previewEngine';
 import { isRegisteredTransitionType } from './transitions/registry';
+import { captureStillFrame, captureVideoFrame } from './captureFrame';
 import type { TransitionRenderParams } from './transitions/types';
 
 // Re-exported for backwards compatibility — the pool now lives in utils so the
@@ -45,34 +45,6 @@ export function toNormalizedDestRect(
     w: rect.width / canvasWidth,
     h: rect.height / canvasHeight,
   };
-}
-
-async function captureVideoFrame(
-  video: HTMLVideoElement,
-): Promise<VideoFrame | null> {
-  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
-  try {
-    return new VideoFrame(video);
-  } catch {
-    return null;
-  }
-}
-
-async function captureStillFrame(
-  img: HTMLImageElement,
-): Promise<VideoFrame | null> {
-  if (!img.complete || img.naturalWidth <= 0) return null;
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0);
-    return new VideoFrame(canvas, { timestamp: 0 });
-  } catch {
-    return null;
-  }
 }
 
 function isGpuTransitionPair(
@@ -569,21 +541,6 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     this.mediaPool.destroy();
     this.engine.destroy();
   }
-}
-
-export function shouldUseTimelinePreview(
-  clips: Clip[],
-  transitions: ClipTransition[] = [],
-  textOverlays: TextOverlay[] = [],
-): boolean {
-  if (clips.length === 0) return false;
-  if (projectHasKeyframeAnimation(clips, textOverlays)) return true;
-  if (clips.some((clip) => clip.stillImage)) return true;
-  const hasVideo = clips.some((clip) => clip.kind === 'video');
-  if (!hasVideo) return false;
-  return (
-    clips.length >= 2 || clips.some((clip) => (clip.layerIndex ?? 0) > 0)
-  );
 }
 
 export async function renderTimelinePreviewFrame(
