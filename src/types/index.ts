@@ -211,6 +211,8 @@ export interface Clip {
    * Omitted in older projects (treated as 1).
    */
   loopCount?: number;
+  /** Play the trim window backwards. Persisted by `serializeProject`; omitted = forwards. */
+  reversed?: boolean;
   /**
    * Parameter automation lanes (volume / pan / playbackRate).
    * Volume keyframes are absolute linear gain (0–2); empty lane uses `volume`.
