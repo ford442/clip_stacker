@@ -71,7 +71,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # media_engine resampler / mix built with the host compiler (no Emscripten),
-      # ASan + UBSan, run through ctest. Includes the THD+N goldens.
+      # Every shipped DSP module (audio_analysis, time_stretch, video_stabilize,
+      # media_engine) built with the host compiler (no Emscripten), ASan + UBSan,
+      # run through ctest. Includes the THD+N goldens.
       - name: Build and run ctest
         run: bash scripts/test-native.sh

@@ -16,7 +16,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
 - `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, time-stretch, video stabilize, media-engine) via the shared CMake toolchain. Requires Emscripten (`emcmake` / `emcc`).
 - `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF).
-- `npm run test:native`: build the native DSP (media engine) with the host compiler and run ctest (ASan + UBSan). No Emscripten needed.
+- `npm run test:native`: build every native DSP module (audio analysis, time-stretch, video stabilize, media engine) with the host compiler and run ctest (ASan + UBSan). No Emscripten needed.
 - `npm run build:audio-analysis` / `build:time-stretch` / `build:video-stabilize` / `build:media-engine`: rebuild one module.
 
 ## Coding Style & Naming Conventions
@@ -301,7 +301,7 @@ Four Emscripten modules share one flag file. Do not copy-paste `emcc` invocation
 - `scripts/wasm-size-check.sh` — **fails** if gzip(`.wasm`) exceeds 200 KB
 - `native/host.cmake` + `-DCLIP_STACKER_HOST_TESTS=ON` — host (non-Emscripten) test build; `scripts/test-native.sh` drives it
 - Configure exports `compile_commands.json` (linked to `native/compile_commands.json`, gitignored); `native/.clangd` points clangd at it — run clangd with `--query-driver=**/em++`
-- CI `wasm` job runs `npm run build:wasm` and `git diff --exit-code -- public/wasm` (including `video_stabilize` and `media_engine`); the `native-host` job runs `scripts/test-native.sh`
+- CI `wasm` job runs `npm run build:wasm` and `git diff --exit-code -- public/wasm` (including `video_stabilize` and `media_engine`); the `native-host` job runs `scripts/test-native.sh`, which ctests all four modules (`video_stabilize`'s pure matrix / smoothing helpers live in `stab_math.h`)
 
 Keep WebGPU as the pixel owner. Do not fold video frames into this engine.
 
