@@ -6,8 +6,10 @@ import {
   clipNeedsEffects,
   needsMultiLayerComposition,
   needsOverlayPass,
+  remoteConcatDroppedFeatures,
   shouldUseTimelineGpuExport,
 } from './renderEligibility';
+import { DEFAULT_FINISHING } from './finishing';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
@@ -259,5 +261,30 @@ describe('renderEligibility', () => {
     expect(
       canUseGpuVideoEncoder([makeClip()], [], [shaderOverlay], { webGpuAvailable: true }),
     ).toBe(true);
+  });
+});
+
+describe('remoteConcatDroppedFeatures', () => {
+  it('allows a plain base-lane concat', () => {
+    expect(remoteConcatDroppedFeatures([makeClip()], [], [], DEFAULT_FINISHING, 0)).toEqual([]);
+  });
+
+  it('refuses when a base clip sits on a muted lane', () => {
+    const muted = makeClip({ id: 'm', trackMuted: true });
+    expect(
+      remoteConcatDroppedFeatures([makeClip(), muted], [], [], DEFAULT_FINISHING, 0),
+    ).toEqual(['lane mute']);
+  });
+
+  it('lists overlays, transitions and captions', () => {
+    expect(
+      remoteConcatDroppedFeatures(
+        [makeClip({ layerIndex: 1 })],
+        [{ afterClipIndex: 1, type: 'fade', duration: 1 }],
+        [],
+        DEFAULT_FINISHING,
+        2,
+      ),
+    ).toEqual(['PiP/overlay lanes', 'transitions', 'captions']);
   });
 });
