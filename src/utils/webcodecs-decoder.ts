@@ -333,7 +333,13 @@ export class ClipFrameDecoder {
       }
 
       // Rejects if the decoder errors (it closes) or stalls, rather than hanging.
-      await waitForQueueBelow(this.decoder, MAX_DECODE_QUEUE_DEPTH + 1);
+      // A close() of our own mid-iteration just ends the stream.
+      try {
+        await waitForQueueBelow(this.decoder, MAX_DECODE_QUEUE_DEPTH + 1);
+      } catch (err) {
+        if (this.disposed) return;
+        throw err;
+      }
     }
 
     if (this.disposed) return;
