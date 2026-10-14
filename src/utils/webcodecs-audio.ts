@@ -11,6 +11,7 @@
  * the OfflineAudioContext fallback mixes dry rather than inventing its own EQ.
  */
 
+import { waitForQueueBelow } from './codecQueue';
 import type { Clip, ClipGroup, ClipTransition } from '../types';
 import { ClipAudioCache } from '../audio/clipAudioCache';
 import {
@@ -409,19 +410,6 @@ function frameTimestampUs(frame: number, sampleRate: number): number {
   return Math.round((frame * 1_000_000) / sampleRate);
 }
 
-/** Resolve after the encoder drains an item (or 20 ms, if `dequeue` is unsupported). */
-function waitForEncoderDequeue(encoder: AudioEncoder): Promise<void> {
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      encoder.removeEventListener?.('dequeue', done);
-      resolve();
-    };
-    const timer = setTimeout(done, 20);
-    encoder.addEventListener?.('dequeue', done);
-  });
-}
-
 /** `AudioEncoder` configured for AAC-LC, fed planar frames at absolute positions. */
 function openAacEncoder(sampleRate: number, channels: number) {
   if (typeof AudioEncoder === 'undefined' || typeof AudioData === 'undefined') {
@@ -456,16 +444,22 @@ function openAacEncoder(sampleRate: number, channels: number) {
         timestamp: frameTimestampUs(startFrame, sampleRate),
         data: data as BufferSource,
       });
-      encoder.encode(audioData);
-      audioData.close();
+      try {
+        encoder.encode(audioData);
+      } finally {
+        audioData.close();
+      }
       check();
     },
     /** Wait while the codec is behind, so streamed PCM does not pile up in its queue. */
     async drain(): Promise<void> {
-      while ((encoder.encodeQueueSize ?? 0) > MAX_ENCODE_QUEUE && !encodeError) {
-        await waitForEncoderDequeue(encoder);
-      }
       check();
+      try {
+        await waitForQueueBelow(encoder, MAX_ENCODE_QUEUE + 1);
+      } catch (err) {
+        check(); // prefer the codec's own error over "closed while waiting"
+        throw err;
+      }
     },
     async finish(): Promise<EncodedAacResult> {
       await encoder.flush();

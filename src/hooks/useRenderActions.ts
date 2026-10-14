@@ -26,10 +26,8 @@ import {
   getMemoryStatus,
 } from "../utils/memory";
 import { generateDebugReport } from "../utils/debugReport";
-import { isFinishingActive } from "../utils/finishing";
 import type { FinishingSettings } from "../utils/finishing";
-import { hasActiveTransitions } from "../utils/renderEligibility";
-import { resolveLayerKey } from "../utils/overlayKey";
+import { remoteConcatDroppedFeatures } from "../utils/renderEligibility";
 import { isWebGpuExportAvailable } from "../webgpu/exportCompositor";
 
 import { settingsStore } from "../store/settingsStore";
@@ -282,7 +280,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
   // resolution on native FFmpeg. There is no compositor on the other end —
   // it only sequences base-lane clips — so it refuses to run whenever the
   // timeline needs one: transitions, PiP/overlay lanes, finishing, chroma/
-  // luma keys, captions, and text overlays would all be silently dropped.
+  // luma keys, captions, text overlays and lane mute would all be silently
+  // dropped (see `remoteConcatDroppedFeatures`).
   // Use the normal Render for those; this path is for a plain concat only.
   const handleGpuStitch = useCallback(async () => {
     const timelineClips = effectiveClips.filter((clip) => clip.kind === "video");
@@ -293,15 +292,13 @@ export function useRenderActions(deps: RenderActionsDeps) {
 
     const { finishing } = settingsStore.getState();
     const { captions } = editorStore.getState();
-    const hasNonBaseLane = effectiveClips.some((clip) => (clip.layerIndex ?? 0) > 0);
-    const hasKeyedClip = effectiveClips.some((clip) => resolveLayerKey(clip) !== null);
-    const skippedFeatures: string[] = [];
-    if (hasNonBaseLane) skippedFeatures.push("PiP/overlay lanes");
-    if (hasActiveTransitions(transitions)) skippedFeatures.push("transitions");
-    if (textOverlays.length > 0) skippedFeatures.push("text overlays");
-    if (isFinishingActive(finishing)) skippedFeatures.push("finishing");
-    if (hasKeyedClip) skippedFeatures.push("chroma/luma keys");
-    if (captions.length > 0) skippedFeatures.push("captions");
+    const skippedFeatures = remoteConcatDroppedFeatures(
+      effectiveClips,
+      transitions,
+      textOverlays,
+      finishing,
+      captions.length,
+    );
     if (skippedFeatures.length > 0) {
       settingsStore.getState().setStatus(
         `Remote concat ignores the timeline compositor and would drop ${skippedFeatures.join(", ")} — use Render instead.`,

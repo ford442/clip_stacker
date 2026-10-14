@@ -1,8 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   AsyncFrameQueue,
   computeBaseCts,
   isFrameInTrimWindow,
+  resolveDecoderConfig,
   selectDecodeWindow,
   type SampleTiming,
 } from './webcodecs-decoder';
@@ -111,5 +112,41 @@ describe('AsyncFrameQueue', () => {
     const pending = queue.pull();
     queue.close();
     expect(await pending).toBeNull();
+  });
+});
+
+describe('resolveDecoderConfig', () => {
+  const base: VideoDecoderConfig = { codec: 'avc1.640028', codedWidth: 1920, codedHeight: 1080 };
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('keeps hardware decode when the machine has it', async () => {
+    vi.stubGlobal('VideoDecoder', { isConfigSupported: vi.fn(async () => ({ supported: true })) });
+    expect((await resolveDecoderConfig(base))?.hardwareAcceleration).toBe('prefer-hardware');
+  });
+
+  it('falls back to no-preference, then prefer-software', async () => {
+    const isConfigSupported = vi.fn(async (config: VideoDecoderConfig) => ({
+      supported: config.hardwareAcceleration === 'prefer-software',
+    }));
+    vi.stubGlobal('VideoDecoder', { isConfigSupported });
+    const resolved = await resolveDecoderConfig(base);
+    expect(resolved).toEqual({ ...base, hardwareAcceleration: 'prefer-software' });
+    expect(isConfigSupported.mock.calls.map(([c]) => c.hardwareAcceleration)).toEqual([
+      'prefer-hardware',
+      'no-preference',
+      'prefer-software',
+    ]);
+  });
+
+  it('returns null when no rung is supported', async () => {
+    vi.stubGlobal('VideoDecoder', {
+      isConfigSupported: vi.fn(async () => {
+        throw new TypeError('unknown codec');
+      }),
+    });
+    expect(await resolveDecoderConfig(base)).toBeNull();
   });
 });

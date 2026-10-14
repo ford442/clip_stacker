@@ -21,7 +21,12 @@ import type { ColorManagementSettings } from '../utils/colorManagement';
 import { publishColorDebugSnapshot } from '../utils/colorManagement';
 import { resolveTimelineFinishing } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
-import type { PreviewCompositionPlan, TimelineCompositor, TimelineRenderOptions } from '../utils/previewComposition';
+import type {
+  PreviewCompositionPlan,
+  PreviewDeviceState,
+  TimelineCompositor,
+  TimelineRenderOptions,
+} from '../utils/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
 import { previewMetrics } from '../utils/previewMetrics';
 import { resolvePreviewMedia, type PreviewMediaSource } from '../utils/proxyMedia';
@@ -48,6 +53,8 @@ import {
 } from './previewWorkerProtocol';
 import { isPreviewDecoderEnabled } from './previewDecodeFlags';
 import { publishWebGpuProbe, type WebGpuProbeResult } from './webgpuProbe';
+import { captureStillFrame, captureVideoFrame } from './captureFrame';
+import { recordRemoteGpuError } from './gpuDevice';
 
 export type { FrameRequest, CapturedFrame, ScopeData, ScopeSettings };
 
@@ -150,6 +157,9 @@ export class PreviewWorkerRuntime {
   private choresRunner: PreviewWorkerChoresRunner | null = null;
   private scopesListener: ((scopes: ScopeData) => void) | null = null;
   private lastFrameSources: FrameSourceStats = { decoder: 0, element: 0 };
+  private readonly deviceListeners = new Set<
+    (state: PreviewDeviceState, message?: string) => void
+  >();
 
   private constructor(worker: Worker) {
     this.worker = worker;
@@ -325,6 +335,40 @@ export class PreviewWorkerRuntime {
         break;
       }
 
+      // The worker's device is not main's: record its health for Copy Debug
+      // and tell the preview, which must not watch main's registry for it.
+      case 'gpu-error': {
+        recordRemoteGpuError({ ...msg.entry, realm: 'preview-worker' });
+        break;
+      }
+
+      case 'gpu-lost': {
+        recordRemoteGpuError({
+          type: 'lost',
+          message: msg.message,
+          timestamp: msg.timestamp,
+          realm: 'preview-worker',
+        });
+        this.emitDeviceState('lost', msg.message);
+        break;
+      }
+
+      case 'gpu-recovered': {
+        this.emitDeviceState('recovered');
+        break;
+      }
+
+      case 'gpu-recovery-failed': {
+        recordRemoteGpuError({
+          type: 'lost',
+          message: `Device recreate failed: ${msg.message}`,
+          timestamp: msg.timestamp,
+          realm: 'preview-worker',
+        });
+        this.emitDeviceState('failed', msg.message);
+        break;
+      }
+
       case 'render-cancelled': {
         const pending = this.pendingRenders.get(msg.renderId);
         this.pendingRenders.delete(msg.renderId);
@@ -351,6 +395,16 @@ export class PreviewWorkerRuntime {
         break;
       }
     }
+  }
+
+  private emitDeviceState(state: PreviewDeviceState, message?: string): void {
+    for (const listener of this.deviceListeners) listener(state, message);
+  }
+
+  /** Follow the worker device's loss / recovery. Returns unsubscribe. */
+  onDeviceState(listener: (state: PreviewDeviceState, message?: string) => void): () => void {
+    this.deviceListeners.add(listener);
+    return () => this.deviceListeners.delete(listener);
   }
 
   /**
@@ -488,34 +542,6 @@ export class PreviewWorkerRuntime {
 // all GPU work to the off-thread worker via PreviewWorkerRuntime.
 // ---------------------------------------------------------------------------
 
-async function captureVideoFrameFromElement(
-  video: HTMLVideoElement,
-): Promise<VideoFrame | null> {
-  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
-  try {
-    return new VideoFrame(video);
-  } catch {
-    return null;
-  }
-}
-
-async function captureStillVideoFrame(
-  img: HTMLImageElement,
-): Promise<VideoFrame | null> {
-  if (!img.complete || img.naturalWidth <= 0) return null;
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0);
-    return new VideoFrame(canvas, { timestamp: 0 });
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Implements the TimelineCompositor interface backed by the off-thread worker.
  * Frame capture (seek + VideoFrame) stays on the main thread; GPU compositing
@@ -562,6 +588,10 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
     return this.runtime.frameSources;
   }
 
+  onDeviceState(listener: (state: PreviewDeviceState, message?: string) => void): () => void {
+    return this.runtime.onDeviceState(listener);
+  }
+
   /**
    * Transfer the preview blob — the ready proxy, else the source `File` — for
    * every decodable clip whose blob the worker does not already hold. Blobs
@@ -600,7 +630,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         await seekVideoTo(video, req.sourceTime);
         previewMetrics.recordSeek(performance.now() - seekStart);
         if (options?.isCancelled?.()) return null;
-        const frame = await captureVideoFrameFromElement(video);
+        const frame = await captureVideoFrame(video);
         if (!frame) return null;
         return {
           clipId: req.clipId,
@@ -623,7 +653,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
           });
         }
         if (options?.isCancelled?.()) return null;
-        const frame = await captureStillVideoFrame(img);
+        const frame = await captureStillFrame(img);
         if (!frame) return null;
         return {
           clipId: req.clipId,
@@ -644,7 +674,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
       await seekVideoTo(video, req.sourceTime);
       previewMetrics.recordSeek(performance.now() - seekStart);
       if (options?.isCancelled?.()) return null;
-      const frame = await captureVideoFrameFromElement(video);
+      const frame = await captureVideoFrame(video);
       if (!frame) return null;
       return {
         clipId: req.clipId,

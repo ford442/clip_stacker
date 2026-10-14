@@ -1,7 +1,6 @@
 import { useCallback } from 'react';
 import type { Clip } from '../types';
 import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from '../utils/media';
-import { planAddClip } from '../utils/planAddClip';
 import { editorStore } from '../store';
 import { settingsStore } from '../store/settingsStore';
 import type { UseEditHistoryResult } from './useEditHistory';
@@ -115,13 +114,7 @@ export function useIntercutActions({
         };
 
         pushHistory();
-        const { clips, tracks, clipGroups } = editorStore.getState();
-        const plan = planAddClip(clips, tracks, clipGroups, newClip);
-        editorStore.setState({
-          clips: plan.clips,
-          ...(plan.tracks ? { tracks: plan.tracks } : {}),
-          ...(plan.clipGroups ? { clipGroups: plan.clipGroups } : {}),
-        });
+        editorStore.getState().addClip(newClip);
         setSelectedClipId(newClip.id);
         setOutputUrl(null);
 

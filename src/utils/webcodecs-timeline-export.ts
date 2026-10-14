@@ -28,17 +28,17 @@ import {
   flushCaptureThenScheduleNext,
   globalTimeForTimelineFrame,
   shouldEmitTimelineStatusUpdate,
-  shouldWaitForEncoderBackpressure,
+  MAX_ENCODE_QUEUE_DEPTH,
   timelineFrameTimestampUs,
   timelineStatusThrottleFrames,
   TIMELINE_EXPORT_FPS,
 } from './webcodecs-timeline';
+import { encodeAndClose, waitForQueueBelow } from './codecQueue';
 import {
   buildVideoEncoderConfig,
   mapWebCodecsProgress,
   resolveEncoderBitrate,
   resolveEncoderCodec,
-  waitForEncoderDequeue,
   WEBCODECS_PROGRESS_STAGES,
 } from './webcodecs-codec';
 import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecs-mux';
@@ -214,8 +214,7 @@ export async function encodeTimelineComposite(
               duration: frameDurationUs,
             });
           }
-          videoEncoder.encode(frame, { keyFrame: frameIndex % 60 === 0 });
-          frame.close();
+          encodeAndClose(videoEncoder, frame, { keyFrame: frameIndex % 60 === 0 });
         },
         frameIndex + 1 < totalFrames
           ? () => {
@@ -224,10 +223,10 @@ export async function encodeTimelineComposite(
           : null,
       );
 
-      if (shouldWaitForEncoderBackpressure(videoEncoder.encodeQueueSize)) {
-        await waitForEncoderDequeue(videoEncoder);
-      }
       if (videoError) throw videoError;
+      await waitForQueueBelow(videoEncoder, MAX_ENCODE_QUEUE_DEPTH + 1).catch((err: unknown) => {
+        throw videoError ?? err;
+      });
     }
 
     onStatus('Flushing GPU encoder...');

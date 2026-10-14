@@ -59,14 +59,6 @@ export function shouldEmitTimelineStatusUpdate(
   return frameIndex - lastEmittedFrameIndex >= throttleFrames;
 }
 
-/** True when the encoder queue is deeper than the configured backpressure limit. */
-export function shouldWaitForEncoderBackpressure(
-  encodeQueueSize: number,
-  maxDepth: number = MAX_ENCODE_QUEUE_DEPTH,
-): boolean {
-  return encodeQueueSize > maxDepth;
-}
-
 /**
  * Flush and capture GPU frame N, then schedule GPU work for N+1.
  *

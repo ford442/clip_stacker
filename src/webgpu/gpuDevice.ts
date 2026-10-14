@@ -1,11 +1,18 @@
 /**
- * Shared WebGPU device registry.
+ * Shared WebGPU device registry — one per JS realm.
  *
  * Every subsystem that needs a `GPUDevice` (live preview, GPU export, text
  * fill, LUT) previously called `navigator.gpu.requestAdapter()` /
  * `requestDevice()` independently, creating one physical GPU device per
  * subsystem. This module is the single place that owns adapter/device
- * acquisition so the whole app shares one device under typical use:
+ * acquisition, so every subsystem *in one realm* shares one device:
+ *
+ * - **main** — GPU export, text fill, the main-thread preview fallback, and
+ *   the startup probe.
+ * - **preview worker** — its own module instance, so its own device. Its
+ *   losses and errors never reach main's listeners; the worker forwards them
+ *   (`gpu-lost` / `gpu-error` messages) and main records them with
+ *   {@link recordRemoteGpuError} so Copy Debug shows both realms.
  *
  *   const ctx = await acquireGpuContext();
  *   const pipeline = ctx.device.createRenderPipeline(...);
@@ -24,10 +31,15 @@
 
 export type GpuErrorType = 'validation' | 'out-of-memory' | 'internal' | 'lost';
 
+/** Which JS realm's device an error came from. */
+export type GpuRealm = 'main' | 'preview-worker';
+
 export interface GpuErrorLogEntry {
   type: GpuErrorType;
   message: string;
   timestamp: number;
+  /** Omitted for this realm's own entries (read as `main` on the main thread). */
+  realm?: GpuRealm;
 }
 
 export interface GpuContext {
@@ -99,12 +111,34 @@ function resolveOptionalFeatures(adapter: GPUAdapter): GPUFeatureName[] {
 const MAX_ERROR_LOG = 20;
 const errorLog: GpuErrorLogEntry[] = [];
 
-function recordGpuError(entry: GpuErrorLogEntry): void {
+type GpuErrorListener = (entry: GpuErrorLogEntry) => void;
+const errorListeners = new Set<GpuErrorListener>();
+
+function pushErrorLog(entry: GpuErrorLogEntry): void {
   errorLog.push(entry);
   if (errorLog.length > MAX_ERROR_LOG) errorLog.shift();
 }
 
-/** Recent GPU errors (uncaptured device errors + lost events), newest last. */
+function recordGpuError(entry: GpuErrorLogEntry): void {
+  pushErrorLog(entry);
+  for (const listener of errorListeners) listener(entry);
+}
+
+/**
+ * Log an error another realm's device reported (the preview worker forwards
+ * its own). Listeners are not notified — they observe this realm's device.
+ */
+export function recordRemoteGpuError(entry: GpuErrorLogEntry & { realm: GpuRealm }): void {
+  pushErrorLog(entry);
+}
+
+/** Notified for every error this realm's device records, device loss included. */
+export function onGpuError(listener: GpuErrorListener): () => void {
+  errorListeners.add(listener);
+  return () => errorListeners.delete(listener);
+}
+
+/** Recent GPU errors (uncaptured device errors + lost events, every realm), newest last. */
 export function getGpuErrorLog(): GpuErrorLogEntry[] {
   return [...errorLog];
 }
@@ -115,9 +149,11 @@ export function clearGpuErrorLog(): void {
 
 type DeviceLostListener = (info: GPUDeviceLostInfo) => void;
 type DeviceRecoveredListener = (ctx: GpuContext) => void;
+type DeviceRecoveryFailedListener = (error: Error) => void;
 
 const lostListeners = new Set<DeviceLostListener>();
 const recoveredListeners = new Set<DeviceRecoveredListener>();
+const recoveryFailedListeners = new Set<DeviceRecoveryFailedListener>();
 
 /** Notified when the shared device is lost (e.g. GPU process crash, browser reclaim). */
 export function onGpuDeviceLost(listener: DeviceLostListener): () => void {
@@ -129,6 +165,12 @@ export function onGpuDeviceLost(listener: DeviceLostListener): () => void {
 export function onGpuDeviceRecovered(listener: DeviceRecoveredListener): () => void {
   recoveredListeners.add(listener);
   return () => recoveredListeners.delete(listener);
+}
+
+/** Notified when the automatic recreate after a device loss fails — GPU work is over for now. */
+export function onGpuDeviceRecoveryFailed(listener: DeviceRecoveryFailedListener): () => void {
+  recoveryFailedListeners.add(listener);
+  return () => recoveryFailedListeners.delete(listener);
 }
 
 class GpuContextImpl implements GpuContext {
@@ -169,8 +211,10 @@ class GpuContextImpl implements GpuContext {
       .then((ctx) => {
         for (const listener of recoveredListeners) listener(ctx);
       })
-      .catch(() => {
-        // Nothing we can do automatically beyond this; surfaced to the next caller.
+      .catch((err: unknown) => {
+        // Nothing more is tried automatically; the next acquire retries.
+        const error = err instanceof Error ? err : new Error(String(err));
+        for (const listener of recoveryFailedListeners) listener(error);
       });
   }
 
@@ -253,6 +297,8 @@ export function __resetGpuContextForTests(): void {
   current = null;
   pendingAcquire = null;
   errorLog.length = 0;
+  errorListeners.clear();
   lostListeners.clear();
   recoveredListeners.clear();
+  recoveryFailedListeners.clear();
 }

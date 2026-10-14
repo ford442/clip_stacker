@@ -13,6 +13,12 @@ import { bassLevelFromAnalyserBytes } from "./canvas-renderer-audio";
 import { calculateLetterboxRect, computeFadeAlpha, waitForSeeked } from "./canvas-renderer-helpers";
 import { createAudioContext } from "../audio/context";
 
+/** The error a canvas clip render fails with when its media element errors. */
+export function mediaPlaybackError(clip: Pick<Clip, "title">, media: HTMLMediaElement): Error {
+  const detail = media.error?.message || (media.error ? `code ${media.error.code}` : "unknown error");
+  return new Error(`Playback of "${clip.title}" failed during canvas render (${detail})`);
+}
+
 const TARGET_WIDTH = 1280;
 const TARGET_HEIGHT = 720;
 const TARGET_FPS = 30;
@@ -233,7 +239,7 @@ export class CanvasRenderer {
       await waitForSeeked(video);
       await video.play();
 
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
         let rafHandle = 0;
         let done = false;
 
@@ -286,11 +292,13 @@ export class CanvasRenderer {
           },
           { once: true },
         );
+        // A media error mid-clip must fail the render: resolving here would
+        // quietly end the clip early and ship a truncated file.
         video.addEventListener(
           "error",
           () => {
             done = true;
-            resolve();
+            reject(mediaPlaybackError(clip, video));
           },
           { once: true },
         );
@@ -344,7 +352,7 @@ export class CanvasRenderer {
     try {
       await audio.play();
 
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
         let rafHandle = 0;
         let done = false;
 
@@ -392,11 +400,13 @@ export class CanvasRenderer {
           },
           { once: true },
         );
+        // A media error mid-clip must fail the render: resolving here would
+        // quietly end the clip early and ship a truncated file.
         audio.addEventListener(
           "error",
           () => {
             done = true;
-            resolve();
+            reject(mediaPlaybackError(clip, audio));
           },
           { once: true },
         );

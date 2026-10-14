@@ -9,6 +9,7 @@ import {
 import { isStabilizationActive } from './stabilization';
 import { clipHasRateAutomation } from './timeRemap';
 import { isFinishingActive, type FinishingSettings } from './finishing';
+import { resolveLayerKey } from './overlayKey';
 
 /** Mirrors ffmpegService clipNeedsEffects — shared for encoder path selection. */
 export function clipNeedsEffects(clip: Clip): boolean {
@@ -165,4 +166,28 @@ export function pictureTransformPlanFields(
     pictureTransform: 'ffmpeg',
     ...(gaps.length > 0 ? { pictureTransformGaps: gaps } : {}),
   };
+}
+
+/**
+ * What the remote concat (`handleGpuStitch`) would silently drop for this
+ * timeline. It has no compositor — it trims each base clip with its own audio
+ * and stitches them end to end — so any of these makes it refuse.
+ */
+export function remoteConcatDroppedFeatures(
+  timelineClips: Clip[],
+  transitions: ClipTransition[],
+  textOverlays: TextOverlay[],
+  finishing: FinishingSettings,
+  captionCount: number,
+): string[] {
+  const dropped: string[] = [];
+  if (timelineClips.some((clip) => (clip.layerIndex ?? 0) > 0)) dropped.push('PiP/overlay lanes');
+  if (hasActiveTransitions(transitions)) dropped.push('transitions');
+  if (textOverlays.length > 0) dropped.push('text overlays');
+  if (isFinishingActive(finishing)) dropped.push('finishing');
+  if (timelineClips.some((clip) => resolveLayerKey(clip) !== null)) dropped.push('chroma/luma keys');
+  if (captionCount > 0) dropped.push('captions');
+  // A muted lane's clips would still be trimmed with their audio.
+  if (timelineClips.some((clip) => clip.kind === 'video' && clip.trackMuted)) dropped.push('lane mute');
+  return dropped;
 }

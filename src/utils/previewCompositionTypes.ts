@@ -225,8 +225,17 @@ export interface TimelineCompositor {
   resetFinishingTemporal?(): void;
   /** Pause pooled decoders for idle teardown (preview paused/backgrounded). */
   pauseDecoders(): void;
+  /**
+   * Follow the health of the `GPUDevice` *this* compositor draws with (the
+   * worker's own device for the worker backend, main's for the main-thread
+   * one). Absent on backends without a device (Canvas2D). Returns unsubscribe.
+   */
+  onDeviceState?(listener: (state: PreviewDeviceState, message?: string) => void): () => void;
   destroy(): void;
 }
+
+/** Lifecycle of a compositor's GPU device after it is lost. */
+export type PreviewDeviceState = 'lost' | 'recovered' | 'failed';
 
 /** Capped preview canvas geometry plus the output→preview scale factor. */
 export interface CanvasGeometry {

@@ -26,7 +26,13 @@ import {
   type PreviewClipLayer,
   type PreviewCompositionPlan,
 } from '../utils/previewComposition';
-import { peekGpuDevice } from './gpuDevice';
+import {
+  onGpuDeviceLost,
+  onGpuDeviceRecovered,
+  onGpuDeviceRecoveryFailed,
+  onGpuError,
+  peekGpuDevice,
+} from './gpuDevice';
 import { probeWebGpu } from './webgpuProbe';
 import { adoptGpuDevice, peekChoresGpuDevice } from '../gpu-chores/device';
 import { runJob } from '../gpu-chores/runJob';
@@ -83,6 +89,21 @@ function choreTransferList(results: GpuChoreResult[]): Transferable[] {
 function closeFrames(frames: Array<{ frame: VideoFrame }>): void {
   for (const f of frames) f.frame.close();
 }
+
+// This realm's device is invisible to main's registry: forward its health.
+// `PreviewEngine` rebuilds itself on recovery, so main only has to wait.
+onGpuError((entry) => {
+  if (entry.type !== 'lost') post({ type: 'gpu-error', entry });
+});
+onGpuDeviceLost((info) => {
+  post({ type: 'gpu-lost', message: info.message, timestamp: Date.now() });
+});
+onGpuDeviceRecovered(() => {
+  post({ type: 'gpu-recovered' });
+});
+onGpuDeviceRecoveryFailed((error) => {
+  post({ type: 'gpu-recovery-failed', message: error.message, timestamp: Date.now() });
+});
 
 // Phase-1 probe as soon as the worker module loads — before main transfers
 // the canvas — so a failed probe never neuters the DOM canvas.

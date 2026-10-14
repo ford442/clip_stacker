@@ -78,10 +78,9 @@ export function MasterAudioTrack({
 
   const handleRemove = useCallback(() => {
     editorActions.pushHistory();
-    editorActions.setMasterAudio((prev) => {
-      if (prev?.objectUrl) URL.revokeObjectURL(prev.objectUrl);
-      return null;
-    });
+    // The URL is not revoked here: undo can bring this master track back.
+    // `resetHistory` revokes it once no history entry can reference it.
+    editorActions.setMasterAudio(null);
   }, []);
 
   const trackWidth = Math.max(contentWidth, (masterAudio?.duration ?? 0) * pixelsPerSecond);

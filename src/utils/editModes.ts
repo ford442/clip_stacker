@@ -140,7 +140,8 @@ function transitionAt(transitions: ClipTransition[], index: number): number {
   return isActiveTransition(t) ? t.duration : 0;
 }
 
-function baseOrder(tracks: Track[]): string[] {
+/** Clip ids on the base lane, in play order. */
+export function baseLaneOrder(tracks: Track[]): string[] {
   const base = videoTracks(tracks)[0];
   return base ? sortedItems(base).map((i) => i.clipId) : [];
 }
@@ -212,8 +213,8 @@ function baseDurationsValid(
 ): boolean {
   const byId = clipMap(clips);
   const prevById = clipMap(prev.clips);
-  const prevOrder = baseOrder(prev.tracks);
-  return baseOrder(tracks).every((id, index) => {
+  const prevOrder = baseLaneOrder(prev.tracks);
+  return baseLaneOrder(tracks).every((id, index) => {
     const clip = byId.get(id);
     if (!clip) return true;
     if (prevById.get(id) === clip && prevOrder[index] === id) return true;
@@ -232,8 +233,8 @@ function finalize(
   clips: Clip[],
   alias?: Map<string, string>,
 ): EditResult {
-  const prevOrder = baseOrder(prev.tracks);
-  const nextOrder = baseOrder(tracks);
+  const prevOrder = baseLaneOrder(prev.tracks);
+  const nextOrder = baseLaneOrder(tracks);
   const orderChanged =
     prevOrder.length !== nextOrder.length || prevOrder.some((id, i) => id !== nextOrder[i]);
   const transitions = orderChanged
@@ -544,8 +545,8 @@ function prepareDrop(
   // Lifting a clip out of the gapless base lane closes its slot first, so the
   // drop position is measured against where the base clips will actually play.
   if (source && isBaseLane(state.tracks, source.track.id)) {
-    const prevOrder = baseOrder(state.tracks);
-    const transitions = remapBaseTransitions(prevOrder, baseOrder(tracks), state.transitions);
+    const prevOrder = baseLaneOrder(state.tracks);
+    const transitions = remapBaseTransitions(prevOrder, baseLaneOrder(tracks), state.transitions);
     tracks = normalizeBaseLane(tracks, state.clips, transitions);
   }
   return {
@@ -710,6 +711,53 @@ export function dropEdit(
   return mode === 'insert'
     ? insertEdit(state, clipId, trackId, startTime, options)
     : overwriteEdit(state, clipId, trackId, startTime);
+}
+
+/**
+ * Duplicate: place `copy` (a new pool clip, see `duplicateClip`) directly after
+ * `clipId` on the same lane.
+ *
+ * Overlay and audio lanes follow the drop mode — `insert` ripples later items
+ * right by the copy's length, `overwrite` covers whatever sits there. The base
+ * lane always inserts: it is a gapless edit list whose next clip starts inside
+ * the source's outgoing xfade, so "overwrite at the source's end" would eat
+ * that clip's head. The xfade that left the source now leaves the copy (the
+ * copy is aliased to the source, exactly like a split tail), so the cut into
+ * the following clip looks the same as before.
+ */
+export function duplicateItem(
+  state: EditState,
+  clipId: string,
+  copy: Clip,
+  mode: DropEditMode,
+  options: RippleOptions = {},
+): EditResult {
+  const at = locate(state, clipId);
+  if (typeof at === 'string') return fail(at);
+  const clips = addToPool(state.clips, clipId, copy);
+  const byId = clipMap(clips);
+  const self = at.items[at.index];
+
+  if (!at.base) {
+    return dropEdit({ ...state, clips }, mode, copy.id, at.track.id, itemEnd(self, byId), options);
+  }
+
+  // The cut the copy goes into: where the next base clip starts (inside any
+  // xfade), or the lane's end.
+  const nextItem = at.items[at.index + 1];
+  const cut = nextItem ? nextItem.startTime : itemEnd(self, byId);
+  let tracks = state.tracks;
+  if (options.linked) {
+    const rippled = rippleLanes(tracks, clips, at.track.id, cut, getClipDuration(copy), options);
+    if (typeof rippled === 'string') return fail(rippled);
+    tracks = rippled;
+  }
+  const order = at.items.map((i) => i.clipId);
+  order.splice(at.index + 1, 0, copy.id);
+  // Placeholder start times that only encode order — `finalize` rewrites the
+  // base lane from segment math.
+  const items = order.map((id, i) => ({ clipId: id, startTime: i }));
+  return finalize(state, withItems(tracks, at.track.id, items), clips, new Map([[copy.id, clipId]]));
 }
 
 /**

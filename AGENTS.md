@@ -129,7 +129,10 @@ shortcuts and programmatic callers are blocked too.
   restores placements, trims and transitions together. Deltas are output
   seconds; speed-ramped or looped clips are refused rather than trimmed
   approximately. Splitting an item duplicates the *placement* (new clip id,
-  same file / object URL); covering one drops it.
+  same file / object URL); covering one drops it. **Duplicate** is
+  `duplicateItem`: the copy lands right after the source on the same lane
+  (overlay/audio lanes follow the drop mode; the base lane always inserts, and
+  the xfade that left the source now leaves the copy).
 - Ripple is **lane-local** by default; `linkedRipple` also shifts every other
   non-base lane, and a locked lane that would have to move blocks the edit.
 - After any edit, base-lane start times are rewritten from
@@ -490,6 +493,21 @@ Do not keep a second WebGL context for histograms. Keep COOP/COEP and the produc
 
 The preview worker decodes its own frames. Main never seeks a hidden `<video>` on the happy path.
 
+**One preview stack.** Any timeline with a video clip — a single clip
+included — previews through `TimelineCompositorPreview`, the same composition
+plan export draws (titles, captions, stabilization, finishing). There is no
+separate single-clip preview; only an audio-only selection gets a plain
+`<audio>` player. The playhead is always **output** time — convert with
+`resolveClipOutputWindow` / `sourceTimeAtOutputLocal` before treating it as a
+source timestamp (Split does).
+
+**GPU devices are per realm.** `gpuDevice.ts` shares one device per JS realm:
+main (export, text fill, main-thread preview fallback) and the preview worker
+each own one. The worker forwards `gpu-error` / `gpu-lost` / `gpu-recovered` /
+`gpu-recovery-failed`; main logs them via `recordRemoteGpuError` (Copy Debug
+tags the realm) and the preview follows its compositor's `onDeviceState`,
+never main's `onGpuDeviceLost`.
+
 ### Decoder-backed preview (`src/webgpu/`)
 
 - `previewDecoderSource.ts` — worker-side `PreviewDecoderSource`. Main transfers each clip's `File` once (`clip-media`, structured-cloneable by reference — no byte copy); the worker opens one forward-only `DecoderFrameCursor` per **active** layer (`clipId::role::mediaObjectUrl`), exactly like GPU export.
@@ -539,6 +557,20 @@ file. Export never reads it.
 Never route a proxy into `TimelineDecoderFrameProvider`, the FFmpeg paths or
 the canvas export. `Clip.proxy` is the only serialized part; replacing a
 clip's `file` (RIFE) must clear it.
+
+## WebCodecs codec ladder
+
+Never hard-code `hardwareAcceleration: 'prefer-hardware'` — Chrome treats it as
+*require hardware*. Encode probes `ENCODER_ACCELERATION_LADDER`
+(`prefer-hardware` → `no-preference`), decode `DECODER_ACCELERATION_LADDER`
+(adds `prefer-software`); `resolveEncoderCodec` only returns a config
+`isConfigSupported` accepted and otherwise throws `NoSupportedEncoderError`, so
+`hybridMergeClips` falls back to FFmpeg. The winning rung is in
+`RenderPlan.videoEncoder` and Copy Debug. HEVC / AV1 codec strings are sized by
+resolution (`hevcCodecString` / `av1CodecString`). Every encode loop closes
+its frames in a `finally` (`encodeAndClose`) and waits on the codec queue with
+`waitForQueueBelow` (`src/utils/codecQueue.ts`), which rejects when the codec
+closes or stalls instead of hanging.
 
 ## Variable speed remapping (time stretch)
 

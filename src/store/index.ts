@@ -16,7 +16,6 @@ export {
   useEditorMasterAudio,
   useEditorMasterAudioMarkers,
   useSelectedClipId,
-  useSelectedClipIds,
   useIsClipSelected,
   useCanUndo,
   useCanRedo,
