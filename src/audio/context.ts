@@ -50,3 +50,46 @@ export function createAudioContext(options: CreateAudioContextOptions = {}): Aud
     return new Ctx({ latencyHint });
   }
 }
+
+let sharedContext: AudioContext | null = null;
+let gestureListenerInstalled = false;
+
+/** Resume `ctx` if the autoplay policy left it suspended. Never throws. */
+export function resumeAudioContext(ctx: AudioContext): void {
+  if (ctx.state !== 'suspended') return;
+  ctx.resume().catch(() => undefined);
+}
+
+/**
+ * The one AudioContext shared by element-routed preview audio (per-clip volume
+ * on `<audio>` / `<video>`). Created lazily; never closed, because a
+ * `MediaElementAudioSourceNode` binds its element to its context for good —
+ * closing it would silence the element for the rest of its life.
+ *
+ * Browsers create it suspended until a user gesture, so the first call also
+ * installs a one-shot pointer/key listener that resumes it.
+ */
+export function getSharedAudioContext(): AudioContext {
+  if (sharedContext && sharedContext.state !== 'closed') return sharedContext;
+  sharedContext = createAudioContext();
+  if (!gestureListenerInstalled && typeof window !== 'undefined' && window.addEventListener) {
+    gestureListenerInstalled = true;
+    const onGesture = () => {
+      if (sharedContext) resumeAudioContext(sharedContext);
+      if (sharedContext?.state !== 'suspended') {
+        window.removeEventListener('pointerdown', onGesture, true);
+        window.removeEventListener('keydown', onGesture, true);
+        gestureListenerInstalled = false;
+      }
+    };
+    window.addEventListener('pointerdown', onGesture, true);
+    window.addEventListener('keydown', onGesture, true);
+  }
+  return sharedContext;
+}
+
+/** Test-only: forget the shared context. */
+export function __resetSharedAudioContextForTests(): void {
+  sharedContext = null;
+  gestureListenerInstalled = false;
+}
