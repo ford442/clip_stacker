@@ -713,6 +713,53 @@ export function dropEdit(
 }
 
 /**
+ * Duplicate: place `copy` (a new pool clip, see `duplicateClip`) directly after
+ * `clipId` on the same lane.
+ *
+ * Overlay and audio lanes follow the drop mode — `insert` ripples later items
+ * right by the copy's length, `overwrite` covers whatever sits there. The base
+ * lane always inserts: it is a gapless edit list whose next clip starts inside
+ * the source's outgoing xfade, so "overwrite at the source's end" would eat
+ * that clip's head. The xfade that left the source now leaves the copy (the
+ * copy is aliased to the source, exactly like a split tail), so the cut into
+ * the following clip looks the same as before.
+ */
+export function duplicateItem(
+  state: EditState,
+  clipId: string,
+  copy: Clip,
+  mode: DropEditMode,
+  options: RippleOptions = {},
+): EditResult {
+  const at = locate(state, clipId);
+  if (typeof at === 'string') return fail(at);
+  const clips = addToPool(state.clips, clipId, copy);
+  const byId = clipMap(clips);
+  const self = at.items[at.index];
+
+  if (!at.base) {
+    return dropEdit({ ...state, clips }, mode, copy.id, at.track.id, itemEnd(self, byId), options);
+  }
+
+  // The cut the copy goes into: where the next base clip starts (inside any
+  // xfade), or the lane's end.
+  const nextItem = at.items[at.index + 1];
+  const cut = nextItem ? nextItem.startTime : itemEnd(self, byId);
+  let tracks = state.tracks;
+  if (options.linked) {
+    const rippled = rippleLanes(tracks, clips, at.track.id, cut, getClipDuration(copy), options);
+    if (typeof rippled === 'string') return fail(rippled);
+    tracks = rippled;
+  }
+  const order = at.items.map((i) => i.clipId);
+  order.splice(at.index + 1, 0, copy.id);
+  // Placeholder start times that only encode order — `finalize` rewrites the
+  // base lane from segment math.
+  const items = order.map((id, i) => ({ clipId: id, startTime: i }));
+  return finalize(state, withItems(tracks, at.track.id, items), clips, new Map([[copy.id, clipId]]));
+}
+
+/**
  * Apply the sticky tool to the selected clip for a keyboard nudge of `delta`
  * output seconds. `select` has no nudge behaviour.
  */

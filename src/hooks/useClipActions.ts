@@ -7,13 +7,15 @@ import {
   removeClipFromGroups,
 } from "../utils/clipOperations";
 import {
+  findClipTrack,
   isClipLocked,
   replaceClipOnTrackAfterSplit,
 } from "../utils/trackModel";
 import { shiftTransitionsForInsert } from "../utils/transitions";
 import { downloadRemoteMedia, type MediaLibraryItem } from "../utils/project";
 import { editorStore, playbackStore, setPlayheadTime } from "../store";
-import { planAddClip } from "../utils/planAddClip";
+import { duplicateItem } from "../utils/editModes";
+import { uiStore } from "../store/uiStore";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
 import { settingsStore } from "../store/settingsStore";
@@ -40,30 +42,6 @@ export function useClipActions({
   setSelectedClipId,
   pushHistory,
 }: ClipActionsDeps) {
-  /** Add a new clip to the state and set up A/B grouping if a matching clip exists. */
-  const addClipToState = useCallback((newClip: Clip) => {
-    const { clips: prevClips, tracks: prevTracks, clipGroups: prevGroups } =
-      editorStore.getState();
-    const plan = planAddClip(prevClips, prevTracks, prevGroups, newClip);
-    editorStore.setState({
-      clips: plan.clips,
-      ...(plan.tracks ? { tracks: plan.tracks } : {}),
-      ...(plan.clipGroups ? { clipGroups: plan.clipGroups } : {}),
-    });
-  }, []);
-
-  const insertClipAfter = useCallback(
-    (index: number, newClip: Clip) => {
-      setClips((prev) => {
-        const next = [...prev];
-        next.splice(index + 1, 0, newClip);
-        return next;
-      });
-      setTransitions((prev) => shiftTransitionsForInsert(prev, index + 1));
-    },
-    [setClips, setTransitions],
-  );
-
   const handleDuplicateClip = useCallback(() => {
     const { setStatus, setOutputUrl } = settingsStore.getState();
     if (!selectedClipId) {
@@ -71,25 +49,33 @@ export function useClipActions({
       return;
     }
 
-    const index = clips.findIndex((clip) => clip.id === selectedClipId);
-    if (index < 0) return;
+    const { tracks, clips: pool, transitions } = editorStore.getState();
+    const source = pool.find((clip) => clip.id === selectedClipId);
+    if (!source) return;
 
-    pushHistory();
-    const source = clips[index];
+    // The pure edit places the copy on the source's lane (and refuses a
+    // locked one); `commitEdit` makes it a single undo step.
     const copy = duplicateClip(source);
-    insertClipAfter(index, copy);
+    const { dropEditMode, linkedRipple } = uiStore.getState();
+    const result = duplicateItem(
+      { tracks, clips: pool, transitions },
+      source.id,
+      copy,
+      dropEditMode,
+      { linked: linkedRipple },
+    );
+    if (!result.ok) {
+      setStatus(result.reason);
+      return;
+    }
+    editorStore.getState().commitEdit(result.state);
     setSelectedClipId(copy.id);
-    setPlayheadTime(copy.trimStart);
+    // Park the playhead on the copy's output position (the timeline clock).
+    const placed = findClipTrack(result.state.tracks, copy.id);
+    if (placed) setPlayheadTime(placed.track.items[placed.itemIndex].startTime);
     setOutputUrl(null);
     setStatus(`Duplicated "${source.title}".`);
-  }, [
-    clips,
-    selectedClipId,
-    pushHistory,
-    insertClipAfter,
-    insertClipAfter,
-    setSelectedClipId,
-  ]);
+  }, [selectedClipId, setSelectedClipId]);
 
   const handleSplitClip = useCallback(() => {
     const { setStatus, setOutputUrl } = settingsStore.getState();
@@ -201,7 +187,7 @@ export function useClipActions({
             pushHistory();
             pushedHistory = true;
           }
-          addClipToState(newClip);
+          editorStore.getState().addClip(newClip);
           setSelectedClipId(newClip.id);
           added++;
         } catch (error) {
@@ -220,7 +206,7 @@ export function useClipActions({
         );
       }
     },
-    [addClipToState, pushHistory, setSelectedClipId],
+    [pushHistory, setSelectedClipId],
   );
 
   const handleAddLibraryClip = useCallback(
@@ -260,7 +246,7 @@ export function useClipActions({
           ...(isImage ? { stillImage: true } : {}),
         };
         pushHistory();
-        addClipToState(newClip);
+        editorStore.getState().addClip(newClip);
         setSelectedClipId(newClip.id);
         setOutputUrl(null);
         setStatus(`Added "${item.name}" from media library.`);
@@ -270,7 +256,7 @@ export function useClipActions({
         );
       }
     },
-    [addClipToState, pushHistory, setSelectedClipId],
+    [pushHistory, setSelectedClipId],
   );
 
   const handleToggleVariant = useCallback(
