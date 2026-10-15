@@ -39,7 +39,7 @@ import { runJob } from '../gpu-chores/runJob';
 import { closeBitmap } from '../gpu-chores/rasterize';
 import { VECTORSCOPE_SIZE } from '../gpu-chores/cpu/vectorscope';
 import type { GpuChoreResult } from '../gpu-chores/types';
-import { WorkerTimelineRenderer, type CapturedFrameEntry } from './timelinePreview';
+import { WorkerTimelineRenderer, type CapturedFrameEntry } from './workerTimelineRenderer';
 import { PreviewDecoderSource } from './previewDecoderSource';
 import type {
   CapturedFrame,

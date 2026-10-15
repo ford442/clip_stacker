@@ -27,7 +27,8 @@ import {
   getPublishedWebGpuProbe,
   type WebGpuProbeResult,
 } from '../webgpu/webgpuProbe';
-import { PreviewWorkerAdapter, isCanvasTransferred } from '../webgpu/previewWorkerRuntime';
+import { PreviewWorkerAdapter } from '../webgpu/previewWorkerAdapter';
+import { isCanvasTransferred } from '../webgpu/previewWorkerRuntime';
 import type { ScopeData } from '../webgpu/previewWorkerProtocol';
 import { PreviewScopes } from './PreviewScopes';
 import {
