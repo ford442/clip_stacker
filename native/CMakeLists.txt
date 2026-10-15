@@ -13,7 +13,6 @@ if(CLIP_STACKER_HOST_TESTS)
   include("${CMAKE_CURRENT_LIST_DIR}/host.cmake")
   enable_testing()
   add_subdirectory(audio_analysis)
-  add_subdirectory(time_stretch)
   add_subdirectory(video_stabilize)
   add_subdirectory(media_engine)
   return()
@@ -25,9 +24,15 @@ endif()
 
 include("${CMAKE_CURRENT_LIST_DIR}/toolchain.cmake")
 
-file(MAKE_DIRECTORY "${CLIP_STACKER_PUBLIC_WASM}")
+file(MAKE_DIRECTORY "${CLIP_STACKER_WASM_OUT}")
 
 add_subdirectory(audio_analysis)
-add_subdirectory(time_stretch)
 add_subdirectory(video_stabilize)
 add_subdirectory(media_engine)
+
+# Opt-in: whisper.cpp is cloned on demand (scripts/build-whisper.sh) and its
+# artifacts are not committed. See native/whisper/README.md.
+option(CLIP_STACKER_WHISPER "Build the whisper auto-caption module (needs whisper.cpp)" OFF)
+if(CLIP_STACKER_WHISPER)
+  add_subdirectory(whisper)
+endif()

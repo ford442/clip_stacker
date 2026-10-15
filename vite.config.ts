@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import type { Connect, Plugin } from 'vite';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
@@ -27,9 +29,47 @@ function utf16JsMimePlugin(): Plugin {
   };
 }
 
+/**
+ * `npm run build:wasm:debug` writes -O0 / DWARF modules to
+ * native/build-debug/wasm instead of over the committed public/wasm. Serve
+ * them at /wasm-debug/ (dev and preview only); `?wasm_debug` points the
+ * loaders there (src/wasm/emscriptenLoader.ts).
+ */
+function wasmDebugPlugin(): Plugin {
+  const dir = fileURLToPath(new URL('./native/build-debug/wasm/', import.meta.url));
+  const serve: Connect.NextHandleFunction = (req, res, next) => {
+    const path = (req.url ?? '').split('?')[0] ?? '';
+    // One plain file name: no subdirectories, no traversal.
+    const match = /\/wasm-debug\/([\w.-]+\.(js|wasm))$/.exec(path);
+    if (!match) {
+      next();
+      return;
+    }
+    readFile(`${dir}${match[1]}`).then(
+      (body) => {
+        res.setHeader('Content-Type', match[2] === 'wasm' ? 'application/wasm' : 'text/javascript');
+        res.end(body);
+      },
+      () => {
+        res.statusCode = 404;
+        res.end(`not built: run npm run build:wasm:debug (${match[1]})`);
+      },
+    );
+  };
+  return {
+    name: 'clip-stacker-wasm-debug',
+    configureServer(server) {
+      server.middlewares.use(serve);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(serve);
+    },
+  };
+}
+
 export default defineConfig({
   base: './',
-  plugins: [react(), utf16JsMimePlugin()],
+  plugins: [react(), utf16JsMimePlugin(), wasmDebugPlugin()],
   build: {
     outDir: 'dist',
     emptyOutDir: true,

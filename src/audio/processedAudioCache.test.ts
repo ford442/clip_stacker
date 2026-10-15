@@ -6,9 +6,9 @@ import type { AudioScheduleEntry } from './schedule';
 import {
   __setMediaEngineKillSwitchForTests,
   _resetMediaEngineLoadStateForTests,
-  applyInsertChainToPcm,
   loadMediaEngineModule,
 } from '../wasm/mediaEngine';
+import { applyInsertChainToPcm } from '../wasm/mediaEngineInsertChain';
 import type { ClipAudioEffects } from '../utils/audioEffects';
 
 const WASM_BASE = pathToFileURL(path.resolve(process.cwd(), 'public/wasm') + path.sep).href;

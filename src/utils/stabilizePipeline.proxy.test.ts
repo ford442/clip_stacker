@@ -116,7 +116,9 @@ beforeEach(() => {
   _resetVideoStabilizeLoadStateForTests();
 });
 
-describe('stabilization solved on a proxy', () => {
+// Real WASM over synthetic footage / long mixes: seconds of CPU, far past
+// the 5 s default when the suite runs in parallel on a loaded machine.
+describe('stabilization solved on a proxy', { timeout: 30_000 }, () => {
   it('plans the same analysis frame for the proxy and the original', () => {
     const fromOriginal = computeAnalysisPlan(3840, 2160, 10);
     const proxy = proxyDimensions(3840, 2160);

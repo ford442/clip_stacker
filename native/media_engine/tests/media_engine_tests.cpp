@@ -205,7 +205,7 @@ int mix_call(const Schedule& s, float* out, long long begin, int frames, int fla
   }
   if (pcm.empty()) pcm.push_back(0.f);
   return mix_timeline_audio_range(
-      out, frames, static_cast<int>(begin), kOutRate, out_ch, pcm.data(), meta.data(),
+      out, frames, static_cast<int>(begin), kOutRate, out_ch, pcm.data(), static_cast<int>(pcm.size()), meta.data(),
       static_cast<int>(meta.size() / MIX_SLICE_STRIDE), rows.data(),
       static_cast<int>(rows.size() / MIX_ENTRY_STRIDE), keys.data(),
       static_cast<int>(keys.size() / MIX_KEY_STRIDE), flags);
@@ -297,7 +297,7 @@ std::vector<float> mix_fx(const Schedule& s, int frames, int chunk, const std::v
     if (pcm.empty()) pcm.push_back(0.f);
     const int stride = fx_rows ? static_cast<int>(MIX_ENTRY_FX_STRIDE) : static_cast<int>(MIX_ENTRY_STRIDE);
     rc = mix_fx_session_range(session, out.data() + static_cast<size_t>(begin) * out_ch, n, begin, pcm.data(),
-                              meta.data(), static_cast<int>(meta.size() / MIX_SLICE_STRIDE), rows.data(),
+                              static_cast<int>(pcm.size()), meta.data(), static_cast<int>(meta.size() / MIX_SLICE_STRIDE), rows.data(),
                               static_cast<int>(rows.size() / stride), keys.data(),
                               static_cast<int>(keys.size() / MIX_KEY_STRIDE), flags);
   }
@@ -740,14 +740,24 @@ TEST_CASE(rejects_malformed_arguments) {
   const float pcm[4] = {};
   const int meta[MIX_SLICE_STRIDE] = {0, 4, 1, 48000, 0, 4};
   double row[MIX_ENTRY_STRIDE] = {0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0};
-  CHECK(mix_timeline_audio(out, 4, 48000, 3, pcm, meta, 1, row, 1, nullptr, 0, 0) == -1);
-  CHECK(mix_timeline_audio_range(out, 4, -1, 48000, 2, pcm, meta, 1, row, 1, nullptr, 0, 0) == -1);
-  CHECK(mix_timeline_audio(out, 4, 48000, 2, nullptr, meta, 1, row, 1, nullptr, 0, 0) == -1);
+  CHECK(mix_timeline_audio(out, 4, 48000, 3, pcm, 4, meta, 1, row, 1, nullptr, 0, 0) == CS_EINVAL);
+  CHECK(mix_timeline_audio_range(out, 4, -1, 48000, 2, pcm, 4, meta, 1, row, 1, nullptr, 0, 0) == CS_EINVAL);
+  CHECK(mix_timeline_audio(out, 4, 48000, 2, nullptr, 0, meta, 1, row, 1, nullptr, 0, 0) == CS_EINVAL);
   row[MIX_ENTRY_VOLUME_KEY_COUNT] = 2;  // curve points past the keyframe blob
-  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, meta, 1, row, 1, nullptr, 0, 0) == -2);
+  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, 4, meta, 1, row, 1, nullptr, 0, 0) == CS_ERANGE);
   row[MIX_ENTRY_VOLUME_KEY_COUNT] = 0;
   row[MIX_ENTRY_SLICE_INDEX] = 5;  // unknown slice: skipped, not an error
-  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, meta, 1, row, 1, nullptr, 0, 0) == 0);
+  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, 4, meta, 1, row, 1, nullptr, 0, 0) == 0);
+
+  // A slice that runs past the blob is refused instead of read.
+  row[MIX_ENTRY_SLICE_INDEX] = 0;
+  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, 3, meta, 1, row, 1, nullptr, 0, 0) == CS_ERANGE);
+  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, -1, meta, 1, row, 1, nullptr, 0, 0) == CS_EINVAL);
+  const int shifted[MIX_SLICE_STRIDE] = {2, 4, 1, 48000, 0, 4};
+  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, 4, shifted, 1, row, 1, nullptr, 0, 0) == CS_ERANGE);
+  const int stereo[MIX_SLICE_STRIDE] = {0, 4, 2, 48000, 0, 4};  // two planes: 8 floats
+  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, 4, stereo, 1, row, 1, nullptr, 0, 0) == CS_ERANGE);
+  CHECK(mix_timeline_audio(out, 4, 48000, 2, pcm, 4, meta, 1, row, 1, nullptr, 0, 0) == CS_OK);
 }
 
 // ---------------------------------------------------------------------------
@@ -1036,20 +1046,20 @@ TEST_CASE(fx_session_rejects_malformed_calls) {
   const int meta[MIX_SLICE_STRIDE] = {0, 4, 1, 48000, 0, 4};
   double row[MIX_ENTRY_FX_STRIDE] = {0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0};
   // Effects need a session: the stateless entry point refuses the flag.
-  CHECK(mix_timeline_audio_range(out, 4, 0, 48000, 2, pcm, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == -1);
+  CHECK(mix_timeline_audio_range(out, 4, 0, 48000, 2, pcm, 4, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == CS_EINVAL);
 
   MixFxSession* session = mix_fx_session_create(48000, 2, 1, fx, 1, 0, 0);
   CHECK(session != nullptr);
   CHECK(mix_fx_session_latency(session) == 0);
-  CHECK(mix_fx_session_range(session, out, 4, 4, pcm, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == -3);
+  CHECK(mix_fx_session_range(session, out, 4, 4, pcm, 4, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == CS_ESTATE);
   row[MIX_ENTRY_FX_COUNT] = 2;  // chain past the effect blob
-  CHECK(mix_fx_session_range(session, out, 4, 0, pcm, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == -2);
+  CHECK(mix_fx_session_range(session, out, 4, 0, pcm, 4, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == CS_ERANGE);
   row[MIX_ENTRY_FX_COUNT] = 1;
   row[MIX_ENTRY_FX_STATE] = 1;  // state slot past `state_count`
-  CHECK(mix_fx_session_range(session, out, 4, 0, pcm, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == -2);
+  CHECK(mix_fx_session_range(session, out, 4, 0, pcm, 4, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == CS_ERANGE);
   row[MIX_ENTRY_FX_STATE] = 0;
-  CHECK(mix_fx_session_range(session, out, 4, 0, pcm, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == 0);
-  CHECK(mix_fx_session_range(session, out, 4, 4, pcm, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == 0);
+  CHECK(mix_fx_session_range(session, out, 4, 0, pcm, 4, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == 0);
+  CHECK(mix_fx_session_range(session, out, 4, 4, pcm, 4, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == 0);
   mix_fx_session_destroy(session);
   mix_fx_session_destroy(nullptr);
 
@@ -1058,8 +1068,8 @@ TEST_CASE(fx_session_rejects_malformed_calls) {
   MixInsertChain* chain = insert_chain_create(48000, fx, 1);
   CHECK(chain != nullptr);
   float plane[4] = {};
-  CHECK(insert_chain_process(chain, plane, 4, 3) == -1);
-  CHECK(insert_chain_process(nullptr, plane, 4, 1) == -1);
+  CHECK(insert_chain_process(chain, plane, 4, 3) == CS_EINVAL);
+  CHECK(insert_chain_process(nullptr, plane, 4, 1) == CS_EINVAL);
   CHECK(insert_chain_process(chain, plane, 4, 1) == 0);
   insert_chain_destroy(chain);
   insert_chain_destroy(nullptr);

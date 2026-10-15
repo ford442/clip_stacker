@@ -3,6 +3,7 @@ set(MEDIA_ENGINE_DSP_SOURCES
   src/eq.cpp
   src/dynamics.cpp
   src/audio_mix.cpp
+  src/time_stretch.cpp
 )
 
 if(CLIP_STACKER_HOST_TESTS)
@@ -13,10 +14,8 @@ if(CLIP_STACKER_HOST_TESTS)
   return()
 endif()
 
-add_executable(media_engine
-  ${MEDIA_ENGINE_DSP_SOURCES}
-  src/bindings.cpp
-)
+# The C API has no Embind: EXPORTED_FUNCTIONS below is the whole binding layer.
+add_executable(media_engine ${MEDIA_ENGINE_DSP_SOURCES})
 target_include_directories(media_engine PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
@@ -35,4 +34,5 @@ clip_stacker_wasm_module(media_engine
     _insert_chain_create
     _insert_chain_process
     _insert_chain_destroy
+    _time_stretch_remap
 )

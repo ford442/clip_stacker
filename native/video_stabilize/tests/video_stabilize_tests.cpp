@@ -56,15 +56,26 @@ TEST_CASE(matrix_before_finalize_is_identity) {
   for (int i = 0; i < 4; ++i) stab_push_frame(h, texture(static_cast<float>(i) * 3.f, 0.f).data());
   matrix(h, 1, m);
   CHECK(isIdentity(m, 0.f));
-  CHECK(stab_finalize(h) == 0);
-  CHECK(stab_push_frame(h, texture(0.f, 0.f).data()) == -1);  // two-phase
+  CHECK(stab_finalize(h) == CS_OK);
+  CHECK(stab_push_frame(h, texture(0.f, 0.f).data()) == CS_ESTATE);  // two-phase
   matrix(h, 99, m);  // out of range
   CHECK(isIdentity(m, 0.f));
   stab_destroy(h);
 
   StabHandle* empty = stab_create(kW, kH, 5);
-  CHECK(stab_finalize(empty) != 0);
+  CHECK(stab_finalize(empty) == CS_ESTATE);
   stab_destroy(empty);
+}
+
+TEST_CASE(bad_arguments_return_status) {
+  CHECK(stab_create(0, kH, 5) == nullptr);
+  CHECK(stab_create(kW, 8193, 5) == nullptr);
+  CHECK(stab_push_frame(nullptr, texture(0.f, 0.f).data()) == CS_EINVAL);
+  CHECK(stab_finalize(nullptr) == CS_EINVAL);
+  StabHandle* h = stab_create(kW, kH, 5);
+  CHECK(stab_push_frame(h, nullptr) == CS_EINVAL);
+  CHECK(stab_frame_count(h) == 0);
+  stab_destroy(h);
 }
 
 TEST_CASE(static_frames_yield_identity) {

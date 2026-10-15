@@ -4,6 +4,7 @@ import path from 'node:path';
 import {
   _resetAudioAnalysisLoadStateForTests,
   createAudioAnalyzer,
+  loadAudioAnalysisModule,
   toAudioReactiveUniforms,
 } from './audioAnalysis';
 import { analyzePcmWithHandle } from './offlineAnalysis';
@@ -104,6 +105,35 @@ describe('audioAnalysis WASM', () => {
     expect(u[1]).toBeCloseTo(0.2, 5);
     expect(u[2]).toBeCloseTo(0.3, 5);
     expect(u[3]).toBeCloseTo(0.5, 5);
+  });
+
+  it('reads bands written by a call that grew the heap', async () => {
+    // Regression: the bands used to be read through a HEAPF32 view taken
+    // before `_analyzeFrame`; a growth inside the call detached it and every
+    // band read back as 0.
+    const mod = (await loadAudioAnalysisModule({ baseUrl: WASM_BASE }))!;
+    const analyzer = await createAudioAnalyzer(44100, 2048, { baseUrl: WASM_BASE });
+    expect(analyzer.available).toBe(true);
+    if (!analyzer.available) return;
+    const original = mod._analyzeFrame;
+    let grew = false;
+    mod._analyzeFrame = (...args: Parameters<typeof original>) => {
+      const rc = original.apply(mod, args);
+      const before = mod.HEAPU8.buffer;
+      mod._free(mod._malloc(mod.HEAPU8.length));
+      grew = mod.HEAPU8.buffer !== before;
+      return rc;
+    };
+    try {
+      const tone = new Float32Array(2048);
+      for (let i = 0; i < tone.length; i++) tone[i] = Math.sin((2 * Math.PI * 100 * i) / 44100);
+      const e = analyzer.analyze(tone);
+      expect(grew).toBe(true);
+      expect(Math.max(...e.bands)).toBeGreaterThan(0.1);
+    } finally {
+      mod._analyzeFrame = original;
+      analyzer.destroy();
+    }
   });
 
   it('returns unavailable when baseUrl is bogus (no crash)', async () => {

@@ -1,4 +1,6 @@
 #include "audio_mix.h"
+#include "cs_alloc.h"
+#include "cs_math.h"
 #include "effects.h"
 #include "resampler.h"
 
@@ -10,9 +12,9 @@
 namespace {
 
 using media_engine::SourceSlice;
+using cs::kPi;
 
-constexpr double kPi = 3.14159265358979323846;
-
+// TS twin of fade_gain / Curve / Panner: applyGainEnvelope / applyPanEnvelope in src/audio/gainEnvelope.ts.
 double fade_gain(double local_time, double duration, double fade_in, double fade_out) {
   double gain = 1.0;
   if (fade_in > 0.0 && local_time < fade_in) {
@@ -164,10 +166,10 @@ struct MixFxSession {
   int resolve(const double* row, media_engine::InsertChain** chain) {
     const double first = row[MIX_ENTRY_FX_FIRST];
     const double count = row[MIX_ENTRY_FX_COUNT];
-    if (!valid_key_range(first, count, effect_count())) return -2;
-    if (count < 1.0) return 0;
+    if (!valid_key_range(first, count, effect_count())) return CS_ERANGE;
+    if (count < 1.0) return CS_OK;
     const double state = row[MIX_ENTRY_FX_STATE];
-    if (!(state >= 0.0 && state < static_cast<double>(states.size()))) return -2;
+    if (!(state >= 0.0 && state < static_cast<double>(states.size()))) return CS_ERANGE;
     EntryFx& fx = states[static_cast<size_t>(state)];
     if (!fx.built) {
       fx.chain.build(effects.data() + static_cast<size_t>(first) * MIX_FX_STRIDE, static_cast<int>(count),
@@ -175,7 +177,7 @@ struct MixFxSession {
       fx.built = true;
     }
     if (fx.chain.active()) *chain = &fx.chain;
-    return 0;
+    return CS_OK;
   }
 };
 
@@ -188,6 +190,7 @@ int mix_core(
     int out_sample_rate,
     int out_channels,
     const float* pcm_blob,
+    int pcm_floats,
     const int* slices,
     int slice_count,
     const double* entries,
@@ -196,12 +199,12 @@ int mix_core(
     int keyframe_count,
     int flags,
     MixFxSession* session) {
-  if (!out || out_frames <= 0 || start_frame < 0 || out_sample_rate <= 0) return -1;
-  if (out_channels != 1 && out_channels != 2) return -1;
-  if (slice_count < 0 || entry_count < 0 || keyframe_count < 0) return -1;
-  if (slice_count > 0 && (!pcm_blob || !slices)) return -1;
-  if (entry_count > 0 && !entries) return -1;
-  if (keyframe_count > 0 && !keyframes) return -1;
+  if (!out || out_frames <= 0 || start_frame < 0 || out_sample_rate <= 0) return CS_EINVAL;
+  if (out_channels != 1 && out_channels != 2) return CS_EINVAL;
+  if (slice_count < 0 || entry_count < 0 || keyframe_count < 0 || pcm_floats < 0) return CS_EINVAL;
+  if (slice_count > 0 && (!pcm_blob || !slices)) return CS_EINVAL;
+  if (entry_count > 0 && !entries) return CS_EINVAL;
+  if (keyframe_count > 0 && !keyframes) return CS_EINVAL;
 
   const int out_ch = out_channels;
   const int out_samples = out_frames * out_ch;
@@ -224,7 +227,7 @@ int mix_core(
     const double pan_count = row[MIX_ENTRY_PAN_KEY_COUNT];
     if (!valid_key_range(vol_first, vol_count, keyframe_count) ||
         !valid_key_range(pan_first, pan_count, keyframe_count)) {
-      return -2;
+      return CS_ERANGE;
     }
     media_engine::InsertChain* chain = nullptr;
     if (fx_rows) {
@@ -240,6 +243,9 @@ int mix_core(
     const int first_frame = meta[MIX_SLICE_FIRST_FRAME];
     const int clip_frames = meta[MIX_SLICE_CLIP_FRAMES];
     if (clip_frames <= 0 || src_rate <= 0 || src_ch < 1 || pcm_offset < 0 || slice_frames < 0) continue;
+    const int planes = src_ch >= 2 ? 2 : 1;
+    // JS sizes the blob; a slice that runs past it would read foreign heap.
+    if (!cs_span_ok(pcm_offset, static_cast<long long>(planes) * slice_frames, pcm_floats)) return CS_ERANGE;
 
     const double timeline_start = row[MIX_ENTRY_TIMELINE_START];
     const double duration = row[MIX_ENTRY_DURATION];
@@ -256,7 +262,6 @@ int mix_core(
     const double end_of = std::min(chunk_end, std::ceil((timeline_start + duration) * out_rate) + 1.0);
     if (!(first_of < end_of)) continue;
 
-    const int planes = src_ch >= 2 ? 2 : 1;
     SourceSlice source[2];
     for (int c = 0; c < planes; ++c) {
       source[c] = SourceSlice{pcm_blob + pcm_offset + c * slice_frames, first_frame, slice_frames};
@@ -344,7 +349,7 @@ int mix_core(
     }
   }
 
-  return 0;
+  return CS_OK;
 }
 
 }  // namespace
@@ -356,6 +361,7 @@ int mix_timeline_audio_range(
     int out_sample_rate,
     int out_channels,
     const float* pcm_blob,
+    int pcm_floats,
     const int* slices,
     int slice_count,
     const double* entries,
@@ -364,8 +370,8 @@ int mix_timeline_audio_range(
     int keyframe_count,
     int flags) {
   // Insert chains carry state across calls: they need a session.
-  if (flags & MIX_FLAG_EFFECTS) return -1;
-  return mix_core(out, out_frames, start_frame, out_sample_rate, out_channels, pcm_blob, slices,
+  if (flags & MIX_FLAG_EFFECTS) return CS_EINVAL;
+  return mix_core(out, out_frames, start_frame, out_sample_rate, out_channels, pcm_blob, pcm_floats, slices,
                   slice_count, entries, entry_count, keyframes, keyframe_count, flags, nullptr);
 }
 
@@ -375,6 +381,7 @@ int mix_timeline_audio(
     int out_sample_rate,
     int out_channels,
     const float* pcm_blob,
+    int pcm_floats,
     const int* slices,
     int slice_count,
     const double* entries,
@@ -383,7 +390,7 @@ int mix_timeline_audio(
     int keyframe_count,
     int flags) {
   return mix_timeline_audio_range(
-      out, out_frames, 0, out_sample_rate, out_channels, pcm_blob, slices, slice_count,
+      out, out_frames, 0, out_sample_rate, out_channels, pcm_blob, pcm_floats, slices, slice_count,
       entries, entry_count, keyframes, keyframe_count, flags);
 }
 
@@ -403,7 +410,14 @@ MixFxSession* mix_fx_session_create(
   if (!session) return nullptr;
   session->sample_rate = out_sample_rate;
   session->channels = out_channels;
-  session->effects.assign(effects, effects + static_cast<size_t>(effect_count) * MIX_FX_STRIDE);
+  // Both sizes come from JS (effect rows, schedule length).
+  const size_t effect_values = static_cast<size_t>(effect_count) * MIX_FX_STRIDE;
+  if (!cs::try_reserve(session->effects, effect_values) ||
+      !cs::try_reserve(session->states, static_cast<size_t>(state_count))) {
+    delete session;
+    return nullptr;
+  }
+  session->effects.assign(effects, effects + effect_values);
   session->states.resize(static_cast<size_t>(state_count));
   for (int i = 0; i < bus_count && !session->has_limiter; ++i) {
     const double* row = session->effects.data() + static_cast<size_t>(bus_first + i) * MIX_FX_STRIDE;
@@ -424,6 +438,7 @@ int mix_fx_session_range(
     int out_frames,
     int start_frame,
     const float* pcm_blob,
+    int pcm_floats,
     const int* slices,
     int slice_count,
     const double* entries,
@@ -431,15 +446,15 @@ int mix_fx_session_range(
     const double* keyframes,
     int keyframe_count,
     int flags) {
-  if (!session || !out || out_frames <= 0) return -1;
-  if (static_cast<long long>(start_frame) != session->next_frame) return -3;
+  if (!session || !out || out_frames <= 0) return CS_EINVAL;
+  if (static_cast<long long>(start_frame) != session->next_frame) return CS_ESTATE;
 
   const int rate = session->sample_rate;
   const int ch = session->channels;
   if (!session->has_limiter) {
-    const int rc = mix_core(out, out_frames, start_frame, rate, ch, pcm_blob, slices, slice_count,
+    const int rc = mix_core(out, out_frames, start_frame, rate, ch, pcm_blob, pcm_floats, slices, slice_count,
                             entries, entry_count, keyframes, keyframe_count, flags, session);
-    if (rc == 0) session->next_frame += out_frames;
+    if (rc == CS_OK) session->next_frame += out_frames;
     return rc;
   }
 
@@ -448,11 +463,13 @@ int mix_fx_session_range(
   const int latency = session->limiter.latency();
   const int bus_begin = start_frame == 0 ? 0 : start_frame + latency;
   const int bus_frames = start_frame == 0 ? out_frames + latency : out_frames;
-  session->bus.resize(static_cast<size_t>(bus_frames) * ch);
+  const size_t bus_values = static_cast<size_t>(bus_frames) * ch;
+  if (!cs::try_reserve(session->bus, bus_values)) return CS_ENOMEM;
+  session->bus.resize(bus_values);
   float* bus = session->bus.data();
-  const int rc = mix_core(bus, bus_frames, bus_begin, rate, ch, pcm_blob, slices, slice_count, entries,
+  const int rc = mix_core(bus, bus_frames, bus_begin, rate, ch, pcm_blob, pcm_floats, slices, slice_count, entries,
                           entry_count, keyframes, keyframe_count, flags, session);
-  if (rc != 0) return rc;
+  if (rc != CS_OK) return rc;
 
   int written = 0;
   for (int f = 0; f < bus_frames; ++f) {
@@ -461,7 +478,7 @@ int mix_fx_session_range(
     }
   }
   session->next_frame += out_frames;
-  return written == out_frames ? 0 : -4;
+  return written == out_frames ? CS_OK : CS_EINTERNAL;
 }
 
 struct MixInsertChain {
@@ -478,9 +495,9 @@ MixInsertChain* insert_chain_create(double design_sample_rate, const double* eff
 }
 
 int insert_chain_process(MixInsertChain* handle, float* planar, int frames, int channels) {
-  if (!handle || !planar || frames < 0 || (channels != 1 && channels != 2)) return -1;
+  if (!handle || !planar || frames < 0 || (channels != 1 && channels != 2)) return CS_EINVAL;
   media_engine::InsertChain& chain = handle->chain;
-  if (!chain.active()) return 0;
+  if (!chain.active()) return CS_OK;
   float* planes[2] = {planar, planar + (channels > 1 ? frames : 0)};
   for (int i = 0; i < frames; ++i) {
     float frame[2] = {planes[0][i], planes[1][i]};
@@ -488,7 +505,7 @@ int insert_chain_process(MixInsertChain* handle, float* planar, int frames, int 
     planes[0][i] = frame[0];
     if (channels > 1) planes[1][i] = frame[1];
   }
-  return 0;
+  return CS_OK;
 }
 
 void insert_chain_destroy(MixInsertChain* handle) { delete handle; }

@@ -1,4 +1,5 @@
 #include "resampler.h"
+#include "cs_math.h"
 
 #include <cmath>
 #include <cstring>
@@ -23,7 +24,7 @@ inline void store4(float* p, v4f v) { std::memcpy(p, &v, sizeof(v)); }
 
 inline v4f splat(float x) { return v4f{x, x, x, x}; }
 
-constexpr double kPi = 3.14159265358979323846;
+using cs::kPi;
 constexpr int kRowFloats = (kSincPhases + 1) * kSincTaps;
 constexpr int kTableSlots = 4;
 
@@ -99,14 +100,8 @@ const float* sinc_table(double cutoff) {
   return slot.rows;
 }
 
-void resample_sinc(
-    const SourceSlice* slices,
-    int channels,
-    double pos,
-    const float* rows,
-    float* out) {
+int sinc_prepare(const float* rows, double pos, float* coeff) {
   const double base = std::floor(pos);
-  const int i = static_cast<int>(base);
   const double phase = (pos - base) * static_cast<double>(kSincPhases);
   int p = static_cast<int>(phase);
   if (p >= kSincPhases) p = kSincPhases - 1;
@@ -114,28 +109,37 @@ void resample_sinc(
 
   // Linear interpolation between adjacent phases keeps 512 rows accurate to
   // well below the f32 noise floor.
-  alignas(16) float coeff[kSincTaps];
   const float* r0 = rows + p * kSincTaps;
   const float* r1 = r0 + kSincTaps;
   for (int k = 0; k < kSincTaps; k += 4) {
     const v4f a = load4(r0 + k);
     store4(coeff + k, a + (load4(r1 + k) - a) * u);
   }
+  return static_cast<int>(base);
+}
 
-  const int first_tap = i - kSincHalfTaps + 1;
-  for (int c = 0; c < channels; ++c) {
-    const SourceSlice& slice = slices[c];
-    const int offset = first_tap - slice.first_frame;
-    if (offset >= 0 && offset + kSincTaps <= slice.frame_count) {
-      out[c] = dot_taps(coeff, slice.data + offset);
-      continue;
-    }
-    // Window crosses the slice / clip edge: zero-pad, then run the same
-    // lane order so results never depend on how JS cut the slices.
-    alignas(16) float window[kSincTaps];
-    for (int k = 0; k < kSincTaps; ++k) window[k] = slice_sample(slice, first_tap + k);
-    out[c] = dot_taps(coeff, window);
+float sinc_read(const SourceSlice& slice, int base, const float* coeff) {
+  const int first_tap = base - kSincHalfTaps + 1;
+  const int offset = first_tap - slice.first_frame;
+  if (offset >= 0 && offset + kSincTaps <= slice.frame_count) {
+    return dot_taps(coeff, slice.data + offset);
   }
+  // Window crosses the slice / clip edge: zero-pad, then run the same lane
+  // order so results never depend on how JS cut the slices.
+  alignas(16) float window[kSincTaps];
+  for (int k = 0; k < kSincTaps; ++k) window[k] = slice_sample(slice, first_tap + k);
+  return dot_taps(coeff, window);
+}
+
+void resample_sinc(
+    const SourceSlice* slices,
+    int channels,
+    double pos,
+    const float* rows,
+    float* out) {
+  alignas(16) float coeff[kSincTaps];
+  const int base = sinc_prepare(rows, pos, coeff);
+  for (int c = 0; c < channels; ++c) out[c] = sinc_read(slices[c], base, coeff);
 }
 
 void resample_linear(

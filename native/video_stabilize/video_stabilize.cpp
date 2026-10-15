@@ -1,4 +1,6 @@
 #include "video_stabilize.h"
+#include "cs_alloc.h"
+#include "cs_status.h"
 #include "stab_math.h"
 
 #include <algorithm>
@@ -23,6 +25,8 @@ constexpr int kRansacIterations = 160;
 constexpr float kRansacThreshold = 2.0f;   // pixels
 constexpr int kMinTrackedPoints = 8;
 constexpr float kMaxSmoothRadius = 120.f;
+/** Analysis frames are downscaled by the caller; anything past this is a bug. */
+constexpr int kMaxDimension = 8192;
 
 struct Image {
   std::vector<float> data;
@@ -355,7 +359,7 @@ struct StabHandle {
 extern "C" {
 
 StabHandle* stab_create(int width, int height, int smooth_radius) {
-  if (width <= 0 || height <= 0) return nullptr;
+  if (width <= 0 || height <= 0 || width > kMaxDimension || height > kMaxDimension) return nullptr;
   StabHandle* h = new (std::nothrow) StabHandle();
   if (!h) return nullptr;
   h->width = width;
@@ -366,12 +370,20 @@ StabHandle* stab_create(int width, int height, int smooth_radius) {
 }
 
 int stab_push_frame(StabHandle* handle, const uint8_t* gray) {
-  if (!handle || !gray || handle->finalized) return -1;
+  if (!handle || !gray) return CS_EINVAL;
+  if (handle->finalized) return CS_ESTATE;
 
   Image img;
   img.width = handle->width;
   img.height = handle->height;
   const size_t count = static_cast<size_t>(img.width) * static_cast<size_t>(img.height);
+  // Peak working set below: the frame, its pyramid (~1.33x) and the corner
+  // detector's eigenvalue map, all floats. Probe it so OOM is a status, not
+  // an abort inside std::vector.
+  if (!cs::can_allocate(4 * count * sizeof(float)) ||
+      !cs::try_reserve(handle->motion, handle->motion.size() + 1)) {
+    return CS_ENOMEM;
+  }
   img.data.resize(count);
   for (size_t i = 0; i < count; ++i) {
     img.data[i] = static_cast<float>(gray[i]);
@@ -434,10 +446,13 @@ int stab_frame_count(const StabHandle* handle) {
 }
 
 int stab_finalize(StabHandle* handle) {
-  if (!handle) return 1;
-  if (handle->finalized) return 0;
+  if (!handle) return CS_EINVAL;
+  if (handle->finalized) return CS_OK;
   const size_t n = handle->motion.size();
-  if (n == 0) return 1;
+  if (n == 0) return CS_ESTATE;
+  // buildCorrections: eight float series plus the corrections, twice over
+  // while the result moves into the handle.
+  if (!cs::can_allocate(2 * n * (8 * sizeof(float) + sizeof(Correction)))) return CS_ENOMEM;
 
   float zoom = 1.f;
   float maxOffset = 0.f;
@@ -449,7 +464,7 @@ int stab_finalize(StabHandle* handle) {
   handle->zoom = zoom;
   handle->maxCorrection = maxOffset;
   handle->finalized = true;
-  return 0;
+  return CS_OK;
 }
 
 void stab_get_matrix(const StabHandle* handle, int frame_idx, float* out) {

@@ -3,3 +3,5 @@ target_link_libraries(media_engine_tests PRIVATE media_engine_dsp)
 clip_stacker_host_target(media_engine_tests)
 
 add_test(NAME media_engine_host COMMAND media_engine_tests)
+
+clip_stacker_host_test(time_stretch_tests time_stretch_tests.cpp media_engine_dsp)

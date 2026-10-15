@@ -1,6 +1,6 @@
 /**
  * Remap an AudioBuffer along a clip's playbackRate automation curve
- * (pitch-preserving WSOLA via WASM, with a JS OLA fallback).
+ * (pitch-preserving WSOLA in the media-engine WASM, with a JS OLA fallback).
  */
 
 import type { Clip } from '../types';
@@ -10,9 +10,9 @@ import {
   cycleDurationForClip,
   integrateRateToSourceOffset,
 } from './timeRemap';
-import { wasmRemapPlanar } from '../wasm/timeStretch';
+import { TIME_STRETCH_HOP, wasmRemapPlanar } from '../wasm/timeStretch';
 
-const HOP = 256;
+const HOP = TIME_STRETCH_HOP;
 
 function toPlanar(buffer: AudioBuffer, startFrame: number, frameCount: number): Float32Array {
   const channels = Math.min(2, Math.max(1, buffer.numberOfChannels));
@@ -43,16 +43,19 @@ function fromPlanar(
   return out;
 }
 
-/** Build source-frame offsets for each synthesis hop center. */
+/**
+ * Source-frame offsets for each synthesis hop centre. f64: a float position
+ * loses sub-sample precision past 2^24 frames (~5.8 min at 48 kHz).
+ */
 export function buildSourceOffsetMap(
   clip: Pick<Clip, 'playbackRate' | 'automation' | 'reversed'>,
   outFrames: number,
   sampleRate: number,
   hop: number,
   sourceFrames?: number,
-): Float32Array {
+): Float64Array {
   const numHops = Math.max(1, Math.ceil(outFrames / hop) + 1);
-  const offsets = new Float32Array(numHops);
+  const offsets = new Float64Array(numHops);
   const defaultRate = getClipPlaybackRate(clip);
   const track = clip.automation?.playbackRate;
   const reversed = clip.reversed === true && sourceFrames != null && sourceFrames > 1;
@@ -70,7 +73,7 @@ function jsRemapPlanar(
   input: Float32Array,
   inFrames: number,
   channels: number,
-  offsets: Float32Array,
+  offsets: Float64Array,
   outFrames: number,
   hop: number,
 ): Float32Array {
@@ -149,14 +152,14 @@ export async function remapClipAudioBuffer(
   const planarIn = toPlanar(source, startFrame, inFrames);
   const offsets = buildSourceOffsetMap(clip, outFrames, sr, HOP, inFrames);
 
-  let planarOut = await wasmRemapPlanar(
-    planarIn,
-    inFrames,
-    channels,
-    offsets,
-    outFrames,
-    HOP,
-  );
+  let planarOut: Float32Array | null = null;
+  try {
+    planarOut = await wasmRemapPlanar(planarIn, inFrames, channels, offsets, outFrames, HOP);
+  } catch (err) {
+    // A trap retires the module instance (emscriptenLoader); this clip still
+    // gets audio from the JS path.
+    console.warn('[remapAudio] WASM time stretch failed; using the JS fallback:', err);
+  }
   if (!planarOut) {
     planarOut = jsRemapPlanar(planarIn, inFrames, channels, offsets, outFrames, HOP);
   }

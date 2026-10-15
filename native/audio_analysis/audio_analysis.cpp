@@ -1,8 +1,13 @@
 #include "audio_analysis.h"
 
+#include "cs_alloc.h"
+#include "cs_math.h"
+#include "cs_status.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <new>
 #include <vector>
 
 #include "third_party/kissfft/kiss_fft.h"
@@ -37,7 +42,7 @@ int clampFftSize(int fftSize) {
 
 float hannWindow(int i, int n) {
   if (n <= 1) return 1.f;
-  return 0.5f * (1.f - std::cos(2.f * static_cast<float>(M_PI) * static_cast<float>(i) /
+  return 0.5f * (1.f - std::cos(2.f * cs::kPiF * static_cast<float>(i) /
                                  static_cast<float>(n - 1)));
 }
 
@@ -54,6 +59,8 @@ struct Analyzer {
   std::vector<float> magnitude;
   std::vector<float> prevMagnitude;
   std::vector<float> fluxHistory;
+  /** Scratch for the running median: preallocated, so a hop never mallocs. */
+  std::vector<float> fluxScratch;
   int fluxWrite = 0;
   int fluxCount = 0;
 
@@ -87,12 +94,12 @@ void initBands(Analyzer* a) {
   }
 }
 
-float medianOfHistory(const Analyzer* a) {
+float medianOfHistory(Analyzer* a) {
   if (a->fluxCount <= 0) return 0.f;
-  std::vector<float> tmp(a->fluxHistory.begin(),
-                         a->fluxHistory.begin() + a->fluxCount);
-  const int mid = static_cast<int>(tmp.size()) / 2;
-  std::nth_element(tmp.begin(), tmp.begin() + mid, tmp.end());
+  float* tmp = a->fluxScratch.data();
+  std::copy(a->fluxHistory.begin(), a->fluxHistory.begin() + a->fluxCount, tmp);
+  const int mid = a->fluxCount / 2;
+  std::nth_element(tmp, tmp + mid, tmp + a->fluxCount);
   return tmp[mid];
 }
 
@@ -103,6 +110,14 @@ extern "C" {
 void* createAnalyzer(int sampleRate, int fftSize) {
   if (sampleRate < 8000 || sampleRate > 192000) return nullptr;
   fftSize = clampFftSize(fftSize);
+
+  // Every buffer below is sized here, once: probe the total so an OOM
+  // returns null instead of aborting inside std::vector.
+  const size_t bins = static_cast<size_t>(fftSize / 2);
+  const size_t bytes = 2 * static_cast<size_t>(fftSize) * sizeof(kiss_fft_cpx) +
+                       static_cast<size_t>(fftSize) * sizeof(float) + 2 * bins * sizeof(float) +
+                       2 * kFluxHistory * sizeof(float);
+  if (!cs::can_allocate(bytes)) return nullptr;
 
   auto* a = new (std::nothrow) Analyzer();
   if (!a) return nullptr;
@@ -123,6 +138,7 @@ void* createAnalyzer(int sampleRate, int fftSize) {
   a->magnitude.assign(static_cast<size_t>(a->bins), 0.f);
   a->prevMagnitude.assign(static_cast<size_t>(a->bins), 0.f);
   a->fluxHistory.assign(kFluxHistory, 0.f);
+  a->fluxScratch.assign(kFluxHistory, 0.f);
 
   for (int i = 0; i < fftSize; ++i) {
     a->window[static_cast<size_t>(i)] = hannWindow(i, fftSize);
@@ -160,10 +176,10 @@ int getHopSize(void* handle) {
   return a->hopSize;
 }
 
-void analyzeFrame(void* handle, const float* pcm, int numSamples,
-                  float* outBands, float* outBeat) {
+int analyzeFrame(void* handle, const float* pcm, int numSamples,
+                 float* outBands, float* outBeat) {
   auto* a = static_cast<Analyzer*>(handle);
-  if (!a || !pcm || !outBands || !outBeat) return;
+  if (!a || !pcm || !outBands || !outBeat || numSamples < 0) return CS_EINVAL;
 
   const int n = a->fftSize;
   // Copy + window + window-pad
@@ -235,6 +251,7 @@ void analyzeFrame(void* handle, const float* pcm, int numSamples,
   *outBeat = a->beatEnvelope;
   a->samplesProcessed += static_cast<double>(
       numSamples > 0 ? std::min(numSamples, a->hopSize) : a->hopSize);
+  return CS_OK;
 }
 
 } // extern "C"

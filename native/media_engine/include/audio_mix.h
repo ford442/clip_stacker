@@ -1,5 +1,7 @@
 #pragma once
 
+#include "cs_status.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -147,12 +149,15 @@ enum {
  * into interleaved f32 `out` (`out_frames * out_channels`, 1 or 2 channels).
  *
  * Every output frame is a pure function of its absolute index, so any chunking
- * produces bit-identical PCM. `slices` is `slice_count * MIX_SLICE_STRIDE`
- * ints, `entries` is `entry_count * MIX_ENTRY_STRIDE` doubles, `keyframes` is
+ * produces bit-identical PCM. `pcm_blob` holds `pcm_floats` floats; every
+ * slice an entry reads must lie inside it. `slices` is
+ * `slice_count * MIX_SLICE_STRIDE` ints, `entries` is
+ * `entry_count * MIX_ENTRY_STRIDE` doubles, `keyframes` is
  * `keyframe_count * MIX_KEY_STRIDE` doubles. Entries whose slice index is out
  * of range are skipped. `flags` is a mask of `MIX_FLAG_*`.
  *
- * Returns 0 on success, negative on invalid arguments.
+ * Returns a `cs_status`: CS_EINVAL for bad arguments, CS_ERANGE when a slice
+ * runs past `pcm_floats` or a curve past `keyframe_count`.
  */
 int mix_timeline_audio_range(
     float* out,
@@ -161,6 +166,7 @@ int mix_timeline_audio_range(
     int out_sample_rate,
     int out_channels,
     const float* pcm_blob,
+    int pcm_floats,
     const int* slices,
     int slice_count,
     const double* entries,
@@ -176,6 +182,7 @@ int mix_timeline_audio(
     int out_sample_rate,
     int out_channels,
     const float* pcm_blob,
+    int pcm_floats,
     const int* slices,
     int slice_count,
     const double* entries,
@@ -205,7 +212,8 @@ typedef struct MixFxSession MixFxSession;
  * `effects` is `effect_count * MIX_FX_STRIDE` doubles (copied); entries point
  * into it with `MIX_ENTRY_FX_FIRST` / `MIX_ENTRY_FX_COUNT`. Rows
  * `[bus_first, bus_first + bus_count)` are the bus chain (one limiter is
- * honoured). `state_count` bounds `MIX_ENTRY_FX_STATE`. Null on bad arguments.
+ * honoured). `state_count` bounds `MIX_ENTRY_FX_STATE`. Null on bad arguments
+ * or OOM.
  */
 MixFxSession* mix_fx_session_create(
     int out_sample_rate,
@@ -231,8 +239,8 @@ int mix_fx_session_latency(const MixFxSession* session);
  * Like `mix_timeline_audio_range`, with entries `MIX_ENTRY_FX_STRIDE` wide
  * when `flags & MIX_FLAG_EFFECTS` (legacy twelve otherwise, which still runs
  * the bus limiter). `start_frame` must equal the previous call's end (0
- * first); anything else returns -3. Output and channel count come from the
- * session.
+ * first); anything else returns CS_ESTATE. CS_ENOMEM if the bus buffer
+ * cannot grow. Output and channel count come from the session.
  */
 int mix_fx_session_range(
     MixFxSession* session,
@@ -240,6 +248,7 @@ int mix_fx_session_range(
     int out_frames,
     int start_frame,
     const float* pcm_blob,
+    int pcm_floats,
     const int* slices,
     int slice_count,
     const double* entries,
