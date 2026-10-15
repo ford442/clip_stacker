@@ -19,7 +19,6 @@ import {
   type CaptionProvider,
 } from '../utils/captionProvider';
 import { mergeCaptions } from '../utils/captionSegments';
-import { renderAutoCaptionAudio } from '../utils/autoCaptionAudio';
 import { getWhisperUnavailableReason } from '../wasm/whisperCaptionProvider';
 
 export interface AutoCaptionProviderOption {
@@ -102,6 +101,9 @@ export function useAutoCaption(): UseAutoCaptionResult {
     setStage('Mixing audio…');
 
     try {
+      // The timeline mixer (media engine, WebCodecs audio) is only needed
+      // once a transcription actually runs.
+      const { renderAutoCaptionAudio } = await import('../utils/autoCaptionAudio');
       const editor = editorStore.getState();
       const { audio, timeOffsetSec, durationSec } = await renderAutoCaptionAudio({
         clips: editor.clips,

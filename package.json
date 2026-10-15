@@ -3,9 +3,12 @@
   "version": "1.0.0",
   "description": "Upload, trim, reorder, fade, and merge video clips into one MP4 using FFmpeg WebAssembly",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/utf16-dual-encode.mjs",
+    "build": "vite build && node scripts/check-bundle-size.mjs && node scripts/utf16-dual-encode.mjs",
     "build:utf16": "node scripts/utf16-dual-encode.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && python3 deploy.py",
@@ -47,8 +50,9 @@
     "@ffmpeg/core": "^0.12.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "@vitest/ui": "^4.1.7",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/ui": "^4.1.11",
     "@webgpu/types": "^0.1.70",
     "eslint": "^10.12.0",
     "eslint-plugin-react-hooks": "^7.1.1",
@@ -57,7 +61,7 @@
     "madge": "^8.0.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.71.2",
-    "vite": "^5.4.0",
-    "vitest": "^4.1.7"
+    "vite": "^8.3.4",
+    "vitest": "^4.1.11"
   }
 }

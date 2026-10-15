@@ -14,7 +14,7 @@ import {
   combineLetterboxWithLayerUv,
   computeLetterboxUv,
   uvRectToSourcePixels,
-} from '../webgpu/exportCompositor';
+} from '../webgpu/letterboxUv';
 import { calculateLetterboxRect, clampOpacity } from './canvas-renderer-helpers';
 import { isIdentityStabMatrix, stabMatrixToCanvasTransform } from './stabilization';
 import { applyKeyToImageData, KEY_MODE, type LayerKeyUniforms } from './overlayKey';

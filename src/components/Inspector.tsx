@@ -38,10 +38,9 @@ import {
   type PipCorner,
 } from '../utils/pipPreset';
 import { DEFAULT_CHROMA_KEY } from '../utils/overlayBlend';
-import { CaptionsPanel } from './CaptionsPanel';
 import { InspectorClipTab } from './inspector/InspectorClipTab';
-import { InspectorExportTab } from './inspector/InspectorExportTab';
 import { clamp } from '../utils/math';
+import { LazyBoundary, lazyNamed } from './LazyBoundary';
 import {
   findMatchingPreset,
   formatSeconds,
@@ -53,6 +52,15 @@ import {
   SECONDS_PER_INSPECTOR_THUMBNAIL,
 } from './inspector/helpers';
 import type { ClipValues, InspectorProps, InspectorTab } from './inspector/types';
+
+// The Clip tab is the default view; Captions (subtitle tooling, auto-caption,
+// FFmpeg caption modes) and Export (finishing / colour panels) load the first
+// time their tab is opened.
+const CaptionsPanel = lazyNamed(() => import('./CaptionsPanel'), 'CaptionsPanel');
+const InspectorExportTab = lazyNamed(
+  () => import('./inspector/InspectorExportTab'),
+  'InspectorExportTab',
+);
 
 function InspectorImpl({
   onChange,
@@ -494,19 +502,25 @@ function InspectorImpl({
             <div className="muted">Select a clip to edit trim and fades.</div>
           )
         )}
-        {tab === 'captions' && <CaptionsPanel {...captions} />}
+        {tab === 'captions' && (
+          <LazyBoundary label="Captions">
+            <CaptionsPanel {...captions} />
+          </LazyBoundary>
+        )}
         {tab === 'export' && (
-          <InspectorExportTab
-            exportSettings={exportSettings}
-            finishing={finishing}
-            colorManagement={colorManagement}
-            currentPresetName={currentPresetName}
-            onExportSettingsChange={onExportSettingsChange}
-            onFinishingChange={onFinishingChange}
-            onColorManagementChange={onColorManagementChange}
-            updateExport={updateExport}
-            updateResolutionPreset={updateResolutionPreset}
-          />
+          <LazyBoundary label="Export settings">
+            <InspectorExportTab
+              exportSettings={exportSettings}
+              finishing={finishing}
+              colorManagement={colorManagement}
+              currentPresetName={currentPresetName}
+              onExportSettingsChange={onExportSettingsChange}
+              onFinishingChange={onFinishingChange}
+              onColorManagementChange={onColorManagementChange}
+              updateExport={updateExport}
+              updateResolutionPreset={updateResolutionPreset}
+            />
+          </LazyBoundary>
         )}
       </div>
     </section>

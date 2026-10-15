@@ -21,7 +21,14 @@ import { TextOverlayPanel } from "./TextOverlayPanel";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MemoryWarningModal } from "./MemoryWarningModal";
 import { RecoveryModal } from "./RecoveryModal";
-import { RenderFailurePanel } from "./RenderFailurePanel";
+import { LazyBoundary, lazyNamed } from "./LazyBoundary";
+
+// Only shown after a failed render, and it reads the FFmpeg runtime's logs, so
+// it loads with that runtime rather than with the shell.
+const RenderFailurePanel = lazyNamed(
+  () => import("./RenderFailurePanel"),
+  "RenderFailurePanel",
+);
 
 /**
  * Props are limited to things the panels cannot get for themselves: the
@@ -204,16 +211,21 @@ export function AppShell(props: AppShellProps) {
           onCopyDebugInfo={onCopyDebugInfo}
         />
         {renderFailureMessage && !isRendering && (
-          <RenderFailurePanel
-            message={renderFailureMessage}
-            renderPlan={renderPlan}
-            onCopyDebug={onCopyDebugInfo}
-            onRetry={() => {
-              onDismissRenderFailure();
-              void onPerformRender();
-            }}
-            onDismiss={onDismissRenderFailure}
-          />
+          <LazyBoundary
+            label="Render failure details"
+            fallback={<p className="muted" role="alert">{renderFailureMessage}</p>}
+          >
+            <RenderFailurePanel
+              message={renderFailureMessage}
+              renderPlan={renderPlan}
+              onCopyDebug={onCopyDebugInfo}
+              onRetry={() => {
+                onDismissRenderFailure();
+                void onPerformRender();
+              }}
+              onDismiss={onDismissRenderFailure}
+            />
+          </LazyBoundary>
         )}
         <StorageRow
           onSaveRemote={onSaveRemote}

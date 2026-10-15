@@ -3,7 +3,13 @@ import { fileURLToPath } from 'node:url';
 import type { Connect, Plugin } from 'vite';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { CONTENT_SECURITY_POLICY, DEV_CONTENT_SECURITY_POLICY } from './src/utils/csp';
+// `.js` resolves to csp.ts for both TypeScript and Vite's config bundler, and
+// keeps the import extension-explicit for Vite's planned native config loader.
+import {
+  CONTENT_SECURITY_POLICY,
+  DEV_CONTENT_SECURITY_POLICY,
+  cspMetaPlugin,
+} from './src/utils/csp.js';
 
 /**
  * Serve .1ijs (UTF-16LE dual-encoded JS) with an explicit charset so browsers
@@ -67,9 +73,16 @@ function wasmDebugPlugin(): Plugin {
   };
 }
 
+// COOP/COEP make the page cross-origin isolated: SharedArrayBuffer and the
+// multi-threaded FFmpeg core depend on them.
+const CROSS_ORIGIN_ISOLATION_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+};
+
 export default defineConfig({
   base: './',
-  plugins: [react(), utf16JsMimePlugin(), wasmDebugPlugin()],
+  plugins: [react(), utf16JsMimePlugin(), wasmDebugPlugin(), cspMetaPlugin()],
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -78,15 +91,13 @@ export default defineConfig({
     host: 'localhost',
     port: 5173,
     headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      ...CROSS_ORIGIN_ISOLATION_HEADERS,
       'Content-Security-Policy': DEV_CONTENT_SECURITY_POLICY,
     },
   },
   preview: {
     headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      ...CROSS_ORIGIN_ISOLATION_HEADERS,
       'Content-Security-Policy': CONTENT_SECURITY_POLICY,
     },
   },

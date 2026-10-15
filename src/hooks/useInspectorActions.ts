@@ -16,12 +16,6 @@ import { clipDisplayPixelsToNormalized } from "../utils/overlayCoords";
 import { parseCanvasSize } from "../utils/pipPreset";
 import { createKenBurnsKeyframes } from "../utils/animatedLayout";
 import { getMediaInfo } from "../utils/media";
-import {
-  extractAudioToWav,
-  extractTrimmedVideoClip,
-  muxProcessedVideoWithSourceAudio,
-  getLastFfmpegLogs,
-} from "../ffmpeg/ffmpegService";
 import type { ClipValues } from "../components/Inspector";
 import { DEFAULT_CHROMA_KEY } from "../utils/overlayBlend";
 import type { UseEditHistoryResult } from "./useEditHistory";
@@ -32,6 +26,9 @@ import { editorActions, editorStore } from "../store/editorStore";
 import { isClipLocked, moveClipToVideoLayer } from "../utils/trackModel";
 import { useStorageAuthToken, useStorageEndpoint } from "../store";
 import { clamp01Finite } from "../utils/math";
+
+// FFmpeg is only needed once a clip action runs; see useRenderActions.
+const loadFfmpegService = () => import("../ffmpeg/ffmpegService");
 
 type InspectorActionsDeps = Pick<
   UseEditHistoryResult,
@@ -92,9 +89,11 @@ export function useInspectorActions({
     const baseName = selectedClip.file.name.replace(/\.[^.]+$/, "");
     const wavFileName = `${baseName}.wav`;
 
+    let ffmpeg: Awaited<ReturnType<typeof loadFfmpegService>> | null = null;
     try {
       const { setStatus } = settingsStore.getState();
-      const wavBlob = await extractAudioToWav(selectedClip, setStatus);
+      ffmpeg = await loadFfmpegService();
+      const wavBlob = await ffmpeg.extractAudioToWav(selectedClip, setStatus);
 
       let remoteUrl: string | undefined;
       if (storageEndpoint) {
@@ -144,7 +143,7 @@ export function useInspectorActions({
     } catch (error) {
       const err = error as Error;
       console.error("Audio extraction failed (full details):", err);
-      const recentLogs = getLastFfmpegLogs(20).join("\n");
+      const recentLogs = ffmpeg?.getLastFfmpegLogs(20).join("\n");
       if (recentLogs)
         console.error("Last FFmpeg logs for extract:\n" + recentLogs);
       settingsStore.getState().setStatus(`Audio extraction failed: ${err.message}`);
@@ -335,6 +334,8 @@ export function useInspectorActions({
       setStatus("Preparing trimmed clip for RIFE…");
 
       try {
+        const { extractTrimmedVideoClip, muxProcessedVideoWithSourceAudio } =
+          await loadFfmpegService();
         // Step 1: Export the trimmed segment via FFmpeg (lossless copy).
         // RIFE must operate on the trimmed portion only — running it on the
         // merged video would cause morphing artifacts across scene cuts.

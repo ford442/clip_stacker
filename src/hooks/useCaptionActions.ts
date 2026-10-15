@@ -3,7 +3,6 @@ import type { CaptionEntry, TextOverlayStyle } from "../types";
 import { editorStore } from "../store/editorStore";
 import { settingsStore } from "../store/settingsStore";
 import { uiActions } from "../store/uiStore";
-import { captionsToSrtBlob } from "../ffmpeg/captions";
 import {
   createCaptionId,
   MIN_CAPTION_DURATION_SEC,
@@ -149,13 +148,22 @@ export function useCaptionActions({
   );
 
   /** Download the caption track as a `.srt` sidecar. No re-encode involved. */
-  const handleExportCaptionsSrt = useCallback(() => {
+  const handleExportCaptionsSrt = useCallback(async () => {
     const { setStatus, exportSettings } = settingsStore.getState();
     const captions = editorStore.getState().captions;
     if (captions.length === 0) {
       setStatus("Add or import captions before exporting an .srt file.");
       return;
     }
+    // ffmpeg/captions pulls in the FFmpeg runtime; load it only on export.
+    let captionsModule: typeof import("../ffmpeg/captions");
+    try {
+      captionsModule = await import("../ffmpeg/captions");
+    } catch (error) {
+      setStatus(`Could not export .srt: ${(error as Error).message}`);
+      return;
+    }
+    const { captionsToSrtBlob } = captionsModule;
     downloadBlob(
       captionsToSrtBlob(captions),
       `${exportSettings.filename || "stacked"}.srt`,
