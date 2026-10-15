@@ -19,6 +19,8 @@ import {
   DEFAULT_MAX_DECODER_CURSORS,
   type ForwardFrameCursor,
 } from '../utils/decoderCursorPool';
+import { ReverseChunkCache } from '../utils/reverseFrames';
+import { clipIsReversed } from '../utils/reverseClip';
 import type { CapturedFrame, FrameRequest, WorkerClip } from './previewWorkerProtocol';
 
 /** Ring-buffer depth per *active* layer (not per library clip). */
@@ -48,6 +50,7 @@ export interface PreviewFrameSplit {
 export class PreviewDecoderSource {
   private readonly media = new Map<string, Blob>();
   private readonly pool: DecoderCursorPool;
+  private readonly reverseCache: ReverseChunkCache;
   private pendingOpen: { blob: Blob; trimStart: number; trimEnd: number } | null = null;
 
   constructor(
@@ -59,6 +62,11 @@ export class PreviewDecoderSource {
       if (!open) throw new Error('no media staged for cursor open');
       return this.cursorFactory(open.blob, open.trimStart, open.trimEnd);
     }, maxConcurrent);
+    this.reverseCache = new ReverseChunkCache(async (_key, trimStart, trimEnd) => {
+      const open = this.pendingOpen;
+      if (!open) throw new Error('no media staged for reverse cursor');
+      return this.cursorFactory(open.blob, trimStart, trimEnd);
+    });
   }
 
   get activeCount(): number {
@@ -71,6 +79,7 @@ export class PreviewDecoderSource {
     this.media.set(clipId, blob);
     // A replaced blob invalidates any cursor already decoding the old bytes.
     this.pool.pruneKeys((key) => !key.startsWith(`${clipId}::`));
+    this.reverseCache.pruneKeys((key) => !key.startsWith(`${clipId}::`));
   }
 
   hasClipMedia(clipId: string): boolean {
@@ -83,11 +92,13 @@ export class PreviewDecoderSource {
       if (!clipIds.has(id)) this.media.delete(id);
     }
     this.pool.pruneKeys((key) => clipIds.has(key.slice(0, key.indexOf('::'))));
+    this.reverseCache.pruneKeys((key) => clipIds.has(key.slice(0, key.indexOf('::'))));
   }
 
   /** Free every live decoder without forgetting registered media (pause/idle). */
   releaseCursors(): void {
     this.pool.pruneKeys(() => false);
+    this.reverseCache.destroy();
   }
 
   /**
@@ -133,7 +144,11 @@ export class PreviewDecoderSource {
     this.pendingOpen = { blob, trimStart: clip.trimStart, trimEnd };
     let frame: VideoFrame | null = null;
     try {
-      frame = await this.pool.frameAt(key, request.sourceTime);
+      // Reversed playback seeks backward every frame. The chunk cache decodes
+      // ~1s at a time instead of reopening the decoder per frame.
+      frame = clipIsReversed(clip)
+        ? ((await this.reverseCache.frameAt(key, request.sourceTime, clip.trimStart, trimEnd)) as VideoFrame | null)
+        : await this.pool.frameAt(key, request.sourceTime);
     } catch {
       return null;
     } finally {
@@ -152,6 +167,7 @@ export class PreviewDecoderSource {
 
   destroy(): void {
     this.pool.destroy();
+    this.reverseCache.destroy();
     this.media.clear();
   }
 }

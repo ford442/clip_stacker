@@ -34,6 +34,21 @@ describe('timelinePreview', () => {
     expect(shouldUseTimelinePreview([makeClip('audio', { kind: 'audio' })])).toBe(
       false,
     );
+    expect(shouldUseTimelinePreview([makeClip('a', { playbackRate: 2 })])).toBe(true);
+    expect(
+      shouldUseTimelinePreview([
+        makeClip('a', {
+          automation: {
+            playbackRate: [
+              { t: 0, value: 1 },
+              { t: 1, value: 2 },
+            ],
+          },
+        }),
+      ]),
+    ).toBe(true);
+    expect(shouldUseTimelinePreview([makeClip('a', { loopCount: 4 })])).toBe(true);
+    expect(shouldUseTimelinePreview([makeClip('a', { reversed: true })])).toBe(true);
     expect(
       shouldUseTimelinePreview([
         makeClip('still', { stillImage: true }),

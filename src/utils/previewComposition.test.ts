@@ -99,6 +99,27 @@ describe('previewComposition', () => {
       expect(plan.totalDuration).toBeCloseTo(5);
       expect(layers[0].localElapsed).toBeCloseTo(1);
       expect(layers[0].sourceTime).toBeCloseTo(2);
+      // Speed changes which source frame is shown. It does not scale the picture.
+      const at1x = buildPreviewCompositionPlan(
+        [makeClip('a', 10)],
+        [],
+        [],
+        [],
+        undefined,
+        1,
+      );
+      expect(layers[0].rect).toEqual(clipLayers(at1x)[0].rect);
+    });
+
+    it('samples a reversed clip from the end of the trim', () => {
+      const clips = [makeClip('a', 10, { trimStart: 1, trimEnd: 7, reversed: true })];
+      const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0);
+      expect(plan.totalDuration).toBeCloseTo(6);
+      const layers = clipLayers(plan);
+      expect(layers[0].sourceTime).toBeGreaterThan(6.99);
+      expect(layers[0].sourceTime).toBeLessThan(7);
+      const later = buildPreviewCompositionPlan(clips, [], [], [], undefined, 2);
+      expect(clipLayers(later)[0].sourceTime).toBeCloseTo(5);
     });
 
     it('maps sourceTime through a variable rate ramp', () => {

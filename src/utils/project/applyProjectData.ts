@@ -301,6 +301,8 @@ export async function applyProjectData(
     if (savedClip.loopCount != null) {
       liveClip.loopCount = Number(savedClip.loopCount);
     }
+    if (savedClip.reversed === true) liveClip.reversed = true;
+    else delete liveClip.reversed;
     const automation = normalizeClipAutomation(savedClip.automation);
     if (automation) liveClip.automation = automation;
     else delete liveClip.automation;

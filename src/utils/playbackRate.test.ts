@@ -13,6 +13,7 @@ import {
   getClipPlaybackRate,
   getTrimmedSourceDuration,
   nudgePlaybackRate,
+  constantRateOutputElapsed,
   outputDurationForRate,
   playbackRateForTargetDuration,
   playbackRateToFitBeats,
@@ -62,6 +63,13 @@ describe('playbackRate', () => {
   it('formats rates without trailing zeros', () => {
     expect(formatPlaybackRate(2)).toBe('2');
     expect(formatPlaybackRate(0.5)).toBe('0.5');
+  });
+
+  it('maps source elapsed onto the output clock at a constant rate', () => {
+    expect(constantRateOutputElapsed(0, 2)).toBe(0);
+    expect(constantRateOutputElapsed(4, 1)).toBe(4);
+    expect(constantRateOutputElapsed(4, 2)).toBe(2);
+    expect(constantRateOutputElapsed(4, 0.5)).toBe(8);
   });
 
   it('computes trimmed source duration and fit-to-target rate', () => {

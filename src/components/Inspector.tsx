@@ -62,6 +62,7 @@ function InspectorImpl({
   onExtractAudio,
   onRife,
   onStabilizeChange,
+  onReverseChange,
   captions,
 }: InspectorProps) {
   const { exportSettings, finishing, colorManagement, rifeProcessing } = useStore(
@@ -482,6 +483,7 @@ function InspectorImpl({
               onAutomationChange={onAutomationChange}
               onExtractAudio={onExtractAudio}
               onStabilizeChange={onStabilizeChange}
+              onReverseChange={onReverseChange}
               onRife={onRife}
               onKeyframesChange={onKeyframesChange}
               onApplyKenBurns={onApplyKenBurns}

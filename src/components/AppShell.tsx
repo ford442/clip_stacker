@@ -78,6 +78,7 @@ export type AppShellProps = {
   onExtractAudio: () => Promise<void>;
   onRife: (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => Promise<void>;
   onStabilizeChange: (enabled: boolean) => void;
+  onReverseChange: (enabled: boolean) => void;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
@@ -145,6 +146,7 @@ export function AppShell(props: AppShellProps) {
     onExtractAudio,
     onRife,
     onStabilizeChange,
+    onReverseChange,
     onMoveUp,
     onMoveDown,
     onReorder,
@@ -245,6 +247,7 @@ export function AppShell(props: AppShellProps) {
           onExtractAudio={onExtractAudio}
           onRife={onRife}
           onStabilizeChange={onStabilizeChange}
+          onReverseChange={onReverseChange}
           captions={captions}
         />
       </section>

@@ -15,6 +15,7 @@ import {
   audioTempoFilterSegment,
   getClipPlaybackRate,
 } from "../utils/playbackRate";
+import { audioReversePrefix } from "../utils/reverseClip";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   renderTimelineAudioMixWav,
@@ -417,7 +418,7 @@ export async function muxVideoWithAudio(
     const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
     const atempo = audioTempoFilterSegment(getClipPlaybackRate(clip));
 
-    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo}`;
+    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS${atempo}`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;

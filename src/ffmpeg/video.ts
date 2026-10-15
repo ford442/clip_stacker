@@ -15,6 +15,7 @@ import {
   getClipPlaybackRate,
   videoSetptsFilter,
 } from "../utils/playbackRate";
+import { audioReversePrefix, videoReversePrefix } from "../utils/reverseClip";
 import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
 import {
   buildOverlayAlphaFilters,
@@ -129,7 +130,7 @@ export function buildPipFilterComplex(
     const atempo = audioTempoFilterSegment(rate);
 
     if (clip.kind === "video") {
-      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},${setpts}`;
+      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},${videoReversePrefix(clip)}${setpts}`;
 
       if (isBase) {
         // Normalise to output canvas size
@@ -194,7 +195,7 @@ export function buildPipFilterComplex(
     // Still images (and sources proven to be silent) have no `[i:a]` to trim;
     // synthesize silence so the concat / amix graph still sees matching streams.
     let af = clipHasSourceAudio(clip)
-      ? `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`
+      ? `[${i}:a]atrim=start=${clip.trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`
       : `anullsrc=r=44100:cl=stereo:d=${dur},aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)

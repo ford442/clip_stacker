@@ -284,6 +284,26 @@ export function useInspectorActions({
     [selectedClipId, pushHistory, setClips],
   );
 
+  const handleReverseChange = useCallback(
+    (enabled: boolean) => {
+      if (!selectedClipId) return;
+      pushHistory();
+      setClips((prev) =>
+        prev.map((clip) => {
+          if (clip.id !== selectedClipId) return clip;
+          if (enabled) return { ...clip, reversed: true };
+          const next = { ...clip };
+          delete next.reversed;
+          return next;
+        }),
+      );
+      settingsStore
+        .getState()
+        .setStatus(enabled ? "Clip plays backward." : "Clip plays forward.");
+    },
+    [selectedClipId, pushHistory, setClips],
+  );
+
   const handleRife = useCallback(
     async (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
@@ -384,5 +404,6 @@ export function useInspectorActions({
     handleApplyKenBurns,
     handleRife,
     handleStabilizeChange,
+    handleReverseChange,
   };
 }

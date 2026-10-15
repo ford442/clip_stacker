@@ -100,15 +100,24 @@ export function App() {
   });
 
   const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null!);
+  // Speed (and every other clip edit) replaces `clips`. Re-running the
+  // playhead jump on that would seek back to the in-point on every slider
+  // tick, so the only visible change was the clip block changing length.
+  const playheadPositionedForClipId = useRef<string | null>(null);
 
   useEffect(() => {
     if (!selectedClipId) {
+      playheadPositionedForClipId.current = null;
       setPlayheadTime(null);
       return;
     }
+    if (playheadPositionedForClipId.current === selectedClipId) return;
     const clip = clips.find((c) => c.id === selectedClipId);
     if (!clip) return;
-    setPlayheadTime(clip.trimStart);
+    playheadPositionedForClipId.current = selectedClipId;
+    // Output seconds. Preview and export map this through playback rate;
+    // storing trimStart here seeks a trimmed clip to the wrong frame.
+    setPlayheadTime(clip.timelineStart ?? 0);
   }, [selectedClipId, clips]);
 
   const clipActions = useClipActions({
@@ -290,6 +299,7 @@ export function App() {
       onExtractAudio={inspectorActions.handleExtractAudio}
       onRife={inspectorActions.handleRife}
       onStabilizeChange={inspectorActions.handleStabilizeChange}
+      onReverseChange={inspectorActions.handleReverseChange}
       onMoveUp={timelineActions.handleMoveUp}
       onMoveDown={timelineActions.handleMoveDown}
       onReorder={timelineActions.handleReorder}

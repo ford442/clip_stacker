@@ -53,6 +53,7 @@ export interface InspectorClipTabProps {
   onAutomationChange?: (automation: ClipAutomation | undefined) => void;
   onExtractAudio?: () => void;
   onStabilizeChange?: (enabled: boolean) => void;
+  onReverseChange?: (enabled: boolean) => void;
   onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onApplyKenBurns?: () => void;
@@ -96,6 +97,7 @@ export function InspectorClipTab(props: InspectorClipTabProps) {
         updateVolume={(value) => props.update('volume', value)}
         onAutomationChange={props.onAutomationChange}
         onExtractAudio={props.onExtractAudio}
+        onReverseChange={props.onReverseChange}
       />
       <InspectorClipVideoToolsSection
         clip={clip}

@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
@@ -356,6 +357,17 @@ export const useEditorCaptionStyle = () =>
 export const useEditorMasterAudioMarkers = () =>
   useStore(editorStore, useShallow((s) => s.masterAudioMarkers));
 export const useSelectedClipId = () => useStore(editorStore, (s) => s.selectedClipId);
+
+const EMPTY_SELECTION: readonly string[] = [];
+
+/** Ids in the current selection. Today that is the primary clip, or none. */
+export function useSelectedClipIds(): readonly string[] {
+  const selectedClipId = useSelectedClipId();
+  return useMemo(
+    () => (selectedClipId ? [selectedClipId] : EMPTY_SELECTION),
+    [selectedClipId],
+  );
+}
 export const useEditorMasterAudio = () => useStore(editorStore, (s) => s.masterAudio);
 
 /** Clips on the timeline (active A/B variant per group, track-aware order). */

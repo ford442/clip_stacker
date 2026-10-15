@@ -25,8 +25,11 @@ export interface EditSnapshot {
   captionStyle: Partial<TextOverlayStyle>;
   masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
-  /** Multi-select ids (includes the primary selectedClipId when set). */
-  selectedClipIds: string[];
+  /**
+   * Multi-select ids (includes the primary selectedClipId when set).
+   * Omitted on snapshots taken before multi-select; treat as just the primary.
+   */
+  selectedClipIds?: string[];
   masterAudio: MasterAudio | null;
 }
 

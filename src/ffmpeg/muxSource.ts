@@ -9,6 +9,7 @@ import type {
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
+import { audioReversePrefix } from "../utils/reverseClip";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   isFfmpegLoadFailed,
@@ -143,7 +144,7 @@ export async function muxProcessedVideoWithSourceAudio(
         "processed video write source audio",
       );
 
-      const filterComplex = `[1:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS[aout]`;
+      const filterComplex = `[1:a]atrim=start=${clip.trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS[aout]`;
 
       await safeExec(
         ffmpeg,

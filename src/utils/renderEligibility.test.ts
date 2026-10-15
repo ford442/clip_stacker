@@ -53,6 +53,10 @@ describe('renderEligibility', () => {
     it('is true when loopCount > 1', () => {
       expect(clipNeedsEffects(makeClip({ loopCount: 4 }))).toBe(true);
     });
+
+    it('is true when the clip plays backward', () => {
+      expect(clipNeedsEffects(makeClip({ reversed: true }))).toBe(true);
+    });
   });
 
   describe('needsMultiLayerComposition', () => {
@@ -95,6 +99,30 @@ describe('renderEligibility', () => {
 
     it('is true for looped clips (must not use the loop-unaware sequential WebCodecs path)', () => {
       expect(needsMultiLayerComposition([makeClip({ loopCount: 4 })], [])).toBe(true);
+    });
+
+    it('is true when playback rate is not 1× so export samples remapped source time', () => {
+      expect(needsMultiLayerComposition([makeClip({ playbackRate: 2 })], [])).toBe(true);
+      expect(needsMultiLayerComposition([makeClip({ playbackRate: 1 })], [])).toBe(false);
+      expect(
+        needsMultiLayerComposition(
+          [
+            makeClip({
+              automation: {
+                playbackRate: [
+                  { t: 0, value: 1 },
+                  { t: 2, value: 2 },
+                ],
+              },
+            }),
+          ],
+          [],
+        ),
+      ).toBe(true);
+    });
+
+    it('is true for a reversed clip so export does not walk the trim forward', () => {
+      expect(needsMultiLayerComposition([makeClip({ reversed: true })], [])).toBe(true);
     });
 
     it('is false for a clip with loopCount 1', () => {

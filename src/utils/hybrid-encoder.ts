@@ -29,6 +29,9 @@ import {
   pictureTransformPlanFields,
 } from './renderEligibility';
 import { clipHasPictureTransform } from './animatedLayout';
+import { clipHasLoop } from './playbackRate';
+import { clipIsReversed } from './reverseClip';
+import { clipHasRateAutomation } from './timeRemap';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { resolveLayerKey } from './overlayKey';
@@ -133,11 +136,20 @@ export async function hybridMergeClips(
   const hasPipClip = clips.some(
     (clip) => (clip.layerIndex ?? 0) > 0 || clipHasPictureTransform(clip),
   );
+  // Canvas capture is one realtime <video> play. A speed curve or a loop is
+  // not a single playbackRate, so those fall through to the compositor.
+  // A constant rate is applied as video.playbackRate inside the renderer.
   const canvasCantComposite =
-    hasKeyedClip || hasPipClip || hasActiveTransitions(transitions) || isFinishingActive(finishing);
+    hasKeyedClip ||
+    hasPipClip ||
+    hasActiveTransitions(transitions) ||
+    isFinishingActive(finishing) ||
+    clips.some(
+      (clip) => clipHasRateAutomation(clip) || clipHasLoop(clip) || clipIsReversed(clip),
+    );
   if (useCanvas && canvasCantComposite) {
     onStatus(
-      'Canvas renderer skipped — the timeline has keys, finishing, transitions, PiP, or picture transforms it can\'t composite; using the GPU/FFmpeg compositor instead.',
+      'Canvas renderer skipped — the timeline has keys, finishing, transitions, PiP, picture transforms, speed curves, loops, or reversed clips it can\'t composite; using the GPU/FFmpeg compositor instead.',
     );
   } else if (useCanvas && typeof MediaRecorder !== 'undefined') {
     try {

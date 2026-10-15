@@ -196,6 +196,12 @@ export interface Clip {
    */
   playbackRate?: number;
   /**
+   * Play the trimmed window backward. Output duration is unchanged: speed
+   * and loops still apply, and each loop cycle replays the reversed window.
+   * Omitted on older projects (forward).
+   */
+  reversed?: boolean;
+  /**
    * Play the trimmed + speed-remapped output window this many times, back to
    * back, as one timeline item. Multiplies output duration. 1 = once (default).
    * Omitted in older projects (treated as 1).
@@ -298,6 +304,8 @@ export interface SerializedClip {
   chromaKey?: ChromaKeySettings;
   volume?: number;
   playbackRate?: number;
+  /** Play the trim window backward. Omit on older projects. */
+  reversed?: boolean;
   /** Play the remapped trim window this many times. 1 = once. Omit in old projects. */
   loopCount?: number;
   automation?: ClipAutomation;

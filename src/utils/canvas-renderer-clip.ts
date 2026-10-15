@@ -8,6 +8,7 @@
 
 import type { Clip } from "../types";
 import type { RendererOptions, RenderProgress, ProgressCallback } from "./canvas-renderer-types";
+import { constantRateOutputElapsed, getClipPlaybackRate } from "./playbackRate";
 import { getClipDuration } from "./project";
 import { bassLevelFromAnalyserBytes } from "./canvas-renderer-audio";
 import { calculateLetterboxRect, computeFadeAlpha, waitForSeeked } from "./canvas-renderer-helpers";
@@ -231,6 +232,9 @@ export class CanvasRenderer {
       video.src = clip.objectUrl;
       video.currentTime = trimStart;
       await waitForSeeked(video);
+      // Realtime capture: the media clock still runs trimStart→trimEnd, so the
+      // recording is source/rate long and the picture plays at `rate`.
+      video.playbackRate = getClipPlaybackRate(clip);
       await video.play();
 
       await new Promise<void>((resolve) => {
@@ -245,7 +249,10 @@ export class CanvasRenderer {
           }
 
           const mediaTime = video.currentTime;
-          const elapsed = Math.max(0, mediaTime - trimStart);
+          const elapsed = constantRateOutputElapsed(
+            Math.max(0, mediaTime - trimStart),
+            getClipPlaybackRate(clip),
+          );
 
           if (
             mediaTime >=
@@ -321,6 +328,7 @@ export class CanvasRenderer {
   ): Promise<void> {
     const audio = new Audio(clip.objectUrl);
     audio.currentTime = clip.trimStart;
+    audio.playbackRate = getClipPlaybackRate(clip);
 
     if (audioCtx && analyser) {
       try {
@@ -362,7 +370,10 @@ export class CanvasRenderer {
             return;
           }
 
-          const elapsed = Math.max(0, audio.currentTime - clip.trimStart);
+          const elapsed = constantRateOutputElapsed(
+            Math.max(0, audio.currentTime - clip.trimStart),
+            getClipPlaybackRate(clip),
+          );
 
           // Black background for audio-only clips.
           this.ctx.fillStyle = "#000";

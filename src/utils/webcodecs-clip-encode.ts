@@ -3,6 +3,7 @@
  */
 
 import type { Clip } from '../types';
+import { constantRateOutputElapsed, getClipPlaybackRate } from './playbackRate';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
 import { ClipFrameDecoder } from './webcodecs-decoder';
 import {
@@ -42,7 +43,11 @@ export async function encodeVideoFrames(
 ): Promise<number> {
   const trimStart = clip.trimStart;
   const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-  const clipDuration = trimEnd - trimStart;
+  const sourceDuration = trimEnd - trimStart;
+  // Output span is the trimmed source divided by the constant playback rate.
+  // Speed clips are normally routed to the timeline compositor; this keeps the
+  // sequential path from writing a 1× file if it is reached anyway.
+  const outputDuration = constantRateOutputElapsed(sourceDuration, getClipPlaybackRate(clip));
 
   if (clip.kind === 'audio') {
     drawBlackFrame(compositor, targetWidth, targetHeight);
@@ -51,11 +56,11 @@ export async function encodeVideoFrames(
       overlayPass,
       clipGlobalStartSec,
       startTimeUs,
-      Math.round(clipDuration * 1_000_000),
+      Math.round(outputDuration * 1_000_000),
     );
     encoder.encode(frame, { keyFrame: true });
     frame.close();
-    return startTimeUs + Math.round(clipDuration * 1_000_000);
+    return startTimeUs + Math.round(outputDuration * 1_000_000);
   }
 
   // Preferred hot path: WebCodecs VideoDecoder demux/decode — exact frame
@@ -72,7 +77,7 @@ export async function encodeVideoFrames(
       finishing,
       trimStart,
       trimEnd,
-      clipDuration,
+      outputDuration,
       clipGlobalStartSec,
       overlayPass,
     );
@@ -90,7 +95,10 @@ export async function encodeVideoFrames(
     video.src = clip.objectUrl;
     video.currentTime = trimStart;
     await waitForSeeked(video);
+    // Capture faster than realtime. Timestamps below follow media time, then
+    // the clip's playback rate, so this 3× does not change the exported speed.
     video.playbackRate = 3.0;
+    const contentRate = getClipPlaybackRate(clip);
 
     let frameCount = 0;
 
@@ -108,13 +116,14 @@ export async function encodeVideoFrames(
             return;
           }
 
-          const elapsed = Math.max(0, mediaTime - trimStart);
+          const sourceElapsed = Math.max(0, mediaTime - trimStart);
+          const elapsed = constantRateOutputElapsed(sourceElapsed, contentRate);
           const timestamp = startTimeUs + Math.round(elapsed * 1_000_000);
           drawCompositedFrame(
             compositor,
             video,
             elapsed,
-            clipDuration,
+            outputDuration,
             clip,
             targetWidth,
             targetHeight,
@@ -128,7 +137,7 @@ export async function encodeVideoFrames(
               overlayPass,
               clipGlobalStartSec + elapsed,
               timestamp,
-              Math.round(1_000_000 / TARGET_FPS),
+              Math.max(1, Math.round(1_000_000 / TARGET_FPS / contentRate)),
             );
             encoder.encode(frame, { keyFrame: frameCount % 60 === 0 });
             frame.close();
@@ -154,13 +163,14 @@ export async function encodeVideoFrames(
         video.currentTime = t;
         await waitForSeeked(video);
 
-        const elapsed = t - trimStart;
+        const sourceElapsed = t - trimStart;
+        const elapsed = constantRateOutputElapsed(sourceElapsed, contentRate);
         const timestamp = startTimeUs + Math.round(elapsed * 1_000_000);
         drawCompositedFrame(
           compositor,
           video,
           elapsed,
-          clipDuration,
+          outputDuration,
           clip,
           targetWidth,
           targetHeight,
@@ -173,7 +183,7 @@ export async function encodeVideoFrames(
           overlayPass,
           clipGlobalStartSec + elapsed,
           timestamp,
-          Math.round(1_000_000 / TARGET_FPS),
+          Math.max(1, Math.round(1_000_000 / TARGET_FPS / contentRate)),
         );
         encoder.encode(frame, { keyFrame: frameCount % 60 === 0 });
         frame.close();
@@ -186,13 +196,14 @@ export async function encodeVideoFrames(
     if (document.body.contains(video)) document.body.removeChild(video);
   }
 
-  return startTimeUs + Math.round(clipDuration * 1_000_000);
+  return startTimeUs + Math.round(outputDuration * 1_000_000);
 }
 
 /**
  * Decoder-driven frame delivery: VideoDecoder → ring buffer → compositor →
  * VideoEncoder, no HTMLVideoElement in the loop. Runs at decode speed rather
- * than playback speed.
+ * than playback speed. Frame timestamps are output-timeline seconds
+ * (`sourceElapsed / playbackRate`), so a 2× clip occupies half the file.
  */
 async function encodeVideoFramesFromDecoder(
   encoder: VideoEncoder,
@@ -204,22 +215,24 @@ async function encodeVideoFramesFromDecoder(
   finishing: FinishingSettings,
   trimStart: number,
   trimEnd: number,
-  clipDuration: number,
+  outputDuration: number,
   clipGlobalStartSec: number,
   overlayPass: DecoderTextOverlayPass | null,
 ): Promise<number> {
   const decoder = await ClipFrameDecoder.open(clip.file, { trimStart, trimEnd });
+  const contentRate = getClipPlaybackRate(clip);
   let frameCount = 0;
 
   try {
     for await (const frame of decoder.frames()) {
-      const elapsed = Math.max(0, frame.timestamp / 1_000_000 - trimStart);
+      const sourceElapsed = Math.max(0, frame.timestamp / 1_000_000 - trimStart);
+      const elapsed = constantRateOutputElapsed(sourceElapsed, contentRate);
       try {
         drawCompositedVideoFrame(
           compositor,
           frame,
           elapsed,
-          clipDuration,
+          outputDuration,
           clip,
           targetWidth,
           targetHeight,
@@ -235,7 +248,7 @@ async function encodeVideoFramesFromDecoder(
         overlayPass,
         clipGlobalStartSec + elapsed,
         startTimeUs + Math.round(elapsed * 1_000_000),
-        Math.round(1_000_000 / TARGET_FPS),
+        Math.max(1, Math.round(1_000_000 / TARGET_FPS / contentRate)),
       );
       encoder.encode(encodedFrame, { keyFrame: frameCount % 60 === 0 });
       encodedFrame.close();
@@ -252,5 +265,5 @@ async function encodeVideoFramesFromDecoder(
   if (frameCount === 0) {
     throw new Error('VideoDecoder path produced no frames');
   }
-  return startTimeUs + Math.round(clipDuration * 1_000_000);
+  return startTimeUs + Math.round(outputDuration * 1_000_000);
 }

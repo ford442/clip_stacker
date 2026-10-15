@@ -11,6 +11,9 @@ import {
 } from '../utils/colorManagement';
 import { grainFrameSeedFromTime } from '../utils/grain';
 import { projectHasKeyframeAnimation } from '../utils/animatedLayout';
+import { clipHasLoop, clipHasPlaybackRateAdjustment } from '../utils/playbackRate';
+import { clipIsReversed } from '../utils/reverseClip';
+import { clipHasRateAutomation } from '../utils/timeRemap';
 import { layerWarpDrawParams, transitionWarpParams } from '../utils/clipTransform';
 import {
   buildPreviewCompositionPlan,
@@ -579,6 +582,20 @@ export function shouldUseTimelinePreview(
   if (clips.length === 0) return false;
   if (projectHasKeyframeAnimation(clips, textOverlays)) return true;
   if (clips.some((clip) => clip.stillImage)) return true;
+  // The single-clip <video> preview plays the file at 1× and treats the
+  // playhead as source time. Speed, curves, and loops have to go through
+  // the composition plan, which seeks each frame at the remapped source time.
+  if (
+    clips.some(
+      (clip) =>
+        clipHasPlaybackRateAdjustment(clip) ||
+        clipHasRateAutomation(clip) ||
+        clipHasLoop(clip) ||
+        clipIsReversed(clip),
+    )
+  ) {
+    return true;
+  }
   const hasVideo = clips.some((clip) => clip.kind === 'video');
   if (!hasVideo) return false;
   return (

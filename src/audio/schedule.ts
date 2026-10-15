@@ -11,6 +11,7 @@ import { clampClipVolume } from '../utils/audioVolume';
 import type { Keyframe } from '../utils/keyframes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
 import { getClipLoopCount, getClipPlaybackRate } from '../utils/playbackRate';
+import { clipIsReversed } from '../utils/reverseClip';
 import { clipHasRateAutomation, cycleDurationForClip } from '../utils/timeRemap';
 
 /** One clip's audio placement on the output timeline. */
@@ -47,8 +48,15 @@ export interface AudioScheduleEntry {
   /** Clip snapshot fields needed to rebuild a remapped buffer. */
   rateRemapClip?: Pick<
     Clip,
-    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'
+    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'reversed'
   >;
+  /**
+   * Constant-rate reverse: play a buffer that is the trim window backward,
+   * still at `playbackRate`. Speed curves use `rateRemap` instead and flip
+   * the source-offset map.
+   */
+  reverseAudio?: boolean;
+  reverseClip?: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration'>;
   /**
    * Audio-bed / music track clip. When its timeline range overlaps a non-bed
    * (dialogue / base) entry, playback ducks its gain for intelligible speech.
@@ -71,6 +79,10 @@ function entryFromClip(
 ): AudioScheduleEntry {
   const automation = normalizeClipAutomation(clip.automation);
   const rateRemap = clipHasRateAutomation(clip);
+  const reversed = clipIsReversed(clip);
+  // A speed curve already rebuilds the buffer. Constant-rate reverse is a
+  // plain sample reversal of the trim, then the same playbackRate as forward.
+  const reverseAudio = reversed && !rateRemap;
   return {
     clipId: clip.id,
     objectUrl: clip.objectUrl,
@@ -78,8 +90,8 @@ function entryFromClip(
     duration,
     cycleDuration: cycleDurationForClip(clip),
     loopCount: getClipLoopCount(clip),
-    // Remapped buffers already start at the trim window.
-    bufferOffset: rateRemap ? 0 : Math.max(0, clip.trimStart),
+    // Remapped and reversed buffers already start at the trim window.
+    bufferOffset: rateRemap || reverseAudio ? 0 : Math.max(0, clip.trimStart),
     volume: clampClipVolume(clip.volume),
     audioFadeIn: Math.max(0, clip.audioFadeIn),
     audioFadeOut: Math.max(0, clip.audioFadeOut),
@@ -97,6 +109,17 @@ function entryFromClip(
             duration: clip.duration,
             playbackRate: clip.playbackRate,
             automation: clip.automation,
+            ...(reversed ? { reversed: true } : {}),
+          },
+        }
+      : {}),
+    ...(reverseAudio
+      ? {
+          reverseAudio: true,
+          reverseClip: {
+            trimStart: clip.trimStart,
+            trimEnd: clip.trimEnd,
+            duration: clip.duration,
           },
         }
       : {}),
@@ -215,6 +238,8 @@ export function schedulesMatchStructure(
       left.bufferOffset !== right.bufferOffset ||
       left.playbackRate !== right.playbackRate ||
       Boolean(left.rateRemap) !== Boolean(right.rateRemap) ||
+      Boolean(left.reverseAudio) !== Boolean(right.reverseAudio) ||
+      Boolean(left.rateRemapClip?.reversed) !== Boolean(right.rateRemapClip?.reversed) ||
       Boolean(left.isBed) !== Boolean(right.isBed) ||
       !keyframesMatch(left.volumeAutomation, right.volumeAutomation) ||
       !keyframesMatch(left.panAutomation, right.panAutomation) ||

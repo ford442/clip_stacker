@@ -63,6 +63,9 @@ export function sanitizeClipAdjustments(clip: Clip): void {
     clip.loopCount = clampClipLoopCount(clip.loopCount);
   }
 
+  if (clip.reversed) clip.reversed = true;
+  else delete clip.reversed;
+
   const maxFade = Math.max(0, getClipDuration(clip) / 2 - FADE_SAFETY_MARGIN);
   clip.videoFadeIn = Math.min(Math.max(0, clip.videoFadeIn), maxFade);
   clip.videoFadeOut = Math.min(Math.max(0, clip.videoFadeOut), maxFade);

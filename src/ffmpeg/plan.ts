@@ -10,6 +10,7 @@ import type {
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/project";
 import { clipHasLoop, getClipLoopCount } from "../utils/playbackRate";
+import { clipIsReversed } from "../utils/reverseClip";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   allVideoClipsMatchOutputResolution,
@@ -250,6 +251,7 @@ function computeRenderPlanPath(
     let rifeClipCount = 0;
     let loopClipCount = 0;
     let soleLoopCount: number | null = null;
+    let reverseClipCount = 0;
     for (const clip of effectClips) {
       if (clip.kind === "audio") {
         audioClipCount++;
@@ -275,6 +277,7 @@ function computeRenderPlanPath(
         loopClipCount++;
         soleLoopCount = getClipLoopCount(clip);
       }
+      if (clipIsReversed(clip)) reverseClipCount++;
     }
 
     const reasonParts: string[] = [];
@@ -283,6 +286,7 @@ function computeRenderPlanPath(
     if (volumeClipCount > 0) reasonParts.push("have volume adjustments");
     if (speedClipCount > 0) reasonParts.push("have speed adjustments");
     if (rifeClipCount > 0) reasonParts.push("are RIFE-processed");
+    if (reverseClipCount > 0) reasonParts.push("are reversed");
     if (loopClipCount > 0) {
       reasonParts.push(
         loopClipCount === 1 && soleLoopCount != null

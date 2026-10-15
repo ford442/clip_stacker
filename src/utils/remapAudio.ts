@@ -45,19 +45,22 @@ function fromPlanar(
 
 /** Build source-frame offsets for each synthesis hop center. */
 export function buildSourceOffsetMap(
-  clip: Pick<Clip, 'playbackRate' | 'automation'>,
+  clip: Pick<Clip, 'playbackRate' | 'automation' | 'reversed'>,
   outFrames: number,
   sampleRate: number,
   hop: number,
+  sourceFrames?: number,
 ): Float32Array {
   const numHops = Math.max(1, Math.ceil(outFrames / hop) + 1);
   const offsets = new Float32Array(numHops);
   const defaultRate = getClipPlaybackRate(clip);
   const track = clip.automation?.playbackRate;
+  const reversed = clip.reversed === true && sourceFrames != null && sourceFrames > 1;
   for (let h = 0; h < numHops; h++) {
     const tOut = (h * hop) / sampleRate;
     const sourceSec = integrateRateToSourceOffset(track, defaultRate, tOut);
-    offsets[h] = sourceSec * sampleRate;
+    const forward = sourceSec * sampleRate;
+    offsets[h] = reversed ? Math.max(0, sourceFrames! - 1 - forward) : forward;
   }
   return offsets;
 }
@@ -125,7 +128,7 @@ function jsRemapPlanar(
 export async function remapClipAudioBuffer(
   clip: Pick<
     Clip,
-    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'
+    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'reversed'
   >,
   source: AudioBuffer,
   audioCtx: BaseAudioContext,
@@ -144,7 +147,7 @@ export async function remapClipAudioBuffer(
   const outFrames = Math.max(1, Math.floor(outSec * sr));
 
   const planarIn = toPlanar(source, startFrame, inFrames);
-  const offsets = buildSourceOffsetMap(clip, outFrames, sr, HOP);
+  const offsets = buildSourceOffsetMap(clip, outFrames, sr, HOP, inFrames);
 
   let planarOut = await wasmRemapPlanar(
     planarIn,

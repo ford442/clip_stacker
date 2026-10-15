@@ -14,6 +14,8 @@ import type { Clip } from '../types';
 import type { LayerFrameProvider, PreviewClipLayer } from './previewComposition';
 import { DecoderFrameCursor } from './decoderCursor';
 import { DecoderCursorPool, DEFAULT_MAX_DECODER_CURSORS } from './decoderCursorPool';
+import { ReverseChunkCache } from './reverseFrames';
+import { clipIsReversed } from './reverseClip';
 
 export { DEFAULT_MAX_DECODER_CURSORS };
 
@@ -24,6 +26,7 @@ function layerKey(layer: PreviewClipLayer): string {
 export class TimelineDecoderFrameProvider implements LayerFrameProvider {
   private readonly pending = new Map<string, Clip>();
   private readonly pool: DecoderCursorPool;
+  private readonly reverseCache: ReverseChunkCache;
 
   constructor(maxConcurrent: number = DEFAULT_MAX_DECODER_CURSORS) {
     this.pool = new DecoderCursorPool(async (key) => {
@@ -32,6 +35,11 @@ export class TimelineDecoderFrameProvider implements LayerFrameProvider {
       const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
       return DecoderFrameCursor.open(clip.file, clip.trimStart, trimEnd);
     }, maxConcurrent);
+    this.reverseCache = new ReverseChunkCache(async (key, trimStart, trimEnd) => {
+      const clip = this.pending.get(key);
+      if (!clip) throw new Error(`no clip registered for ${key}`);
+      return DecoderFrameCursor.open(clip.file, trimStart, trimEnd);
+    });
   }
 
   /** Live decoder cursor count (for budget instrumentation, mirrors ClipMediaPool.size). */
@@ -45,6 +53,15 @@ export class TimelineDecoderFrameProvider implements LayerFrameProvider {
     const key = layerKey(layer);
     this.pending.set(key, clip);
     try {
+      if (clipIsReversed(clip)) {
+        const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
+        return (await this.reverseCache.frameAt(
+          key,
+          layer.sourceTime,
+          clip.trimStart,
+          trimEnd,
+        )) as VideoFrame | null;
+      }
       return await this.pool.frameAt(key, layer.sourceTime);
     } finally {
       this.pending.delete(key);
@@ -53,6 +70,7 @@ export class TimelineDecoderFrameProvider implements LayerFrameProvider {
 
   destroy(): void {
     this.pool.destroy();
+    this.reverseCache.destroy();
     this.pending.clear();
   }
 }

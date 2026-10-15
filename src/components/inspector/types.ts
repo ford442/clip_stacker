@@ -35,6 +35,8 @@ export interface InspectorProps {
   onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
   /** Toggle camera-shake stabilization for the selected video clip. */
   onStabilizeChange?: (enabled: boolean) => void;
+  /** Play the selected clip's trim window backward. */
+  onReverseChange?: (enabled: boolean) => void;
   /** Caption-track callbacks, forwarded to the Captions tab. */
   captions: CaptionsPanelProps;
 }

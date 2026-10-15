@@ -10,10 +10,10 @@ import {
 } from './timeRemap';
 import {
   audioTempoFilterSegment,
-  formatPlaybackRate,
   getClipPlaybackRate,
   videoSetptsFilter,
 } from './playbackRate';
+import { audioReversePrefix, clipIsReversed, trimmedSourceEnd, videoReversePrefix } from './reverseClip';
 
 export interface VariableSpeedSegment {
   /** Output-local start time (seconds). */
@@ -41,12 +41,19 @@ export interface VariableSpeedFilterResult {
 const MIN_SEGMENT_SEC = 0.02;
 const DEFAULT_SEGMENT_COUNT = 48;
 
+/** Trim bounds are seconds, not playback rates — do not clamp them to 0.25–4. */
+function formatTrimSeconds(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return '0';
+  const fixed = value.toFixed(6);
+  return fixed.replace(/\.?0+$/, '') || '0';
+}
+
 /**
  * Build constant-rate segments covering the clip's output duration.
  * Segment boundaries include automation keyframe times for accuracy.
  */
 export function buildVariableSpeedSegments(
-  clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'>,
+  clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'reversed'>,
   segmentCount = DEFAULT_SEGMENT_COUNT,
 ): VariableSpeedSegment[] {
   // One cycle only — looping repeats this segment set, it does not stretch it.
@@ -86,12 +93,22 @@ export function buildVariableSpeedSegments(
     );
     const sourceConsumed = Math.max(1e-9, srcOffset1 - srcOffset0);
     const rate = sourceConsumed / span;
+    // A reversed clip plays each consumed slice backward, so the trim of
+    // this chunk is the mirror image inside the window (low → high) and
+    // the filter graph appends `reverse` / `areverse`.
+    const trimEnd = trimmedSourceEnd(clip);
+    const sourceStart = clipIsReversed(clip)
+      ? trimEnd - srcOffset1
+      : trimStart + srcOffset0;
+    const sourceEnd = clipIsReversed(clip)
+      ? trimEnd - srcOffset0
+      : trimStart + srcOffset1;
 
     segments.push({
       outputStart,
       outputEnd,
-      sourceStart: trimStart + srcOffset0,
-      sourceEnd: trimStart + srcOffset1,
+      sourceStart,
+      sourceEnd,
       rate,
     });
   }
@@ -104,7 +121,7 @@ export function buildVariableSpeedSegments(
  * Returns labeled [vout] / [aout] filter chains for concat-style assembly.
  */
 export function buildVariableSpeedFilter(
-  clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'>,
+  clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'reversed'>,
   options: {
     segmentCount?: number;
     inputVideo?: string;
@@ -127,13 +144,15 @@ export function buildVariableSpeedFilter(
     const srcEnd = segments[0]?.sourceEnd ?? end;
     const setpts = videoSetptsFilter(rate);
     const atempo = audioTempoFilterSegment(rate);
+    const revV = videoReversePrefix(clip);
+    const revA = audioReversePrefix(clip);
     return {
       videoLabel: `[${videoOut}]`,
       audioLabel: `[${audioOut}]`,
       videoFilter:
-        `${inputVideo}trim=start=${formatPlaybackRate(srcStart)}:end=${formatPlaybackRate(srcEnd)},${setpts}[${videoOut}]`,
+        `${inputVideo}trim=start=${formatTrimSeconds(srcStart)}:end=${formatTrimSeconds(srcEnd)},${revV}${setpts}[${videoOut}]`,
       audioFilter:
-        `${inputAudio}atrim=start=${formatPlaybackRate(srcStart)}:end=${formatPlaybackRate(srcEnd)},asetpts=PTS-STARTPTS${atempo}[${audioOut}]`,
+        `${inputAudio}atrim=start=${formatTrimSeconds(srcStart)}:end=${formatTrimSeconds(srcEnd)},${revA}asetpts=PTS-STARTPTS${atempo}[${audioOut}]`,
       segmentCount: 1,
     };
   }
@@ -148,11 +167,13 @@ export function buildVariableSpeedFilter(
     const aLabel = `aseg${i}`;
     const setpts = videoSetptsFilter(seg.rate);
     const atempo = audioTempoFilterSegment(seg.rate);
+    const revV = videoReversePrefix(clip);
+    const revA = audioReversePrefix(clip);
     videoParts.push(
-      `${inputVideo}trim=start=${formatPlaybackRate(seg.sourceStart)}:end=${formatPlaybackRate(seg.sourceEnd)},${setpts}[${vLabel}]`,
+      `${inputVideo}trim=start=${formatTrimSeconds(seg.sourceStart)}:end=${formatTrimSeconds(seg.sourceEnd)},${revV}${setpts}[${vLabel}]`,
     );
     audioParts.push(
-      `${inputAudio}atrim=start=${formatPlaybackRate(seg.sourceStart)}:end=${formatPlaybackRate(seg.sourceEnd)},asetpts=PTS-STARTPTS${atempo}[${aLabel}]`,
+      `${inputAudio}atrim=start=${formatTrimSeconds(seg.sourceStart)}:end=${formatTrimSeconds(seg.sourceEnd)},${revA}asetpts=PTS-STARTPTS${atempo}[${aLabel}]`,
     );
     videoLabels.push(`[${vLabel}]`);
     audioLabels.push(`[${aLabel}]`);

@@ -86,6 +86,16 @@ describe('buildAudioSchedule', () => {
     expect(schedule[0].playbackRate).toBe(2);
   });
 
+  it('plays a reversed trim from a buffer that already starts at 0', () => {
+    const clips = [makeClip('a', 10, { trimStart: 2, trimEnd: 7, reversed: true, playbackRate: 2 })];
+    const schedule = buildAudioSchedule(clips, [], []);
+    expect(schedule[0].reverseAudio).toBe(true);
+    expect(schedule[0].bufferOffset).toBe(0);
+    expect(schedule[0].duration).toBe(2.5);
+    expect(schedule[0].playbackRate).toBe(2);
+    expect(schedule[0].rateRemap).toBeUndefined();
+  });
+
   it('marks rateRemap and plays remapped buffers at 1×', () => {
     const clips = [
       makeClip('a', 10, {

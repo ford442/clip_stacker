@@ -1,13 +1,14 @@
 import type { Clip, ClipTransition, RenderPlan, TextOverlay } from '../types';
 import { clipHasVolumeAdjustment } from './audioVolume';
 import { clipHasLoop, clipHasPlaybackRateAdjustment } from './playbackRate';
+import { clipIsReversed } from './reverseClip';
+import { clipHasRateAutomation } from './timeRemap';
 import {
   clipHasAnimatedPictureTransform,
   clipHasKeyframes,
   clipHasPictureTransform,
 } from './animatedLayout';
 import { isStabilizationActive } from './stabilization';
-import { clipHasRateAutomation } from './timeRemap';
 import { isFinishingActive, type FinishingSettings } from './finishing';
 
 /** Mirrors ffmpegService clipNeedsEffects — shared for encoder path selection. */
@@ -22,7 +23,8 @@ export function clipNeedsEffects(clip: Clip): boolean {
     clipHasVolumeAdjustment(clip) ||
     clipHasPlaybackRateAdjustment(clip) ||
     clipHasRateAutomation(clip) ||
-    clipHasLoop(clip)
+    clipHasLoop(clip) ||
+    clipIsReversed(clip)
   );
 }
 
@@ -56,10 +58,13 @@ export function canCaptureWebGpuCanvasWithText(
  * Transitions, PiP, clip keyframes, still images, and looped clips need
  * multi-source frame delivery (timeline compositor) — the plain sequential
  * WebCodecs path (`encodeVideoFrames`) walks each clip's trim window once
- * and has no loop-wrap awareness, so a looped clip must route through the
- * compositor's `buildPreviewCompositionPlan` (which wraps source time via
- * `wrapOutputLocalToCycle`) instead. Text overlay keyframes are resolved in
- * the overlay post-pass via `buildPreviewCompositionPlan`.
+ * and has no loop-wrap or speed awareness, so a looped clip or any clip
+ * whose playback rate is not 1× must route through the compositor's
+ * `buildPreviewCompositionPlan` (source time is the integral of the rate,
+ * wrapped per loop). That is the same clock the timeline preview uses, so
+ * export does not keep 1× frames inside a resized clip. Text overlay
+ * keyframes are resolved in the overlay post-pass via
+ * `buildPreviewCompositionPlan`.
  */
 export function needsMultiLayerComposition(
   clips: Clip[],
@@ -70,6 +75,9 @@ export function needsMultiLayerComposition(
   if (clips.some(clipHasKeyframes)) return true;
   if (clips.some((clip) => clip.stillImage)) return true;
   if (clips.some(clipHasLoop)) return true;
+  if (clips.some(clipHasRateAutomation)) return true;
+  if (clips.some(clipHasPlaybackRateAdjustment)) return true;
+  if (clips.some(clipIsReversed)) return true;
   return false;
 }
 
