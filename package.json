@@ -10,6 +10,7 @@
     "dev": "vite",
     "build": "vite build && node scripts/check-bundle-size.mjs && node scripts/utf16-dual-encode.mjs",
     "build:utf16": "node scripts/utf16-dual-encode.mjs",
+    "sync:ffmpeg-core": "node scripts/sync-ffmpeg-core.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && python3 deploy.py",
     "deploy:rife-space": "bash scripts/deploy-rife-space.sh",
@@ -47,7 +48,8 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@ffmpeg/core": "^0.12.6",
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/core-mt": "0.12.10",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^6.1.2",
