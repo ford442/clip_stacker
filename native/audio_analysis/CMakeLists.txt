@@ -26,9 +26,11 @@ target_include_directories(audio_analysis PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/third_party/kissfft"
 )
-# kiss_fft.c is C; link as C++ so libc++ is available (matches DEFAULT_TO_CXX).
-set_source_files_properties(third_party/kissfft/kiss_fft.c PROPERTIES LANGUAGE C)
-target_link_options(audio_analysis PRIVATE "SHELL:-s DEFAULT_TO_CXX=1")
+# kiss_fft.c compiles as C; the target links with em++ (CMake's linker
+# language is CXX because audio_analysis.cpp is C++), so libc++ is available.
+# Vendored code stays untouched: silence its -Wextra nit, and its own DEBUG
+# macro colliding with the toolchain's debug-build define.
+set_source_files_properties(third_party/kissfft/kiss_fft.c PROPERTIES COMPILE_OPTIONS "-Wno-sign-compare;-Wno-macro-redefined")
 
 clip_stacker_wasm_module(audio_analysis
   EXPORT_NAME createAudioAnalysisModule

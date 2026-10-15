@@ -9,7 +9,7 @@
 import type { Clip, ClipTransition } from '../types';
 import { computeFadeAlpha } from './fadePreview';
 import { sampleKeyframes } from './keyframes';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 import { sourceTimeAtOutputLocal, wrapOutputLocalToCycle } from './timeRemap';
 import { isMorphSegmentReady, isMorphTransition, morphClipId } from './morphTransition';
 import { placementWindow } from './trackStacking';

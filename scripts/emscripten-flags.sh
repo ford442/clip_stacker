@@ -4,14 +4,14 @@
 # Source of truth for compiler/linker flags is native/toolchain.cmake.
 # This file is the shell entry: configure, build, optional debug.
 #
-# WASM_BUILD_DIR (default native/build) holds the CMake tree. Configure exports
+# WASM_BUILD_DIR (default native/build, native/build-debug for WASM_DEBUG=1)
+# holds the CMake tree. Configure exports
 # compile_commands.json there and links it to native/compile_commands.json
 # (gitignored) for clangd — see native/.clangd.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NATIVE="$ROOT/native"
-BUILD_DIR="${WASM_BUILD_DIR:-$NATIVE/build}"
 
 if ! command -v emcmake >/dev/null 2>&1 && ! command -v emcc >/dev/null 2>&1; then
   echo "error: emcc/emcmake not found. Install Emscripten and source emsdk_env.sh" >&2
@@ -23,13 +23,51 @@ if ! command -v emcmake >/dev/null 2>&1; then
   exit 1
 fi
 
+# Supported SDK range. The committed public/wasm artifacts are built with the
+# pinned version (native/emsdk-version, also what CI installs), and CI fails on
+# any byte of drift — other versions build fine but produce different bytes.
+EMSDK_MIN_VERSION="3.1.64"
+EMSDK_MAX_MAJOR=6
+EMSDK_PINNED_VERSION="$(tr -d '[:space:]' < "$NATIVE/emsdk-version")"
+
+version_ge() {
+  [ "$(printf '%s\n%s\n' "$2" "$1" | sort -V | head -n1)" = "$2" ]
+}
+
+check_emcc_version() {
+  local version
+  version="$(emcc --version 2>/dev/null | head -n1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1 || true)"
+  if [ -z "$version" ]; then
+    echo "error: could not read the Emscripten version from 'emcc --version'" >&2
+    exit 1
+  fi
+  if ! version_ge "$version" "$EMSDK_MIN_VERSION"; then
+    echo "error: Emscripten $version is too old; clip_stacker needs >= $EMSDK_MIN_VERSION" >&2
+    echo "       (pinned: $EMSDK_PINNED_VERSION — emsdk install $EMSDK_PINNED_VERSION && emsdk activate $EMSDK_PINNED_VERSION)" >&2
+    exit 1
+  fi
+  if [ "${version%%.*}" -gt "$EMSDK_MAX_MAJOR" ]; then
+    echo "warning: Emscripten $version is newer than the tested range (<= $EMSDK_MAX_MAJOR.x); if the build" >&2
+    echo "         fails, use the pinned $EMSDK_PINNED_VERSION and report the breakage." >&2
+  elif [ "$version" != "$EMSDK_PINNED_VERSION" ]; then
+    echo "note: Emscripten $version builds fine, but the committed artifacts come from" >&2
+    echo "      $EMSDK_PINNED_VERSION; CI's drift check will flag a commit of these bytes." >&2
+  fi
+}
+check_emcc_version
+
 WASM_DEBUG="${WASM_DEBUG:-0}"
 BUILD_TYPE=Release
 CMAKE_DEBUG=OFF
+DEFAULT_BUILD_DIR="$NATIVE/build"
 if [ "$WASM_DEBUG" = "1" ] || [ "${CMAKE_BUILD_TYPE:-}" = "Debug" ]; then
   BUILD_TYPE=Debug
   CMAKE_DEBUG=ON
+  # Debug output lands in native/build-debug/wasm (see toolchain.cmake), never
+  # over the committed release artifacts in public/wasm.
+  DEFAULT_BUILD_DIR="$NATIVE/build-debug"
 fi
+BUILD_DIR="${WASM_BUILD_DIR:-$DEFAULT_BUILD_DIR}"
 
 cmake_bin() {
   if command -v emcmake >/dev/null 2>&1; then
@@ -47,12 +85,16 @@ build_bin() {
   fi
 }
 
+# Extra -D flags for the configure step (e.g. -DCLIP_STACKER_WHISPER=ON).
+WASM_CMAKE_ARGS=()
+
 configure_wasm_cmake() {
-  mkdir -p "$BUILD_DIR" "$ROOT/public/wasm"
+  mkdir -p "$BUILD_DIR"
   cmake_bin -S "$NATIVE" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DCLIP_STACKER_WASM_DEBUG="$CMAKE_DEBUG" \
-    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+    -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+    "${WASM_CMAKE_ARGS[@]}"
   link_compile_commands
 }
 

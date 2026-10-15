@@ -1,4 +1,5 @@
 #include "audio_mix.h"
+#include "cs_math.h"
 #include "effects.h"
 
 #include <algorithm>
@@ -8,7 +9,7 @@ namespace media_engine {
 
 namespace {
 
-constexpr double kPi = 3.14159265358979323846;
+using cs::kPi;
 
 double clamp_finite(double v, double lo, double hi, double fallback) {
   if (!std::isfinite(v)) return fallback;

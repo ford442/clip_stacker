@@ -6,6 +6,8 @@
  * Canvas2D does not apply noise reduction (WebGPU only).
  */
 
+import { clamp, clamp01, finiteOr } from './math';
+
 export const NOISE_REDUCTION_UNIFORM_FLOATS = 16;
 
 /** Max spatial radius (px) in the WGSL bilateral kernel. */
@@ -43,18 +45,6 @@ export const DEFAULT_NOISE_REDUCTION_PARAMS = {
   lumaOnly: true,
   draft: false,
 };
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function clamp01(v: number): number {
-  return clamp(v, 0, 1);
-}
-
-function finiteOr(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-}
 
 /** True when spatial and temporal strengths are effectively off. */
 export function isNoiseReductionNeutral(pass: NoiseReductionSettings | undefined): boolean {

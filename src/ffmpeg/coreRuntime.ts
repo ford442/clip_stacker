@@ -309,6 +309,7 @@ export async function ensureFont(
     if ((err as any).ffmpegLogs) throw err;
     throw new Error(
       `Failed to load font for text overlays: ${(err as Error).message}`,
+      { cause: err },
     );
   }
 }

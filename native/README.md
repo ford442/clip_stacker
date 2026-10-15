@@ -1,19 +1,55 @@
 # Native WASM modules
 
-Shared Emscripten toolchain for analysis, time-stretch, stabilization, and
-timeline audio mix. Flags live in `toolchain.cmake`; the shell driver is
+Shared Emscripten toolchain for audio analysis, stabilization, and the media
+engine (timeline mix, insert effects, WSOLA time stretch), plus the opt-in
+whisper module. Flags live in `toolchain.cmake`; the shell driver is
 `scripts/emscripten-flags.sh`.
 
 ```bash
-npm run build:wasm
-WASM_DEBUG=1 npm run build:wasm
+npm run build:wasm            # release → public/wasm (committed)
+npm run build:wasm:debug      # -O0 -g, ASSERTIONS → native/build-debug/wasm
+npm run build:whisper         # opt-in, -DCLIP_STACKER_WHISPER=ON (not committed)
 ```
 
 Artifacts are written to `public/wasm/` and committed. Gzip size > 200 KB fails
-the build. CI rebuilds every module (including `video_stabilize` and
-`media_engine`) and fails on `git diff -- public/wasm`.
+the build. CI rebuilds every module and fails on `git diff -- public/wasm`.
 
-The CMake tree lives in `$WASM_BUILD_DIR` (default `native/build/`).
+The CMake tree lives in `$WASM_BUILD_DIR` (default `native/build/`, or
+`native/build-debug/` for debug builds, whose output never touches
+`public/wasm`). The dev and preview servers serve `native/build-debug/wasm` at
+`/wasm-debug/`; open the app with `?wasm_debug` to load it (main-thread loaders
+pick it up directly; workers get it through the base URL main passes them).
+
+## Emscripten version
+
+`native/emsdk-version` pins the SDK the committed artifacts come from; CI's
+`wasm` job installs exactly that version. `scripts/emscripten-flags.sh` refuses
+SDKs older than 3.1.64, warns above the tested major, and notes when a
+different version will produce bytes the drift check rejects. To move the pin:
+install the new SDK, `npm run build:wasm`, commit `native/emsdk-version` and
+`public/wasm/` together.
+
+The glue is ES6 (`EXPORT_ES6`) and resolves its `.wasm` with
+`new URL(..., import.meta.url)` by default — emsdk >= 4 no longer accepts
+`USE_ES6_IMPORT_META=0`. The loaders always pass `locateFile`, so that default
+is never used. `INCOMING_MODULE_JS_API` is pinned to `locateFile` and
+`instantiateWasm` (Vitest compiles `file://` bytes itself through the latter).
+
+## Shared conventions (`common/include/`)
+
+- `cs_status.h` — every `int`-returning entry point returns a `cs_status`
+  (`CS_OK = 0`, `CS_EINVAL`, `CS_ENOMEM`, `CS_ESTATE`, `CS_ERANGE`,
+  `CS_EINTERNAL`), mirrored by `CS_STATUS` in `src/wasm/emscriptenLoader.ts`.
+  `cs_span_ok(offset, count, size)` is the bounds check for any buffer JS
+  describes with an offset and a length (e.g. `pcm_floats` in the mixer).
+- `cs_alloc.h` — the modules build with `-fno-exceptions`, so a failed
+  `std::vector` allocation aborts and kills the module for the session.
+  Caller-sized buffers use `cs::Buffer` (nothrow new) or `cs::try_reserve` /
+  `cs::can_allocate` and return `CS_ENOMEM` instead.
+- `cs_math.h` — `cs::kPi`; the code builds as strict C++17 (no GNU
+  extensions), where `M_PI` is not guaranteed.
+
+WASM targets compile with `-Wall -Wextra`; host targets add `-Werror`.
 
 ## Host tests (no Emscripten)
 
@@ -32,9 +68,9 @@ native/build-host/video_stabilize/video_stabilize_tests translated   # name filt
 | Module | ctest | Covers |
 | --- | --- | --- |
 | `audio_analysis` | `audio_analysis_tests` | a sine lights only its band; silence stays at zero energy / zero beat; `getHopSize` = FFT/2 (and FFT size rounding); a click after silence fires one onset, `resetAnalyzer` clears it. kissfft builds with the same `-ffp-contract=off` host flags. |
-| `time_stretch` | `time_stretch_tests` | tempo 1 is a near-copy (mono + stereo, bounded error); tempo 2 into half the length keeps pitch (zero-crossing) and level; identity `time_stretch_remap` matches constant tempo 1; bad args are rejected. |
 | `video_stabilize` | `video_stabilize_tests` | static frames finalize to identity; a translated frame gives a `tx`/`ty` that follows the content shift (opposite the camera move) in normalized UV; matrices before finalize are identity; invalid `stab_create` is null. `stab_math.h` (similarity fit, smoother, motion → UV corrections) is tested directly on synthetic motion. |
-| `media_engine` | `media_engine_host` | resampler THD+N goldens, chunk bit-equality, curve / pan parity. |
+| `media_engine` | `media_engine_host` | resampler THD+N goldens, chunk bit-equality, curve / pan parity, slice bounds against `pcm_floats`. |
+| `media_engine` | `time_stretch_tests` | WSOLA: rate 1 is bit-exact (mono, stereo, offsets a hair off whole frames); 2x and 0.5x keep pitch (zero-crossing) and level; the similarity search keeps a slowed tone's envelope flat where plain OLA (tolerance 0) dips; positions past 2^24 frames stay sub-sample; output past the last offset and reads outside the input are silence; bad args are `CS_EINVAL`. |
 
 Tests use the tiny runner in `host_test/host_test.h` (no third-party test
 framework). Configuring `native/` with plain `cmake` requires

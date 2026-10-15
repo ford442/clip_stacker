@@ -7,8 +7,8 @@ import {
   useEditorClips,
   useIsClipSelected,
 } from '../store';
-import { getClipDuration } from '../utils/project';
-import { IntercutModal } from './IntercutModal';
+import { getClipDuration } from '../utils/clipTiming';
+import { LazyBoundary, lazyNamed } from './LazyBoundary';
 import { AutoCutPanel } from './AutoCutPanel';
 import { ProxyBadge, ProxyPlaybackToggle } from './ProxyBadge';
 import { settingsStore } from '../store/settingsStore';
@@ -186,6 +186,8 @@ function ClipGroupBlock({ group, onToggleVariant, onDelete }: ClipGroupBlockProp
 
 const MemoClipGroupBlock = memo(ClipGroupBlock);
 
+const IntercutModal = lazyNamed(() => import('./IntercutModal'), 'IntercutModal');
+
 interface Props extends ClipLibraryActions {
   onGenerateIntercut: (config: IntercutGeneratorConfig) => Promise<boolean>;
 }
@@ -194,6 +196,9 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
   const clips = useEditorClips();
   const clipGroups = useEditorClipGroups();
   const [intercutOpen, setIntercutOpen] = useState(false);
+  // The modal (and the intercut planner/FFmpeg code behind it) loads on first
+  // open, then stays mounted so its form keeps its values between openings.
+  const [intercutMounted, setIntercutMounted] = useState(false);
   const intercutProcessing = useStore(settingsStore, (s) => s.intercutProcessing);
 
   const ungroupedClipIds = clips.filter((c) => !c.groupId).map((c) => c.id);
@@ -207,7 +212,10 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
         <button
           type="button"
           className="btn-secondary intercut-library-btn"
-          onClick={() => setIntercutOpen(true)}
+          onClick={() => {
+            setIntercutMounted(true);
+            setIntercutOpen(true);
+          }}
           disabled={intercutProcessing}
         >
           ✂️ Create Intercut Clip
@@ -236,18 +244,22 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
           />
         ))}
       </ul>
-      <IntercutModal
-        isOpen={intercutOpen}
-        generating={intercutProcessing}
-        onClose={() => {
-          if (!settingsStore.getState().intercutProcessing) setIntercutOpen(false);
-        }}
-        onGenerate={async (config) => {
-          const ok = await onGenerateIntercut(config);
-          if (ok) setIntercutOpen(false);
-          return ok;
-        }}
-      />
+      {intercutMounted && (
+        <LazyBoundary label="Intercut generator" fallback={null}>
+          <IntercutModal
+            isOpen={intercutOpen}
+            generating={intercutProcessing}
+            onClose={() => {
+              if (!settingsStore.getState().intercutProcessing) setIntercutOpen(false);
+            }}
+            onGenerate={async (config) => {
+              const ok = await onGenerateIntercut(config);
+              if (ok) setIntercutOpen(false);
+              return ok;
+            }}
+          />
+        </LazyBoundary>
+      )}
     </section>
   );
 }

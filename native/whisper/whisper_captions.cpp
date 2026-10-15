@@ -12,6 +12,9 @@
 
 #include <emscripten.h>
 
+#include "cs_status.h"
+
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <string>
@@ -36,12 +39,23 @@ struct Session {
 // One session at a time is all the UI can start; handle 1 is that session.
 Session g_session;
 
+// PTHREAD_POOL_SIZE (native/whisper/CMakeLists.txt). The calling worker is
+// one of ggml's threads, so this many threads use the pool plus the caller;
+// more would ask for a pthread worker that cannot start while this call
+// blocks.
+#ifndef CLIP_STACKER_WHISPER_THREADS
+#define CLIP_STACKER_WHISPER_THREADS 1
+#endif
+constexpr int kMaxThreads = CLIP_STACKER_WHISPER_THREADS;
+
 }  // namespace
 
+// Quoted: the release build runs Closure, which would rename a dotted access
+// and break the property JS sets on the module instance.
 EM_JS(int, whisper_js_progress, (float progress), {
   if (typeof Module !== 'undefined' &&
-      typeof Module.onWhisperProgress === 'function') {
-    return Module.onWhisperProgress(progress) | 0;
+      typeof Module['onWhisperProgress'] === 'function') {
+    return Module['onWhisperProgress'](progress) | 0;
   }
   return 0;
 });
@@ -75,7 +89,7 @@ EMSCRIPTEN_KEEPALIVE
 int whisperTranscribe(int handle, const float* pcm, int samples,
                       const char* language, int threads) {
   (void)handle;
-  if (!g_session.ctx || !pcm || samples <= 0) return -1;
+  if (!g_session.ctx || !pcm || samples <= 0) return CS_EINVAL;
 
   g_session.segments.clear();
   g_session.aborted = false;
@@ -86,7 +100,7 @@ int whisperTranscribe(int handle, const float* pcm, int samples,
   params.print_realtime = false;
   params.print_timestamps = false;
   params.translate = false;
-  params.n_threads = threads > 0 ? threads : 1;
+  params.n_threads = threads > 0 ? std::min(threads, kMaxThreads) : kMaxThreads;
   params.language = (language && std::strcmp(language, "auto") != 0) ? language : nullptr;
   // Language stays null for "auto" so whisper detects it.
 
@@ -99,8 +113,8 @@ int whisperTranscribe(int handle, const float* pcm, int samples,
   params.abort_callback = [](void*) -> bool { return g_session.aborted; };
 
   const int status = whisper_full(g_session.ctx, params, pcm, samples);
-  if (g_session.aborted) return -2;
-  if (status != 0) return -3;
+  if (g_session.aborted) return CS_ESTATE;  // cancelled from JS
+  if (status != 0) return CS_EINTERNAL;
 
   const int count = whisper_full_n_segments(g_session.ctx);
   g_session.segments.reserve(static_cast<size_t>(count));

@@ -109,7 +109,7 @@ Third line
   });
 
   it('strips a UTF-8 BOM', () => {
-    const captions = parseSrt(`﻿${BASIC_SRT}`);
+    const captions = parseSrt(`\uFEFF${BASIC_SRT}`);
     expect(captions).toHaveLength(2);
     expect(captions[0].startSec).toBe(1);
   });

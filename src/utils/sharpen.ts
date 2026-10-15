@@ -5,6 +5,8 @@
  * WebGPU is WYSIWYG; FFmpeg WASM uses unsharp (luma only). Canvas2D is out of scope.
  */
 
+import { clamp, clamp01, finiteOr } from './math';
+
 export const SHARPEN_UNIFORM_FLOATS = 8;
 
 /** Soft-cap hint in UI — amounts above this tend to look digital. */
@@ -33,18 +35,6 @@ export const DEFAULT_SHARPEN_PARAMS = {
   threshold: 0.02,
   midtoneDetail: 0,
 };
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function clamp01(v: number): number {
-  return clamp(v, 0, 1);
-}
-
-function finiteOr(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-}
 
 /** True when sharpen amount and midtone detail are effectively off. */
 export function isSharpenNeutral(pass: SharpenSettings | undefined): boolean {

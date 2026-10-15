@@ -1,7 +1,7 @@
 /**
  * Encode a preview proxy with the WebCodecs path export already ships:
  * `ClipFrameDecoder` (forward decode, never seeks) → canvas blit to the proxy
- * size → `VideoEncoder` (H.264) → `mp4-muxer`. No FFmpeg, no new dependency.
+ * size → `VideoEncoder` (H.264) → `Mp4Writer` (`container/`). No FFmpeg.
  *
  * Frame timestamps are the source's, untouched, so a proxy cursor opened at a
  * trim window lands on the same source times the original would. No audio
@@ -9,7 +9,7 @@
  * per clip, which costs nothing like a 4K video decode does.
  */
 
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import { Mp4Writer } from './container';
 import { ClipFrameDecoder } from './webcodecs-decoder';
 import { h264CodecString } from './webcodecs-codec';
 import { encodeAndClose, waitForQueueBelow } from './codecQueue';
@@ -108,11 +108,8 @@ export async function encodeProxy(source: Blob, options: EncodeProxyOptions): Pr
     Number.isFinite(options.durationSec) && options.durationSec > 0 ? options.durationSec : Infinity;
   const decoder = await ClipFrameDecoder.open(source, { trimStart: 0, trimEnd: durationSec });
 
-  const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
+  const muxer = new Mp4Writer({
     video: { codec: 'avc', width, height, frameRate: profile.maxFps },
-    fastStart: 'in-memory',
-    firstTimestampBehavior: 'offset',
   });
   let encodeError: Error | null = null;
   const encoder = new VideoEncoder({
@@ -133,6 +130,7 @@ export async function encodeProxy(source: Blob, options: EncodeProxyOptions): Pr
       try {
         throwIfCancelled();
         if (encodeError) throw encodeError;
+        muxer.throwIfFailed();
         const t = frame.timestamp / 1_000_000;
         if (!selector.accept(t)) continue;
 
@@ -153,9 +151,9 @@ export async function encodeProxy(source: Blob, options: EncodeProxyOptions): Pr
     throwIfCancelled();
     await encoder.flush();
     if (encodeError) throw encodeError;
-    muxer.finalize();
+    const buffer = await muxer.finalize();
     options.onProgress?.(1);
-    return new Blob([muxer.target.buffer], { type: 'video/mp4' });
+    return new Blob([buffer], { type: 'video/mp4' });
   } finally {
     decoder.close();
     if (encoder.state !== 'closed') {

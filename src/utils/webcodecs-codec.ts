@@ -28,7 +28,7 @@ export type ExportVideoCodec = NonNullable<ExportSettings['videoCodec']>;
 export interface ResolvedEncoderCodec {
   /** WebCodecs codec string passed to VideoEncoder.configure. */
   codec: string;
-  /** mp4-muxer video track codec id. */
+  /** `Mp4Writer` video track codec id. */
   muxerCodec: 'avc' | 'hevc' | 'av1';
   /**
    * The acceleration hint the probe accepted (see
@@ -221,7 +221,7 @@ export function buildVideoEncoderConfig(
     hardwareAcceleration: candidate.hardwareAcceleration ?? 'prefer-hardware',
     latencyMode: VIDEO_ENCODER_LATENCY_MODE,
     colorSpace: colorSpaceForOutput(outputColor),
-    // mp4-muxer expects length-prefixed (avc) samples, not Annex B.
+    // MP4 stores length-prefixed (avc) samples, not Annex B.
     ...(candidate.muxerCodec === 'avc' ? { avc: { format: 'avc' } } : {}),
   };
 }

@@ -10,64 +10,53 @@
  * export premix falls back to OfflineAudioContext.
  */
 
-import { getWasmPublicBaseUrl } from './audioAnalysis';
-import { readWasmBinaryIfFileUrl, type EmscriptenFactory } from './emscriptenLoader';
-import { sortKeyframes, type Keyframe } from '../utils/keyframes';
 import {
-  clipAudioEffectsActive,
-  masterLimiterActive,
-  MAX_EQ_BANDS,
-  type AudioEqBandType,
-  type ClipAudioEffects,
-  type MasterLimiterSettings,
-} from '../utils/audioEffects';
+  CS_STATUS,
+  describeStatus,
+  getEmscriptenLoadFailure,
+  getEmscriptenModule,
+  loadEmscriptenModule,
+  withHeap,
+  _resetEmscriptenModuleForTests,
+} from './emscriptenLoader';
+import type { Keyframe } from '../utils/keyframes';
+import type { ClipAudioEffects, MasterLimiterSettings } from '../utils/audioEffects';
+import {
+  MEDIA_ENGINE_CHANNELS,
+  MIX_ENTRY_FX_STRIDE,
+  MIX_ENTRY_STRIDE,
+  MIX_FLAG_EFFECTS,
+  MIX_FLAG_LINEAR_RESAMPLE,
+  MIX_FX_STRIDE,
+  MIX_KEY_STRIDE,
+  MIX_SLICE_STRIDE,
+  MIX_SOURCE_MARGIN_FRAMES,
+  packAudioEffectRows,
+  packKeyframes,
+  packLimiterRow,
+  sanitizedRate,
+} from './mediaEngineLayout';
 
-export const MEDIA_ENGINE_CHANNELS = 2;
-/** f64 fields per packed mix entry (`MIX_ENTRY_STRIDE` in audio_mix.h). */
-export const MIX_ENTRY_STRIDE = 12;
-/** i32 fields per source slice (`MIX_SLICE_STRIDE`). */
-export const MIX_SLICE_STRIDE = 6;
-/** f64 fields per packed keyframe (`MIX_KEY_STRIDE`). */
-export const MIX_KEY_STRIDE = 7;
-/** Source frames uploaded beyond what a chunk reads (`MIX_SOURCE_MARGIN_FRAMES`). */
-export const MIX_SOURCE_MARGIN_FRAMES = 64;
-/** `MIX_FLAG_LINEAR_RESAMPLE`: phase-1 linear interpolation (debug / fallback). */
-export const MIX_FLAG_LINEAR_RESAMPLE = 1;
-/** `MIX_FLAG_EFFECTS`: entries are `MIX_ENTRY_FX_STRIDE` wide (fx session only). */
-export const MIX_FLAG_EFFECTS = 2;
-/** f64 fields per fx mix entry (`MIX_ENTRY_FX_STRIDE`): legacy twelve + first / count / state. */
-export const MIX_ENTRY_FX_STRIDE = 15;
-/** f64 fields per packed effect block (`MIX_FX_STRIDE`). */
-export const MIX_FX_STRIDE = 10;
-/** `MIX_FX_KIND` codes. */
-const MIX_FX_KIND: Record<AudioEqBandType | 'compressor' | 'limiter', number> = {
-  peaking: 1,
-  lowShelf: 2,
-  highShelf: 3,
-  highPass: 4,
-  compressor: 5,
-  limiter: 6,
-};
+export {
+  MEDIA_ENGINE_CHANNELS,
+  MIX_ENTRY_FX_STRIDE,
+  MIX_ENTRY_STRIDE,
+  MIX_FLAG_EFFECTS,
+  MIX_FLAG_LINEAR_RESAMPLE,
+  MIX_FX_STRIDE,
+  MIX_KEY_STRIDE,
+  MIX_SLICE_STRIDE,
+  MIX_SOURCE_MARGIN_FRAMES,
+  packAudioEffectRows,
+  packLimiterRow,
+} from './mediaEngineLayout';
+
 /** Default stream chunk: 240 AAC-LC frames (5.12 s at 48 kHz). */
 export const MEDIA_ENGINE_CHUNK_FRAMES = 1024 * 240;
 /** Kill switch: `?no_media_engine` keeps OfflineAudioContext as the mixer. */
 export const MEDIA_ENGINE_KILL_PARAM = 'no_media_engine';
 /** Debug: `?media_engine_resampler=linear` swaps polyphase sinc for linear. */
 export const MEDIA_ENGINE_RESAMPLER_PARAM = 'media_engine_resampler';
-
-/** `MIX_EASING_*` code; anything unrecognised is a bezier, like `applyEasing`. */
-function easingCode(easing: Keyframe['easing']): number {
-  switch (easing?.type ?? 'linear') {
-    case 'linear':
-      return 0;
-    case 'bellCurveSmooth':
-      return 2;
-    case 'bellCurveSharp':
-      return 3;
-    default:
-      return 1;
-  }
-}
 
 export interface ClipPcm {
   sampleRate: number;
@@ -150,6 +139,7 @@ interface WasmModule {
     outSampleRate: number,
     outChannels: number,
     pcmPtr: number,
+    pcmFloats: number,
     slicesPtr: number,
     sliceCount: number,
     entriesPtr: number,
@@ -175,6 +165,7 @@ interface WasmModule {
     outFrames: number,
     startFrame: number,
     pcmPtr: number,
+    pcmFloats: number,
     slicesPtr: number,
     sliceCount: number,
     entriesPtr: number,
@@ -188,26 +179,18 @@ interface WasmModule {
   _insert_chain_destroy?(chain: number): void;
   _malloc(size: number): number;
   _free(ptr: number): void;
-  HEAPF32: Float32Array;
   HEAPU8: Uint8Array;
-  HEAP32: Int32Array;
 }
 
-type ModuleFactory = EmscriptenFactory<WasmModule>;
+/** Module name shared with `timeStretch.ts` (one module, one heap). */
+export const MEDIA_ENGINE_MODULE = 'media_engine';
+export const MEDIA_ENGINE_FACTORY = 'createMediaEngineModule';
 
-let loadPromise: Promise<WasmModule | null> | null = null;
-let loadedModule: WasmModule | null = null;
-let loadFailedReason: string | null = null;
 let testKillOverride: boolean | null = null;
 let lastMixBackend: 'wasm' | 'unavailable' | 'disabled' | null = null;
 
-function resolveAssetUrl(fileName: string, baseUrl?: string): string {
-  const root = baseUrl
-    ? baseUrl.endsWith('/')
-      ? baseUrl
-      : `${baseUrl}/`
-    : getWasmPublicBaseUrl();
-  return new URL(fileName, root).href;
+function loadedModule(): WasmModule | null {
+  return getEmscriptenModule<WasmModule>(MEDIA_ENGINE_MODULE);
 }
 
 function currentSearch(): string {
@@ -222,7 +205,7 @@ export function isMediaEngineMixEnabled(search: string = currentSearch()): boole
 
 /** True once the module has loaded and the kill switch is off (sync). */
 export function isMediaEngineReady(): boolean {
-  return loadedModule !== null && isMediaEngineMixEnabled();
+  return loadedModule() !== null && isMediaEngineMixEnabled();
 }
 
 function resamplerFlags(choice: TimelineMixStreamOptions['resampler']): number {
@@ -234,44 +217,11 @@ function resamplerFlags(choice: TimelineMixStreamOptions['resampler']): number {
 export async function loadMediaEngineModule(options?: {
   baseUrl?: string;
 }): Promise<WasmModule | null> {
-  if (loadFailedReason) return null;
-  if (loadPromise) return loadPromise;
-
-  loadPromise = (async () => {
-    try {
-      const jsUrl = resolveAssetUrl('media_engine.js', options?.baseUrl);
-      const wasmUrl = resolveAssetUrl('media_engine.wasm', options?.baseUrl);
-      const mod = (await import(/* @vite-ignore */ jsUrl)) as { default: ModuleFactory };
-      const factory = mod.default;
-      if (typeof factory !== 'function') {
-        throw new Error('media_engine module factory missing');
-      }
-      const wasmBinary = await readWasmBinaryIfFileUrl(wasmUrl);
-      loadedModule = await factory({
-        ...(wasmBinary ? { wasmBinary } : {}),
-        locateFile: (path: string) => {
-          if (path.endsWith('.wasm')) return wasmUrl;
-          return resolveAssetUrl(path, options?.baseUrl);
-        },
-      });
-      return loadedModule;
-    } catch (err) {
-      loadFailedReason = err instanceof Error ? err.message : String(err);
-      console.warn(
-        '[mediaEngine] WASM load failed — timeline mix stays on OfflineAudioContext:',
-        loadFailedReason,
-      );
-      return null;
-    }
-  })();
-
-  return loadPromise;
+  return loadEmscriptenModule<WasmModule>(MEDIA_ENGINE_MODULE, MEDIA_ENGINE_FACTORY, options);
 }
 
 export function _resetMediaEngineLoadStateForTests(): void {
-  loadPromise = null;
-  loadedModule = null;
-  loadFailedReason = null;
+  _resetEmscriptenModuleForTests(MEDIA_ENGINE_MODULE);
   testKillOverride = null;
   lastMixBackend = null;
 }
@@ -281,7 +231,7 @@ export function __setMediaEngineKillSwitchForTests(disabled: boolean | null): vo
 }
 
 export function getMediaEngineLoadFailure(): string | null {
-  return loadFailedReason;
+  return getEmscriptenLoadFailure(MEDIA_ENGINE_MODULE);
 }
 
 export function getLastMediaEngineMixBackend(): typeof lastMixBackend {
@@ -290,63 +240,16 @@ export function getLastMediaEngineMixBackend(): typeof lastMixBackend {
 
 /** Current WASM linear-memory size in bytes (0 when not loaded). */
 export function getMediaEngineHeapBytes(): number {
-  return loadedModule?.HEAPU8.buffer.byteLength ?? 0;
+  return loadedModule()?.HEAPU8.buffer.byteLength ?? 0;
 }
 
 export function formatMediaEngineDiagnostics(): string {
   const enabled = isMediaEngineMixEnabled();
-  const fail = loadFailedReason;
+  const fail = getMediaEngineLoadFailure();
   const backend = lastMixBackend ?? 'idle';
   if (!enabled) return `mediaEngine: disabled (?${MEDIA_ENGINE_KILL_PARAM}); last mix: ${backend}`;
   if (fail) return `mediaEngine: unavailable (${fail}); last mix: ${backend}`;
   return `mediaEngine: enabled; last mix: ${backend}`;
-}
-
-/** Append `keys` (sorted like `sampleKeyframes`) as packed rows; returns the row count. */
-function packKeyframes(out: number[], keys: Keyframe[] | undefined): number {
-  if (!keys?.length) return 0;
-  for (const key of sortKeyframes(keys)) {
-    const easing = key.easing;
-    out.push(
-      key.t,
-      key.value,
-      easingCode(easing),
-      easing?.x1 ?? 0,
-      easing?.y1 ?? 0,
-      easing?.x2 ?? 1,
-      easing?.y2 ?? 1,
-    );
-  }
-  return keys.length;
-}
-
-/**
- * Pack a clip's insert chain as `MIX_FX_STRIDE` rows: enabled EQ bands (at
- * most `MAX_EQ_BANDS`) then the compressor. Bypassed blocks are left out, so
- * an all-bypassed chain packs to nothing and mixes bit-exact.
- */
-export function packAudioEffectRows(effects: ClipAudioEffects | undefined): number[] {
-  const rows: number[] = [];
-  if (!clipAudioEffectsActive(effects)) return rows;
-  for (const band of (effects!.eq ?? []).filter((b) => b.enabled).slice(0, MAX_EQ_BANDS)) {
-    rows.push(MIX_FX_KIND[band.type], 1, band.frequency, band.gainDb, band.q, 0, 0, 0, 0, 0);
-  }
-  const c = effects!.compressor;
-  if (c?.enabled) {
-    rows.push(MIX_FX_KIND.compressor, 1, 0, c.makeupDb, 0, c.thresholdDb, c.ratio, c.attack, c.release, c.kneeDb);
-  }
-  return rows;
-}
-
-/** The bus limiter as one `MIX_FX_STRIDE` row (empty when off). */
-export function packLimiterRow(limiter: MasterLimiterSettings | null | undefined): number[] {
-  if (!masterLimiterActive(limiter)) return [];
-  const l = limiter!;
-  return [MIX_FX_KIND.limiter, 1, 0, 0, 0, l.ceilingDb, 0, l.lookahead, l.release, 0];
-}
-
-function sanitizedRate(rate: number | undefined): number {
-  return Number.isFinite(rate) && (rate ?? 0) > 0 ? rate! : 1;
 }
 
 interface EntryState {
@@ -365,16 +268,6 @@ interface FxSession {
   latency: number;
 }
 
-/** Heap regions owned by one stream. */
-interface StreamBuffers {
-  out: number;
-  keys: number;
-  rows: number;
-  slices: number;
-  pcm: number;
-  pcmCapacityFloats: number;
-}
-
 /**
  * Chunked timeline mix over the media-engine WASM. Obtain one from
  * `openTimelineMixStream`; `close()` when done (also on error).
@@ -391,9 +284,8 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
     private readonly mod: WasmModule,
     private readonly schedule: MediaEngineMixEntry[],
     private readonly rows: Float64Array,
-    private readonly keyframeCount: number,
+    private readonly keys: Float64Array,
     private readonly source: ClipPcmSource,
-    private readonly buffers: StreamBuffers,
     readonly sampleRate: number,
     readonly channels: number,
     readonly chunkFrames: number,
@@ -449,13 +341,11 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
     for (let chunk = await this.next(); chunk; chunk = await this.next()) yield chunk;
   }
 
-  /** Free WASM buffers and release every PCM the stream still holds. */
+  /** Destroy the fx session and release every PCM the stream still holds. */
   close(): void {
     if (this.closed) return;
     this.closed = true;
     for (let i = 0; i < this.states.length; i++) this.release(i);
-    const { out, keys, rows, slices, pcm } = this.buffers;
-    for (const ptr of [out, keys, rows, slices, pcm]) if (ptr) this.mod._free(ptr);
     if (this.fx) this.mod._mix_fx_session_destroy?.(this.fx.handle);
   }
 
@@ -515,85 +405,85 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
       pcmFloats += (last - first) * planes;
     }
 
-    this.ensurePcmCapacity(pcmFloats);
+    // Everything a chunk needs is uploaded into one scope and freed after the
+    // call, so the stream holds no heap between chunks.
     const mod = this.mod;
-    const heapF32 = mod.HEAPF32;
-    const heap32 = mod.HEAP32;
-    const heapF64 = new Float64Array(mod.HEAPU8.buffer);
-    const { out, keys, rows, slices, pcm } = this.buffers;
-
-    let cursor = 0;
-    for (let k = 0; k < uploads.length; k++) {
-      const u = uploads[k]!;
-      const len = u.last - u.first;
-      const meta = (slices >> 2) + k * MIX_SLICE_STRIDE;
-      heap32[meta] = cursor;
-      heap32[meta + 1] = len;
-      heap32[meta + 2] = u.planes;
-      heap32[meta + 3] = u.pcm.sampleRate | 0;
-      heap32[meta + 4] = u.first;
-      heap32[meta + 5] = u.frames;
-      for (let c = 0; c < u.planes; c++) {
-        heapF32.set(u.pcm.channelData[c]!.subarray(u.first, u.last), (pcm >> 2) + cursor);
-        cursor += len;
-      }
-      const stride = this.fx ? MIX_ENTRY_FX_STRIDE : MIX_ENTRY_STRIDE;
-      const row = (rows >> 3) + k * stride;
-      heapF64.set(this.rows.subarray(u.index * stride, (u.index + 1) * stride), row);
-      heapF64[row] = k;
-    }
-
-    const rc = this.fx
-      ? mod._mix_fx_session_range!(
-          this.fx.handle,
-          out,
-          frameCount,
-          begin,
-          pcm,
-          slices,
-          uploads.length,
-          rows,
-          uploads.length,
-          keys,
-          this.keyframeCount,
-          this.flags | MIX_FLAG_EFFECTS,
-        )
-      : mod._mix_timeline_audio_range(
-          out,
-          frameCount,
-          begin,
-          this.sampleRate,
-          this.channels,
-          pcm,
-          slices,
-          uploads.length,
-          rows,
-          uploads.length,
-          keys,
-          this.keyframeCount,
-          this.flags,
-        );
-    if (rc !== 0) {
-      lastMixBackend = 'unavailable';
-      throw new Error(`media engine mix failed (rc=${rc})`);
-    }
+    const fx = this.fx;
+    const stride = fx ? MIX_ENTRY_FX_STRIDE : MIX_ENTRY_STRIDE;
     const outFloats = frameCount * this.channels;
-    this.chunkOut.set(mod.HEAPF32.subarray(out >> 2, (out >> 2) + outFloats));
-  }
+    const rc = withHeap(mod, (heap) => {
+      const out = heap.alloc(outFloats * 4);
+      const pcm = heap.alloc(pcmFloats * 4);
+      const slices = heap.alloc(uploads.length * MIX_SLICE_STRIDE * 4);
+      const rows = heap.alloc(uploads.length * stride * 8);
+      const keys = heap.f64(this.keys);
+      const meta = heap.i32View(slices, uploads.length * MIX_SLICE_STRIDE);
+      const pcmView = heap.f32View(pcm, pcmFloats);
+      const rowView = heap.f64View(rows, uploads.length * stride);
 
-  private ensurePcmCapacity(floats: number): void {
-    if (floats <= this.buffers.pcmCapacityFloats) return;
-    const capacity = Math.max(floats, Math.ceil(this.buffers.pcmCapacityFloats * 1.5));
-    if (this.buffers.pcm) this.mod._free(this.buffers.pcm);
-    this.buffers.pcm = 0;
-    this.buffers.pcmCapacityFloats = 0;
-    const ptr = this.mod._malloc(capacity * 4);
-    if (!ptr) {
+      let cursor = 0;
+      for (let k = 0; k < uploads.length; k++) {
+        const u = uploads[k]!;
+        const len = u.last - u.first;
+        const m = k * MIX_SLICE_STRIDE;
+        meta[m] = cursor;
+        meta[m + 1] = len;
+        meta[m + 2] = u.planes;
+        meta[m + 3] = u.pcm.sampleRate | 0;
+        meta[m + 4] = u.first;
+        meta[m + 5] = u.frames;
+        for (let c = 0; c < u.planes; c++) {
+          pcmView.set(u.pcm.channelData[c]!.subarray(u.first, u.last), cursor);
+          cursor += len;
+        }
+        rowView.set(this.rows.subarray(u.index * stride, (u.index + 1) * stride), k * stride);
+        rowView[k * stride] = k;
+      }
+
+      const keyCount = this.keys.length / MIX_KEY_STRIDE;
+      const status = fx
+        ? mod._mix_fx_session_range!(
+            fx.handle,
+            out,
+            frameCount,
+            begin,
+            pcm,
+            pcmFloats,
+            slices,
+            uploads.length,
+            rows,
+            uploads.length,
+            keys,
+            keyCount,
+            this.flags | MIX_FLAG_EFFECTS,
+          )
+        : mod._mix_timeline_audio_range(
+            out,
+            frameCount,
+            begin,
+            this.sampleRate,
+            this.channels,
+            pcm,
+            pcmFloats,
+            slices,
+            uploads.length,
+            rows,
+            uploads.length,
+            keys,
+            keyCount,
+            this.flags,
+          );
+      if (status === CS_STATUS.OK) this.chunkOut.set(heap.f32View(out, outFloats));
+      return status;
+    });
+    if (rc === null) {
       lastMixBackend = 'unavailable';
-      throw new Error(`media engine out of memory (${capacity * 4} bytes of source PCM)`);
+      throw new Error(`media engine out of memory (${pcmFloats * 4} bytes of source PCM)`);
     }
-    this.buffers.pcm = ptr;
-    this.buffers.pcmCapacityFloats = capacity;
+    if (rc !== CS_STATUS.OK) {
+      lastMixBackend = 'unavailable';
+      throw new Error(`media engine mix failed (${describeStatus(rc)})`);
+    }
   }
 }
 
@@ -673,29 +563,17 @@ export async function openTimelineMixStream(
       rows[base + 14] = i; // filter-state slot: stable across chunks
     }
   }
-  const keyframeCount = keyValues.length / MIX_KEY_STRIDE;
-
-  const buffers: StreamBuffers = {
-    out: mod._malloc(chunkFrames * channels * 4),
-    keys: mod._malloc(Math.max(8, keyValues.length * 8)),
-    rows: mod._malloc(Math.max(8, rows.byteLength)),
-    slices: mod._malloc(Math.max(4, schedule.length * MIX_SLICE_STRIDE * 4)),
-    pcm: 0,
-    pcmCapacityFloats: 0,
-  };
-  // f64 views need 8-byte alignment (Emscripten's malloc guarantees it).
-  if (!buffers.out || !buffers.keys || !buffers.rows || !buffers.slices || (buffers.keys | buffers.rows) & 7) {
-    for (const ptr of [buffers.out, buffers.keys, buffers.rows, buffers.slices]) if (ptr) mod._free(ptr);
+  // A heap that cannot hold one chunk's output will not mix: fall back now
+  // rather than on the first chunk.
+  if (!withHeap(mod, (heap) => heap.alloc(chunkFrames * channels * 4) > 0)) {
     lastMixBackend = 'unavailable';
     return null;
   }
-  if (keyValues.length) new Float64Array(mod.HEAPU8.buffer).set(keyValues, buffers.keys >> 3);
 
   let fx: FxSession | null = null;
   if (useFx) {
     const handle = createFxSession(mod, sampleRate, channels, schedule.length, fxValues, busFirst);
     if (!handle) {
-      for (const ptr of [buffers.out, buffers.keys, buffers.rows, buffers.slices]) mod._free(ptr);
       lastMixBackend = 'unavailable';
       return null;
     }
@@ -707,9 +585,8 @@ export async function openTimelineMixStream(
     mod,
     schedule,
     rows,
-    keyframeCount,
+    Float64Array.from(keyValues),
     source,
-    buffers,
     sampleRate,
     channels,
     chunkFrames,
@@ -728,83 +605,20 @@ function createFxSession(
   fxValues: number[],
   busFirst: number,
 ): number {
-  const ptr = mod._malloc(fxValues.length * 8);
-  if (!ptr || ptr & 7) {
-    if (ptr) mod._free(ptr);
-    return 0;
-  }
-  new Float64Array(mod.HEAPU8.buffer).set(fxValues, ptr >> 3);
   const effectCount = fxValues.length / MIX_FX_STRIDE;
-  const handle = mod._mix_fx_session_create!(
-    sampleRate,
-    channels,
-    stateCount,
-    ptr,
-    effectCount,
-    busFirst,
-    effectCount - busFirst,
+  return (
+    withHeap(mod, (heap) =>
+      mod._mix_fx_session_create!(
+        sampleRate,
+        channels,
+        stateCount,
+        heap.f64(fxValues),
+        effectCount,
+        busFirst,
+        effectCount - busFirst,
+      ),
+    ) ?? 0
   );
-  mod._free(ptr);
-  return handle;
-}
-
-/** Frames per `insert_chain_process` call: bounds the heap a long clip needs. */
-const INSERT_CHAIN_BLOCK_FRAMES = 1 << 16;
-
-/**
- * Run a clip insert chain in place over planar PCM, from `startFrame` to the
- * end — the preview's processed-buffer path, through the same C++ chain the
- * export mix runs per entry. `playbackRate` designs the filters for the
- * output-domain rate (`sampleRate * playbackRate`), as the mix hears them
- * after resampling.
- *
- * Synchronous; false when the media engine is not loaded or disabled
- * (callers then play the dry buffer — never a Web Audio approximation).
- */
-export function applyInsertChainToPcm(
-  channelData: Float32Array[],
-  sampleRate: number,
-  effects: ClipAudioEffects | undefined,
-  options: { startFrame?: number; playbackRate?: number } = {},
-): boolean {
-  const mod = loadedModule;
-  if (!mod || !isMediaEngineMixEnabled() || typeof mod._insert_chain_create !== 'function') return false;
-  const rows = packAudioEffectRows(effects);
-  if (rows.length === 0) return true;
-  const planes = Math.min(2, channelData.length);
-  if (planes === 0 || !(sampleRate > 0)) return false;
-  let length = Infinity;
-  for (let c = 0; c < planes; c++) length = Math.min(length, channelData[c]!.length);
-  const start = Math.max(0, Math.floor(options.startFrame ?? 0));
-  const designRate = sampleRate * sanitizedRate(options.playbackRate);
-
-  const rowsPtr = mod._malloc(rows.length * 8);
-  const block = Math.max(1, Math.min(INSERT_CHAIN_BLOCK_FRAMES, length - start));
-  const pcmPtr = mod._malloc(block * planes * 4);
-  let chain = 0;
-  try {
-    if (!rowsPtr || !pcmPtr || rowsPtr & 7) return false;
-    new Float64Array(mod.HEAPU8.buffer).set(rows, rowsPtr >> 3);
-    chain = mod._insert_chain_create(designRate, rowsPtr, rows.length / MIX_FX_STRIDE);
-    if (!chain) return false;
-    for (let begin = start; begin < length; begin += block) {
-      const frames = Math.min(block, length - begin);
-      const heap = mod.HEAPF32;
-      for (let c = 0; c < planes; c++) {
-        heap.set(channelData[c]!.subarray(begin, begin + frames), (pcmPtr >> 2) + c * frames);
-      }
-      if (mod._insert_chain_process!(chain, pcmPtr, frames, planes) !== 0) return false;
-      for (let c = 0; c < planes; c++) {
-        const offset = (pcmPtr >> 2) + c * frames;
-        channelData[c]!.set(heap.subarray(offset, offset + frames), begin);
-      }
-    }
-    return true;
-  } finally {
-    if (chain) mod._insert_chain_destroy?.(chain);
-    if (pcmPtr) mod._free(pcmPtr);
-    if (rowsPtr) mod._free(rowsPtr);
-  }
 }
 
 /**

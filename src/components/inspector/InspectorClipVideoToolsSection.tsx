@@ -11,7 +11,7 @@ import {
   layoutPixelToNormValue,
   type CanvasSize,
 } from '../../utils/overlayCoords';
-import { getClipDuration } from '../../utils/project';
+import { getClipDuration } from '../../utils/clipTiming';
 import type { PipCorner } from '../../utils/pipPreset';
 import { KeyframeMiniEditor } from '../KeyframeMiniEditor';
 import {

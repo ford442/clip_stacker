@@ -5,8 +5,9 @@
  *  - Decode: VideoDecoder (mp4box demux + ring buffer; see webcodecs-decoder.ts)
  *  - Composite: WebGPU exportCompositor / timelinePreview (VideoFrame → shaders)
  *  - Encode: VideoEncoder (hardware H.264/HEVC/AV1) ← canvas after GPU flush
- *  - Mux: mp4-muxer (video + optional WebCodecs AAC); FFmpeg only for audio mux
- *    fallback via muxVideoWithAudio when AudioEncoder path is unavailable
+ *  - Mux: Mp4Writer (`container/`, Mediabunny) — video + optional WebCodecs AAC;
+ *    FFmpeg only for audio mux fallback via muxVideoWithAudio when the
+ *    AudioEncoder path is unavailable
  *  - Decode fallback: HTMLVideoElement → requestVideoFrameCallback when a clip
  *    cannot be demuxed/decoded with WebCodecs
  *
@@ -17,13 +18,12 @@
  *
  * Implementation is split by responsibility:
  *  - webcodecs-codec.ts — codec probe, bitrate, progress stages
- *  - webcodecs-mux.ts — mp4-muxer session + optional AAC mix-in
+ *  - webcodecs-mux.ts — Mp4Writer session + optional AAC mix-in
  *  - webcodecs-compositor.ts — canvas/WebGPU draw + overlay pass
  *  - webcodecs-clip-encode.ts — sequential per-clip encode
  *  - webcodecs-timeline-export.ts — timeline compositor encode
  */
 
-import { ArrayBufferTarget } from 'mp4-muxer';
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { getClipDuration } from './project';
@@ -79,7 +79,7 @@ export {
 /**
  * Encode timeline video with hardware H.264. When `includeWebCodecsAudio` is
  * true, timeline audio is mixed and encoded with `AudioEncoder` into the same
- * mp4-muxer session (no FFmpeg on the happy path).
+ * MP4 writer session (no FFmpeg on the happy path).
  */
 export async function encodeVideoWithWebCodecs(
   clips: Clip[],
@@ -200,6 +200,7 @@ export async function encodeVideoWithWebCodecs(
         overlayPass,
       );
       if (videoError) throw videoError;
+      muxer.throwIfFailed();
 
       elapsedDuration += getClipDuration(clip);
       onProgress?.({
@@ -224,10 +225,9 @@ export async function encodeVideoWithWebCodecs(
       onProgress,
     );
 
-    muxer.finalize();
+    const buffer = await muxer.finalize();
     onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.finalize, progress: 0.92, indeterminate: false });
 
-    const { buffer } = muxer.target as ArrayBufferTarget;
     return new Blob([buffer], { type: 'video/mp4' });
   } finally {
     compositor.gpuCompositor?.destroy();

@@ -1,7 +1,7 @@
 import type { Clip, ClipAnimatableProp, ClipKeyframes, TextOverlay } from '../types';
 import { sampleKeyframes, upsertKeyframe } from './keyframes';
 import { IDENTITY_PICTURE_TRANSFORM, type PictureTransform } from './clipTransform';
-import { clampOverlayPosition } from './project';
+import { clampOverlayPosition } from './project/clipHelpers';
 import { resolveTextOverlayPixels } from './overlayCoords';
 import { resolveScrollingX } from './textOverlay';
 

@@ -8,6 +8,7 @@
  */
 
 import { TIMELINE_EXPORT_FPS } from './webcodecs-timeline';
+import { clamp, clamp01, finiteOr } from './math';
 
 export const GRAIN_UNIFORM_FLOATS = 16;
 
@@ -126,18 +127,6 @@ export const GRAIN_PRESETS: GrainPreset[] = [
     },
   },
 ];
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function clamp01(v: number): number {
-  return clamp(v, 0, 1);
-}
-
-function finiteOr(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-}
 
 function cloneVignette(v: GrainVignetteSettings): GrainVignetteSettings {
   return { ...v };

@@ -81,10 +81,6 @@ export const MAX_INSPECTOR_THUMBNAILS = 8;
 export const SECONDS_PER_INSPECTOR_THUMBNAIL = 3;
 export const INSPECTOR_WAVEFORM_SAMPLES = 120;
 
-export function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
 export function parseNumber(value: string, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;

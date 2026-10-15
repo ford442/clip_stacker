@@ -2,7 +2,7 @@ import type { CaptionEntry, Clip, MasterAudio, SyncMarker, Track } from '../type
 import { beatsInTrimWindow } from './beatMarkers';
 import { DEFAULT_BEAT_SNAP_THRESHOLD_MS, snapTimeToBeat } from './beatSnap';
 import { getClipPlaybackRate } from './playbackRate';
-import { getClipDuration } from './project/clipHelpers';
+import { getClipDuration } from './clipTiming';
 
 /**
  * Timeline magnet (#168 follow-up): snap an output time to the playhead, clip

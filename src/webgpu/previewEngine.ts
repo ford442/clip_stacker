@@ -1,14 +1,11 @@
-import previewShader from "./shaders/preview.wgsl?raw";
-import overlayShader from "./shaders/overlay.wgsl?raw";
 import { acquireGpuContext, onGpuDeviceRecovered, type GpuContext } from "./gpuDevice";
 import {
-  createTransitionPipelineCache,
   renderTransitionPass,
   TRANSITION_UNIFORM_FLOATS,
   type TransitionPipelineCache,
 } from "./transitions/transitionPass";
 import type { TransitionRenderParams } from "./transitions/types";
-import { FinishingPassChain } from "./finishingPassChain";
+import type { FinishingPassChain } from "./finishingPassChain";
 import {
   DEFAULT_COLOR_MANAGEMENT,
   isColorManagementActive,
@@ -26,12 +23,28 @@ import type { ColorGradeSettings } from "../utils/lut";
 import { isColorGradeActive } from "../utils/lut";
 import { isFinishingActive, type FinishingSettings } from "../utils/finishing";
 import {
-  AUDIO_UNIFORM_OFFSET,
   ZERO_AUDIO_REACTIVE,
   type AudioReactiveState,
 } from "../wasm/audioReactiveUniforms";
-import { packWarpUniforms, type Affine2x3 } from "../utils/clipTransform";
-import { packKeyUniforms, type LayerKeyUniforms } from "../utils/overlayKey";
+import {
+  packLayerUniforms,
+  UNIFORM_FLOATS,
+  type LayerDraw,
+  type LayerRenderParams,
+} from "./previewLayerUniforms";
+import {
+  buildPreviewDeviceResources,
+  CANVAS_TEXTURE_USAGE,
+  canvasConfiguration,
+  GPU_TEX_COPY_DST,
+  GPU_TEX_TEXTURE_BINDING,
+} from "./previewDeviceResources";
+
+export type {
+  LayerDraw,
+  LayerRenderParams,
+  NormalizedDestRect,
+} from "./previewLayerUniforms";
 
 /**
  * WebGPU-based clip preview engine.
@@ -47,101 +60,6 @@ import { packKeyUniforms, type LayerKeyUniforms } from "../utils/overlayKey";
  *   // Cleanup:
  *   engine.destroy();
  */
-
-/** Must match WGSL Uniforms (36 floats = 144 bytes, 16-byte aligned). */
-const UNIFORM_FLOATS = 36;
-
-/** First slot of the layer warp affine in `Uniforms` (must match preview.wgsl). */
-const WARP_UNIFORM_OFFSET = 17;
-
-/** `warpMask` then `quadX/Y/W/H` in `Uniforms` (must match preview.wgsl). */
-const WARP_QUAD_UNIFORM_OFFSET = 29;
-
-/** First slot of the chroma/luma key block in `Uniforms` (must match preview.wgsl). */
-const KEY_UNIFORM_OFFSET = 23;
-
-// Numeric GPUTextureUsage flags (spec values) so this module can load in tests
-// without a WebGPU environment.
-const GPU_TEX_COPY_SRC = 0x01;
-const GPU_TEX_COPY_DST = 0x02;
-const GPU_TEX_TEXTURE_BINDING = 0x04;
-const GPU_TEX_RENDER_ATTACHMENT = 0x10;
-
-// RENDER_ATTACHMENT (we draw into it) + COPY_SRC (VideoFrame/VideoEncoder and
-// the finishing pass chain read it back) is all a canvas swapchain texture
-// ever needs. COPY_DST / TEXTURE_BINDING are not portable across adapters —
-// some reject configure() outright — and nothing here samples or copies into
-// the canvas texture; the finishing chain copies FROM it into an offscreen
-// ping-pong texture and renders back onto it as a color attachment.
-const CANVAS_TEXTURE_USAGE = GPU_TEX_RENDER_ATTACHMENT | GPU_TEX_COPY_SRC;
-
-/** Shared `GPUCanvasContext.configure()` options (initial configure, resize, and device-recovery reconfigure). */
-function canvasConfiguration(
-  device: GPUDevice,
-  format: GPUTextureFormat,
-): GPUCanvasConfiguration {
-  return {
-    device,
-    format,
-    alphaMode: "premultiplied",
-    usage: CANVAS_TEXTURE_USAGE,
-    colorSpace: "srgb",
-    toneMapping: { mode: "standard" },
-  };
-}
-
-const PREMULTIPLIED_BLEND: GPUBlendState = {
-  color: {
-    srcFactor: "one",
-    dstFactor: "one-minus-src-alpha",
-    operation: "add",
-  },
-  alpha: {
-    srcFactor: "one",
-    dstFactor: "one-minus-src-alpha",
-    operation: "add",
-  },
-};
-
-export interface NormalizedDestRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface LayerRenderParams {
-  elapsed: number;
-  duration: number;
-  fadeIn: number;
-  fadeOut: number;
-  opacity: number;
-  uvScale: [number, number];
-  uvOffset: [number, number];
-  /**
-   * The layer warp (stabilization ∘ inverse picture transform) as one inverse
-   * 2x3 affine in the dest rect's normalized UV, `[a, b, tx, c, d, ty]` —
-   * see `utils/clipTransform.ts`. Omit (or pass identity) for plain clips.
-   */
-  warpMatrix?: Affine2x3;
-  /** Quad to draw when a picture transform can leave `destRect` (masked outside). */
-  warpQuad?: NormalizedDestRect;
-  /**
-   * Chroma / luma key for this layer. Omit for unkeyed layers — the shader
-   * then samples the source as-is.
-   */
-  key?: LayerKeyUniforms;
-  /** Destination rectangle on the canvas in normalized 0–1 coordinates. */
-  destRect?: NormalizedDestRect;
-  /** When true, clears the canvas before drawing this layer. */
-  clear?: boolean;
-}
-
-export interface LayerDraw {
-  videoFrame: VideoFrame;
-  params: LayerRenderParams;
-}
-
 export class PreviewEngine {
   private device: GPUDevice;
   private context: GPUCanvasContext;
@@ -211,102 +129,6 @@ export class PreviewEngine {
     this.configureCanvas();
   }
 
-  /**
-   * Build the device-scoped pipelines/samplers/buffers. Pulled out of
-   * `create()` so a device-loss recovery (see `handleDeviceRecovered`) can
-   * rebuild the same resources against the freshly-recreated device instead
-   * of leaving this engine's GPU objects bound to a destroyed one.
-   */
-  private static buildDeviceResources(device: GPUDevice, format: GPUTextureFormat) {
-    const shaderModule = device.createShaderModule({ code: previewShader });
-    const overlayModule = device.createShaderModule({ code: overlayShader });
-
-    const sampler = device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-    });
-
-    const uniformBuffer = device.createBuffer({
-      size: UNIFORM_FLOATS * 4,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    const transitionUniformBuffer = device.createBuffer({
-      size: TRANSITION_UNIFORM_FLOATS * 4,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    const transitionPipelineCache = createTransitionPipelineCache(device, format);
-    const finishingChain = FinishingPassChain.create(device, format);
-
-    const bindGroupLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.FRAGMENT,
-          externalTexture: {},
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: "uniform" },
-        },
-      ],
-    });
-
-    const pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [bindGroupLayout],
-      }),
-      vertex: { module: shaderModule, entryPoint: "vs_main" },
-      fragment: {
-        module: shaderModule,
-        entryPoint: "fs_main",
-        targets: [{ format, blend: PREMULTIPLIED_BLEND }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
-
-    const overlayLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.FRAGMENT,
-          texture: { sampleType: "float" },
-        },
-      ],
-    });
-
-    const overlayPipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [overlayLayout] }),
-      vertex: { module: overlayModule, entryPoint: "vs_main" },
-      fragment: {
-        module: overlayModule,
-        entryPoint: "fs_main",
-        targets: [{ format, blend: PREMULTIPLIED_BLEND }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
-
-    const overlaySampler = device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-    });
-
-    return {
-      pipeline,
-      sampler,
-      uniformBuffer,
-      transitionUniformBuffer,
-      transitionPipelineCache,
-      finishingChain,
-      overlayPipeline,
-      overlaySampler,
-    };
-  }
-
   static async create(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<PreviewEngine> {
     const { device, format } = await acquireGpuContext();
 
@@ -315,7 +137,7 @@ export class PreviewEngine {
 
     context.configure(canvasConfiguration(device, format));
 
-    const built = PreviewEngine.buildDeviceResources(device, format);
+    const built = buildPreviewDeviceResources(device, format);
 
     const engine = new PreviewEngine(
       device,
@@ -361,7 +183,7 @@ export class PreviewEngine {
 
     this.device = ctx.device;
     this.format = ctx.format;
-    const built = PreviewEngine.buildDeviceResources(this.device, this.format);
+    const built = buildPreviewDeviceResources(this.device, this.format);
     this.pipeline = built.pipeline;
     this.sampler = built.sampler;
     this.uniformBuffer = built.uniformBuffer;
@@ -779,28 +601,7 @@ export class PreviewEngine {
     index: number,
   ): void {
     const params = layer.params;
-    const dest = params.destRect ?? { x: 0, y: 0, w: 1, h: 1 };
-    this.uniformData[0] = params.fadeIn;
-    this.uniformData[1] = params.fadeOut;
-    this.uniformData[2] = params.duration;
-    this.uniformData[3] = params.elapsed;
-    this.uniformData[4] = params.opacity;
-    this.uniformData[5] = params.uvScale[0];
-    this.uniformData[6] = params.uvScale[1];
-    this.uniformData[7] = params.uvOffset[0];
-    this.uniformData[8] = params.uvOffset[1];
-    this.uniformData[9] = dest.x;
-    this.uniformData[10] = dest.y;
-    this.uniformData[11] = dest.w;
-    this.uniformData[12] = dest.h;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.bass] = this.audioReactive.bass;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.mid] = this.audioReactive.mid;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.treble] = this.audioReactive.treble;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.beat] = this.audioReactive.beat;
-    packWarpUniforms(this.uniformData, WARP_UNIFORM_OFFSET, params.warpMatrix);
-    const quad = params.warpQuad ?? dest;
-    this.uniformData.set([params.warpQuad ? 1 : 0, quad.x, quad.y, quad.w, quad.h], WARP_QUAD_UNIFORM_OFFSET);
-    packKeyUniforms(this.uniformData, KEY_UNIFORM_OFFSET, params.key);
+    packLayerUniforms(this.uniformData, params, this.audioReactive);
 
     const uniformBuffer = this.uniformBufferForLayer(index);
     this.device.queue.writeBuffer(uniformBuffer, 0, this.uniformData);

@@ -4,7 +4,13 @@
  * Feature gracefully disables when the module fails to load (no crash).
  */
 
-import { readWasmBinaryIfFileUrl, type EmscriptenFactory } from './emscriptenLoader';
+import {
+  CS_STATUS,
+  getEmscriptenLoadFailure,
+  loadEmscriptenModule,
+  withHeap,
+  _resetEmscriptenModuleForTests,
+} from './emscriptenLoader';
 
 export const AUDIO_ANALYSIS_BAND_COUNT = 8;
 
@@ -44,46 +50,16 @@ interface WasmModule {
     numSamples: number,
     bandsPtr: number,
     beatPtr: number,
-  ): void;
+  ): number;
   _resetAnalyzer(handle: number): void;
   _destroyAnalyzer(handle: number): void;
   _getHopSize(handle: number): number;
   _malloc(size: number): number;
   _free(ptr: number): void;
-  HEAPF32: Float32Array;
+  HEAPU8: Uint8Array;
 }
 
-type ModuleFactory = EmscriptenFactory<WasmModule>;
-
-let loadPromise: Promise<WasmModule | null> | null = null;
-let loadFailedReason: string | null = null;
-
-/** Repo-relative public assets (Node / Vitest). */
-const NODE_WASM_BASE = new URL('../../public/wasm/', import.meta.url);
-
-/** Public URL for the `public/wasm/` directory (works on main thread and in workers). */
-export function getWasmPublicBaseUrl(): string {
-  if (typeof document !== 'undefined') {
-    return new URL('wasm/', document.baseURI).href;
-  }
-  // Bundled workers live under `assets/`; WASM is copied to `dist/wasm/`.
-  if (typeof self !== 'undefined' && typeof import.meta.url === 'string') {
-    return new URL('../wasm/', import.meta.url).href;
-  }
-  if (typeof window !== 'undefined') {
-    return new URL('wasm/', window.location.href).href;
-  }
-  return NODE_WASM_BASE.href;
-}
-
-function resolveAssetUrl(fileName: string, baseUrl?: string): string {
-  const root = baseUrl
-    ? baseUrl.endsWith('/')
-      ? baseUrl
-      : `${baseUrl}/`
-    : getWasmPublicBaseUrl();
-  return new URL(fileName, root).href;
-}
+const MODULE_NAME = 'audio_analysis';
 
 /**
  * Load the Emscripten module once. Returns null on failure (feature disabled).
@@ -92,54 +68,16 @@ export async function loadAudioAnalysisModule(options?: {
   /** Directory URL containing audio_analysis.js / .wasm (trailing slash optional). */
   baseUrl?: string;
 }): Promise<WasmModule | null> {
-  if (loadFailedReason) return null;
-  if (loadPromise) return loadPromise;
-
-  loadPromise = (async () => {
-    try {
-      const jsUrl = resolveAssetUrl('audio_analysis.js', options?.baseUrl);
-      const wasmUrl = resolveAssetUrl('audio_analysis.wasm', options?.baseUrl);
-
-      // Dynamic import of the MODULARIZE/EXPORT_ES6 glue.
-      const mod = (await import(/* @vite-ignore */ jsUrl)) as {
-        default: ModuleFactory;
-      };
-      const factory = mod.default;
-      if (typeof factory !== 'function') {
-        throw new Error('audio_analysis module factory missing');
-      }
-
-      const instance = await factory({
-        ...(await readWasmBinaryIfFileUrl(wasmUrl).then((wasmBinary) =>
-          wasmBinary ? { wasmBinary } : {},
-        )),
-        locateFile: (path: string) => {
-          if (path.endsWith('.wasm')) return wasmUrl;
-          return resolveAssetUrl(path, options?.baseUrl);
-        },
-      });
-      return instance;
-    } catch (err) {
-      loadFailedReason = (err as Error)?.message || String(err);
-      console.warn(
-        '[audioAnalysis] WASM load failed — audio-reactive analysis disabled:',
-        loadFailedReason,
-      );
-      return null;
-    }
-  })();
-
-  return loadPromise;
+  return loadEmscriptenModule<WasmModule>(MODULE_NAME, 'createAudioAnalysisModule', options);
 }
 
 /** Reset cached load state (tests only). */
 export function _resetAudioAnalysisLoadStateForTests(): void {
-  loadPromise = null;
-  loadFailedReason = null;
+  _resetEmscriptenModuleForTests(MODULE_NAME);
 }
 
 export function getAudioAnalysisLoadFailure(): string | null {
-  return loadFailedReason;
+  return getEmscriptenLoadFailure(MODULE_NAME);
 }
 
 function aggregateBands(bands: Float32Array): Pick<AudioBandEnergies, 'bass' | 'mid' | 'treble'> {
@@ -168,7 +106,7 @@ export async function createAudioAnalyzer(
   if (!mod) {
     return {
       available: false,
-      reason: loadFailedReason || 'WASM module unavailable',
+      reason: getAudioAnalysisLoadFailure() || 'WASM module unavailable',
     };
   }
 
@@ -178,19 +116,14 @@ export async function createAudioAnalyzer(
   }
 
   const hopSize = mod._getHopSize(handle) || fftSize / 2;
-  const pcmPtr = mod._malloc(fftSize * 4);
-  const bandsPtr = mod._malloc(AUDIO_ANALYSIS_BAND_COUNT * 4);
-  const beatPtr = mod._malloc(4);
-
-  if (!pcmPtr || !bandsPtr || !beatPtr) {
-    mod._destroyAnalyzer(handle);
-    if (pcmPtr) mod._free(pcmPtr);
-    if (bandsPtr) mod._free(bandsPtr);
-    if (beatPtr) mod._free(beatPtr);
-    return { available: false, reason: 'WASM heap allocation failed' };
-  }
-
   let destroyed = false;
+  const silent = (): AudioBandEnergies => ({
+    bands: new Float32Array(AUDIO_ANALYSIS_BAND_COUNT),
+    beat: 0,
+    bass: 0,
+    mid: 0,
+    treble: 0,
+  });
 
   const analyzer: AudioAnalyzerHandle = {
     available: true,
@@ -198,29 +131,22 @@ export async function createAudioAnalyzer(
     fftSize,
     hopSize,
     analyze(pcm: Float32Array): AudioBandEnergies {
-      if (destroyed) {
-        return {
-          bands: new Float32Array(AUDIO_ANALYSIS_BAND_COUNT),
-          beat: 0,
-          bass: 0,
-          mid: 0,
-          treble: 0,
-        };
-      }
+      if (destroyed) return silent();
       const n = Math.min(pcm.length, fftSize);
-      const heap = mod.HEAPF32;
-      const pcmOffset = pcmPtr >> 2;
-      for (let i = 0; i < fftSize; i++) {
-        heap[pcmOffset + i] = i < n ? pcm[i]! : 0;
-      }
-      mod._analyzeFrame(handle, pcmPtr, n, bandsPtr, beatPtr);
-      const bands = new Float32Array(AUDIO_ANALYSIS_BAND_COUNT);
-      const bandsOffset = bandsPtr >> 2;
-      for (let i = 0; i < AUDIO_ANALYSIS_BAND_COUNT; i++) {
-        bands[i] = heap[bandsOffset + i] ?? 0;
-      }
-      const beat = heap[beatPtr >> 2] ?? 0;
-      return { bands, beat, ...aggregateBands(bands) };
+      const result = withHeap(mod, (heap) => {
+        const pcmPtr = heap.alloc(fftSize * 4);
+        const bandsPtr = heap.alloc(AUDIO_ANALYSIS_BAND_COUNT * 4);
+        const beatPtr = heap.alloc(4);
+        const frame = heap.f32View(pcmPtr, fftSize);
+        frame.set(pcm.subarray(0, n));
+        frame.fill(0, n);
+        if (mod._analyzeFrame(handle, pcmPtr, n, bandsPtr, beatPtr) !== CS_STATUS.OK) return null;
+        // Read after the call: analysis may grow the heap and detach older views.
+        const bands = heap.readF32(bandsPtr, AUDIO_ANALYSIS_BAND_COUNT);
+        const beat = heap.f32View(beatPtr, 1)[0] ?? 0;
+        return { bands, beat, ...aggregateBands(bands) };
+      });
+      return result ?? silent();
     },
     reset() {
       if (!destroyed) mod._resetAnalyzer(handle);
@@ -229,9 +155,6 @@ export async function createAudioAnalyzer(
       if (destroyed) return;
       destroyed = true;
       mod._destroyAnalyzer(handle);
-      mod._free(pcmPtr);
-      mod._free(bandsPtr);
-      mod._free(beatPtr);
     },
   };
 

@@ -142,7 +142,7 @@ async function uploadClipForRife(videoBlob: Blob): Promise<string> {
     return path;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`RIFE processing failed: ${message}`);
+    throw new Error(`RIFE processing failed: ${message}`, { cause: err });
   }
 }
 
@@ -180,7 +180,7 @@ async function interpolateUploadedClip(
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`RIFE processing failed: ${message}`);
+    throw new Error(`RIFE processing failed: ${message}`, { cause: err });
   }
 
   onProgress?.({
@@ -242,7 +242,7 @@ export async function generateMorphTransition(
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Morph transition failed: ${message}`);
+    throw new Error(`Morph transition failed: ${message}`, { cause: err });
   }
 
   onProgress?.({
@@ -342,7 +342,7 @@ export async function stitchClipsOnGpu(
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`GPU stitch failed: ${message}`);
+    throw new Error(`GPU stitch failed: ${message}`, { cause: err });
   }
 
   onProgress?.({

@@ -6,6 +6,8 @@
  * Canvas2D preview does not apply primary color (WebGPU only).
  */
 
+import { clamp, clamp01, finiteOr } from './math';
+
 export const PRIMARY_CONTRAST_PIVOT = 0.18;
 
 /** Uniform float count (6 × vec4) for WGSL PrimaryColorUniforms. */
@@ -44,18 +46,6 @@ export const DEFAULT_PRIMARY_COLOR_PARAMS = {
   gamma: [1, 1, 1] as [number, number, number],
   gain: [1, 1, 1] as [number, number, number],
 };
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function clamp01(v: number): number {
-  return clamp(v, 0, 1);
-}
-
-function finiteOr(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-}
 
 function normalizeRgbTriplet(
   raw: unknown,

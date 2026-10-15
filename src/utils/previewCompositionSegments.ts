@@ -6,7 +6,8 @@
  */
 
 import type { Clip, ClipTransition, ExportSettings } from '../types';
-import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH, getClipDuration } from './project';
+import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './canvasDefaults';
+import { getClipDuration } from './clipTiming';
 import { parseOutputResolution } from './resolution';
 import { clipHasLayoutKeyframes, resolveAnimatedClipLayout } from './animatedLayout';
 import { capPreviewResolution, DEFAULT_PREVIEW_MAX_HEIGHT } from './previewBudget';
@@ -113,17 +114,12 @@ export function resolveCanvasSize(
   const outputWidth = width || DEFAULT_CANVAS_WIDTH;
   const outputHeight = height || DEFAULT_CANVAS_HEIGHT;
 
-  let canvasWidth = outputWidth;
-  let canvasHeight = outputHeight;
-  let scale = 1;
-  let capped = false;
-
   const maxHeight = options.maxHeight ?? DEFAULT_PREVIEW_MAX_HEIGHT;
-  const heightCap = capPreviewResolution(canvasWidth, canvasHeight, maxHeight);
-  canvasWidth = heightCap.width;
-  canvasHeight = heightCap.height;
-  scale = heightCap.scale;
-  capped = heightCap.capped;
+  const heightCap = capPreviewResolution(outputWidth, outputHeight, maxHeight);
+  let canvasWidth = heightCap.width;
+  let canvasHeight = heightCap.height;
+  let scale = heightCap.scale;
+  let capped = heightCap.capped;
 
   if (options.maxWidth && canvasWidth > options.maxWidth) {
     const widthScale = options.maxWidth / canvasWidth;

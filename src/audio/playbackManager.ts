@@ -7,16 +7,16 @@ import {
   schedulesMatchStructure,
   type AudioScheduleEntry,
 } from './schedule';
-import {
-  collectAutomationBreakpoints,
-  DEFAULT_CLIP_PAN,
-  scheduleAudioParamBreakpoints,
-} from '../utils/clipAutomation';
-import { sampleKeyframes } from '../utils/keyframes';
-import { clampClipVolume } from '../utils/audioVolume';
 import { RemappedAudioCache } from '../utils/remappedAudioCache';
 import { ProcessedAudioCache } from './processedAudioCache';
 import { createAudioContext } from './context';
+import { bandEnergy, ZERO_ANALYSER_LEVELS, type AnalyserLevels } from './analyserLevels';
+import { applyGainEnvelope, applyPanEnvelope } from './gainEnvelope';
+
+// Analyser meter levels and the gain / pan envelope maths live in sibling
+// modules; re-exported for existing importers.
+export { ZERO_ANALYSER_LEVELS, type AnalyserLevels } from './analyserLevels';
+export { applyGainEnvelope, applyPanEnvelope, samplePanAt } from './gainEnvelope';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
 
@@ -26,26 +26,6 @@ export interface AudioPlaybackStatus {
   available: boolean;
   currentTime: number;
 }
-
-/** Instantaneous meter reading from the playback AnalyserNode. */
-export interface AnalyserLevels {
-  /** Broadband RMS in 0–1. */
-  rms: number;
-  /** Peak sample in 0–1. */
-  peak: number;
-  /** Low / mid / high band energies in 0–1 (for reactive shaders / meters). */
-  bass: number;
-  mid: number;
-  treble: number;
-}
-
-export const ZERO_ANALYSER_LEVELS: AnalyserLevels = {
-  rms: 0,
-  peak: 0,
-  bass: 0,
-  mid: 0,
-  treble: 0,
-};
 
 type StatusListener = (status: AudioPlaybackStatus) => void;
 
@@ -619,158 +599,6 @@ export class AudioPlaybackManager {
       }
     }
   }
-}
-
-/** Map a slice of Analyser frequency bins (dB) to a 0–1 energy. */
-function bandEnergy(frequencyDb: Float32Array, start: number, end: number): number {
-  if (end <= start) return 0;
-  let sum = 0;
-  for (let i = start; i < end; i++) {
-    // getFloatFrequencyData is typically −100…0 dB.
-    const db = frequencyDb[i];
-    const linear = db <= -100 ? 0 : Math.pow(10, db / 20);
-    sum += linear;
-  }
-  return Math.min(1, sum / (end - start));
-}
-
-/**
- * Apply volume keyframes + per-clip audio fade envelopes relative to the
- * scheduled start of this source (`when`), accounting for mid-clip seeks via
- * `clipElapsed`. Automation values are absolute linear gain; fades multiply.
- */
-export function applyGainEnvelope(
-  param: AudioParam,
-  entry: Pick<
-    AudioScheduleEntry,
-    'volume' | 'audioFadeIn' | 'audioFadeOut' | 'duration' | 'volumeAutomation'
-  >,
-  when: number,
-  playDuration: number,
-  clipElapsed: number,
-  earliestTime: number,
-): void {
-  const volume = clampClipVolume(entry.volume);
-  const hasAutomation = (entry.volumeAutomation?.length ?? 0) > 0;
-  const fadeIn = entry.audioFadeIn;
-  const fadeOut = entry.audioFadeOut;
-
-  // Fast path: constant volume with optional linear fades (legacy behavior).
-  if (!hasAutomation) {
-    const startTime = Math.max(when, earliestTime);
-    param.cancelScheduledValues(startTime);
-
-    const levelAt = (localTime: number): number => {
-      let level = volume;
-      if (fadeIn > 0 && localTime < fadeIn) {
-        level *= localTime / fadeIn;
-      }
-      if (fadeOut > 0 && localTime > entry.duration - fadeOut) {
-        const outProgress = (entry.duration - localTime) / fadeOut;
-        level *= Math.max(0, Math.min(1, outProgress));
-      }
-      return level;
-    };
-
-    param.setValueAtTime(levelAt(clipElapsed), startTime);
-
-    if (fadeIn > 0 && clipElapsed < fadeIn) {
-      const fadeInEnd = when + (fadeIn - clipElapsed);
-      if (fadeInEnd > startTime) {
-        param.linearRampToValueAtTime(volume, fadeInEnd);
-      }
-    }
-
-    if (fadeOut > 0) {
-      const fadeOutStartLocal = entry.duration - fadeOut;
-      const fadeOutStart = when + (fadeOutStartLocal - clipElapsed);
-      const fadeOutEnd = when + playDuration;
-      if (fadeOutEnd > startTime && clipElapsed < entry.duration) {
-        if (fadeOutStart > startTime) {
-          param.setValueAtTime(volume, Math.max(startTime, fadeOutStart));
-        }
-        const endLevel = levelAt(clipElapsed + playDuration);
-        param.linearRampToValueAtTime(endLevel, Math.max(startTime, fadeOutEnd));
-      }
-    }
-    return;
-  }
-
-  const breakpoints = collectAutomationBreakpoints({
-    duration: entry.duration,
-    clipElapsed,
-    playDuration,
-    keyframes: entry.volumeAutomation,
-    defaultValue: volume,
-    fadeIn,
-    fadeOut,
-  }).map((point) => ({
-    ...point,
-    value: clampClipVolume(point.value),
-  }));
-
-  scheduleAudioParamBreakpoints(
-    param,
-    breakpoints,
-    when,
-    clipElapsed,
-    earliestTime,
-  );
-}
-
-/**
- * Apply stereo pan automation (−1…+1). Empty keyframes leave the pan centered.
- */
-export function applyPanEnvelope(
-  param: AudioParam,
-  panAutomation: AudioScheduleEntry['panAutomation'],
-  when: number,
-  playDuration: number,
-  clipElapsed: number,
-  earliestTime: number,
-  fullDuration?: number,
-): void {
-  const hasAutomation = (panAutomation?.length ?? 0) > 0;
-  if (!hasAutomation) {
-    const startTime = Math.max(when, earliestTime);
-    param.cancelScheduledValues(startTime);
-    param.setValueAtTime(DEFAULT_CLIP_PAN, startTime);
-    return;
-  }
-
-  const duration = Math.max(
-    fullDuration ?? 0,
-    clipElapsed + playDuration,
-  );
-  const breakpoints = collectAutomationBreakpoints({
-    duration,
-    clipElapsed,
-    playDuration,
-    keyframes: panAutomation,
-    defaultValue: DEFAULT_CLIP_PAN,
-  }).map((point) => ({
-    ...point,
-    value: Math.max(-1, Math.min(1, point.value)),
-  }));
-
-  scheduleAudioParamBreakpoints(
-    param,
-    breakpoints,
-    when,
-    clipElapsed,
-    earliestTime,
-  );
-}
-
-/** Instantaneous pan at local clip time (for tests / meters). */
-export function samplePanAt(
-  panAutomation: AudioScheduleEntry['panAutomation'],
-  localTime: number,
-): number {
-  return Math.max(
-    -1,
-    Math.min(1, sampleKeyframes(panAutomation, localTime, DEFAULT_CLIP_PAN)),
-  );
 }
 
 /** Singleton used by the timeline preview session. */

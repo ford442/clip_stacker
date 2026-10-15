@@ -19,7 +19,7 @@ import {
   type EditState,
 } from "../utils/editModes";
 import { collectSnapTargets, snapClipStart } from "../utils/timelineSnap";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 
 /**
  * Guard every clip edit that a locked lane must reject (#168 Phase A).
@@ -144,7 +144,6 @@ export function useTimelineActions({
         if (fromPoolIndex < 0) return prev;
         const next = [...legacy];
         const [moved] = next.splice(fromPoolIndex, 1);
-        let target = insertBefore;
         if (insertBefore < timelineIds.length) {
           const targetId = timelineIds[insertBefore > fromIndex ? insertBefore - 1 : insertBefore];
           const targetPoolIndex = next.findIndex((c) => c.id === targetId);

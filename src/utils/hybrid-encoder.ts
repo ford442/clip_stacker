@@ -261,6 +261,7 @@ export async function hybridMergeClips(
           const message = err instanceof Error ? err.message : 'GPU encode failed';
           throw new Error(
             `${message} Display P3 / HDR10 was not written as a Rec.709 file.`,
+            { cause: err },
           );
         }
         gpuFailure = (err as Error).message;

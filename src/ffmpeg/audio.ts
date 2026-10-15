@@ -9,7 +9,7 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   isFfmpegLoadFailed,
@@ -163,6 +163,7 @@ export async function extractAudioToWav(
         throw new Error(
           `No audio stream found in "${clip.title}". ` +
             `The file may be video-only or use an unsupported audio codec.\n\n${msg}`,
+          { cause: execErr },
         );
       }
       throw execErr;

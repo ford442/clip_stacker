@@ -27,15 +27,14 @@ import {
   getPublishedWebGpuProbe,
   type WebGpuProbeResult,
 } from '../webgpu/webgpuProbe';
-import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
-import { PreviewWorkerAdapter, isCanvasTransferred } from '../webgpu/previewWorkerRuntime';
+import { PreviewWorkerAdapter } from '../webgpu/previewWorkerAdapter';
+import { isCanvasTransferred } from '../webgpu/previewWorkerRuntime';
 import type { ScopeData } from '../webgpu/previewWorkerProtocol';
 import { PreviewScopes } from './PreviewScopes';
 import {
   renderTextOverlayCanvas,
   renderTextOverlaysAsync,
-  TimelineCanvas2DRenderer,
-} from '../utils/canvas-renderer';
+} from '../utils/canvas-renderer-compositor';
 import type { TimelineCompositor } from '../utils/previewComposition';
 import {
   detectCapabilities,
@@ -292,10 +291,19 @@ export function TimelineCompositorPreview({
               !workerFailed &&
               (skipPreviewWorkerRef.current || !caps.offscreenCanvas);
             if (allowMainGpu) {
+              // The main-thread compositor (preview engine + finishing pass
+              // chain) is the fallback for browsers without OffscreenCanvas
+              // workers; the worker bundles its own copy, so main only loads
+              // it here. A failed load lands in the catch below like a failed
+              // create().
+              const { TimelinePreviewEngine } = await import('../webgpu/timelinePreview');
+              if (!alive) return;
               engine = await TimelinePreviewEngine.create(canvas, timelineClips);
             }
           }
         } else if (chosen === 'canvas2d') {
+          const { TimelineCanvas2DRenderer } = await import('../utils/canvas-renderer-timeline');
+          if (!alive) return;
           engine = TimelineCanvas2DRenderer.create(canvas, timelineClips);
         }
       } catch {

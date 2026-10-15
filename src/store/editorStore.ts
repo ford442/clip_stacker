@@ -14,11 +14,11 @@ import type {
   TrackKind,
   SyncMarker,
 } from '../types';
-import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import { computeTotalDuration } from '../utils/transitions';
 import {
   addTrack as addTrackToList,
   createDefaultTracks,
+  getEffectiveTimelineClips,
   removeTrack as removeTrackFromList,
   renameTrack as renameTrackInList,
   setTrackHeight as setTrackHeightInList,

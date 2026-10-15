@@ -1,5 +1,5 @@
 import type { Clip } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   emitProgress,

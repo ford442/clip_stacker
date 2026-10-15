@@ -2,7 +2,7 @@
  * WebCodecs audio encode + timeline mix for GPU export.
  *
  * Mixes PCM from the same schedule math as live playback (`buildAudioSchedule`),
- * encodes AAC-LC with `AudioEncoder`, and feeds chunks to mp4-muxer alongside
+ * encodes AAC-LC with `AudioEncoder`, and feeds chunks to the MP4 writer alongside
  * the hardware video track — keeping FFmpeg off the happy path for
  * soundtracked GPU exports. With the media-engine WASM loaded the mix streams
  * chunk by chunk (no length cap); OfflineAudioContext is the fallback.
@@ -547,7 +547,10 @@ export async function encodeScheduleAudioStreaming(
   }
 }
 
-/** Push encoded AAC chunks into an mp4-muxer instance. */
+/**
+ * Push encoded AAC chunks into an `Mp4Writer`. No metadata: the writer builds
+ * the AAC-LC config from its declared audio track.
+ */
 export function addAacChunksToMuxer(
   muxer: { addAudioChunk: (chunk: EncodedAudioChunk) => void },
   chunks: EncodedAudioChunk[],

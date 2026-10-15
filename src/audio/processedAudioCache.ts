@@ -18,10 +18,10 @@
 import type { AudioScheduleEntry } from './schedule';
 import { audioEffectsSignature } from '../utils/audioEffects';
 import {
-  applyInsertChainToPcm,
   isMediaEngineMixEnabled,
   loadMediaEngineModule,
 } from '../wasm/mediaEngine';
+import { applyInsertChainToPcm } from '../wasm/mediaEngineInsertChain';
 
 interface ProcessedEntry {
   source: AudioBuffer;

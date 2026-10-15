@@ -17,7 +17,7 @@
 import type { Clip, ExportSettings } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { muxVideoWithAudio } from '../ffmpeg/ffmpegService';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 import { CanvasRenderer } from './canvas-renderer';
 import { startCanvasCapture } from './media-recorder-encoder';
 import { parseOutputResolution } from './resolution';

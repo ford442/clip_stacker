@@ -4,7 +4,7 @@
  */
 
 import type { Clip, ClipTransition, ExportSettings } from '../types';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 import { audioVolumeFilterSegment } from './audioVolume';
 import {
   audioTempoFilterSegment,

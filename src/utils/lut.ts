@@ -2,6 +2,8 @@
  * 3D LUT utilities — `.cube` parsing, bundled presets, and GPU upload helpers.
  */
 
+import { clamp01 } from './math';
+
 export interface LutData {
   /** Edge length of the 3D LUT cube (e.g. 17 → 17³ entries). */
   size: number;
@@ -40,10 +42,6 @@ export const BUNDLED_LUT_PRESETS: BundledLutPreset[] = [
 ];
 
 const PRESET_LUT_SIZE = 17;
-
-function clamp01(v: number): number {
-  return Math.max(0, Math.min(1, v));
-}
 
 /** Parse an Adobe/IRIDAS `.cube` LUT file into dense RGB samples. */
 export function parseCubeLut(text: string): LutData {

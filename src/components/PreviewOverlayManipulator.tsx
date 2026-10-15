@@ -223,7 +223,7 @@ export function PreviewOverlayManipulator({
       const y = ((clientY - rect.top) / rect.height) * plan.canvasHeight;
       return { x, y };
     },
-    [plan.canvasWidth],
+    [plan.canvasWidth, plan.canvasHeight],
   );
 
   const findTargetAt = useCallback(

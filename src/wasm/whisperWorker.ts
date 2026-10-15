@@ -9,6 +9,7 @@
 
 import type { TranscriptSegment } from '../utils/captionSegments';
 import { fetchModel } from './whisperModelCache';
+import { withHeap } from './emscriptenLoader';
 import { allocString, loadWhisperModule, type WhisperModule } from './whisperModule';
 
 export type WhisperWorkerRequest =
@@ -67,18 +68,17 @@ async function transcribe(request: Extract<WhisperWorkerRequest, { type: 'transc
     return;
   }
 
-  const modelPtr = module._malloc(modelBytes.length);
-  module.HEAPU8.set(modelBytes, modelPtr);
-  const handle = module._whisperInit(modelPtr, modelBytes.length);
-  module._free(modelPtr);
+  // The model is copied into the heap only for `whisperInit`, which keeps
+  // its own copy of the weights.
+  const handle = withHeap(module, (heap) => module._whisperInit(heap.u8(modelBytes), modelBytes.length));
+  if (handle === null) {
+    post({ type: 'error', id, message: 'Not enough memory to load the speech model.' });
+    return;
+  }
   if (!handle) {
     post({ type: 'error', id, message: 'Whisper could not load the model file.' });
     return;
   }
-
-  const pcmPtr = module._malloc(pcm.length * 4);
-  module.HEAPF32.set(pcm, pcmPtr >> 2);
-  const languagePtr = allocString(module, language && language.length > 0 ? language : 'auto');
 
   // The wrapper calls this from inside the blocking run; a non-zero return
   // aborts it, which is the only way cancel can interrupt a WASM call.
@@ -89,9 +89,21 @@ async function transcribe(request: Extract<WhisperWorkerRequest, { type: 'transc
   };
 
   try {
-    const count = module._whisperTranscribe(handle, pcmPtr, pcm.length, languagePtr, threads ?? 0);
+    const count = withHeap(module, (heap) =>
+      module._whisperTranscribe(
+        handle,
+        heap.f32(pcm),
+        pcm.length,
+        allocString(module, heap, language && language.length > 0 ? language : 'auto'),
+        threads ?? 0,
+      ),
+    );
     if (cancelled.has(id)) {
       post({ type: 'cancelled', id });
+      return;
+    }
+    if (count === null) {
+      post({ type: 'error', id, message: 'Not enough memory for this much audio.' });
       return;
     }
     if (count < 0) {
@@ -102,8 +114,6 @@ async function transcribe(request: Extract<WhisperWorkerRequest, { type: 'transc
   } finally {
     module.onWhisperProgress = undefined;
     cancelled.delete(id);
-    module._free(pcmPtr);
-    module._free(languagePtr);
     module._whisperFree(handle);
   }
 }

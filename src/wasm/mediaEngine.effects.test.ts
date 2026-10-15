@@ -5,7 +5,6 @@ import {
   MIX_FX_STRIDE,
   __setMediaEngineKillSwitchForTests,
   _resetMediaEngineLoadStateForTests,
-  applyInsertChainToPcm,
   loadMediaEngineModule,
   mixTimelineAudio,
   openTimelineMixStream,
@@ -14,6 +13,7 @@ import {
   type ClipPcm,
   type MediaEngineMixEntry,
 } from './mediaEngine';
+import { applyInsertChainToPcm } from './mediaEngineInsertChain';
 import type { ClipAudioEffects, MasterLimiterSettings } from '../utils/audioEffects';
 
 const WASM_BASE = pathToFileURL(path.resolve(process.cwd(), 'public/wasm') + path.sep).href;
@@ -84,7 +84,9 @@ async function mixInChunks(
   return out;
 }
 
-describe('mediaEngine insert effects', () => {
+// Real WASM over synthetic footage / long mixes: seconds of CPU, far past
+// the 5 s default when the suite runs in parallel on a loaded machine.
+describe('mediaEngine insert effects', { timeout: 30_000 }, () => {
   beforeEach(() => {
     _resetMediaEngineLoadStateForTests();
   });

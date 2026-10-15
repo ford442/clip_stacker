@@ -155,7 +155,7 @@ export function captionsAtTime(
 
 /** Strip a UTF-8 BOM and normalize CRLF / lone-CR line endings to `\n`. */
 function toLines(text: string): string[] {
-  return text.replace(/^﻿/, '').replace(/\r\n?/g, '\n').split('\n');
+  return text.replace(/^\uFEFF/, '').replace(/\r\n?/g, '\n').split('\n');
 }
 
 /**

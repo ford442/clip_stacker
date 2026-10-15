@@ -9,7 +9,7 @@ import {
   planProxy,
   proxyStoreKey,
 } from '../utils/proxyMedia';
-import { encodeProxy, ProxyBuildCancelled, type EncodeProxyOptions } from '../utils/proxyEncoder';
+import type { EncodeProxyOptions } from '../utils/proxyEncoder';
 
 export interface ProxyBuildDeps {
   store: MediaStore;
@@ -20,8 +20,18 @@ export interface ProxyBuildDeps {
 const defaultDeps = (): ProxyBuildDeps => ({
   store: getMediaStore(),
   fingerprint: fingerprintMedia,
-  encode: encodeProxy,
+  // The encoder (decoder, mp4box, muxer) loads with the first proxy build.
+  encode: async (source, options) =>
+    (await import('../utils/proxyEncoder')).encodeProxy(source, options),
 });
+
+/**
+ * Matched by name so classifying an error does not need the encoder module
+ * (and with it the encoder) loaded.
+ */
+function isProxyBuildCancelled(err: unknown): boolean {
+  return (err as Error | null)?.name === 'ProxyBuildCancelled';
+}
 
 export type ProxyBuildResult =
   | { ok: true; key: string; blob: Blob; proxy: NonNullable<Clip['proxy']> }
@@ -58,7 +68,7 @@ export async function buildClipProxy(
     await deps.store.put(key, blob);
     return { ok: true, key, blob, proxy };
   } catch (err) {
-    if (err instanceof ProxyBuildCancelled || options.signal?.aborted) {
+    if (isProxyBuildCancelled(err) || options.signal?.aborted) {
       return { ok: false, reason: 'cancelled', cancelled: true };
     }
     return { ok: false, reason: (err as Error)?.message || String(err) };

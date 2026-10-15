@@ -4,12 +4,12 @@ import { AUDIO_UNIFORM_OFFSET } from '../wasm/audioReactiveUniforms';
 import { KEY_UNIFORM_FLOATS } from '../utils/overlayKey';
 
 /**
- * `previewEngine.ts` packs `Uniforms` by hand from flat float offsets, so a
+ * `previewLayerUniforms.ts` packs `Uniforms` by hand from flat float offsets, so a
  * field inserted into the WGSL struct silently shifts everything after it —
  * the layer warp reading the audio slots, the key reading the warp matrix, and
  * so on. These checks pin the layout from the shader source itself.
  *
- * The constants mirrored here are the private ones in `previewEngine.ts`;
+ * The constants mirrored here are the ones in `previewLayerUniforms.ts`;
  * changing either side without the other is what this test is for.
  */
 const UNIFORM_FLOATS = 36;

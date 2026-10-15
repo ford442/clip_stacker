@@ -46,6 +46,7 @@ import {
   normalizeGrainPass,
   type GrainSettings,
 } from './grain';
+import { clamp01 } from './math';
 
 export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
@@ -152,10 +153,6 @@ export const DEFAULT_FINISHING: FinishingSettings = {
     halation: { ...DEFAULT_GRAIN.halation },
   },
 };
-
-function clamp01(v: number): number {
-  return Math.max(0, Math.min(1, v));
-}
 
 function passAmount(pass: FinishingPassBase | undefined): number {
   if (!pass?.enabled) return 0;
