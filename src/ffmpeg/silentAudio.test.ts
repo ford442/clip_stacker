@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createFile, MP4BoxBuffer, type Movie } from 'mp4box';
 import {
   buildSilentAacLoopInputArgs,
   createSilentAudioBuffer,
+  encodeSilentAacUnitViaWebCodecs,
   ensureSilentAacUnit,
   getSilentAacUnitBytes,
   resetSilentAacUnitCacheForTesting,
+  SILENT_AAC_CHANNELS,
   SILENT_AAC_SAMPLE_RATE,
   SILENT_AAC_UNIT_NAME,
   SILENT_AAC_UNIT_SEC,
@@ -20,10 +23,85 @@ function mockFfmpeg(unitBytes = new Uint8Array([0, 1, 2, 3, 4])): IFfmpegRuntime
   } as unknown as IFfmpegRuntime;
 }
 
+class FakeAudioBuffer {
+  length: number;
+  numberOfChannels: number;
+  sampleRate: number;
+  private channels: Float32Array[];
+  constructor(opts: { length: number; numberOfChannels: number; sampleRate: number }) {
+    this.length = opts.length;
+    this.numberOfChannels = opts.numberOfChannels;
+    this.sampleRate = opts.sampleRate;
+    this.channels = Array.from({ length: opts.numberOfChannels }, () => new Float32Array(opts.length));
+  }
+  getChannelData(ch: number): Float32Array {
+    return this.channels[ch]!;
+  }
+}
+
+/**
+ * Stand-in WebCodecs AAC encoder: one 4-byte packet per AudioData, real
+ * decoder config on the first output (as Chrome does). The muxer is real.
+ */
+function stubWebCodecsAudio(codec: string): void {
+  class FakeAudioData {
+    timestamp: number;
+    numberOfFrames: number;
+    sampleRate: number;
+    constructor(init: { timestamp: number; numberOfFrames: number; sampleRate: number }) {
+      this.timestamp = init.timestamp;
+      this.numberOfFrames = init.numberOfFrames;
+      this.sampleRate = init.sampleRate;
+    }
+    close(): void {}
+  }
+  class FakeAudioEncoder {
+    static isConfigSupported = async () => ({ supported: true });
+    state = 'unconfigured';
+    private outputs = 0;
+    private readonly output: (chunk: EncodedAudioChunk, meta?: EncodedAudioChunkMetadata) => void;
+    constructor(init: { output: FakeAudioEncoder['output'] }) {
+      this.output = init.output;
+    }
+    configure(): void {
+      this.state = 'configured';
+    }
+    encode(data: FakeAudioData): void {
+      const chunk = {
+        type: 'key',
+        timestamp: data.timestamp,
+        duration: Math.round((data.numberOfFrames / data.sampleRate) * 1_000_000),
+        byteLength: 4,
+        copyTo: (dest: Uint8Array) => dest.set([0x21, 0x10, 0x04, 0x60]),
+      } as unknown as EncodedAudioChunk;
+      const meta =
+        this.outputs++ === 0
+          ? {
+              decoderConfig: {
+                codec,
+                sampleRate: SILENT_AAC_SAMPLE_RATE,
+                numberOfChannels: SILENT_AAC_CHANNELS,
+                description: new Uint8Array([0x12, 0x10]),
+              },
+            }
+          : undefined;
+      this.output(chunk, meta);
+    }
+    async flush(): Promise<void> {}
+    close(): void {
+      this.state = 'closed';
+    }
+  }
+  vi.stubGlobal('AudioBuffer', FakeAudioBuffer);
+  vi.stubGlobal('AudioData', FakeAudioData);
+  vi.stubGlobal('AudioEncoder', FakeAudioEncoder);
+}
+
 describe('silentAudio', () => {
   afterEach(() => {
     resetSilentAacUnitCacheForTesting();
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('buildSilentAacLoopInputArgs loops the unit file', () => {
@@ -43,28 +121,6 @@ describe('silentAudio', () => {
 
   it('createSilentAudioBuffer is zeros at the export sample rate', () => {
     // happy-dom may lack AudioBuffer / OfflineAudioContext; stub a minimal buffer.
-    class FakeAudioBuffer {
-      length: number;
-      numberOfChannels: number;
-      sampleRate: number;
-      private channels: Float32Array[];
-      constructor(opts: {
-        length: number;
-        numberOfChannels: number;
-        sampleRate: number;
-      }) {
-        this.length = opts.length;
-        this.numberOfChannels = opts.numberOfChannels;
-        this.sampleRate = opts.sampleRate;
-        this.channels = Array.from(
-          { length: opts.numberOfChannels },
-          () => new Float32Array(opts.length),
-        );
-      }
-      getChannelData(ch: number): Float32Array {
-        return this.channels[ch]!;
-      }
-    }
     vi.stubGlobal('AudioBuffer', FakeAudioBuffer);
 
     const buf = createSilentAudioBuffer(0.5, SILENT_AAC_SAMPLE_RATE, 2);
@@ -92,6 +148,39 @@ describe('silentAudio', () => {
 
     // Cached: second call does not re-encode.
     await getSilentAacUnitBytes(ffmpeg);
+    expect(ffmpeg.exec).toHaveBeenCalledTimes(1);
+  });
+
+  it('encodeSilentAacUnitViaWebCodecs muxes the encoded unit into an AAC-only MP4', async () => {
+    stubWebCodecsAudio('mp4a.40.2');
+
+    const bytes = await encodeSilentAacUnitViaWebCodecs(SILENT_AAC_UNIT_SEC);
+    expect(bytes).not.toBeNull();
+
+    const file = createFile();
+    const ready: { info?: Movie } = {};
+    file.onReady = (info) => {
+      ready.info = info;
+    };
+    file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(bytes!.slice().buffer, 0));
+    file.flush();
+    const movie = ready.info!;
+    expect(movie.videoTracks).toHaveLength(0);
+    expect(movie.audioTracks).toHaveLength(1);
+    const [audio] = movie.audioTracks;
+    expect(audio!.codec).toBe('mp4a.40.2');
+    expect(audio!.audio?.sample_rate).toBe(SILENT_AAC_SAMPLE_RATE);
+    expect(audio!.audio?.channel_count).toBe(SILENT_AAC_CHANNELS);
+    expect(audio!.nb_samples).toBe(Math.ceil((SILENT_AAC_UNIT_SEC * SILENT_AAC_SAMPLE_RATE) / 1024));
+  });
+
+  it('getSilentAacUnitBytes falls back to FFmpeg when the WebCodecs unit cannot be muxed', async () => {
+    stubWebCodecsAudio('mp4a.99'); // not an AAC codec string the muxer accepts
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const unit = new Uint8Array([4, 5, 6]);
+    const ffmpeg = mockFfmpeg(unit);
+
+    expect(await getSilentAacUnitBytes(ffmpeg)).toEqual(unit);
     expect(ffmpeg.exec).toHaveBeenCalledTimes(1);
   });
 

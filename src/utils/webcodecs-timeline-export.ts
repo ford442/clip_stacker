@@ -4,7 +4,6 @@
  */
 
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
-import { ArrayBufferTarget } from 'mp4-muxer';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { computeTotalDuration } from './transitions';
 import { canCaptureWebGpuCanvasWithText } from './renderEligibility';
@@ -224,6 +223,7 @@ export async function encodeTimelineComposite(
       );
 
       if (videoError) throw videoError;
+      muxer.throwIfFailed();
       await waitForQueueBelow(videoEncoder, MAX_ENCODE_QUEUE_DEPTH + 1).catch((err: unknown) => {
         throw videoError ?? err;
       });
@@ -244,8 +244,7 @@ export async function encodeTimelineComposite(
       onProgress,
     );
 
-    muxer.finalize();
-    const { buffer } = muxer.target as ArrayBufferTarget;
+    const buffer = await muxer.finalize();
     return new Blob([buffer], { type: 'video/mp4' });
   } finally {
     frameProvider.destroy();

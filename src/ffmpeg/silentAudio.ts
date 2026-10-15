@@ -5,7 +5,7 @@
  * then mux with `-stream_loop -1` + `-c:a copy` so silence cost is ~remux, not encode.
  */
 
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import { Mp4Writer } from '../utils/container';
 import type { IFfmpegRuntime } from './ffmpegRuntime';
 import type { StatusCallback } from './ffmpegCommon';
 import {
@@ -70,8 +70,8 @@ export function createSilentAudioBuffer(
 }
 
 /**
- * Encode a short silent m4a via WebCodecs + mp4-muxer.
- * Returns null when AudioEncoder is unavailable or encoding fails.
+ * Encode a short silent m4a via WebCodecs + the MP4 writer.
+ * Returns null when AudioEncoder is unavailable or encoding / muxing fails.
  */
 export async function encodeSilentAacUnitViaWebCodecs(
   durationSec: number = SILENT_AAC_UNIT_SEC,
@@ -144,23 +144,24 @@ export async function encodeSilentAacUnitViaWebCodecs(
   encoder.close();
   if (encodeError || entries.length === 0) return null;
 
-  const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
+  const muxer = new Mp4Writer({
     audio: {
       codec: 'aac',
       sampleRate: SILENT_AAC_SAMPLE_RATE,
       numberOfChannels: SILENT_AAC_CHANNELS,
     },
-    fastStart: 'in-memory',
-    firstTimestampBehavior: 'offset',
   });
 
   for (const { chunk, meta } of entries) {
     muxer.addAudioChunk(chunk, meta);
   }
-  muxer.finalize();
-
-  const bytes = new Uint8Array(muxer.target.buffer);
+  let bytes: Uint8Array;
+  try {
+    bytes = new Uint8Array(await muxer.finalize());
+  } catch (err) {
+    console.warn('[silentAudio] muxing the WebCodecs unit failed; using FFmpeg:', err);
+    return null;
+  }
   return bytes.byteLength > 0 ? bytes : null;
 }
 
