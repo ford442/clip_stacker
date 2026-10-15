@@ -1,3 +1,15 @@
+if(CLIP_STACKER_HOST_TESTS)
+  # stab_math.h (matrix / smoothing helpers) is header-only, so the tests can
+  # include it directly as well as the C API.
+  add_library(video_stabilize_dsp STATIC video_stabilize.cpp)
+  target_include_directories(video_stabilize_dsp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+  clip_stacker_host_target(video_stabilize_dsp)
+  clip_stacker_host_test(video_stabilize_tests tests/video_stabilize_tests.cpp video_stabilize_dsp)
+  # stab_math.h is an anonymous-namespace header; tests use only part of it.
+  target_compile_options(video_stabilize_tests PRIVATE -Wno-unused-function)
+  return()
+endif()
+
 add_executable(video_stabilize video_stabilize.cpp)
 target_include_directories(video_stabilize PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 

@@ -18,6 +18,7 @@ import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 import { encodeVideoWithWebCodecs, isWebCodecsAvailable } from './webcodecs';
+import { getLastResolvedEncoderCodec } from './webcodecs-codec';
 import {
   assessWebCodecsAudioMix,
   isAudioEncoderAvailable,
@@ -119,6 +120,14 @@ export async function hybridMergeClips(
       encoderIntent: path,
       ...(hasKeyedClip && overlayKeying ? { overlayKeying } : {}),
     };
+    delete keyed.videoEncoder;
+    const encoder = getLastResolvedEncoderCodec();
+    if ((path === 'webcodecs' || path === 'webcodecs-av') && encoder) {
+      keyed.videoEncoder = {
+        codec: encoder.codec,
+        hardwareAcceleration: encoder.hardwareAcceleration ?? 'prefer-hardware',
+      };
+    }
     // Re-derived for the path actually taken, like `encoderIntent`.
     delete keyed.pictureTransform;
     delete keyed.pictureTransformGaps;

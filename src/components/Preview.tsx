@@ -20,9 +20,7 @@ import {
 } from '../store';
 import type { Clip, TextOverlay } from '../types';
 import { sanitizeFilename } from '../utils/filename';
-import { shouldUseTimelinePreview } from '../webgpu/timelinePreview';
 import { TimelineCompositorPreview } from './TimelineCompositorPreview';
-import { WebGPUVideoPreview } from './WebGPUVideoPreview';
 
 interface Props {
   onClipLayoutCommit?: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
@@ -35,9 +33,10 @@ interface Props {
 }
 
 /**
- * WebGPU-accelerated preview. Single-clip mode renders fades live; timeline
- * mode composites multiple layers (hard cuts, dissolves, PiP) from the global
- * playhead position.
+ * WebGPU-accelerated preview. Any timeline with a video clip — even a single
+ * one — goes through the one compositor (`TimelineCompositorPreview`), which
+ * draws exactly what export draws: lanes, transitions, titles, captions,
+ * stabilization, finishing. Only an audio-only selection gets a plain player.
  */
 function PreviewImpl({
   onClipLayoutCommit,
@@ -88,13 +87,7 @@ function PreviewImpl({
     );
   }
 
-  const useTimeline = shouldUseTimelinePreview(
-    timelineClips,
-    transitions,
-    textOverlays,
-  );
-
-  if (useTimeline) {
+  if (timelineClips.some((item) => item.kind === 'video')) {
     return (
       <section className="panel">
         <h2>Preview</h2>
@@ -121,24 +114,11 @@ function PreviewImpl({
     );
   }
 
-  if (!clip) {
+  if (!clip || clip.kind !== 'audio') {
     return (
       <section className="panel">
         <h2>Preview</h2>
         <div className="muted">No clip selected.</div>
-      </section>
-    );
-  }
-
-  if (clip.kind === 'video') {
-    return (
-      <section className="panel">
-        <h2>Preview</h2>
-        <WebGPUVideoPreview
-          clip={clip}
-          finishing={finishing}
-          colorManagement={colorManagement}
-        />
       </section>
     );
   }

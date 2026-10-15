@@ -19,7 +19,7 @@ import { audioReversePrefix } from "../utils/reverseClip";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   renderTimelineAudioMixWav,
-  timelineHasAudioAutomation,
+  timelineNeedsAudioPremix,
 } from "../utils/webcodecs-audio";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import type { MasterAudio } from "../types";
@@ -342,9 +342,9 @@ export async function muxVideoWithAudio(
     0,
   );
 
-  // Volume/pan automation cannot be expressed as FFmpeg volume filters —
+  // Volume/pan automation, insert effects and the bus limiter are not FFmpeg filters —
   // offline-mix in the browser and mux the premixed WAV.
-  if (timelineHasAudioAutomation(clips)) {
+  if (timelineNeedsAudioPremix(clips)) {
     onStatus("Rendering automated audio mix...");
     emitProgress(onProgress, "Premixing automated audio", 0.88, true);
     const wavBytes = await renderTimelineAudioMixWav(

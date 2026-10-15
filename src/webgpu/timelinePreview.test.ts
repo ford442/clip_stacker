@@ -1,68 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import type { Clip } from '../types';
-import { shouldUseTimelinePreview, toNormalizedDestRect } from './timelinePreview';
-
-function makeClip(id: string, overrides: Partial<Clip> = {}): Clip {
-  return {
-    id,
-    file: new File([], `${id}.mp4`),
-    objectUrl: `blob:${id}`,
-    title: id,
-    kind: 'video',
-    duration: 5,
-    trimStart: 0,
-    trimEnd: NaN,
-    videoFadeIn: 0,
-    videoFadeOut: 0,
-    audioFadeIn: 0,
-    audioFadeOut: 0,
-    ...overrides,
-  };
-}
+import { toNormalizedDestRect } from './timelinePreview';
 
 describe('timelinePreview', () => {
-  it('enables timeline preview for multi-clip stacks and PiP overlays', () => {
-    expect(shouldUseTimelinePreview([])).toBe(false);
-    expect(shouldUseTimelinePreview([makeClip('a')])).toBe(false);
-    expect(shouldUseTimelinePreview([makeClip('a'), makeClip('b')])).toBe(true);
-    expect(
-      shouldUseTimelinePreview([
-        makeClip('a'),
-        makeClip('pip', { layerIndex: 1 }),
-      ]),
-    ).toBe(true);
-    expect(shouldUseTimelinePreview([makeClip('audio', { kind: 'audio' })])).toBe(
-      false,
-    );
-    expect(shouldUseTimelinePreview([makeClip('a', { playbackRate: 2 })])).toBe(true);
-    expect(
-      shouldUseTimelinePreview([
-        makeClip('a', {
-          automation: {
-            playbackRate: [
-              { t: 0, value: 1 },
-              { t: 1, value: 2 },
-            ],
-          },
-        }),
-      ]),
-    ).toBe(true);
-    expect(shouldUseTimelinePreview([makeClip('a', { loopCount: 4 })])).toBe(true);
-    expect(shouldUseTimelinePreview([makeClip('a', { reversed: true })])).toBe(true);
-    expect(
-      shouldUseTimelinePreview([
-        makeClip('still', { stillImage: true }),
-      ]),
-    ).toBe(true);
-    expect(
-      shouldUseTimelinePreview([
-        makeClip('a', {
-          keyframes: { x: [{ t: 0, value: 0 }, { t: 1, value: 100 }] },
-        }),
-      ]),
-    ).toBe(true);
-  });
-
   it('normalizes PiP destination rects for shader uniforms', () => {
     expect(
       toNormalizedDestRect({ x: 128, y: 72, width: 320, height: 180 }, 1280, 720),

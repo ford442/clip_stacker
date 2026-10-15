@@ -23,7 +23,6 @@ import {
   DEFAULT_PREVIEW_CONSTRAINTS,
   usePreviewSize,
 } from '../hooks/usePreviewSize';
-import { onGpuDeviceLost } from '../webgpu/gpuDevice';
 import {
   getPublishedWebGpuProbe,
   type WebGpuProbeResult,
@@ -48,6 +47,7 @@ import {
 import { evaluatePreviewBudget } from '../utils/previewBudget';
 import { shouldResetFinishingTemporal } from '../utils/noiseReduction';
 import { previewMetrics } from '../utils/previewMetrics';
+import { useProxyState } from '../store/proxyStore';
 import { parseOutputResolution } from '../utils/resolution';
 import { createRenderScheduler } from '../utils/seekCoalescer';
 import { PreviewOverlayManipulator } from './PreviewOverlayManipulator';
@@ -122,6 +122,10 @@ export function TimelineCompositorPreview({
   const renderTokenRef = useRef(0);
   const renderFailuresRef = useRef(0);
   const backendRef = useRef<PreviewBackend>('unavailable');
+  /** The backend `init` picked — restored when a lost device comes back. */
+  const engineBackendRef = useRef<PreviewBackend>('unavailable');
+  /** True between the compositor's device loss and its recovery: renders would no-op. */
+  const deviceLostRef = useRef(false);
   /** After a post-transfer worker init failure, skip the worker and use main-thread WebGPU. */
   const skipPreviewWorkerRef = useRef(false);
   const [canvasGeneration, setCanvasGeneration] = useState(0);
@@ -149,7 +153,7 @@ export function TimelineCompositorPreview({
   const renderAt = useCallback(
     async (globalTime: number) => {
       const engine = engineRef.current;
-      if (!engine) return;
+      if (!engine || deviceLostRef.current) return;
       const lastTime = lastRenderedTimeRef.current;
       // Clear temporal NR on any backward scrub or large discontinuous seek.
       if (shouldResetFinishingTemporal(lastTime, globalTime, !!playingRef.current)) {
@@ -311,6 +315,8 @@ export function TimelineCompositorPreview({
 
       engineRef.current = engine;
       backendRef.current = chosen;
+      engineBackendRef.current = chosen;
+      deviceLostRef.current = false;
       setBackend(chosen);
       if (textOverlays.some((o) => o.fill === 'shader') && chosen !== 'webgpu') {
         setDegradationMessage(
@@ -340,20 +346,48 @@ export function TimelineCompositorPreview({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasGeneration]);
 
-  // Same reasoning as the single-clip preview: a lost device leaves this
-  // engine's draw calls silently no-op-ing rather than throwing, so the
-  // existing renderFailuresRef-based fallback may never trip. Drop to
-  // "unavailable" immediately so the UI degrades instead of freezing.
+  // Watch the device *this* compositor draws with — the worker's own device
+  // on the worker backend, never main's (losing the export device must not
+  // tear down a healthy preview). A lost device makes draws no-op silently,
+  // so the render-failure counter may never trip: pause rendering until the
+  // engine has rebuilt on the recreated device, and give up only if the
+  // recreate fails.
   useEffect(() => {
-    return onGpuDeviceLost(() => {
+    const engine = engineRef.current;
+    if (!engine?.onDeviceState) return;
+    return engine.onDeviceState((state, message) => {
+      if (engineRef.current !== engine) return;
+      if (state === 'lost') {
+        deviceLostRef.current = true;
+        schedulerRef.current?.cancel();
+        renderTokenRef.current += 1;
+        setDegradationMessage(
+          `GPU device lost${message ? ` (${message})` : ''} — recovering the preview…`,
+        );
+        return;
+      }
+      if (state === 'recovered') {
+        deviceLostRef.current = false;
+        renderFailuresRef.current = 0;
+        lastRenderedTimeRef.current = null;
+        backendRef.current = engineBackendRef.current;
+        setBackend(engineBackendRef.current);
+        setDegradationMessage(null);
+        requestRender(globalTimeRef.current);
+        return;
+      }
       cancelAnimationFrame(rafRef.current);
       schedulerRef.current?.cancel();
-      engineRef.current?.destroy();
+      engine.destroy();
       engineRef.current = null;
       backendRef.current = 'unavailable';
       setBackend('unavailable');
+      setGpuProbe(displayedWebGpuProbe());
+      setDegradationMessage(
+        `GPU device lost and could not be recreated${message ? ` (${message})` : ''}. Reload the page to restore the preview.`,
+      );
     });
-  }, []);
+  }, [backend, canvasGeneration, requestRender]);
 
   // Only the worker-backed WebGPU compositor can produce scopes: they are read
   // from the composed GPU texture, which the Canvas2D path does not have.
@@ -368,6 +402,11 @@ export function TimelineCompositorPreview({
     );
     if (!showWaveform && !showVectorscope) setScopeData(null);
   }, [showWaveform, showVectorscope, backend, canvasGeneration]);
+
+  // A proxy becoming ready (or the proxy toggle flipping) changes which bytes
+  // a layer decodes, so it re-syncs clip media like a clip edit does.
+  const proxiesEnabled = useProxyState((s) => s.enabled);
+  const readyProxies = useProxyState((s) => s.ready);
 
   useEffect(() => {
     engineRef.current?.syncClips(timelineClips);
@@ -386,6 +425,8 @@ export function TimelineCompositorPreview({
     exportSettings,
     playheadTime,
     requestRender,
+    proxiesEnabled,
+    readyProxies,
   ]);
 
   useEffect(() => {

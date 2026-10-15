@@ -7,6 +7,9 @@ import {
   peekGpuDevice,
   onGpuDeviceLost,
   onGpuDeviceRecovered,
+  onGpuDeviceRecoveryFailed,
+  onGpuError,
+  recordRemoteGpuError,
   __resetGpuContextForTests,
 } from './gpuDevice';
 
@@ -257,6 +260,48 @@ describe('gpuDevice registry', () => {
     const log = getGpuErrorLog();
     expect(log.map((e) => e.type)).toEqual(['validation', 'out-of-memory', 'internal']);
     expect(log[0].message).toBe('bad bind group');
+  });
+
+  it('notifies recovery-failed listeners when the automatic recreate fails', async () => {
+    const { device, triggerLost } = makeFakeDevice();
+    const adapter = makeFakeAdapter(device);
+    adapter.requestDevice
+      .mockResolvedValueOnce(device)
+      .mockRejectedValueOnce(new Error('adapter gone'));
+    stubGpu(adapter);
+    await acquireGpuContext();
+
+    const failed = vi.fn();
+    const recovered = vi.fn();
+    onGpuDeviceRecoveryFailed(failed);
+    onGpuDeviceRecovered(recovered);
+    triggerLost({ reason: 'unknown', message: 'driver reset' } as GPUDeviceLostInfo);
+    await flushMicrotasks();
+
+    expect(recovered).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ message: 'adapter gone' }));
+  });
+
+  it('onGpuError sees this realm\'s errors; remote entries are logged without echoing', async () => {
+    const { device } = makeFakeDevice();
+    stubGpu(makeFakeAdapter(device));
+    await acquireGpuContext();
+    const listener = vi.fn();
+    onGpuError(listener);
+
+    device.onuncapturederror?.({ error: new Error('local failure') });
+    recordRemoteGpuError({
+      type: 'validation',
+      message: 'worker failure',
+      timestamp: 1,
+      realm: 'preview-worker',
+    });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ message: 'local failure' }));
+    expect(getGpuErrorLog()).toContainEqual(
+      expect.objectContaining({ message: 'worker failure', realm: 'preview-worker' }),
+    );
   });
 
   it('getGpuErrorLog caps at the most recent entries', async () => {

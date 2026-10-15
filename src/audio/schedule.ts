@@ -13,6 +13,12 @@ import { normalizeClipAutomation } from '../utils/clipAutomation';
 import { getClipLoopCount, getClipPlaybackRate } from '../utils/playbackRate';
 import { clipIsReversed } from '../utils/reverseClip';
 import { clipHasRateAutomation, cycleDurationForClip } from '../utils/timeRemap';
+import {
+  audioEffectsSignature,
+  clipAudioEffectsActive,
+  normalizeClipAudioEffects,
+  type ClipAudioEffects,
+} from '../utils/audioEffects';
 
 /** One clip's audio placement on the output timeline. */
 export interface AudioScheduleEntry {
@@ -40,6 +46,12 @@ export interface AudioScheduleEntry {
   volumeAutomation?: Keyframe[];
   /** Stereo pan keyframes (−1 L … +1 R). Empty → centered (0). */
   panAutomation?: Keyframe[];
+  /**
+   * Insert chain (EQ → compressor), present only when some block is enabled.
+   * Applied by the media engine before gain/pan on export and in the preview's
+   * processed buffer; never by Web Audio nodes.
+   */
+  audioEffects?: ClipAudioEffects;
   /**
    * When true, audio is pitch-preserved WSOLA-remapped offline to `duration`
    * and played at rate 1 from buffer offset 0 (trim already baked in).
@@ -83,6 +95,9 @@ function entryFromClip(
   // A speed curve already rebuilds the buffer. Constant-rate reverse is a
   // plain sample reversal of the trim, then the same playbackRate as forward.
   const reverseAudio = reversed && !rateRemap;
+  const audioEffects = clipAudioEffectsActive(clip.audioEffects)
+    ? normalizeClipAudioEffects(clip.audioEffects)
+    : undefined;
   return {
     clipId: clip.id,
     objectUrl: clip.objectUrl,
@@ -100,6 +115,7 @@ function entryFromClip(
       ? { volumeAutomation: automation.volume }
       : {}),
     ...(automation?.pan?.length ? { panAutomation: automation.pan } : {}),
+    ...(audioEffects ? { audioEffects } : {}),
     ...(rateRemap
       ? {
           rateRemap: true,
@@ -243,6 +259,8 @@ export function schedulesMatchStructure(
       Boolean(left.isBed) !== Boolean(right.isBed) ||
       !keyframesMatch(left.volumeAutomation, right.volumeAutomation) ||
       !keyframesMatch(left.panAutomation, right.panAutomation) ||
+      // Insert changes swap the processed buffer, so live gain updates are not enough.
+      audioEffectsSignature(left.audioEffects) !== audioEffectsSignature(right.audioEffects) ||
       !keyframesMatch(
         left.rateRemapClip?.automation?.playbackRate,
         right.rateRemapClip?.automation?.playbackRate,

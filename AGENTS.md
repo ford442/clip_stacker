@@ -16,7 +16,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
 - `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, time-stretch, video stabilize, media-engine) via the shared CMake toolchain. Requires Emscripten (`emcmake` / `emcc`).
 - `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF).
-- `npm run test:native`: build the native DSP (media engine) with the host compiler and run ctest (ASan + UBSan). No Emscripten needed.
+- `npm run test:native`: build every native DSP module (audio analysis, time-stretch, video stabilize, media engine) with the host compiler and run ctest (ASan + UBSan). No Emscripten needed.
 - `npm run build:audio-analysis` / `build:time-stretch` / `build:video-stabilize` / `build:media-engine`: rebuild one module.
 
 ## Coding Style & Naming Conventions
@@ -129,7 +129,10 @@ shortcuts and programmatic callers are blocked too.
   restores placements, trims and transitions together. Deltas are output
   seconds; speed-ramped or looped clips are refused rather than trimmed
   approximately. Splitting an item duplicates the *placement* (new clip id,
-  same file / object URL); covering one drops it.
+  same file / object URL); covering one drops it. **Duplicate** is
+  `duplicateItem`: the copy lands right after the source on the same lane
+  (overlay/audio lanes follow the drop mode; the base lane always inserts, and
+  the xfade that left the source now leaves the copy).
 - Ripple is **lane-local** by default; `linkedRipple` also shifts every other
   non-base lane, and a locked lane that would have to move blocks the edit.
 - After any edit, base-lane start times are rewritten from
@@ -301,7 +304,7 @@ Four Emscripten modules share one flag file. Do not copy-paste `emcc` invocation
 - `scripts/wasm-size-check.sh` — **fails** if gzip(`.wasm`) exceeds 200 KB
 - `native/host.cmake` + `-DCLIP_STACKER_HOST_TESTS=ON` — host (non-Emscripten) test build; `scripts/test-native.sh` drives it
 - Configure exports `compile_commands.json` (linked to `native/compile_commands.json`, gitignored); `native/.clangd` points clangd at it — run clangd with `--query-driver=**/em++`
-- CI `wasm` job runs `npm run build:wasm` and `git diff --exit-code -- public/wasm` (including `video_stabilize` and `media_engine`); the `native-host` job runs `scripts/test-native.sh`
+- CI `wasm` job runs `npm run build:wasm` and `git diff --exit-code -- public/wasm` (including `video_stabilize` and `media_engine`); the `native-host` job runs `scripts/test-native.sh`, which ctests all four modules (`video_stabilize`'s pure matrix / smoothing helpers live in `stab_math.h`)
 
 Keep WebGPU as the pixel owner. Do not fold video frames into this engine.
 
@@ -318,6 +321,8 @@ C++ owns the export premix DSP: polyphase resample, volume/pan automation curves
 - `src/utils/webcodecs-audio.ts` — `encodeScheduleAudioStreaming` feeds chunks straight to `AudioEncoder` (no length cap); `renderTimelineAudioMix` prefers WASM; OfflineAudioContext fallback (≤ `MAX_OFFLINE_AUDIO_SECONDS`)
 - Kill switch: `?no_media_engine` (curves and everything else go back to OfflineAudioContext). Debug: `?media_engine_resampler=linear`.
 - Keyframe semantics must match `sampleKeyframes` / `applyGainEnvelope` / `StereoPannerNode`; change both sides together. Packed strides in `audio_mix.h` are mirrored in `mediaEngine.ts`.
+- **Insert effects** (`Clip.audioEffects`, `src/utils/audioEffects.ts`): ≤ 4 RBJ biquads then one compressor per clip (`native/media_engine/src/eq.cpp`, `dynamics.cpp`), after resample and before the volume curve; a look-ahead **bus limiter** from `ExportSettings.masterLimiter` (off by default). They are effect-block rows (`MIX_FX_STRIDE`) plus three fields on an fx entry (`MIX_ENTRY_FX_STRIDE`, `MIX_FLAG_EFFECTS`), run through a stateful `mix_fx_session_*` (contiguous calls from frame 0; the bus reads `mix_fx_session_latency` frames ahead). No enabled block and no limiter → the stream stays on `mix_timeline_audio_range`, byte-identical to before (host test pins it).
+- Preview gets inserts from the same C++: `src/audio/processedAudioCache.ts` runs `insert_chain_*` over a copy of the decoded buffer. Never add `BiquadFilterNode` / `DynamicsCompressorNode`; with the media engine off, inserts are bypassed everywhere. The limiter is export-only. FFmpeg paths premix whenever `timelineNeedsAudioPremix` (automation, inserts, limiter).
 - No pthreads until the mix is multi-threaded by design; COOP/COEP is already paid for FFmpeg.
 
 Do not add more DSP inside `canvas-renderer` or FFmpeg `filter_complex` for mix/fade/resample this engine should own.
@@ -488,6 +493,21 @@ Do not keep a second WebGL context for histograms. Keep COOP/COEP and the produc
 
 The preview worker decodes its own frames. Main never seeks a hidden `<video>` on the happy path.
 
+**One preview stack.** Any timeline with a video clip — a single clip
+included — previews through `TimelineCompositorPreview`, the same composition
+plan export draws (titles, captions, stabilization, finishing). There is no
+separate single-clip preview; only an audio-only selection gets a plain
+`<audio>` player. The playhead is always **output** time — convert with
+`resolveClipOutputWindow` / `sourceTimeAtOutputLocal` before treating it as a
+source timestamp (Split does).
+
+**GPU devices are per realm.** `gpuDevice.ts` shares one device per JS realm:
+main (export, text fill, main-thread preview fallback) and the preview worker
+each own one. The worker forwards `gpu-error` / `gpu-lost` / `gpu-recovered` /
+`gpu-recovery-failed`; main logs them via `recordRemoteGpuError` (Copy Debug
+tags the realm) and the preview follows its compositor's `onDeviceState`,
+never main's `onGpuDeviceLost`.
+
 ### Decoder-backed preview (`src/webgpu/`)
 
 - `previewDecoderSource.ts` — worker-side `PreviewDecoderSource`. Main transfers each clip's `File` once (`clip-media`, structured-cloneable by reference — no byte copy); the worker opens one forward-only `DecoderFrameCursor` per **active** layer (`clipId::role::mediaObjectUrl`), exactly like GPU export.
@@ -504,6 +524,53 @@ The preview worker decodes its own frames. Main never seeks a hidden `<video>` o
 - `PreviewEngine.captureScopeTexture()` copies the composed canvas texture into a private offscreen texture (`COPY_DST | TEXTURE_BINDING`) and hands it to gpu-chores. The canvas configuration stays swapchain-only (`RENDER_ATTACHMENT | COPY_SRC`) — scopes never bind or copy *into* it. The copy must happen in the same task as the render that drew the frame.
 - Kernels are ordinary gpu-chores ops, so `?no_gpu_compute` disables them and the CPU goldens (`lumaHistogramBt709`, `vectorscopeUv`) are the reference in tests.
 - `src/components/PreviewScopes.tsx` draws both from the bins; a failed scope readback is logged and dropped, never failing the frame.
+
+## Preview proxies
+
+A proxy is a 960p H.264 mezzanine that preview reads instead of a big camera
+file. Export never reads it.
+
+- `src/utils/proxyMedia.ts` — `PROXY_PROFILE` (a constant, not a codec panel),
+  `planProxy`, `proxyDimensions`, `ProxyFrameSelector` (caps at 30 fps without
+  inventing frames), `proxyStoreKey(sourceHash, profile)`,
+  `resolvePreviewMedia` (proxy vs original for one clip). Pure.
+- `src/utils/proxyEncoder.ts` — `encodeProxy`: `ClipFrameDecoder` → canvas
+  blit → `VideoEncoder` → `mp4-muxer`. Source timestamps are kept, so a proxy
+  cursor opened on a trim window lands on the same source times. No FFmpeg.
+- `src/utils/mediaStore.ts` — the async `MediaStore` interface and
+  `fingerprintMedia`. **In-memory only until #279** swaps in OPFS/IndexedDB
+  (`setMediaStore`); nothing here survives a reload yet.
+- `src/store/proxyStore.ts` — runtime state: the toggle, the build queue,
+  per-clip progress/errors, and ready blobs keyed by store key (a split shares
+  one proxy).
+- `src/hooks/useProxyBuilder.ts` — the queue (one at a time, cancelled when the
+  clip leaves) and `ProxyReconciler` (evict + delete when no clip references a
+  key; an undo writes a recently evicted blob back).
+- Preview: `PreviewWorkerAdapter.sendClipMedia` resolves each clip and re-sends
+  when the resolved blob changes; the worker's `PreviewDecoderSource` tags it
+  `proxy`/`original`, and `render-complete.frameSources.proxy` lands in
+  `previewMetrics` as `proxySourcedLayers` / `originalSourcedLayers`.
+- Stabilization: `useClipStabilization` passes the proxy as
+  `StabilizeOptions.source`. The plan is still sized from the original's
+  dimensions and matrices are normalized UV, so export never re-analyses.
+
+Never route a proxy into `TimelineDecoderFrameProvider`, the FFmpeg paths or
+the canvas export. `Clip.proxy` is the only serialized part; replacing a
+clip's `file` (RIFE) must clear it.
+
+## WebCodecs codec ladder
+
+Never hard-code `hardwareAcceleration: 'prefer-hardware'` — Chrome treats it as
+*require hardware*. Encode probes `ENCODER_ACCELERATION_LADDER`
+(`prefer-hardware` → `no-preference`), decode `DECODER_ACCELERATION_LADDER`
+(adds `prefer-software`); `resolveEncoderCodec` only returns a config
+`isConfigSupported` accepted and otherwise throws `NoSupportedEncoderError`, so
+`hybridMergeClips` falls back to FFmpeg. The winning rung is in
+`RenderPlan.videoEncoder` and Copy Debug. HEVC / AV1 codec strings are sized by
+resolution (`hevcCodecString` / `av1CodecString`). Every encode loop closes
+its frames in a `finally` (`encodeAndClose`) and waits on the codec queue with
+`waitForQueueBelow` (`src/utils/codecQueue.ts`), which rejects when the codec
+closes or stalls instead of hanging.
 
 ## Variable speed remapping (time stretch)
 

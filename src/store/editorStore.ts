@@ -37,6 +37,7 @@ import {
 import { cloneTracks } from '../utils/trackModel';
 import type { EditState } from '../utils/editModes';
 import { normalizeCaptions } from '../utils/subtitles';
+import { planAddClip } from '../utils/planAddClip';
 
 /**
  * Durable editing state (#144).
@@ -105,6 +106,12 @@ export interface EditorState {
    * groups and the selection.
    */
   commitEdit: (next: EditState) => void;
+  /**
+   * Add an imported clip to the pool and place it (`planAddClip`: next free
+   * slot on the right lane, A/B grouping by file name). Does not push history —
+   * an import of several files is one undo step, so the caller pushes once.
+   */
+  addClip: (clip: Clip) => void;
   setClipGroups: (action: StateUpdater<ClipGroup[]>) => void;
   setTransitions: (action: StateUpdater<ClipTransition[]>) => void;
   setTextOverlays: (action: StateUpdater<TextOverlay[]>) => void;
@@ -260,6 +267,16 @@ export const editorStore = createStore<EditorState>()((set, get) => {
         };
       });
     },
+    addClip: (clip) => {
+      set((s) => {
+        const plan = planAddClip(s.clips, s.tracks, s.clipGroups, clip);
+        return {
+          clips: plan.clips,
+          ...(plan.tracks ? { tracks: plan.tracks } : {}),
+          ...(plan.clipGroups ? { clipGroups: plan.clipGroups } : {}),
+        };
+      });
+    },
     setClipGroups: (action) =>
       set((s) => ({ clipGroups: resolveUpdater(action, s.clipGroups) })),
     setTransitions: (action) =>
@@ -316,6 +333,17 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     },
 
     resetHistory: (snapshot) => {
+      // Master-audio blob URLs are owned by the editing session, not by any
+      // clip, so `revokeOrphanedUrls` never sees them. Once the stacks are
+      // cleared nothing can bring the outgoing ones back — revoke them.
+      const outgoingMasterUrls = new Set(
+        [get().masterAudio, ...undoStack.map((s) => s.masterAudio), ...redoStack.map((s) => s.masterAudio)]
+          .map((audio) => audio?.objectUrl)
+          .filter((url): url is string => Boolean(url)),
+      );
+      outgoingMasterUrls.delete(snapshot.masterAudio?.objectUrl ?? '');
+      for (const url of outgoingMasterUrls) URL.revokeObjectURL(url);
+
       undoStack.length = 0;
       redoStack.length = 0;
       debounceSessions.clear();
@@ -419,6 +447,7 @@ export const editorActions: Pick<
   | 'setTrackHeight'
   | 'renameTrack'
   | 'commitEdit'
+  | 'addClip'
   | 'setClipGroups'
   | 'setTransitions'
   | 'setTextOverlays'

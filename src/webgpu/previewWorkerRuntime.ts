@@ -21,9 +21,16 @@ import type { ColorManagementSettings } from '../utils/colorManagement';
 import { publishColorDebugSnapshot } from '../utils/colorManagement';
 import { resolveTimelineFinishing } from '../utils/finishing';
 import type { ColorGradeSettings } from '../utils/lut';
-import type { PreviewCompositionPlan, TimelineCompositor, TimelineRenderOptions } from '../utils/previewComposition';
+import type {
+  PreviewCompositionPlan,
+  PreviewDeviceState,
+  TimelineCompositor,
+  TimelineRenderOptions,
+} from '../utils/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
 import { previewMetrics } from '../utils/previewMetrics';
+import { resolvePreviewMedia, type PreviewMediaSource } from '../utils/proxyMedia';
+import { proxyStore } from '../store/proxyStore';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
 import {
   clearPreviewWorkerChoresRunner,
@@ -46,6 +53,8 @@ import {
 } from './previewWorkerProtocol';
 import { isPreviewDecoderEnabled } from './previewDecodeFlags';
 import { publishWebGpuProbe, type WebGpuProbeResult } from './webgpuProbe';
+import { captureStillFrame, captureVideoFrame } from './captureFrame';
+import { recordRemoteGpuError } from './gpuDevice';
 
 export type { FrameRequest, CapturedFrame, ScopeData, ScopeSettings };
 
@@ -148,6 +157,9 @@ export class PreviewWorkerRuntime {
   private choresRunner: PreviewWorkerChoresRunner | null = null;
   private scopesListener: ((scopes: ScopeData) => void) | null = null;
   private lastFrameSources: FrameSourceStats = { decoder: 0, element: 0 };
+  private readonly deviceListeners = new Set<
+    (state: PreviewDeviceState, message?: string) => void
+  >();
 
   private constructor(worker: Worker) {
     this.worker = worker;
@@ -323,6 +335,40 @@ export class PreviewWorkerRuntime {
         break;
       }
 
+      // The worker's device is not main's: record its health for Copy Debug
+      // and tell the preview, which must not watch main's registry for it.
+      case 'gpu-error': {
+        recordRemoteGpuError({ ...msg.entry, realm: 'preview-worker' });
+        break;
+      }
+
+      case 'gpu-lost': {
+        recordRemoteGpuError({
+          type: 'lost',
+          message: msg.message,
+          timestamp: msg.timestamp,
+          realm: 'preview-worker',
+        });
+        this.emitDeviceState('lost', msg.message);
+        break;
+      }
+
+      case 'gpu-recovered': {
+        this.emitDeviceState('recovered');
+        break;
+      }
+
+      case 'gpu-recovery-failed': {
+        recordRemoteGpuError({
+          type: 'lost',
+          message: `Device recreate failed: ${msg.message}`,
+          timestamp: msg.timestamp,
+          realm: 'preview-worker',
+        });
+        this.emitDeviceState('failed', msg.message);
+        break;
+      }
+
       case 'render-cancelled': {
         const pending = this.pendingRenders.get(msg.renderId);
         this.pendingRenders.delete(msg.renderId);
@@ -349,6 +395,16 @@ export class PreviewWorkerRuntime {
         break;
       }
     }
+  }
+
+  private emitDeviceState(state: PreviewDeviceState, message?: string): void {
+    for (const listener of this.deviceListeners) listener(state, message);
+  }
+
+  /** Follow the worker device's loss / recovery. Returns unsubscribe. */
+  onDeviceState(listener: (state: PreviewDeviceState, message?: string) => void): () => void {
+    this.deviceListeners.add(listener);
+    return () => this.deviceListeners.delete(listener);
   }
 
   /**
@@ -412,8 +468,8 @@ export class PreviewWorkerRuntime {
     return this.lastFrameSources;
   }
 
-  /** Hand the worker the source bytes for clips it should decode itself. */
-  sendClipMedia(media: Array<{ clipId: string; blob: Blob }>): void {
+  /** Hand the worker the preview bytes (proxy or original) for clips it should decode itself. */
+  sendClipMedia(media: Array<{ clipId: string; blob: Blob; source?: PreviewMediaSource }>): void {
     if (this.destroyed || media.length === 0) return;
     const msg: PreviewWorkerInbound = { type: 'clip-media', media };
     this.worker.postMessage(msg);
@@ -486,34 +542,6 @@ export class PreviewWorkerRuntime {
 // all GPU work to the off-thread worker via PreviewWorkerRuntime.
 // ---------------------------------------------------------------------------
 
-async function captureVideoFrameFromElement(
-  video: HTMLVideoElement,
-): Promise<VideoFrame | null> {
-  if (video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return null;
-  try {
-    return new VideoFrame(video);
-  } catch {
-    return null;
-  }
-}
-
-async function captureStillVideoFrame(
-  img: HTMLImageElement,
-): Promise<VideoFrame | null> {
-  if (!img.complete || img.naturalWidth <= 0) return null;
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = img.naturalWidth;
-    canvas.height = img.naturalHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(img, 0, 0);
-    return new VideoFrame(canvas, { timestamp: 0 });
-  } catch {
-    return null;
-  }
-}
-
 /**
  * Implements the TimelineCompositor interface backed by the off-thread worker.
  * Frame capture (seek + VideoFrame) stays on the main thread; GPU compositing
@@ -522,8 +550,12 @@ async function captureStillVideoFrame(
 export class PreviewWorkerAdapter implements TimelineCompositor {
   private readonly runtime: PreviewWorkerRuntime;
   private readonly pool: ClipMediaPool;
-  /** Clip ids whose source File has already been handed to the worker. */
-  private readonly sentMedia = new Set<string>();
+  /**
+   * Clip id → the preview blob last handed to the worker. A proxy finishing,
+   * or the proxy toggle flipping, changes the resolved blob and re-sends it;
+   * the worker drops that clip's cursors and reopens on the new bytes.
+   */
+  private readonly sentMedia = new Map<string, Blob>();
 
   private constructor(runtime: PreviewWorkerRuntime, pool: ClipMediaPool) {
     this.runtime = runtime;
@@ -556,18 +588,25 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
     return this.runtime.frameSources;
   }
 
+  onDeviceState(listener: (state: PreviewDeviceState, message?: string) => void): () => void {
+    return this.runtime.onDeviceState(listener);
+  }
+
   /**
-   * Transfer the source `File` for every decodable clip the worker has not
-   * seen yet. `File` is structured-cloneable by reference, so this hands over
-   * a handle, not the bytes.
+   * Transfer the preview blob — the ready proxy, else the source `File` — for
+   * every decodable clip whose blob the worker does not already hold. Blobs
+   * are structured-cloneable by reference, so this hands over a handle, not
+   * the bytes.
    */
   private sendClipMedia(clips: Clip[]): void {
-    const media: Array<{ clipId: string; blob: Blob }> = [];
+    const lookup = proxyStore.getState();
+    const media: Array<{ clipId: string; blob: Blob; source: PreviewMediaSource }> = [];
     for (const clip of clips) {
       if (clip.kind !== 'video' || clip.stillImage || !clip.file) continue;
-      if (this.sentMedia.has(clip.id)) continue;
-      this.sentMedia.add(clip.id);
-      media.push({ clipId: clip.id, blob: clip.file });
+      const resolved = resolvePreviewMedia(clip, lookup);
+      if (this.sentMedia.get(clip.id) === resolved.blob) continue;
+      this.sentMedia.set(clip.id, resolved.blob);
+      media.push({ clipId: clip.id, blob: resolved.blob, source: resolved.source });
     }
     this.runtime.sendClipMedia(media);
   }
@@ -591,7 +630,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         await seekVideoTo(video, req.sourceTime);
         previewMetrics.recordSeek(performance.now() - seekStart);
         if (options?.isCancelled?.()) return null;
-        const frame = await captureVideoFrameFromElement(video);
+        const frame = await captureVideoFrame(video);
         if (!frame) return null;
         return {
           clipId: req.clipId,
@@ -614,7 +653,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
           });
         }
         if (options?.isCancelled?.()) return null;
-        const frame = await captureStillVideoFrame(img);
+        const frame = await captureStillFrame(img);
         if (!frame) return null;
         return {
           clipId: req.clipId,
@@ -627,12 +666,15 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
 
       if (clip.kind !== 'video') return null;
 
-      const video = this.pool.getVideo(clip);
+      // The <video> fallback reads the same bytes the worker decoder would.
+      const media = resolvePreviewMedia(clip, proxyStore.getState());
+      const fromProxy = media.source === 'proxy' && Boolean(media.objectUrl);
+      const video = this.pool.getVideoForUrl(clip.id, fromProxy ? media.objectUrl : clip.objectUrl);
       const seekStart = performance.now();
       await seekVideoTo(video, req.sourceTime);
       previewMetrics.recordSeek(performance.now() - seekStart);
       if (options?.isCancelled?.()) return null;
-      const frame = await captureVideoFrameFromElement(video);
+      const frame = await captureVideoFrame(video);
       if (!frame) return null;
       return {
         clipId: req.clipId,
@@ -640,6 +682,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         frame,
         videoWidth: video.videoWidth,
         videoHeight: video.videoHeight,
+        ...(fromProxy ? { proxy: true } : {}),
       };
     };
 
@@ -693,7 +736,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   syncClips(clips: Clip[]): void {
     const ids = new Set(clips.map((c) => c.id));
     this.pool.pruneExcept(ids);
-    for (const id of [...this.sentMedia]) {
+    for (const id of [...this.sentMedia.keys()]) {
       if (!ids.has(id)) this.sentMedia.delete(id);
     }
     this.sendClipMedia(clips);

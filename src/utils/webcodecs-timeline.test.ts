@@ -4,7 +4,6 @@ import {
   computeTimelineExportFrameCount,
   globalTimeForTimelineFrame,
   shouldEmitTimelineStatusUpdate,
-  shouldWaitForEncoderBackpressure,
   timelineFrameTimestampUs,
   timelineStatusThrottleFrames,
   MAX_ENCODE_QUEUE_DEPTH,
@@ -51,19 +50,6 @@ describe('webcodecs-timeline', () => {
       const frameDurationUs = Math.round(1_000_000 / TIMELINE_EXPORT_FPS);
       expect(timelineFrameTimestampUs(0)).toBe(0);
       expect(timelineFrameTimestampUs(60)).toBe(60 * frameDurationUs);
-    });
-  });
-
-  describe('shouldWaitForEncoderBackpressure', () => {
-    it('waits when the queue exceeds the limit', () => {
-      expect(shouldWaitForEncoderBackpressure(0)).toBe(false);
-      expect(shouldWaitForEncoderBackpressure(MAX_ENCODE_QUEUE_DEPTH)).toBe(false);
-      expect(shouldWaitForEncoderBackpressure(MAX_ENCODE_QUEUE_DEPTH + 1)).toBe(true);
-    });
-
-    it('respects a custom max depth', () => {
-      expect(shouldWaitForEncoderBackpressure(5, 4)).toBe(true);
-      expect(shouldWaitForEncoderBackpressure(4, 4)).toBe(false);
     });
   });
 

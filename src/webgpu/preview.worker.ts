@@ -26,7 +26,13 @@ import {
   type PreviewClipLayer,
   type PreviewCompositionPlan,
 } from '../utils/previewComposition';
-import { peekGpuDevice } from './gpuDevice';
+import {
+  onGpuDeviceLost,
+  onGpuDeviceRecovered,
+  onGpuDeviceRecoveryFailed,
+  onGpuError,
+  peekGpuDevice,
+} from './gpuDevice';
 import { probeWebGpu } from './webgpuProbe';
 import { adoptGpuDevice, peekChoresGpuDevice } from '../gpu-chores/device';
 import { runJob } from '../gpu-chores/runJob';
@@ -46,6 +52,7 @@ import type {
   WorkerClip,
 } from './previewWorkerProtocol';
 import { SCOPES_OFF } from './previewWorkerProtocol';
+import type { PreviewMediaSource } from '../utils/proxyMedia';
 
 let renderer: WorkerTimelineRenderer | null = null;
 let decoderSource: PreviewDecoderSource | null = null;
@@ -57,11 +64,13 @@ interface PendingRender {
   colorManagement?: ColorManagementSettings;
   /** Frames the worker's own decoder already produced for this render. */
   decoded: CapturedFrame[];
+  /** How many of `decoded` were read from a preview proxy. */
+  proxyDecoded: number;
 }
 const pendingRenders = new Map<number, PendingRender>();
 const cancelledIds = new Set<number>();
 /** Clip media the worker holds but has not been able to attach yet (pre-init). */
-const stagedMedia = new Map<string, Blob>();
+const stagedMedia = new Map<string, { blob: Blob; source?: PreviewMediaSource }>();
 
 function post(msg: PreviewWorkerOutbound, transfer: Transferable[] = []): void {
   (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
@@ -80,6 +89,21 @@ function choreTransferList(results: GpuChoreResult[]): Transferable[] {
 function closeFrames(frames: Array<{ frame: VideoFrame }>): void {
   for (const f of frames) f.frame.close();
 }
+
+// This realm's device is invisible to main's registry: forward its health.
+// `PreviewEngine` rebuilds itself on recovery, so main only has to wait.
+onGpuError((entry) => {
+  if (entry.type !== 'lost') post({ type: 'gpu-error', entry });
+});
+onGpuDeviceLost((info) => {
+  post({ type: 'gpu-lost', message: info.message, timestamp: Date.now() });
+});
+onGpuDeviceRecovered(() => {
+  post({ type: 'gpu-recovered' });
+});
+onGpuDeviceRecoveryFailed((error) => {
+  post({ type: 'gpu-recovery-failed', message: error.message, timestamp: Date.now() });
+});
 
 // Phase-1 probe as soon as the worker module loads — before main transfers
 // the canvas — so a failed probe never neuters the DOM canvas.
@@ -100,6 +124,7 @@ async function completeRender(
   renderId: number,
   pending: PendingRender,
   elementFrames: CapturedFrame[],
+  elementProxyFrames = 0,
 ): Promise<void> {
   if (!renderer) {
     closeFrames(pending.decoded);
@@ -110,6 +135,7 @@ async function completeRender(
   const frameSources: FrameSourceStats = {
     decoder: pending.decoded.length,
     element: elementFrames.length,
+    proxy: pending.proxyDecoded + elementProxyFrames,
   };
 
   const entries: CapturedFrameEntry[] = [...pending.decoded, ...elementFrames].map((f) => ({
@@ -208,7 +234,9 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         decoderSource?.destroy();
         decoderSource = msg.decoderEnabled === false ? null : new PreviewDecoderSource();
         if (decoderSource) {
-          for (const [clipId, blob] of stagedMedia) decoderSource.setClipMedia(clipId, blob);
+          for (const [clipId, { blob, source }] of stagedMedia) {
+            decoderSource.setClipMedia(clipId, blob, source);
+          }
         }
         stagedMedia.clear();
         post({ type: 'initialized' });
@@ -223,9 +251,9 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
     }
 
     case 'clip-media': {
-      for (const { clipId, blob } of msg.media) {
-        if (decoderSource) decoderSource.setClipMedia(clipId, blob);
-        else stagedMedia.set(clipId, blob);
+      for (const { clipId, blob, source } of msg.media) {
+        if (decoderSource) decoderSource.setClipMedia(clipId, blob, source);
+        else stagedMedia.set(clipId, { blob, source });
       }
       break;
     }
@@ -294,11 +322,13 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
 
       // Decoder first; only what it can't serve round-trips to the main thread.
       let decoded: CapturedFrame[] = [];
+      let proxyDecoded = 0;
       let fallback = requests;
       if (decoderSource) {
         const clipsById = new Map<string, WorkerClip>(clips.map((c) => [c.id, c]));
         const split = await decoderSource.split(requests, clipsById);
         decoded = split.decoded;
+        proxyDecoded = split.proxyDecoded;
         fallback = split.fallback;
       }
 
@@ -307,6 +337,7 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         finishing: resolvedFinishing,
         colorManagement,
         decoded,
+        proxyDecoded,
       };
 
       if (cancelledIds.has(renderId)) {
@@ -342,7 +373,8 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         break;
       }
 
-      await completeRender(renderId, pending, frames);
+      const proxyFrames = frames.reduce((n, f) => n + (f.proxy ? 1 : 0), 0);
+      await completeRender(renderId, pending, frames, proxyFrames);
       break;
     }
 

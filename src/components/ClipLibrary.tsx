@@ -10,6 +10,7 @@ import {
 import { getClipDuration } from '../utils/project';
 import { IntercutModal } from './IntercutModal';
 import { AutoCutPanel } from './AutoCutPanel';
+import { ProxyBadge, ProxyPlaybackToggle } from './ProxyBadge';
 import { settingsStore } from '../store/settingsStore';
 import { useStore } from 'zustand';
 import type { IntercutGeneratorConfig } from '../ffmpeg/intercutGenerator';
@@ -66,6 +67,8 @@ function ClipLibraryItem({ clipId, onToggleVariant: _onToggleVariant, onDelete }
             {clip.rifeMode === 'boomerang' ? ' 🔁' : ` ✨${clip.rifeMultiplier ?? 2}×`}
           </span>
         )}
+        {' '}
+        <ProxyBadge clip={clip} />
       </div>
     </li>
   );
@@ -133,6 +136,8 @@ function VariantRow({ group, slot, onToggleVariant, onDelete }: VariantRowProps)
             {clip.rifeMode === 'boomerang' ? ' 🔁' : ` ✨${clip.rifeMultiplier ?? 2}×`}
           </span>
         )}
+        {' '}
+        <ProxyBadge clip={clip} />
       </div>
     </div>
   );
@@ -209,6 +214,7 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
         </button>
       )}
       <AutoCutPanel />
+      <ProxyPlaybackToggle />
       {clips.length === 0 && activeGroups.length === 0 && (
         <p className="muted">No clips yet. Add clips above.</p>
       )}

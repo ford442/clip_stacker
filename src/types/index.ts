@@ -86,6 +86,16 @@ export interface SyncMarker {
  * resolution. Deliberately NOT serialized with the project — see
  * `SerializedClip.stabilize`.
  */
+/** A clip's preview proxy: which profile, keyed by which source hash, at what size. */
+export interface ClipProxy {
+  /** `PROXY_PROFILE.id` the proxy was encoded with. */
+  profile: string;
+  /** Source content hash (`fingerprintMedia`) — half of the store key. */
+  hash: string;
+  width: number;
+  height: number;
+}
+
 export interface ClipStabilization {
   /** Rate the analysis sampled the source at (frames per second). */
   fps: number;
@@ -214,6 +224,11 @@ export interface Clip {
    * Audio fades and bed ducking still multiply on top of the sampled level.
    */
   automation?: ClipAutomation;
+  /**
+   * Insert effects (EQ bands → compressor), constant over the clip. Run in
+   * the media-engine C++ on both the export premix and the preview buffers.
+   */
+  audioEffects?: import('../utils/audioEffects').ClipAudioEffects;
   /** Optional per-property keyframe animation (local clip time in seconds). */
   keyframes?: ClipKeyframes;
   /** True when the source is a still image (Ken Burns / UV keyframes). */
@@ -251,6 +266,15 @@ export interface Clip {
   stabilization?: ClipStabilization;
   /** Why analysis could not run for this clip (WASM disabled, undecodable, …). */
   stabilizeError?: string;
+  // ---------------------------------------------------------------------------
+  // Preview proxy (see `utils/proxyMedia.ts`)
+  // ---------------------------------------------------------------------------
+  /**
+   * The preview proxy built for this clip's source. Only the record travels;
+   * the bytes live in the working-media store under `proxyStoreKey(hash, profile)`.
+   * Preview and stabilization read the proxy; export always reads `file`.
+   */
+  proxy?: ClipProxy;
 }
 
 export interface SerializedClip {
@@ -309,6 +333,8 @@ export interface SerializedClip {
   /** Play the remapped trim window this many times. 1 = once. Omit in old projects. */
   loopCount?: number;
   automation?: ClipAutomation;
+  /** Insert effects; omitted when the clip has none (old projects load dry). */
+  audioEffects?: import('../utils/audioEffects').ClipAudioEffects;
   keyframes?: ClipKeyframes;
   stillImage?: boolean;
   /** Beat onset times in seconds (source media), from audio analysis. */
@@ -328,6 +354,8 @@ export interface SerializedClip {
    * recomputes them instead of bloating every project file.
    */
   stabilize?: boolean;
+  /** Preview proxy record — no bytes, no data URL. */
+  proxy?: ClipProxy;
 }
 
 export type TransitionType = 'none' | (string & {});
@@ -403,6 +431,11 @@ export interface ExportSettings {
    * unavailable. FFmpeg exports ignore this and always use libx264.
    */
   videoCodec?: 'h264' | 'hevc' | 'av1';
+  /**
+   * Look-ahead limiter on the export mix bus (media engine only). Omitted =
+   * off, so exports without it keep their exact samples.
+   */
+  masterLimiter?: import('../utils/audioEffects').MasterLimiterSettings;
 }
 
 export type ResolutionPreset = 'original' | '720p' | '1080p' | '1440p' | '4k' | 'custom';
@@ -743,6 +776,12 @@ export interface RenderPlan {
    * `EncoderPath` in `utils/hybrid-encoder.ts`.
    */
   encoderIntent?: 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
+  /**
+   * The WebCodecs video encoder a `webcodecs*` render actually configured:
+   * the codec string and the acceleration rung the probe accepted
+   * (`no-preference` on a machine with no hardware encoder). Resolved plans only.
+   */
+  videoEncoder?: { codec: string; hardwareAcceleration: HardwareAcceleration };
   /** True when any finishing pass (noise reduction / color / LUT / sharpen / grain) is enabled. */
   finishingActive?: boolean;
   /** True when any clip has an active stabilization matrix that will be applied. */

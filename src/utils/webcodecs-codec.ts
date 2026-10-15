@@ -30,7 +30,35 @@ export interface ResolvedEncoderCodec {
   codec: string;
   /** mp4-muxer video track codec id. */
   muxerCodec: 'avc' | 'hevc' | 'av1';
+  /**
+   * The acceleration hint the probe accepted (see
+   * {@link ENCODER_ACCELERATION_LADDER}). Unset on a bare candidate, which
+   * builds a `prefer-hardware` config.
+   */
+  hardwareAcceleration?: HardwareAcceleration;
 }
+
+/**
+ * Acceleration hints tried in order for encode. Chrome treats
+ * `prefer-hardware` as *require hardware*, so on machines without a hardware
+ * encoder (common on Linux and in VMs) only `no-preference` configures.
+ */
+export const ENCODER_ACCELERATION_LADDER: readonly HardwareAcceleration[] = Object.freeze([
+  'prefer-hardware',
+  'no-preference',
+]);
+
+/**
+ * Acceleration hints tried in order for decode. `prefer-software` is the last
+ * rung because some drivers advertise a hardware decoder that then rejects
+ * the stream's profile; a software decode is still far better than dropping
+ * the layer back to `<video>` seeks.
+ */
+export const DECODER_ACCELERATION_LADDER: readonly HardwareAcceleration[] = Object.freeze([
+  'prefer-hardware',
+  'no-preference',
+  'prefer-software',
+]);
 
 /**
  * TS's bundled `lib.dom.d.ts` hasn't caught up to the WebCodecs spec's
@@ -66,11 +94,58 @@ const H264_PROFILE_IDC: Record<H264Profile, string> = {
   baseline: '42',
 };
 
-/** HEVC Main 10, level 4.1 — HDR10 candidate. Not an 8-bit Main fallback. */
+/** HEVC Main 10, level 4.1 (≤ 1080p) — HDR10 candidate. Not an 8-bit Main fallback. */
 export const HEVC_MAIN10_CODEC = 'hvc1.2.4.L123.B0';
 
-/** AV1 Main, 10-bit. HDR10 candidate. The 8-bit string stays `av01.0.08M.08`. */
+/** AV1 Main, 10-bit, level 4.0 (≤ 1080p). HDR10 candidate. The 8-bit string is `av01.0.08M.08`. */
 export const AV1_10BIT_CODEC = 'av01.0.08M.10';
+
+/** Luma picture size (MaxLumaPs) limits shared by the HEVC and AV1 level tables. */
+const LUMA_PS_1080P = 2_228_224;
+const LUMA_PS_2160P = 8_912_896;
+
+/**
+ * HEVC codec string with a level adequate for the target picture size and
+ * frame rate (Main tier). Level 4.1 (`L123`) up to 1080p, 5.0 / 5.1
+ * (`L150` / `L153`) for 2160p at ≤ 30 / > 30 fps, 6.0 / 6.1 beyond.
+ * A fixed 4.1 makes strict encoders reject a 4K configure — and HDR10 has no
+ * H.264 fallback, so that used to fail the whole export.
+ */
+export function hevcCodecString(
+  width: number,
+  height: number,
+  profile: 'main' | 'main10' = 'main',
+  fps: number = TIMELINE_EXPORT_FPS,
+): string {
+  const lumaPs = width * height;
+  const fast = fps > 30;
+  const level =
+    lumaPs <= LUMA_PS_1080P ? 123
+    : lumaPs <= LUMA_PS_2160P ? (fast ? 153 : 150)
+    : fast ? 183 : 180;
+  const head = profile === 'main10' ? 'hvc1.2.4' : 'hvc1.1.6';
+  return `${head}.L${level}.B0`;
+}
+
+/**
+ * AV1 codec string (Main profile) with a `seq_level_idx` adequate for the
+ * target picture size and frame rate: 4.0 / 4.1 (`08` / `09`) up to 1080p,
+ * 5.0 / 5.1 (`12` / `13`) for 2160p, 6.0 / 6.1 (`16` / `17`) beyond.
+ */
+export function av1CodecString(
+  width: number,
+  height: number,
+  bitDepth: 8 | 10 = 8,
+  fps: number = TIMELINE_EXPORT_FPS,
+): string {
+  const lumaPs = width * height;
+  const fast = fps > 30;
+  const level =
+    lumaPs <= LUMA_PS_1080P ? (fast ? 9 : 8)
+    : lumaPs <= LUMA_PS_2160P ? (fast ? 13 : 12)
+    : fast ? 17 : 16;
+  return `av01.0.${String(level).padStart(2, '0')}M.${bitDepth === 10 ? '10' : '08'}`;
+}
 
 /**
  * H.264 codec string with a level adequate for the target resolution.
@@ -96,19 +171,23 @@ export function codecCandidates(
   width: number,
   height: number,
   outputColor: OutputColor = 'rec709-sdr',
+  fps: number = TIMELINE_EXPORT_FPS,
 ): ResolvedEncoderCodec[] {
   if (outputColor === 'hdr10') {
     return [
-      { codec: HEVC_MAIN10_CODEC, muxerCodec: 'hevc' },
-      { codec: AV1_10BIT_CODEC, muxerCodec: 'av1' },
+      { codec: hevcCodecString(width, height, 'main10', fps), muxerCodec: 'hevc' },
+      { codec: av1CodecString(width, height, 10, fps), muxerCodec: 'av1' },
     ];
   }
   const h264: ResolvedEncoderCodec[] = (['high', 'main', 'baseline'] as const).map((profile) => ({
     codec: h264CodecString(width, height, profile),
     muxerCodec: 'avc' as const,
   }));
-  const hevc: ResolvedEncoderCodec = { codec: 'hvc1.1.6.L123.B0', muxerCodec: 'hevc' };
-  const av1: ResolvedEncoderCodec = { codec: 'av01.0.08M.08', muxerCodec: 'av1' };
+  const hevc: ResolvedEncoderCodec = {
+    codec: hevcCodecString(width, height, 'main', fps),
+    muxerCodec: 'hevc',
+  };
+  const av1: ResolvedEncoderCodec = { codec: av1CodecString(width, height, 8, fps), muxerCodec: 'av1' };
   switch (preference) {
     case 'hevc':
       return [hevc, ...h264];
@@ -139,7 +218,7 @@ export function buildVideoEncoderConfig(
     bitrate,
     bitrateMode: EXPORT_BITRATE_MODE,
     framerate,
-    hardwareAcceleration: 'prefer-hardware',
+    hardwareAcceleration: candidate.hardwareAcceleration ?? 'prefer-hardware',
     latencyMode: VIDEO_ENCODER_LATENCY_MODE,
     colorSpace: colorSpaceForOutput(outputColor),
     // mp4-muxer expects length-prefixed (avc) samples, not Annex B.
@@ -167,9 +246,12 @@ export function __setLastResolvedEncoderCodecForTests(codec: ResolvedEncoderCode
 /**
  * Probe VideoEncoder.isConfigSupported for the requested codec, preferring
  * High → Main → Baseline H.264 profiles (falling back further to HEVC/AV1's
- * own H.264 fallback when neither is available in this browser). `bitrate`
- * must match what the real `configure()` call will use — an unmatched probe
- * can report a config supported that the real encoder then rejects.
+ * own H.264 fallback when neither is available in this browser), first with
+ * hardware acceleration and then without (see {@link ENCODER_ACCELERATION_LADDER}).
+ * Codec order wins within one rung, acceleration across rungs, so a hardware
+ * H.264 encode is chosen over a software HEVC one. `bitrate` must match what
+ * the real `configure()` call will use — an unmatched probe can report a
+ * config supported that the real encoder then rejects.
  */
 async function firstSupportedCandidate(
   preference: ExportVideoCodec | undefined,
@@ -179,18 +261,34 @@ async function firstSupportedCandidate(
   outputColor: OutputColor,
 ): Promise<ResolvedEncoderCodec | null> {
   const candidates = codecCandidates(preference, width, height, outputColor);
-  for (const candidate of candidates) {
-    try {
-      const config = buildVideoEncoderConfig(candidate, width, height, bitrate, TARGET_FPS, outputColor);
-      const support = await VideoEncoder.isConfigSupported(config);
-      if (support.supported === true) return candidate;
-    } catch {
-      // Unparseable codec string on this browser — try the next candidate.
+  for (const hardwareAcceleration of ENCODER_ACCELERATION_LADDER) {
+    for (const base of candidates) {
+      const candidate = { ...base, hardwareAcceleration };
+      try {
+        const config = buildVideoEncoderConfig(candidate, width, height, bitrate, TARGET_FPS, outputColor);
+        const support = await VideoEncoder.isConfigSupported(config);
+        if (support.supported === true) return candidate;
+      } catch {
+        // Unparseable codec string on this browser — try the next candidate.
+      }
     }
   }
   return null;
 }
 
+/** No probed encoder config was accepted — the caller falls back to FFmpeg. */
+export class NoSupportedEncoderError extends Error {
+  constructor(width: number, height: number) {
+    super(`No WebCodecs video encoder accepts a ${width}x${height} export on this machine`);
+    this.name = 'NoSupportedEncoderError';
+  }
+}
+
+/**
+ * Resolve the codec + acceleration the export will configure. Only ever
+ * returns a config `isConfigSupported` accepted: an unprobed guess would only
+ * fail later, asynchronously, inside `configure()`.
+ */
 export async function resolveEncoderCodec(
   preference: ExportVideoCodec | undefined,
   width: number,
@@ -210,10 +308,7 @@ export async function resolveEncoderCodec(
   if (outputColor === 'display-p3') {
     throw new ColorPipelineExportError(displayP3UnavailableReason());
   }
-  const fallback = codecCandidates(preference, width, height, outputColor).at(-1)!;
-  lastResolvedCodec = fallback;
-  lastEncoderColorSpace = colorSpaceForOutput(outputColor);
-  return fallback;
+  throw new NoSupportedEncoderError(width, height);
 }
 
 /**
@@ -286,26 +381,30 @@ export async function isWebCodecsAvailable(
   if (typeof VideoEncoder === 'undefined' || typeof VideoFrame === 'undefined') {
     return false;
   }
-  try {
-    const videoSupport = await VideoEncoder.isConfigSupported({
-      codec: 'avc1.42001e',
-      width,
-      height,
-      hardwareAcceleration: 'prefer-hardware',
-    });
-    return videoSupport.supported === true;
-  } catch {
-    return false;
-  }
+  return (await probeH264EncoderAcceleration(width, height)) !== null;
 }
 
-export function waitForEncoderDequeue(encoder: VideoEncoder): Promise<void> {
-  return new Promise((resolve) => {
-    const target = encoder as unknown as EventTarget;
-    if (typeof target.addEventListener === 'function') {
-      target.addEventListener('dequeue', () => resolve(), { once: true });
-    } else {
-      setTimeout(resolve, 0);
+/**
+ * First rung of {@link ENCODER_ACCELERATION_LADDER} at which a Constrained
+ * Baseline H.264 encoder configures at this size, or null when none does.
+ */
+export async function probeH264EncoderAcceleration(
+  width: number,
+  height: number,
+): Promise<HardwareAcceleration | null> {
+  if (typeof VideoEncoder === 'undefined') return null;
+  for (const hardwareAcceleration of ENCODER_ACCELERATION_LADDER) {
+    try {
+      const support = await VideoEncoder.isConfigSupported({
+        codec: h264CodecString(width, height),
+        width,
+        height,
+        hardwareAcceleration,
+      });
+      if (support.supported === true) return hardwareAcceleration;
+    } catch {
+      // Try the next rung.
     }
-  });
+  }
+  return null;
 }

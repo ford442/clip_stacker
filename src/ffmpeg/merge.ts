@@ -27,7 +27,7 @@ import { buildSharpenFfmpegFilters } from "../utils/sharpen";
 import { buildGrainFfmpegFilters } from "../utils/grain";
 import {
   renderTimelineAudioMixWav,
-  timelineHasAudioAutomation,
+  timelineNeedsAudioPremix,
 } from "../utils/webcodecs-audio";
 import {
   isFfmpegLoadFailed,
@@ -383,10 +383,10 @@ export async function mergeClips(
     finalFileName = "stacked_final.mp4";
   }
 
-  // When volume/pan automation is present, replace FFmpeg-filter audio with a
+  // When automation, insert effects or the bus limiter are present, replace FFmpeg-filter audio with a
   // browser premix — media-engine WASM, else OfflineAudioContext (curves aren't
   // expressible as filters).
-  if (timelineHasAudioAutomation(workingClips)) {
+  if (timelineNeedsAudioPremix(workingClips)) {
     onStatus("Rendering automated audio mix for FFmpeg remux...");
     emitProgress(onProgress, "Premixing automated audio", 0.97, true);
     const wavBytes = await renderTimelineAudioMixWav(

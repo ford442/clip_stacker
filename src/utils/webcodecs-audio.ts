@@ -6,8 +6,12 @@
  * the hardware video track — keeping FFmpeg off the happy path for
  * soundtracked GPU exports. With the media-engine WASM loaded the mix streams
  * chunk by chunk (no length cap); OfflineAudioContext is the fallback.
+ *
+ * Clip insert effects and the master limiter exist only in the media engine:
+ * the OfflineAudioContext fallback mixes dry rather than inventing its own EQ.
  */
 
+import { waitForQueueBelow } from './codecQueue';
 import type { Clip, ClipGroup, ClipTransition } from '../types';
 import { ClipAudioCache } from '../audio/clipAudioCache';
 import {
@@ -26,6 +30,13 @@ import {
   timelineHasAudioAutomation,
 } from './clipAutomation';
 import { RemappedAudioCache } from './remappedAudioCache';
+import {
+  clipAudioEffectsActive,
+  masterLimiterActive,
+  normalizeMasterLimiter,
+  type MasterLimiterSettings,
+} from './audioEffects';
+import { settingsStore } from '../store/settingsStore';
 import {
   audioBufferToClipPcm,
   isMediaEngineMixEnabled,
@@ -121,6 +132,34 @@ export function assessWebCodecsAudioMix(
   return { supported: true };
 }
 
+/** Mix-bus options for the export premix. */
+export interface TimelineAudioMixOptions {
+  /** Look-ahead limiter on the mix output (media engine only). */
+  limiter?: MasterLimiterSettings | null;
+}
+
+/** The export settings' master limiter, or null when it is off. */
+export function exportMasterLimiter(): MasterLimiterSettings | null {
+  const limiter = normalizeMasterLimiter(settingsStore.getState().exportSettings.masterLimiter);
+  return masterLimiterActive(limiter) ? limiter : null;
+}
+
+/**
+ * Whether the FFmpeg paths must replace filter-graph audio with a browser
+ * premix: automation curves, insert effects and the bus limiter are not
+ * FFmpeg filters.
+ */
+export function timelineNeedsAudioPremix(
+  clips: Array<Pick<Clip, 'automation' | 'audioEffects'>>,
+  limiter: MasterLimiterSettings | null = exportMasterLimiter(),
+): boolean {
+  return (
+    timelineHasAudioAutomation(clips) ||
+    clips.some((clip) => clipAudioEffectsActive(clip.audioEffects)) ||
+    masterLimiterActive(limiter)
+  );
+}
+
 function entryPlaybackRate(entry: AudioScheduleEntry): number {
   if (entry.rateRemap) return 1;
   if (Number.isFinite(entry.playbackRate) && entry.playbackRate > 0) {
@@ -144,6 +183,7 @@ function toMixEntries(
     playbackRate: entryPlaybackRate(entry),
     volumeAutomation: entry.volumeAutomation,
     panAutomation: entry.panAutomation,
+    ...(entry.audioEffects ? { effects: entry.audioEffects } : {}),
   }));
 }
 
@@ -195,6 +235,7 @@ async function openScheduleMixStream(
   cache: ClipAudioCache,
   fullSchedule: AudioScheduleEntry[],
   evict: boolean,
+  options: TimelineAudioMixOptions,
 ): Promise<{ stream: TimelineMixStream; ctx: OfflineAudioContext } | null> {
   if (!(await prepareStreamingAudioMix())) return null;
   if (scheduleNeedsOfflineAudioMix(entries)) return null;
@@ -202,22 +243,24 @@ async function openScheduleMixStream(
   const stream = await openTimelineMixStream(
     toMixEntries(entries, fullSchedule),
     createSchedulePcmProvider(entries, cache, ctx, evict),
-    { sampleRate: AAC_SAMPLE_RATE, channels: AAC_CHANNELS, durationSec },
+    { sampleRate: AAC_SAMPLE_RATE, channels: AAC_CHANNELS, durationSec, limiter: options.limiter },
   );
   return stream ? { stream, ctx } : null;
 }
 
 /**
- * C++ mix (polyphase resample, volume/pan curves, fades) written chunk by
- * chunk into one AudioBuffer. Null → caller uses OfflineAudioContext.
+ * C++ mix (polyphase resample, inserts, volume/pan curves, fades, limiter)
+ * written chunk by chunk into one AudioBuffer. Null → caller uses
+ * OfflineAudioContext.
  */
 async function tryWasmTimelineMix(
   entries: AudioScheduleEntry[],
   durationSec: number,
   cache: ClipAudioCache,
   fullSchedule: AudioScheduleEntry[],
+  options: TimelineAudioMixOptions,
 ): Promise<AudioBuffer | null> {
-  const opened = await openScheduleMixStream(entries, durationSec, cache, fullSchedule, false);
+  const opened = await openScheduleMixStream(entries, durationSec, cache, fullSchedule, false, options);
   if (!opened) return null;
   const { stream, ctx } = opened;
   try {
@@ -254,12 +297,13 @@ export async function renderTimelineAudioMix(
   durationSec: number,
   cache: ClipAudioCache = new ClipAudioCache(),
   fullSchedule: AudioScheduleEntry[] = entries,
+  options: TimelineAudioMixOptions = {},
 ): Promise<AudioBuffer> {
   if (typeof OfflineAudioContext === 'undefined') {
     throw new Error('OfflineAudioContext unavailable');
   }
 
-  const wasmMix = await tryWasmTimelineMix(entries, durationSec, cache, fullSchedule);
+  const wasmMix = await tryWasmTimelineMix(entries, durationSec, cache, fullSchedule, options);
   if (wasmMix) return wasmMix;
 
   const sampleCount = Math.max(1, Math.ceil(durationSec * AAC_SAMPLE_RATE));
@@ -317,19 +361,21 @@ export async function renderTimelineAudioMix(
 
 /**
  * Offline-mix the timeline and encode as WAV bytes for FFmpeg VFS mux.
- * Used when volume/pan/rate automation is present (arbitrary curves aren't FFmpeg filters).
+ * Used when `timelineNeedsAudioPremix` (automation curves, inserts, limiter).
+ * The limiter defaults to the export settings'.
  */
 export async function renderTimelineAudioMixWav(
   clips: Clip[],
   groups: ClipGroup[],
   transitions: ClipTransition[],
+  options: TimelineAudioMixOptions = { limiter: exportMasterLimiter() },
 ): Promise<Uint8Array | null> {
   const timelineClips = getTimelineClips(clips, groups);
   const durationSec = computeTotalDuration(timelineClips, transitions);
   const schedule = buildAudioSchedule(clips, groups, transitions);
   if (schedule.length === 0 || durationSec <= 0) return null;
 
-  const mixed = await renderTimelineAudioMix(schedule, durationSec);
+  const mixed = await renderTimelineAudioMix(schedule, durationSec, undefined, schedule, options);
   return new Uint8Array(audioBufferToWav(mixed));
 }
 
@@ -362,19 +408,6 @@ export interface EncodedAacResult {
 /** Presentation time of absolute frame `frame` (µs), rounded per frame so it never drifts. */
 function frameTimestampUs(frame: number, sampleRate: number): number {
   return Math.round((frame * 1_000_000) / sampleRate);
-}
-
-/** Resolve after the encoder drains an item (or 20 ms, if `dequeue` is unsupported). */
-function waitForEncoderDequeue(encoder: AudioEncoder): Promise<void> {
-  return new Promise((resolve) => {
-    const done = () => {
-      clearTimeout(timer);
-      encoder.removeEventListener?.('dequeue', done);
-      resolve();
-    };
-    const timer = setTimeout(done, 20);
-    encoder.addEventListener?.('dequeue', done);
-  });
 }
 
 /** `AudioEncoder` configured for AAC-LC, fed planar frames at absolute positions. */
@@ -411,16 +444,22 @@ function openAacEncoder(sampleRate: number, channels: number) {
         timestamp: frameTimestampUs(startFrame, sampleRate),
         data: data as BufferSource,
       });
-      encoder.encode(audioData);
-      audioData.close();
+      try {
+        encoder.encode(audioData);
+      } finally {
+        audioData.close();
+      }
       check();
     },
     /** Wait while the codec is behind, so streamed PCM does not pile up in its queue. */
     async drain(): Promise<void> {
-      while ((encoder.encodeQueueSize ?? 0) > MAX_ENCODE_QUEUE && !encodeError) {
-        await waitForEncoderDequeue(encoder);
-      }
       check();
+      try {
+        await waitForQueueBelow(encoder, MAX_ENCODE_QUEUE + 1);
+      } catch (err) {
+        check(); // prefer the codec's own error over "closed while waiting"
+        throw err;
+      }
     },
     async finish(): Promise<EncodedAacResult> {
       await encoder.flush();
@@ -462,7 +501,11 @@ export async function encodeAudioBufferToAac(
 export async function encodeScheduleAudioStreaming(
   entries: AudioScheduleEntry[],
   durationSec: number,
-  options: { cache?: ClipAudioCache; fullSchedule?: AudioScheduleEntry[] } = {},
+  options: {
+    cache?: ClipAudioCache;
+    fullSchedule?: AudioScheduleEntry[];
+    limiter?: MasterLimiterSettings | null;
+  } = {},
 ): Promise<EncodedAacResult | null> {
   if (typeof OfflineAudioContext === 'undefined') return null;
   const opened = await openScheduleMixStream(
@@ -472,6 +515,7 @@ export async function encodeScheduleAudioStreaming(
     options.fullSchedule ?? entries,
     // Only evict decoded clips from a cache this export owns.
     !options.cache,
+    { limiter: options.limiter },
   );
   if (!opened) return null;
   const { stream } = opened;
@@ -515,12 +559,14 @@ export function addAacChunksToMuxer(
 
 /**
  * Render + encode timeline audio for export. Returns null when the timeline
- * has no audible schedule (video-only export).
+ * has no audible schedule (video-only export). The limiter defaults to the
+ * export settings'.
  */
 export async function encodeTimelineAudio(
   clips: Clip[],
   groups: ClipGroup[],
   transitions: ClipTransition[],
+  options: TimelineAudioMixOptions = { limiter: exportMasterLimiter() },
 ): Promise<EncodedAacResult | null> {
   const timelineClips = getTimelineClips(clips, groups);
   const durationSec = computeTotalDuration(timelineClips, transitions);
@@ -529,7 +575,7 @@ export async function encodeTimelineAudio(
 
   const tooLongForOffline = durationSec > MAX_OFFLINE_AUDIO_SECONDS;
   try {
-    const streamed = await encodeScheduleAudioStreaming(schedule, durationSec);
+    const streamed = await encodeScheduleAudioStreaming(schedule, durationSec, { limiter: options.limiter });
     if (streamed) return streamed;
   } catch (err) {
     if (tooLongForOffline) throw err;
@@ -541,6 +587,6 @@ export async function encodeTimelineAudio(
     );
   }
 
-  const mixed = await renderTimelineAudioMix(schedule, durationSec);
+  const mixed = await renderTimelineAudioMix(schedule, durationSec, undefined, schedule, options);
   return encodeAudioBufferToAac(mixed);
 }

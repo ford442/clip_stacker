@@ -200,6 +200,32 @@ describe('bed ducking helpers', () => {
   });
 });
 
+describe('insert effects on the schedule', () => {
+  const eq = { type: 'peaking' as const, frequency: 1000, gainDb: 6, q: 1, enabled: true };
+
+  it('carries an active chain and drops a fully bypassed one', () => {
+    const [wet] = buildAudioSchedule([makeClip('a', 2, { audioEffects: { eq: [eq] } })], [], []);
+    expect(wet!.audioEffects).toEqual({ eq: [eq] });
+    const [dry] = buildAudioSchedule(
+      [makeClip('a', 2, { audioEffects: { eq: [{ ...eq, enabled: false }] } })],
+      [],
+      [],
+    );
+    expect(dry!.audioEffects).toBeUndefined();
+  });
+
+  it('treats an effect edit as a structure change (the processed buffer changes)', () => {
+    const base = buildAudioSchedule([makeClip('a', 2, { audioEffects: { eq: [eq] } })], [], []);
+    const boosted = buildAudioSchedule(
+      [makeClip('a', 2, { audioEffects: { eq: [{ ...eq, gainDb: 9 }] } })],
+      [],
+      [],
+    );
+    expect(schedulesMatchStructure(base, boosted)).toBe(false);
+    expect(schedulesMatchStructure(base, base.map((e) => ({ ...e, volume: 0.5 })))).toBe(true);
+  });
+});
+
 describe('lane mute (#168 Phase A)', () => {
   const base = makeClip('base', 4);
   const overlay = makeClip('overlay', 2, { layerIndex: 1, timelineStart: 5 });

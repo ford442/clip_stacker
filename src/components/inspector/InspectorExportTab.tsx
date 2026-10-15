@@ -5,6 +5,7 @@ import { FinishingPanel } from '../FinishingPanel';
 import { OutputColorFields } from './OutputColorFields';
 import type { ColorManagementSettings } from '../../utils/colorManagement';
 import { PRESETS } from './helpers';
+import { LIMITER_LIMITS, normalizeMasterLimiter, type MasterLimiterSettings } from '../../utils/audioEffects';
 
 interface InspectorExportTabProps {
   exportSettings: ExportSettings;
@@ -29,6 +30,9 @@ export function InspectorExportTab({
   updateExport,
   updateResolutionPreset,
 }: InspectorExportTabProps) {
+  const limiter = normalizeMasterLimiter(exportSettings.masterLimiter);
+  const updateLimiter = (patch: Partial<MasterLimiterSettings>) =>
+    onExportSettingsChange({ ...exportSettings, masterLimiter: { ...limiter, ...patch } });
   return (
     <div className="inspector-fields">
       <div className="inspector-group-label">Output filename</div>
@@ -127,6 +131,49 @@ export function InspectorExportTab({
       <p className="inspector-hint">
         Lower CRF = better quality, larger file.<br />
         Faster preset = quicker encode, slightly larger file.
+      </p>
+
+      <div className="inspector-group-label">Master audio</div>
+      <label
+        className="inspector-checkbox-label"
+        title="Look-ahead brickwall limiter on the exported mix bus."
+      >
+        <input
+          type="checkbox"
+          checked={limiter.enabled}
+          onChange={(e) => updateLimiter({ enabled: e.target.checked })}
+        />
+        Master limiter
+      </label>
+      {limiter.enabled && (
+        <>
+          <label className="inspector-volume-slider">
+            Ceiling {limiter.ceilingDb.toFixed(1)} dBFS
+            <input
+              type="range"
+              min={-12}
+              max={LIMITER_LIMITS.ceilingDb.max}
+              step="0.1"
+              value={limiter.ceilingDb}
+              onChange={(e) => updateLimiter({ ceilingDb: Number(e.target.value) })}
+            />
+          </label>
+          <label className="inspector-volume-slider">
+            Release {Math.round(limiter.release * 1000)} ms
+            <input
+              type="range"
+              min={10}
+              max={1000}
+              step="10"
+              value={Math.round(limiter.release * 1000)}
+              onChange={(e) => updateLimiter({ release: Number(e.target.value) / 1000 })}
+            />
+          </label>
+        </>
+      )}
+      <p className="inspector-hint">
+        No exported sample exceeds the ceiling (pre-encode). Runs in the media engine on export only:
+        preview plays the unlimited mix, and <code>?no_media_engine</code> exports without it.
       </p>
 
       {finishing && onFinishingChange && (

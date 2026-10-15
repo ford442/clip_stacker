@@ -8,6 +8,10 @@
  * The cursor lifecycle (backward-jump reopen, exhaustion, budget cap) lives in
  * `DecoderCursorPool`, shared with the preview worker so preview and export
  * cannot drift apart again.
+ *
+ * Export always decodes `clip.file`, never a preview proxy: the proxy is a
+ * 960p scrub stream, and the deliverable is encoded from the original at full
+ * resolution under every toggle.
  */
 
 import type { Clip } from '../types';

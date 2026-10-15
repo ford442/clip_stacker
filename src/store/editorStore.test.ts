@@ -121,6 +121,38 @@ describe('editorStore', () => {
     }
   });
 
+  it('resetHistory revokes master-audio URLs nothing can reach any more', () => {
+    const master = (url: string) => ({
+      file: new File(['a'], `${url}.wav`, { type: 'audio/wav' }),
+      objectUrl: url,
+      fileName: `${url}.wav`,
+      duration: 4,
+      startTime: 0,
+    });
+    const { setMasterAudio, pushHistory, resetHistory } = editorStore.getState();
+    setMasterAudio(master('blob:old-master'));
+    pushHistory();
+    // Removed but still undoable — must not be revoked yet.
+    setMasterAudio(null);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+    resetHistory({
+      clips: [],
+      tracks: createDefaultTracks(),
+      clipGroups: [],
+      transitions: [],
+      textOverlays: [],
+      captions: [],
+      captionStyle: {},
+      masterAudioMarkers: [],
+      selectedClipId: null,
+      masterAudio: master('blob:loaded-master'),
+    });
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:old-master');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:loaded-master');
+  });
+
   it('resetHistory replaces state and clears the undo/redo stacks', () => {
     const { setClips, pushHistory, resetHistory } = editorStore.getState();
     setClips([makeClip('a')]);

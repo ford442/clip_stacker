@@ -6,10 +6,8 @@ import type { Clip } from '../types';
 import { constantRateOutputElapsed, getClipPlaybackRate } from './playbackRate';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
 import { ClipFrameDecoder } from './webcodecs-decoder';
-import {
-  TARGET_FPS,
-  waitForEncoderDequeue,
-} from './webcodecs-codec';
+import { TARGET_FPS } from './webcodecs-codec';
+import { encodeAndClose, waitForQueueBelow } from './codecQueue';
 import {
   captureCompositedFrame,
   drawBlackFrame,
@@ -19,7 +17,7 @@ import {
   type DecoderTextOverlayPass,
   type ResolvedCompositor,
 } from './webcodecs-compositor';
-import { shouldWaitForEncoderBackpressure } from './webcodecs-timeline';
+import { MAX_ENCODE_QUEUE_DEPTH } from './webcodecs-timeline';
 
 declare global {
   interface HTMLVideoElement {
@@ -58,8 +56,7 @@ export async function encodeVideoFrames(
       startTimeUs,
       Math.round(outputDuration * 1_000_000),
     );
-    encoder.encode(frame, { keyFrame: true });
-    frame.close();
+    encodeAndClose(encoder, frame, { keyFrame: true });
     return startTimeUs + Math.round(outputDuration * 1_000_000);
   }
 
@@ -139,8 +136,7 @@ export async function encodeVideoFrames(
               timestamp,
               Math.max(1, Math.round(1_000_000 / TARGET_FPS / contentRate)),
             );
-            encoder.encode(frame, { keyFrame: frameCount % 60 === 0 });
-            frame.close();
+            encodeAndClose(encoder, frame, { keyFrame: frameCount % 60 === 0 });
             frameCount++;
           } catch (err) {
             done = true;
@@ -185,10 +181,10 @@ export async function encodeVideoFrames(
           timestamp,
           Math.max(1, Math.round(1_000_000 / TARGET_FPS / contentRate)),
         );
-        encoder.encode(frame, { keyFrame: frameCount % 60 === 0 });
-        frame.close();
+        encodeAndClose(encoder, frame, { keyFrame: frameCount % 60 === 0 });
         frameCount++;
         t += stepSeconds;
+        await waitForQueueBelow(encoder, MAX_ENCODE_QUEUE_DEPTH + 1);
       }
     }
   } finally {
@@ -250,13 +246,9 @@ async function encodeVideoFramesFromDecoder(
         startTimeUs + Math.round(elapsed * 1_000_000),
         Math.max(1, Math.round(1_000_000 / TARGET_FPS / contentRate)),
       );
-      encoder.encode(encodedFrame, { keyFrame: frameCount % 60 === 0 });
-      encodedFrame.close();
+      encodeAndClose(encoder, encodedFrame, { keyFrame: frameCount % 60 === 0 });
       frameCount++;
-
-      if (shouldWaitForEncoderBackpressure(encoder.encodeQueueSize)) {
-        await waitForEncoderDequeue(encoder);
-      }
+      await waitForQueueBelow(encoder, MAX_ENCODE_QUEUE_DEPTH + 1);
     }
   } finally {
     decoder.close();

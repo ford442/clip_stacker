@@ -17,19 +17,31 @@ The CMake tree lives in `$WASM_BUILD_DIR` (default `native/build/`).
 
 ## Host tests (no Emscripten)
 
-DSP that has a host test suite is also built with the native compiler and run
-through ctest (ASan + UBSan on by default), so numeric regressions fail without
-going through the JS glue:
+Every DSP translation unit that ships in `public/wasm/` is also built with the
+native compiler as a static `<module>_dsp` library and tested through ctest
+(ASan + UBSan on by default), so numeric regressions fail without going
+through the JS glue:
 
 ```bash
 npm run test:native                      # configure + build + ctest in native/build-host
 HOST_SANITIZE=0 npm run test:native      # plain Release build
 native/build-host/media_engine/tests/media_engine_tests --list
+native/build-host/video_stabilize/video_stabilize_tests translated   # name filter
 ```
 
-Configuring `native/` with plain `cmake` requires `-DCLIP_STACKER_HOST_TESTS=ON`
-(`host.cmake` holds the host flags); anything else must go through `emcmake`.
-CI runs the same script in the `native-host` job.
+| Module | ctest | Covers |
+| --- | --- | --- |
+| `audio_analysis` | `audio_analysis_tests` | a sine lights only its band; silence stays at zero energy / zero beat; `getHopSize` = FFT/2 (and FFT size rounding); a click after silence fires one onset, `resetAnalyzer` clears it. kissfft builds with the same `-ffp-contract=off` host flags. |
+| `time_stretch` | `time_stretch_tests` | tempo 1 is a near-copy (mono + stereo, bounded error); tempo 2 into half the length keeps pitch (zero-crossing) and level; identity `time_stretch_remap` matches constant tempo 1; bad args are rejected. |
+| `video_stabilize` | `video_stabilize_tests` | static frames finalize to identity; a translated frame gives a `tx`/`ty` that follows the content shift (opposite the camera move) in normalized UV; matrices before finalize are identity; invalid `stab_create` is null. `stab_math.h` (similarity fit, smoother, motion → UV corrections) is tested directly on synthetic motion. |
+| `media_engine` | `media_engine_host` | resampler THD+N goldens, chunk bit-equality, curve / pan parity. |
+
+Tests use the tiny runner in `host_test/host_test.h` (no third-party test
+framework). Configuring `native/` with plain `cmake` requires
+`-DCLIP_STACKER_HOST_TESTS=ON` (`host.cmake` holds the host flags); anything
+else must go through `emcmake`. CI runs the same script in the `native-host`
+job. New DSP (insert effects, a threaded mix) should land its goldens here
+before the WASM glue changes.
 
 ## clangd
 
@@ -44,5 +56,8 @@ at it. Because the database invokes `em++`, start clangd with
 "clangd.arguments": ["--query-driver=**/em++"]
 ```
 
-No emsdk? `npm run test:native` links its host database instead (only when
-`native/compile_commands.json` does not exist yet).
+Either configure leaves `native/compile_commands.json` in place:
+`npm run build:wasm` always points it at the WASM tree, and `npm run
+test:native` points it at the host tree unless it already resolves to a WASM
+database. Prefer the WASM one when you have emsdk (it is what actually ships,
+with em++'s sysroot); the host one is the no-emsdk fallback.

@@ -18,3 +18,14 @@ function(clip_stacker_host_target target)
     target_link_options(${target} PRIVATE -fsanitize=address,undefined)
   endif()
 endfunction()
+
+# Test executable from one .cpp, linked to a module's DSP library and run by ctest.
+function(clip_stacker_host_test name source dsp_lib)
+  add_executable(${name} ${source})
+  target_link_libraries(${name} PRIVATE ${dsp_lib})
+  target_include_directories(${name} PRIVATE "${CLIP_STACKER_NATIVE_DIR}/host_test")
+  clip_stacker_host_target(${name})
+  add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+set(CLIP_STACKER_NATIVE_DIR "${CMAKE_CURRENT_LIST_DIR}")
