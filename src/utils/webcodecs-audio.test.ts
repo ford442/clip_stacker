@@ -313,9 +313,14 @@ describe('webcodecs-audio', () => {
       }
     });
 
-    it('streams a >45 minute schedule straight into AAC frames', async () => {
+    it('streams a >45 minute schedule straight into AAC frames', { timeout: 60_000 }, async () => {
       await loadMediaEngineModule({ baseUrl: WASM_BASE });
       const offline = stubOfflineAudioContext();
+      const durationSec = MAX_OFFLINE_AUDIO_SECONDS + 60;
+      const frameIndexAt = (sec: number) => Math.floor((sec * 48_000) / AAC_FRAME_SAMPLES);
+      // Peaks only where the assertions look: a JS loop over all ~265M
+      // samples of a 46-minute stereo mix took longer than the mix itself.
+      const probes = new Set([10.5, durationSec - 1.5, 600].map(frameIndexAt));
       const encoded: Array<{ timestamp: number; numberOfFrames: number; peak: number }> = [];
       class FakeAudioData {
         constructor(readonly init: { timestamp: number; numberOfFrames: number; data: Float32Array }) {}
@@ -327,7 +332,10 @@ describe('webcodecs-audio', () => {
         configure() {}
         encode(data: FakeAudioData) {
           let peak = 0;
-          for (const v of data.init.data) peak = Math.max(peak, Math.abs(v));
+          if (probes.has(encoded.length)) {
+            const samples = data.init.data;
+            for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]!));
+          }
           encoded.push({ timestamp: data.init.timestamp, numberOfFrames: data.init.numberOfFrames, peak });
           this.init.output({ timestamp: data.init.timestamp });
         }
@@ -335,7 +343,6 @@ describe('webcodecs-audio', () => {
         close() {}
       });
 
-      const durationSec = MAX_OFFLINE_AUDIO_SECONDS + 60;
       const tone = new Float32Array(48_000);
       for (let i = 0; i < tone.length; i++) tone[i] = Math.sin((2 * Math.PI * 440 * i) / 48_000);
       const decoded: string[] = [];
@@ -365,7 +372,7 @@ describe('webcodecs-audio', () => {
       expect(last.timestamp).toBe(
         Math.round(((encoded.length - 1) * AAC_FRAME_SAMPLES * 1_000_000) / 48_000),
       );
-      const frameAt = (sec: number) => encoded[Math.floor((sec * 48_000) / AAC_FRAME_SAMPLES)]!;
+      const frameAt = (sec: number) => encoded[frameIndexAt(sec)]!;
       expect(frameAt(10.5).peak).toBeGreaterThan(0.5);
       expect(frameAt(durationSec - 1.5).peak).toBeGreaterThan(0.5);
       expect(frameAt(600).peak).toBe(0);
