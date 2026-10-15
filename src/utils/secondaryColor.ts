@@ -8,6 +8,7 @@
  */
 
 import type { LutData } from './lut';
+import { clamp, clamp01, finiteOr } from './math';
 
 export const MAX_SECONDARY_GRADES = 3;
 
@@ -138,18 +139,6 @@ export const SECONDARY_GRADE_PRESETS: SecondaryGradePreset[] = [
   },
 ];
 
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
-}
-
-function clamp01(v: number): number {
-  return clamp(v, 0, 1);
-}
-
-function finiteOr(v: unknown, fallback: number): number {
-  return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
-}
-
 function wrapHueDegrees(h: number): number {
   const wrapped = h % 360;
   return wrapped < 0 ? wrapped + 360 : wrapped;
@@ -174,7 +163,7 @@ export function rgbToHsl(r: number, g: number, b: number): [number, number, numb
   if (max === min) return [0, 0, l];
   const d = max - min;
   const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  let h = 0;
+  let h: number;
   if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
   else if (max === g) h = ((b - r) / d + 2) / 6;
   else h = ((r - g) / d + 4) / 6;
@@ -336,7 +325,7 @@ export function evaluateGradeMask(
   grade: SecondaryGrade,
 ): number {
   const maskType = grade.maskType;
-  let mask = 1;
+  let mask: number;
   if (maskType === 'hue') {
     mask = evaluateHueMask(hueDeg, grade.hueCenter, grade.hueWidth, grade.hueSoftness);
   } else if (maskType === 'window') {

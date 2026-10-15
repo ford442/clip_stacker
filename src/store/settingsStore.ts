@@ -1,13 +1,16 @@
 import { createStore } from 'zustand/vanilla';
-import type { ExportSettings, RenderPlan } from '../types';
+import type {
+  AutoCaptionScope,
+  CaptionExportMode,
+  ExportSettings,
+  RenderPlan,
+} from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import {
   DEFAULT_COLOR_MANAGEMENT,
   type ColorManagementSettings,
 } from '../utils/colorManagement';
-import type { CaptionExportMode } from '../ffmpeg/captions';
-import type { AutoCaptionScope } from '../utils/autoCaptionAudio';
 
 /** localStorage key for the self-hosted transcription endpoint (#auto-caption). */
 export const AUTO_CAPTION_ENDPOINT_KEY = 'clipStacker.autoCaptionEndpoint';

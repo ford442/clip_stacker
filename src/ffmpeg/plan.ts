@@ -8,7 +8,7 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { clipHasLoop, getClipLoopCount } from "../utils/playbackRate";
 import { clipIsReversed } from "../utils/reverseClip";
 import { buildTransitionFilterComplex } from "../utils/transitions";

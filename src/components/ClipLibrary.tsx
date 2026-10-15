@@ -7,7 +7,7 @@ import {
   useEditorClips,
   useIsClipSelected,
 } from '../store';
-import { getClipDuration } from '../utils/project';
+import { getClipDuration } from '../utils/clipTiming';
 import { IntercutModal } from './IntercutModal';
 import { AutoCutPanel } from './AutoCutPanel';
 import { ProxyBadge, ProxyPlaybackToggle } from './ProxyBadge';

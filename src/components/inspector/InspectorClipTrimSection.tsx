@@ -1,9 +1,10 @@
 import type { Clip } from '../../types';
+import { clamp } from '../../utils/math';
 import { MIN_CLIP_DURATION } from '../../utils/media';
 import { FadeCanvasPreview } from '../FadeCanvasPreview';
 import { WaveformCanvas } from '../WaveformCanvas';
 import { GpuChoreLevelsPanel } from './GpuChoreLevelsPanel';
-import { clamp, parseNumber } from './helpers';
+import { parseNumber } from './helpers';
 import type { ClipValues } from './types';
 
 interface InspectorClipTrimSectionProps {

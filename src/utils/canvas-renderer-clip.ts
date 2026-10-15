@@ -9,7 +9,7 @@
 import type { Clip } from "../types";
 import type { RendererOptions, RenderProgress, ProgressCallback } from "./canvas-renderer-types";
 import { constantRateOutputElapsed, getClipPlaybackRate } from "./playbackRate";
-import { getClipDuration } from "./project";
+import { getClipDuration } from "./clipTiming";
 import { bassLevelFromAnalyserBytes } from "./canvas-renderer-audio";
 import { calculateLetterboxRect, computeFadeAlpha, waitForSeeked } from "./canvas-renderer-helpers";
 import { createAudioContext } from "../audio/context";

@@ -41,8 +41,8 @@ import { DEFAULT_CHROMA_KEY } from '../utils/overlayBlend';
 import { CaptionsPanel } from './CaptionsPanel';
 import { InspectorClipTab } from './inspector/InspectorClipTab';
 import { InspectorExportTab } from './inspector/InspectorExportTab';
+import { clamp } from '../utils/math';
 import {
-  clamp,
   findMatchingPreset,
   formatSeconds,
   hasAdvancedLayoutValues,

@@ -564,6 +564,12 @@ export interface CaptionEntry {
   style?: Partial<TextOverlayStyle>;
 }
 
+/** How captions are attached to the exported MP4 (`src/ffmpeg/captions.ts`). */
+export type CaptionExportMode = 'none' | 'burn' | 'soft';
+
+/** What auto-captioning transcribes: the whole output timeline or one clip. */
+export type AutoCaptionScope = 'timeline' | 'clip';
+
 /**
  * A text overlay (caption, ticker, title) rendered via FFmpeg's drawtext filter.
  * All overlays are independent of clips and applied to the final composed video.

@@ -57,7 +57,7 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
     typeof VideoDecoder !== "undefined" &&
     typeof VideoFrame !== "undefined";
 
-  let webgpu = false;
+  let webgpu: boolean;
   try {
     const probe = await probeWebGpu();
     publishWebGpuProbe('main', probe);

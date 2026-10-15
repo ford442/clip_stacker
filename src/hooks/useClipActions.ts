@@ -8,13 +8,13 @@ import {
 } from "../utils/clipOperations";
 import {
   findClipTrack,
+  getEffectiveTimelineClips,
   isClipLocked,
   replaceClipOnTrackAfterSplit,
 } from "../utils/trackModel";
 import { downloadRemoteMedia, type MediaLibraryItem } from "../utils/project";
 import { editorStore, playbackStore, setPlayheadTime } from "../store";
 import { baseLaneOrder, duplicateItem, remapBaseTransitions } from "../utils/editModes";
-import { getEffectiveTimelineClips } from "../utils/timelineClips";
 import { resolveClipOutputWindow } from "../utils/previewComposition";
 import {
   outputLocalAtSourceOffset,

@@ -9,13 +9,13 @@
  * also where the cue time offset comes from.
  */
 
-import type { Clip, ClipGroup, ClipTransition, Track } from '../types';
+import type { AutoCaptionScope, Clip, ClipGroup, ClipTransition, Track } from '../types';
 import { buildAudioSchedule } from '../audio/schedule';
 import { computeTotalDuration } from './transitions';
 import { getTimelineClips } from './timelineClips';
 import { renderTimelineAudioMix } from './webcodecs-audio';
 
-export type AutoCaptionScope = 'timeline' | 'clip';
+export type { AutoCaptionScope };
 
 export interface AutoCaptionAudio {
   audio: AudioBuffer;

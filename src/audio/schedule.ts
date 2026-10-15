@@ -3,7 +3,7 @@ import {
   buildClipTimelineSegments,
   filterBaseLayerTransitions,
 } from '../utils/previewComposition';
-import { getClipDuration } from '../utils/project';
+import { getClipDuration } from '../utils/clipTiming';
 import { getTimelineClips } from '../utils/timelineClips';
 import { audioTracks } from '../utils/trackModel';
 import { placementWindow } from '../utils/trackStacking';

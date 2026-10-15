@@ -134,7 +134,6 @@ export class PreviewMetrics {
     if (now - this.lastLogAt < LOG_THROTTLE_MS) return;
     this.lastLogAt = now;
     const s = this.snapshot();
-    // eslint-disable-next-line no-console
     console.debug(
       `[preview] frame ${s.avgFrameMs.toFixed(1)}ms · seek ${s.avgSeekMs.toFixed(
         1,

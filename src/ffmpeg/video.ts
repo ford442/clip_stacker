@@ -7,7 +7,8 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration, clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
+import { clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
 import { resolveClipLayoutPixels } from "../utils/overlayCoords";
 import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
 import {

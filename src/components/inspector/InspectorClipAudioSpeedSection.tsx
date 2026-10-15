@@ -1,5 +1,5 @@
 import type { Clip, ClipAutomation } from '../../types';
-import { getClipDuration } from '../../utils/project';
+import { getClipDuration } from '../../utils/clipTiming';
 import {
   DEFAULT_CLIP_PAN,
   MAX_CLIP_PAN,

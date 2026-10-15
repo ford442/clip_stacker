@@ -1,6 +1,6 @@
 import type { Clip, ClipGroup, ClipTransition, Track, TrackItem, TrackKind } from '../types';
 import { createClipId } from './media';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 import { buildClipTimelineSegments } from './previewComposition';
 import { getTimelineClips } from './timelineClips';
 import { buildVideoStack, withPlacement } from './trackStacking';
@@ -253,6 +253,24 @@ export function toLegacyTimelineView(
     withPlacement(placement.clip, placement),
   );
   return rememberLegacyView(tracks, clips, groups, result);
+}
+
+/**
+ * Effective timeline clip order for preview/export when track placements exist.
+ * Falls back to the flat clip list when tracks are empty.
+ *
+ * Lives here rather than in `timelineClips.ts` so that module stays a leaf
+ * (this module imports `getTimelineClips` from it).
+ */
+export function getEffectiveTimelineClips(
+  tracks: Track[],
+  clips: Clip[],
+  groups: ClipGroup[],
+): Clip[] {
+  if (tracks.length === 0) {
+    return getTimelineClips(clips, groups);
+  }
+  return toLegacyTimelineView(tracks, clips, groups);
 }
 
 /** Ensure every timeline clip has a track placement. */

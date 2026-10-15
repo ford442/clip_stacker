@@ -232,6 +232,7 @@ export async function toBlobURLWithRetry(
       if (attempt === maxRetries) {
         throw new Error(
           `Failed to load ${url} after ${maxRetries} retries: ${(error as Error).message}`,
+          { cause: error },
         );
       }
       const delayMs = Math.pow(2, attempt) * 1000;

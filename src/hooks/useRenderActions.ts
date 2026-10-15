@@ -2,7 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, Track } from "../types";
 import { editorStore } from "../store/editorStore";
 import type { RenderPlan } from "../types";
-import { getEffectiveTimelineClips } from "../utils/timelineClips";
+import { getEffectiveTimelineClips } from "../utils/trackModel";
 import { resolveTargetResolution } from "../utils/resolution";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
 import { hybridMergeClips } from "../utils/hybrid-encoder";

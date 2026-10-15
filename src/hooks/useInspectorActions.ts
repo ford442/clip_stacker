@@ -6,7 +6,8 @@ import type {
   ExportSettings,
   OverlayBlendMode,
 } from "../types";
-import { sanitizeClipAdjustments, getClipDuration, ContaboStorageManagerClient } from "../utils/project";
+import { sanitizeClipAdjustments, ContaboStorageManagerClient } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { clampClipVolume } from "../utils/audioVolume";
 import { clampClipLoopCount, clampClipPlaybackRate } from "../utils/playbackRate";
 import { normalizeClipAutomation } from "../utils/clipAutomation";
@@ -30,6 +31,7 @@ import { settingsStore } from "../store/settingsStore";
 import { editorActions, editorStore } from "../store/editorStore";
 import { isClipLocked, moveClipToVideoLayer } from "../utils/trackModel";
 import { useStorageAuthToken, useStorageEndpoint } from "../store";
+import { clamp01Finite } from "../utils/math";
 
 type InspectorActionsDeps = Pick<
   UseEditHistoryResult,
@@ -45,11 +47,6 @@ const OVERLAY_BLEND_MODES: OverlayBlendMode[] = [
   "chroma",
   "luma",
 ];
-
-function clamp01(value: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(1, Math.max(0, value));
-}
 
 /**
  * Overlay keying fields from the inspector form. `chromaKey` is only stored for
@@ -67,11 +64,11 @@ function resolveOverlayKeying(
     overlayBlend: mode,
     chromaKey: {
       color: values.chromaColor || DEFAULT_CHROMA_KEY.color,
-      similarity: clamp01(
+      similarity: clamp01Finite(
         Number(values.chromaSimilarity),
         DEFAULT_CHROMA_KEY.similarity,
       ),
-      blend: clamp01(Number(values.chromaBlend), DEFAULT_CHROMA_KEY.blend),
+      blend: clamp01Finite(Number(values.chromaBlend), DEFAULT_CHROMA_KEY.blend),
     },
   };
 }

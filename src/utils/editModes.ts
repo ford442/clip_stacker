@@ -2,7 +2,7 @@ import type { Clip, ClipTransition, Track, TrackItem } from '../types';
 import { createClipId, MIN_CLIP_DURATION } from './media';
 // Submodule imports (not the `./project` / `./previewComposition` barrels) keep
 // this file out of the trackModel ↔ project import cycle — see trackStacking.ts.
-import { getClipDuration } from './project/clipHelpers';
+import { getClipDuration } from './clipTiming';
 import { buildClipTimelineSegments, isActiveTransition } from './previewCompositionSegments';
 import { getClipLoopCount, getClipPlaybackRate } from './playbackRate';
 import { clipHasRateAutomation } from './timeRemap';

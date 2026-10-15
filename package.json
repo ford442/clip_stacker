@@ -20,7 +20,9 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "check:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src"
   },
   "keywords": [
     "video",
@@ -41,14 +43,20 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@ffmpeg/core": "^0.12.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/ui": "^4.1.7",
     "@webgpu/types": "^0.1.70",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "happy-dom": "^20.9.0",
+    "madge": "^8.0.0",
     "typescript": "^5.7.2",
+    "typescript-eslint": "^8.71.2",
     "vite": "^5.4.0",
     "vitest": "^4.1.7"
   }

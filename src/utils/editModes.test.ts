@@ -23,7 +23,7 @@ import {
   setTrackLocked,
 } from './trackModel';
 import { buildClipTimelineSegments } from './previewCompositionSegments';
-import { getClipDuration } from './project/clipHelpers';
+import { getClipDuration } from './clipTiming';
 
 function makeClip(id: string, duration: number, overrides: Partial<Clip> = {}): Clip {
   return {

@@ -3,7 +3,6 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ClipTransition } from '../types';
 import { useEditorCaptions, useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTextOverlays, useEditorTransitions, useSelectedCaptionId, useSelectedClipId, useSelectedTextOverlayId, editorActions, uiActions } from '../store';
 import { editorStore } from '../store/editorStore';
-import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import {
   buildRulerTicks,
   clampPixelsPerSecond,
@@ -31,6 +30,7 @@ import {
   buildTrackClipLayouts,
   computeTracksDuration,
   DEFAULT_TRACK_HEIGHT,
+  getEffectiveTimelineClips,
   MAIN_VIDEO_TRACK_ID,
 } from '../utils/trackModel';
 import { TrackLaneHeader } from './TrackLaneHeader';

@@ -174,6 +174,7 @@ async function uploadClipMediaWithRetry(
         if (attempt < MAX_UPLOAD_RETRY_ATTEMPTS) continue;
         throw new Error(
           `Upload failed for clip ${index}/${total} after ${attempt} attempts: ${uploadError.message}`,
+          { cause: error },
         );
       }
       if (action === 'skip') {
@@ -188,7 +189,9 @@ async function uploadClipMediaWithRetry(
         });
         return undefined;
       }
-      throw new Error(`Upload aborted at clip ${index}/${total}: ${uploadError.message}`);
+      throw new Error(`Upload aborted at clip ${index}/${total}: ${uploadError.message}`, {
+        cause: error,
+      });
     }
   }
 }

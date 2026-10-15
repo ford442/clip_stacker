@@ -154,7 +154,7 @@ export class PreviewDecoderSource {
 
     const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     this.pendingOpen = { blob, trimStart: clip.trimStart, trimEnd };
-    let frame: VideoFrame | null = null;
+    let frame: VideoFrame | null;
     try {
       // Reversed playback seeks backward every frame. The chunk cache decodes
       // ~1s at a time instead of reopening the decoder per frame.

@@ -326,8 +326,8 @@ export class TextFillRenderer {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    try { this.maskTex?.destroy(); } catch {}
-    try { this.uniformBuffer?.destroy(); } catch {}
+    try { this.maskTex?.destroy(); } catch { /* device already lost */ }
+    try { this.uniformBuffer?.destroy(); } catch { /* device already lost */ }
   }
 }
 

@@ -17,7 +17,7 @@
  */
 
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 import { computeTotalDuration } from './transitions';
 import { getTimelineClips } from './timelineClips';
 import { placementWindow } from './trackStacking';
