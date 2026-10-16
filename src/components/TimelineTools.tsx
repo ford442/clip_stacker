@@ -30,6 +30,20 @@ const MODES: { id: DropEditMode; label: string; key: string; title: string }[] =
   { id: 'insert', label: 'Insert', key: 'I', title: 'Drops push later clips on the lane' },
 ];
 
+/**
+ * Label plus a shortcut glyph; CSS shows only the glyph when the timeline is
+ * narrow (container query in timeline.css). The button's aria-label carries
+ * the name either way.
+ */
+function ToolLabel({ label, shortcut }: { label: string; shortcut: string }) {
+  return (
+    <>
+      <span className="timeline-tool-key" aria-hidden="true">{shortcut}</span>
+      <span className="timeline-tool-label">{label}</span>
+    </>
+  );
+}
+
 function TimelineToolsImpl() {
   const tool = useTimelineTool();
   const mode = useDropEditMode();
@@ -46,9 +60,10 @@ function TimelineToolsImpl() {
             className={`timeline-tool-btn${tool === t.id ? ' is-active' : ''}`}
             aria-pressed={tool === t.id}
             title={`${t.title} (${t.key})`}
+            aria-label={t.label}
             onClick={() => uiActions.setTimelineTool(t.id)}
           >
-            {t.label}
+            <ToolLabel label={t.label} shortcut={t.key} />
           </button>
         ))}
       </div>
@@ -60,9 +75,10 @@ function TimelineToolsImpl() {
             className={`timeline-tool-btn${mode === m.id ? ' is-active' : ''}`}
             aria-pressed={mode === m.id}
             title={`${m.title} (${m.key})`}
+            aria-label={m.label}
             onClick={() => uiActions.setDropEditMode(m.id)}
           >
-            {m.label}
+            <ToolLabel label={m.label} shortcut={m.key} />
           </button>
         ))}
       </div>
@@ -72,18 +88,20 @@ function TimelineToolsImpl() {
           className={`timeline-tool-btn${snap ? ' is-active' : ''}`}
           aria-pressed={snap}
           title="Snap drops to the playhead, clip edges, markers, captions and beats (N)"
+          aria-label="Snap"
           onClick={() => uiActions.setSnapEnabled((v) => !v)}
         >
-          Snap
+          <ToolLabel label="Snap" shortcut="N" />
         </button>
         <button
           type="button"
           className={`timeline-tool-btn${linked ? ' is-active' : ''}`}
           aria-pressed={linked}
           title="Ripple every unlocked lane together instead of only the edited lane"
+          aria-label="Link"
           onClick={() => uiActions.setLinkedRipple((v) => !v)}
         >
-          Link
+          <ToolLabel label="Link" shortcut="⇆" />
         </button>
       </div>
     </div>

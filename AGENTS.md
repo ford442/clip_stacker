@@ -48,6 +48,38 @@ Non-obvious caveats:
 - `npm run dev` does not render in a CSP-enforcing browser as-is. Vite writes a `Content-Security-Policy` meta tag into `index.html` (generated from `src/utils/csp.ts` by `cspMetaPlugin` — the one place to edit the policy; `public/.htaccess` repeats it and `csp.test.ts` checks the copy) with `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-inline'`), which blocks Vite's injected inline React-refresh/HMR preamble script and leaves a blank page with `@vitejs/plugin-react can't detect preamble` console errors. To run/verify the app in the browser, use the production build instead: `npm run build` then `npm run preview` (serves on `http://localhost:4173/`, no inline scripts, CSP-clean). Do not relax the CSP just to make dev mode load unless that is the actual task.
 - FFmpeg WASM needs cross-origin isolation; both the dev and preview servers already set the required COOP/COEP headers, so use those servers rather than a generic static server.
 
+## Workspace layout (resizable zones)
+
+Library | Preview | Inspector and the timeline are Cubase-style zones the user
+resizes; the layout is per-browser view state (localStorage
+`clip_stacker.workspaceLayout.v1`), never part of a project or undo history.
+
+- `src/utils/workspaceLayout.ts` — the pure model: limits, `clampSideWidth`,
+  `resizeSideByDrag`, `resizeVerticalSplit` (the upper zone and timeline trade
+  height so the divider follows the pointer), splitter keys, sanitize / load /
+  save, `workspaceShellAttributes`.
+- `src/store/layoutStore.ts` — Zustand store; writes are debounced (and
+  flushed on `pagehide`).
+- `src/hooks/useWorkspaceLayoutVars.ts` — mirrors the store onto `.app-shell`
+  as `--ws-*` CSS variables and `data-*` attributes **from a subscription,
+  not React state**, so a drag never re-renders the panels or the preview.
+  Keep it that way.
+- `src/components/Splitter.tsx` (generic ARIA separator: drag, arrows,
+  Home/End, Enter = collapse, double-click = reset) and
+  `WorkspaceChrome.tsx` (column splitters, timeline divider, collapsed rails,
+  header controls: panel toggles, S/M/L density, full width, reset).
+- `src/styles/layout.css` — the five-track grid. Side columns are also capped
+  at 38% of the grid in CSS so a stored width cannot squeeze the preview when
+  the window shrinks. On desktop the upper zone always has a bounded height
+  (window-fitted default, or the divider's value) and side panels scroll
+  inside it; below 1101px the panels stack as before and collapse / fixed
+  heights do not apply.
+- Density is a set of `--ws-*` tokens under `.app-shell[data-density]`; size
+  new toolbar controls with them rather than hard-coded rem values.
+- The preview canvas is capped by width
+  (`min(100%, --ws-preview-max-h × --preview-aspect)`) so it keeps its aspect
+  ratio and never widens the page (#305).
+
 ## Text overlay fonts
 
 Text overlays (`TextOverlay`) carry an optional `font` id (string). When omitted or unknown on load, the overlay falls back to the default Roboto Regular for backward compatibility with old projects.

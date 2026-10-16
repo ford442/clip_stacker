@@ -97,7 +97,7 @@ export function TimelineHeader({
             onClick={() => editorActions.addTrack('video')}
             title="Add a video lane above the existing ones (composites on top)"
           >
-            + Video track
+            + Video<span className="timeline-add-track-suffix"> track</span>
           </button>
           <button
             type="button"
@@ -105,7 +105,7 @@ export function TimelineHeader({
             onClick={() => editorActions.addTrack('audio')}
             title="Add an audio lane for a concurrent music / SFX bed"
           >
-            + Audio track
+            + Audio<span className="timeline-add-track-suffix"> track</span>
           </button>
           <button
             type="button"
@@ -113,7 +113,7 @@ export function TimelineHeader({
             onClick={() => editorActions.addTrack('text')}
             title="Add a titles lane — new text overlays land here and follow its mute / lock"
           >
-            + Titles track
+            + Titles<span className="timeline-add-track-suffix"> track</span>
           </button>
         </div>
       </div>

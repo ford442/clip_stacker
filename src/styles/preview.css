@@ -9,6 +9,12 @@ audio {
   margin-bottom: 0.5rem;
 }
 
+/* The rendered-output player follows the same height cap as the canvas. */
+.workspace-zone--preview video {
+  max-height: var(--ws-preview-max-h, 75vh);
+  object-fit: contain;
+}
+
 .preview-playhead-label {
   margin: 0;
   font-size: 0.78rem;
@@ -18,21 +24,31 @@ audio {
 
 .preview-video-wrapper {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.5rem;
   max-width: 100%;
+  min-width: 0;
 }
 
+/* Width follows the column but is capped so the height never exceeds
+   --ws-preview-max-h (75vh, or what a fixed upper zone leaves). Capping the
+   width rather than the canvas height keeps the aspect ratio, which a bare
+   max-height on a width:100% canvas did not. --preview-aspect is set inline
+   from the output resolution. */
 .preview-canvas-stack {
   position: relative;
   line-height: 0;
   min-height: 8rem;
+  width: min(100%, calc(var(--ws-preview-max-h, 75vh) * var(--preview-aspect, 1.7778)));
+  min-width: 0;
+  justify-self: center;
 }
 
 .preview-timeline-canvas {
   display: block;
   width: 100%;
   max-width: 100%;
-  max-height: 75vh;
+  max-height: var(--ws-preview-max-h, 75vh);
   height: auto;
   border-radius: var(--radius-sm);
   background: #000;
@@ -47,7 +63,7 @@ audio {
   inset: 0;
   width: 100%;
   max-width: 100%;
-  max-height: 75vh;
+  max-height: var(--ws-preview-max-h, 75vh);
   height: 100%;
   border-radius: var(--radius-sm);
   pointer-events: none;

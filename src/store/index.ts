@@ -35,6 +35,16 @@ export {
   type UiState,
 } from './uiStore';
 export {
+  layoutStore,
+  layoutActions,
+  useLayoutDensity,
+  useLayoutFullWidth,
+  useSideWidth,
+  useSideCollapsed,
+  useUpperHeight,
+  type LayoutState,
+} from './layoutStore';
+export {
   projectStore,
   projectActions,
   useStorageEndpoint,
