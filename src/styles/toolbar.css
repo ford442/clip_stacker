@@ -68,10 +68,10 @@ button,
   border: 1px solid var(--border);
   background: var(--panel-alt);
   color: var(--text);
-  padding: 0.45rem 0.75rem;
+  padding: var(--ws-btn-pad, 0.45rem 0.75rem);
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: 0.85rem;
+  font-size: var(--ws-btn-font, 0.85rem);
   transition:
     border-color 0.15s,
     background 0.15s;

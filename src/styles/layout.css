@@ -2,11 +2,55 @@
    App shell
    ============================================================ */
 .app-shell {
+  /* Density tokens (data-density, set from layoutStore). "comfortable" is the
+     default and matches the pre-density sizes, except the timeline tools,
+     which were too small to hit. */
+  --ws-gap: 1rem;
+  --ws-panel-pad: 1.1rem 1.25rem;
+  --ws-btn-font: 0.85rem;
+  --ws-btn-pad: 0.45rem 0.75rem;
+  --ws-tool-font: 0.74rem;
+  --ws-tool-pad: 3px 9px;
+  --ws-tool-min-h: 24px;
+  --ws-lane-toggle: 20px;
+
   max-width: 1440px;
   margin: 0 auto;
   padding: 1.25rem 1.5rem 2.5rem;
   display: grid;
-  gap: 1rem;
+  /* minmax(0, …): a wide child (e.g. the preview canvas) must never stretch
+     the page past the window (#305). */
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--ws-gap);
+}
+
+.app-shell[data-full-width] {
+  max-width: none;
+  padding-inline: clamp(0.75rem, 1.5vw, 1.5rem);
+}
+
+.app-shell[data-density="compact"] {
+  --ws-gap: 0.6rem;
+  --ws-panel-pad: 0.7rem 0.8rem;
+  --ws-btn-font: 0.78rem;
+  --ws-btn-pad: 0.3rem 0.55rem;
+  --ws-tool-font: 0.68rem;
+  --ws-tool-pad: 2px 7px;
+  --ws-tool-min-h: 20px;
+  --ws-lane-toggle: 18px;
+
+  padding-top: 0.75rem;
+}
+
+.app-shell[data-density="spacious"] {
+  --ws-gap: 1.25rem;
+  --ws-panel-pad: 1.35rem 1.5rem;
+  --ws-btn-font: 0.92rem;
+  --ws-btn-pad: 0.55rem 0.95rem;
+  --ws-tool-font: 0.82rem;
+  --ws-tool-pad: 5px 12px;
+  --ws-tool-min-h: 30px;
+  --ws-lane-toggle: 24px;
 }
 
 /* ============================================================
@@ -63,7 +107,8 @@
   background: var(--glass-bg);
   backdrop-filter: blur(14px) saturate(160%);
   -webkit-backdrop-filter: blur(14px) saturate(160%);
-  padding: 1.1rem 1.25rem;
+  padding: var(--ws-panel-pad, 1.1rem 1.25rem);
+  min-width: 0;
   box-shadow: var(--shadow-sm), var(--glass-inset);
   transition: border-color 0.2s;
 }
@@ -83,23 +128,262 @@
 }
 
 /* ============================================================
-   Layout grid (Library | Preview | Inspector)
-   ============================================================ */
+   Layout grid (Library | Preview | Inspector) — resizable zones
+   ============================================================
+   Five tracks: the side columns, two splitter tracks that double as the
+   column gap, and the preview. Widths come from layoutStore as CSS
+   variables; each side is also capped at a share of the grid so a stored
+   width can never squeeze the preview off screen when the window shrinks. */
 .layout-grid {
+  --ws-rail: 30px;
+  --ws-library-col: min(var(--ws-library-width, 260px), 38%);
+  --ws-inspector-col: min(var(--ws-inspector-width, 280px), 38%);
   display: grid;
-  grid-template-columns: 260px 1fr 280px;
-  gap: 1rem;
+  grid-template-columns:
+    var(--ws-library-col) var(--ws-gap) minmax(0, 1fr) var(--ws-gap)
+    var(--ws-inspector-col);
+  grid-template-rows: auto;
   align-items: start;
 }
 
-@media (max-width: 1100px) {
+.app-shell[data-library-collapsed] .layout-grid {
+  --ws-library-col: var(--ws-rail);
+}
+
+.app-shell[data-inspector-collapsed] .layout-grid {
+  --ws-inspector-col: var(--ws-rail);
+}
+
+.layout-grid > .workspace-zone {
+  min-width: 0;
+  min-height: 0;
+  grid-row: 1;
+}
+
+.workspace-timeline {
+  min-width: 0;
+}
+
+.workspace-zone--library { grid-column: 1; }
+.workspace-splitter--library { grid-column: 2; grid-row: 1; }
+.workspace-zone--preview { grid-column: 3; }
+.workspace-splitter--inspector { grid-column: 4; grid-row: 1; }
+.workspace-zone--inspector { grid-column: 5; }
+
+.app-shell[data-timeline-fixed] .timeline-scroll-container {
+  height: var(--ws-timeline-height);
+  overflow: auto;
+}
+
+/* Collapse and the fixed upper height are desktop-only: below 1101px the
+   panels stack and show in full. */
+@media (min-width: 1101px) {
+  /* Collapsed sides keep their panel mounted (state, scroll position) and
+     only hide it behind the rail. */
+  .app-shell[data-library-collapsed] .workspace-zone--library > :not(.workspace-rail),
+  .app-shell[data-inspector-collapsed] .workspace-zone--inspector > :not(.workspace-rail) {
+    display: none;
+  }
+
+  /* The upper zone has a bounded height — the window-fitted default, or what
+     the timeline divider set — so a tall Inspector scrolls inside its zone
+     instead of pushing the timeline a page down. The preview canvas shrinks
+     to fit the same height. */
   .layout-grid {
-    grid-template-columns: 1fr 1fr;
+    --ws-upper-h: var(--ws-upper-height, max(360px, 62vh));
+    height: var(--ws-upper-h);
+    align-items: stretch;
+  }
+
+  .layout-grid > .workspace-zone > .panel {
+    height: 100%;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .workspace-zone--preview {
+    /* Room for the heading and transport row under the canvas. */
+    --ws-preview-max-h: max(8rem, calc(var(--ws-upper-h) - 10rem));
+  }
+}
+
+/* ── Splitters ─────────────────────────────────────────── */
+.workspace-splitter {
+  position: relative;
+  touch-action: none;
+  outline: none;
+  z-index: 2;
+}
+
+.workspace-splitter--vertical {
+  align-self: stretch;
+  cursor: col-resize;
+  min-height: 3rem;
+}
+
+.workspace-splitter--horizontal {
+  height: 10px;
+  /* Sit inside the shell's row gap instead of adding to it. */
+  margin-block: calc((var(--ws-gap) + 10px) / -2);
+  cursor: row-resize;
+}
+
+.workspace-splitter::after {
+  content: "";
+  position: absolute;
+  border-radius: 2px;
+  background: var(--border);
+  opacity: 0;
+}
+
+.workspace-splitter--vertical::after {
+  top: 0.75rem;
+  bottom: 0.75rem;
+  left: calc(50% - 1.5px);
+  width: 3px;
+}
+
+.workspace-splitter--horizontal::after {
+  left: 20%;
+  right: 20%;
+  top: calc(50% - 1.5px);
+  height: 3px;
+}
+
+.workspace-splitter:hover::after,
+.workspace-splitter:focus-visible::after,
+.workspace-is-resizing .workspace-splitter:focus::after {
+  opacity: 1;
+  background: var(--gold);
+}
+
+.workspace-splitter:focus-visible::after {
+  box-shadow: 0 0 0 2px var(--gold-dim);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .workspace-splitter::after {
+    transition: opacity 0.15s, background 0.15s;
+  }
+}
+
+/* While dragging, keep the resize cursor everywhere and stop text selection. */
+body.workspace-is-resizing {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body.workspace-is-resizing--vertical,
+body.workspace-is-resizing--vertical * {
+  cursor: col-resize !important;
+}
+
+body.workspace-is-resizing--horizontal,
+body.workspace-is-resizing--horizontal * {
+  cursor: row-resize !important;
+}
+
+/* ── Collapsed rail ───────────────────────────────────── */
+.workspace-rail {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 200px;
+  height: 100%;
+  padding: 0.75rem 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  background: var(--glass-bg);
+  color: var(--gold);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.workspace-rail-label {
+  writing-mode: vertical-rl;
+}
+
+.workspace-rail--library .workspace-rail-label {
+  transform: rotate(180deg);
+}
+
+/* ── Header layout controls ───────────────────────────── */
+.workspace-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-left: auto;
+  align-self: center;
+}
+
+.app-header .encoder-used-badge + .workspace-controls {
+  margin-left: 0.25rem;
+}
+
+.workspace-control-group {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(6, 9, 15, 0.55);
+}
+
+.workspace-control-btn {
+  font-size: var(--ws-tool-font);
+  padding: var(--ws-tool-pad);
+  min-height: var(--ws-tool-min-h);
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.workspace-control-btn:hover {
+  color: var(--text);
+}
+
+.workspace-control-btn.is-active {
+  background: var(--gold-dim);
+  border-color: var(--border-active);
+  color: var(--gold-bright);
+}
+
+/* ── Narrow windows: stack, no splitters ──────────────── */
+@media (max-width: 1100px) {
+  .layout-grid,
+  .app-shell[data-library-collapsed] .layout-grid,
+  .app-shell[data-inspector-collapsed] .layout-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--ws-gap);
+  }
+
+  .layout-grid > .workspace-zone { grid-row: auto; }
+  .workspace-zone--library { grid-column: 1; }
+  .workspace-zone--preview { grid-column: 2; }
+  .workspace-zone--inspector { grid-column: 1 / -1; }
+
+  .layout-grid > .workspace-splitter,
+  .workspace-splitter--timeline,
+  .workspace-rail,
+  .workspace-controls [aria-label="Panels"] {
+    display: none;
   }
 }
 
 @media (max-width: 720px) {
-  .layout-grid {
-    grid-template-columns: 1fr;
+  .layout-grid,
+  .app-shell[data-library-collapsed] .layout-grid,
+  .app-shell[data-inspector-collapsed] .layout-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-zone--library,
+  .workspace-zone--preview,
+  .workspace-zone--inspector {
+    grid-column: 1;
   }
 }

@@ -517,7 +517,10 @@ export function TimelineCompositorPreview({
 
   return (
     <div ref={wrapperRef} className="preview-video-wrapper">
-      <div className="preview-canvas-stack">
+      <div
+        className="preview-canvas-stack"
+        style={{ '--preview-aspect': timelineAspectRatio } as React.CSSProperties}
+      >
         <canvas
           key={canvasGeneration}
           ref={canvasRef}
