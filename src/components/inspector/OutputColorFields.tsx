@@ -66,7 +66,6 @@ export function OutputColorFields({
 
   return (
     <>
-      <div className="inspector-group-label">Output color</div>
       <label title="Swapchain and encoder tags. Rec.709 SDR is the default and matches the existing grade.">
         Output color
         <select
