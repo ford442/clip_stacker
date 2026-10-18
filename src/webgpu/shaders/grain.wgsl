@@ -23,6 +23,16 @@ struct GrainUniforms {
   texelSize: vec2<f32>,
   blurAxis: f32,
   _pad1: f32,
+  // vec4 4 — film quality mode (all zero = classic, the pre-film behaviour)
+  quality: f32,
+  monochromeBias: f32,
+  temporalCoherence: f32,
+  _pad2: f32,
+  // vec4 5 — film response curve (grain gain at luma 0 / 0.5 / 1)
+  responseShadows: f32,
+  responseMidtones: f32,
+  responseHighlights: f32,
+  _pad3: f32,
 };
 
 struct VertexOutput {
@@ -71,6 +81,108 @@ fn hash23(p: vec2<f32>) -> vec3<f32> {
     hash21(p + vec2<f32>(19.19, 7.7)),
     hash21(p + vec2<f32>(3.3, 41.41)),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Film quality grain — mirrors `src/utils/filmGrain.ts` (the tested reference).
+
+const FILM_GRAIN_NORM: f32 = 2.0;
+const FILM_GRAIN_RMS: f32 = 0.046;
+const FILM_GRAIN_OCTAVE2_SCALE: f32 = 2.17;
+const FILM_GRAIN_OCTAVE2_WEIGHT: f32 = 0.5;
+const FILM_GRAIN_MAX_HOLD_FRAMES: f32 = 12.0;
+
+/// PCG4D (Jarzynski & Olano 2020): wrapping u32 maths, identical on every GPU.
+fn pcg4d(seed: vec4<u32>) -> vec4<u32> {
+  var v = seed * 1664525u + 1013904223u;
+  v.x += v.y * v.w;
+  v.y += v.z * v.x;
+  v.z += v.x * v.y;
+  v.w += v.y * v.z;
+  v = v ^ (v >> vec4<u32>(16u));
+  v.x += v.y * v.w;
+  v.y += v.z * v.x;
+  v.z += v.x * v.y;
+  v.w += v.y * v.z;
+  return v;
+}
+
+/// White lattice value in [-1, 1) per channel: (mono, r, g, b).
+fn grainLattice(cell: vec2<i32>, frame: u32, octave: u32) -> vec4<f32> {
+  let h = pcg4d(vec4<u32>(bitcast<vec2<u32>>(cell), frame, octave));
+  return vec4<f32>(h) * (2.0 / 4294967296.0) - 1.0;
+}
+
+/// One octave of quintic-interpolated blue-noise lattice values. Each corner
+/// is white noise minus its 4-neighbour mean (zero DC), so the 2×2 corners
+/// need the 12 lattice points of a 4×4 block without its corners.
+fn blueValueNoise(p: vec2<f32>, frame: u32, octave: u32) -> vec4<f32> {
+  let i = vec2<i32>(floor(p));
+  let f = fract(p);
+  let c00 = grainLattice(i, frame, octave);
+  let c10 = grainLattice(i + vec2<i32>(1, 0), frame, octave);
+  let c01 = grainLattice(i + vec2<i32>(0, 1), frame, octave);
+  let c11 = grainLattice(i + vec2<i32>(1, 1), frame, octave);
+  let cm0 = grainLattice(i + vec2<i32>(-1, 0), frame, octave);
+  let cm1 = grainLattice(i + vec2<i32>(-1, 1), frame, octave);
+  let c20 = grainLattice(i + vec2<i32>(2, 0), frame, octave);
+  let c21 = grainLattice(i + vec2<i32>(2, 1), frame, octave);
+  let c0m = grainLattice(i + vec2<i32>(0, -1), frame, octave);
+  let c1m = grainLattice(i + vec2<i32>(1, -1), frame, octave);
+  let c02 = grainLattice(i + vec2<i32>(0, 2), frame, octave);
+  let c12 = grainLattice(i + vec2<i32>(1, 2), frame, octave);
+  let b00 = c00 - 0.25 * (cm0 + c10 + c0m + c01);
+  let b10 = c10 - 0.25 * (c00 + c20 + c1m + c11);
+  let b01 = c01 - 0.25 * (cm1 + c11 + c00 + c02);
+  let b11 = c11 - 0.25 * (c01 + c21 + c10 + c12);
+  let w = f * f * f * (f * (f * 6.0 - 15.0) + 10.0);
+  return mix(mix(b00, b10, w.x), mix(b01, b11, w.x), w.y);
+}
+
+/// Two-octave field for one integer frame key, unit RMS per channel.
+fn filmGrainField(p: vec2<f32>, frame: u32) -> vec4<f32> {
+  let o1 = blueValueNoise(p, frame, 0u);
+  let o2 = blueValueNoise(
+    p * FILM_GRAIN_OCTAVE2_SCALE + vec2<f32>(17.3, 5.9),
+    frame,
+    1u,
+  );
+  return (o1 + o2 * FILM_GRAIN_OCTAVE2_WEIGHT) * FILM_GRAIN_NORM;
+}
+
+/// Unit-RMS RGB grain. Size is relative to frame height and grains are round
+/// on any aspect, so preview and export at different resolutions match.
+fn filmGrainRgb(uv: vec2<f32>) -> vec3<f32> {
+  let cells = mix(720.0, 160.0, clamp(u.size, 0.0, 1.0));
+  let aspect = u.texelSize.y / max(u.texelSize.x, 1e-9);
+  let p = vec2<f32>(uv.x * aspect, uv.y) * cells;
+
+  // Stateless temporal coherence: cross-fade two frame-keyed fields with a
+  // variance-preserving weight (no previous-frame texture, so nothing smears
+  // and any frame index reproduces exactly). Coherence 0 → weight is 0.
+  let hold = 1.0 + clamp(u.temporalCoherence, 0.0, 1.0) * (FILM_GRAIN_MAX_HOLD_FRAMES - 1.0);
+  let t = max(floor(u.frameSeed), 0.0) / hold;
+  let keyF = floor(t);
+  let weight = t - keyF;
+  let key = u32(keyF);
+  var g = filmGrainField(p, key);
+  if (weight > 0.0) {
+    let next = filmGrainField(p, key + 1u);
+    let norm = inverseSqrt((1.0 - weight) * (1.0 - weight) + weight * weight);
+    g = mix(g, next, weight) * norm;
+  }
+
+  let b = clamp(u.monochromeBias, 0.0, 1.0);
+  let monoNorm = inverseSqrt((1.0 - b) * (1.0 - b) + b * b);
+  return mix(g.yzw, g.xxx, b) * monoNorm;
+}
+
+/// Response curve through (0, shadows), (0.5, midtones), (1, highlights).
+fn grainResponse(y: f32) -> f32 {
+  if (y < 0.5) {
+    return mix(u.responseShadows, u.responseMidtones, smoothstep(0.0, 1.0, y / 0.5));
+  }
+  return mix(u.responseMidtones, u.responseHighlights, smoothstep(0.0, 1.0, (y - 0.5) / 0.5));
 }
 
 /// Soft midtone weight — peaking near 0.5 when softness is high.
@@ -163,7 +275,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   // Procedural grain — seeded by integer export/preview frame index.
-  if (amount > 0.0) {
+  if (amount > 0.0 && u.quality > 0.5) {
+    let weight = midtoneGrainWeight(y, u.softness) * max(grainResponse(y), 0.0);
+    color = color + filmGrainRgb(in.uv) * amount * weight * FILM_GRAIN_RMS;
+  } else if (amount > 0.0) {
     // size 0 (fine) → denser cells; size 1 (coarse) → larger grain.
     let cells = mix(720.0, 160.0, clamp(u.size, 0.0, 1.0));
     let cell = floor(in.uv * cells);

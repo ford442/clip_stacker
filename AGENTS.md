@@ -95,6 +95,34 @@ resizes; the layout is per-browser view state (localStorage
 - **Edit** opens the Inspector's Export tab and reveals the *Finishing* section (`uiStore.requestInspectorTab` + `revealSection` in `utils/sectionState.ts`, which also covers the lazily mounted tab). The stack's details-open state is remembered in `clip_stacker.inspectorSections.v1`.
 - Not built: a draggable before/after split, and whole-chain presets.
 
+## Film grain (final finishing pass)
+
+`GrainGpuPass` (`src/webgpu/grainPass.ts` + `shaders/grain.wgsl`) is always the
+last finishing pass (after sharpen, and after the output transform in managed
+colour), so nothing later softens it. `GrainSettings.quality` picks the model:
+
+- **`classic`** (omitted = classic) — the original float-hash grain on square
+  cells. Its output is byte-identical to before the film mode existed; keep it
+  that way so old projects render unchanged.
+- **`film`** — `src/utils/filmGrain.ts` is the reference implementation and
+  `filmGrainRgb` in the WGSL mirrors it: PCG4D integer hash on
+  (cell, frame, octave), a blue-noise lattice (white minus its 4-neighbour
+  mean, so no low-frequency mottling) with quintic interpolation, two octaves,
+  `monochromeBias` (0 colour … 1 mono), a three-point `response` curve, and
+  `temporalCoherence`. Constants shared with the shader are checked by
+  `filmGrain.test.ts`; change both sides together.
+- **Temporal coherence is stateless** — a variance-preserving cross-fade
+  between frame-keyed fields, not a previous-frame texture, so any frame index
+  reproduces exactly (preview = export, seeks included) and moving edges never
+  smear. Coherence 0 is a fresh field per frame.
+- **Film stocks** (`GRAIN_FILM_STOCKS`) are data applied onto the settings by
+  `applyGrainFilmStock` (size, softness, amount, monochrome bias, response);
+  the shader only reads uniforms. Optical settings and coherence are kept.
+- Grain size is relative to frame height and grains stay round on any aspect,
+  so a smaller preview canvas shows the same grain as the export.
+- Uniform layout (24 floats) is pinned by `grainUniformLayout.test.ts`.
+  FFmpeg remains best-effort `noise` (no blue noise, coherence or response).
+
 ## Text overlay fonts
 
 Text overlays (`TextOverlay`) carry an optional `font` id (string). When omitted or unknown on load, the overlay falls back to the default Roboto Regular for backward compatibility with old projects.

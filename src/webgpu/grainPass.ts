@@ -1,6 +1,7 @@
 /**
  * Film grain + optical emulation pass — always last in the finishing chain.
- * Procedural grain is seeded by integer frame index for WYSIWYG export/preview.
+ * Procedural grain is seeded by integer frame index for WYSIWYG export/preview
+ * (`classic` hash grain, or the blue-noise `film` model in utils/filmGrain.ts).
  * Bloom / halation use a separable Gaussian (H then V) matching the old 17×17 kernel.
  */
 
