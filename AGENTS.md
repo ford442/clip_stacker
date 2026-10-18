@@ -122,6 +122,34 @@ same in every tier, and still reset on seek (`resetTemporal`).
   chroma error per tier on a seeded plate and pins the shader constants.
   FFmpeg (`hqdn3d`) and Canvas2D are unaffected.
 
+## Sharpen modes (after LUT, before grain)
+
+`SharpenGpuPass` (`src/webgpu/sharpenPass.ts` + `shaders/sharpen.wgsl`) has
+three modes, picked by `SharpenSettings.mode` (uniform slot 6; the layout
+stays 8 floats). Amount, radius, threshold and midtone detail mean the same
+in all of them.
+
+- **`classic`** (omitted = classic) — the original unsharp mask. Its output
+  is byte-identical to before the modes existed (hard threshold, lossy YUV
+  round trip included); keep it that way so old projects look the same.
+- **`edge`** — detail is split in two. *Texture* detail comes from a
+  range-weighted blur (σ_r `SHARPEN_EDGE_SIGMA` = 0.08 luma), so strong
+  edges stay in its base. *Edge* detail (the rest of the classic detail)
+  steepens transitions but is clamped to the source [min, max] inside the
+  kernel window, so edges get as crisp as classic without halos or
+  ringing. Texture detail is not clamped (a texture peak is its own local
+  max — clamping it caps texture gain). Soft threshold
+  `smoothstep(thr, 2·thr)`; the luma change is added to RGB, so chroma is
+  exact.
+- **`multiscale`** — `edge` plus a medium band (fine blur − a 2.5× wider
+  blur, 7×7 window) for micro-contrast; midtone detail drives the medium
+  band instead of the fine one, so it lifts local contrast without boosting
+  noise.
+- `src/utils/sharpenReference.ts` is the CPU reference driven by the packed
+  uniforms; `sharpenReference.test.ts` measures halo energy, edge rise
+  width, texture gain and noise gain per mode and pins the shader constants.
+  FFmpeg (`unsharp`) and Canvas2D are unaffected.
+
 ## Film grain (final finishing pass)
 
 `GrainGpuPass` (`src/webgpu/grainPass.ts` + `shaders/grain.wgsl`) is always the
