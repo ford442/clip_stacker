@@ -7,11 +7,54 @@
  */
 
 import { clamp, clamp01, finiteOr } from './math';
+import { NR_QUALITY_SLOT } from './denoiseReference';
 
 export const NOISE_REDUCTION_UNIFORM_FLOATS = 16;
 
 /** Max spatial radius (px) in the WGSL bilateral kernel. */
 export const NOISE_REDUCTION_MAX_RADIUS = 4;
+
+/**
+ * Spatial quality tier. `standard` (and an omitted field — old projects) is
+ * the original 5×5 luma bilateral; `high` is a guided bilateral (3×3 sigma-filter guide) with
+ * a Tukey edge stop, a 1.5× reach and luma-guided chroma; `nlm` is non-local
+ * means patch matching (strongest, slowest). Temporal is the same in all.
+ */
+export type NoiseReductionQuality = 'standard' | 'high' | 'nlm';
+
+export const NOISE_REDUCTION_QUALITY_CODE: Record<NoiseReductionQuality, number> = {
+  standard: 0,
+  high: 1,
+  nlm: 2,
+};
+
+export const NOISE_REDUCTION_QUALITY_OPTIONS: {
+  id: NoiseReductionQuality;
+  label: string;
+  description: string;
+}[] = [
+  {
+    id: 'standard',
+    label: 'Standard',
+    description: 'Fast 5×5 luma bilateral (the original filter).',
+  },
+  {
+    id: 'high',
+    label: 'High (edge-aware)',
+    description:
+      'Guided bilateral with a hard edge stop and wider reach; also cleans chroma when Luma only is off.',
+  },
+  {
+    id: 'nlm',
+    label: 'Patch (NL-means)',
+    description:
+      'Non-local means patch matching: strongest denoise with the least smearing, but the slowest — use Draft NR for scrubbing.',
+  },
+];
+
+export function isNoiseReductionQuality(v: unknown): v is NoiseReductionQuality {
+  return v === 'standard' || v === 'high' || v === 'nlm';
+}
 
 export interface NoiseReductionSettings {
   enabled: boolean;
@@ -34,6 +77,8 @@ export interface NoiseReductionSettings {
    * Export should leave this false for full quality.
    */
   draft?: boolean;
+  /** Spatial quality tier; omitted = `standard`. */
+  quality?: NoiseReductionQuality;
 }
 
 export const DEFAULT_NOISE_REDUCTION_PARAMS = {
@@ -62,7 +107,7 @@ export function isNoiseReductionNeutral(pass: NoiseReductionSettings | undefined
  * Layout (4 × vec4):
  *   [0] amount, spatialStrength, spatialRadius, temporalStrength
  *   [1] temporalMotionThreshold, lumaOnly, draft, hasPrev
- *   [2] texelSize.x, texelSize.y, pad, pad
+ *   [2] texelSize.x, texelSize.y, quality (0 standard / 1 high / 2 nlm), pad
  *   [3] pad × 4
  */
 export function packNoiseReductionUniforms(
@@ -95,7 +140,9 @@ export function packNoiseReductionUniforms(
 
   out[8] = texelWidth > 0 ? 1 / texelWidth : 0;
   out[9] = texelHeight > 0 ? 1 / texelHeight : 0;
-  out[10] = 0;
+  out[NR_QUALITY_SLOT] = isNoiseReductionQuality(pass.quality)
+    ? NOISE_REDUCTION_QUALITY_CODE[pass.quality]
+    : 0;
   out[11] = 0;
 
   out[12] = 0;
@@ -135,6 +182,12 @@ export function normalizeNoiseReductionPass(
     ),
     lumaOnly: raw.lumaOnly === false ? false : true,
     draft: Boolean(raw.draft ?? defaults.draft),
+    // Only carried when set, so an old project round-trips without new keys.
+    ...(isNoiseReductionQuality(raw.quality)
+      ? { quality: raw.quality }
+      : isNoiseReductionQuality(defaults.quality)
+        ? { quality: defaults.quality }
+        : {}),
   };
 }
 

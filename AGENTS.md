@@ -95,6 +95,33 @@ resizes; the layout is per-browser view state (localStorage
 - **Edit** opens the Inspector's Export tab and reveals the *Finishing* section (`uiStore.requestInspectorTab` + `revealSection` in `utils/sectionState.ts`, which also covers the lazily mounted tab). The stack's details-open state is remembered in `clip_stacker.inspectorSections.v1`.
 - Not built: a draggable before/after split, and whole-chain presets.
 
+## Noise reduction quality tiers (first finishing pass)
+
+`NoiseReductionGpuPass` (`src/webgpu/noiseReductionPass.ts` +
+`shaders/denoise.wgsl`) runs first in the finishing chain. The spatial stage
+has three tiers, picked by `NoiseReductionSettings.quality` (uniform slot 10;
+the layout stays 16 floats). Temporal blending and its motion gate are the
+same in every tier, and still reset on seek (`resetTemporal`).
+
+- **`standard`** (omitted = standard) — the original 5×5 luma bilateral. Its
+  output is byte-identical to before the tiers existed (including its lossy
+  YUV round trip); keep it that way so old projects look the same.
+- **`high`** — a guided bilateral: range weights compare taps with a 3×3
+  sigma-filtered guide through a Tukey edge stop (exactly zero weight across
+  strong edges), over 1.5× the radius capped at 4.5 px, sampled densely (a
+  strided kernel leaves a 2-px checkerboard). ≤ 69 + 9 fetches.
+- **`nlm`** — non-local means: 3×3 luma patches over a (2S+1)² window
+  (S = round(radius), 1…3) read from one cached block, ≤ 81 + 48 fetches.
+  Strongest; recommend Draft NR (radius ≤ 2) while scrubbing.
+- Both new tiers filter RGB with luma-guided weights (so chroma is cleaned
+  without bleeding across edges) and read exact texels with `textureLoad`;
+  with **Luma only** they add just the luma change, keeping source chroma
+  exactly.
+- `src/utils/denoiseReference.ts` is the CPU reference driven by the packed
+  uniforms; `denoiseReference.test.ts` measures noise / edge / thin-line /
+  chroma error per tier on a seeded plate and pins the shader constants.
+  FFmpeg (`hqdn3d`) and Canvas2D are unaffected.
+
 ## Film grain (final finishing pass)
 
 `GrainGpuPass` (`src/webgpu/grainPass.ts` + `shaders/grain.wgsl`) is always the
