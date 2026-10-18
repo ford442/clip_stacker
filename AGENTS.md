@@ -9,7 +9,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm install` (or `npm ci` for a clean/CI install): install dependencies for local development.
 - `npm run dev`: start the Vite dev server with the headers needed for FFmpeg WASM.
 - `npm run typecheck`: run `tsc --noEmit`, matching CI behavior. Run this after any TypeScript change.
-- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint + react-hooks). Must report 0 errors; warnings are tolerated debt.
+- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint + react-hooks). Must report 0 errors; warnings are tolerated debt. Non-test `src/` files over 700 lines are an error (`max-lines`): split the module rather than raising the limit.
 - `npm run check:cycles`: madge import-cycle check over `src/` (type-only imports count). Must report 0 cycles — import `getClipDuration` from `utils/clipTiming` and `DEFAULT_CANVAS_*` from `utils/canvasDefaults`, not the `utils/project` barrel.
 - `npm test -- --run`: run the Vitest suite once, matching CI behavior.
 - `npm run test:coverage`: run tests with coverage reporting.
@@ -102,11 +102,12 @@ Format, built-ins and the agent API are documented in
 `docs/finishing-preset.schema.json`.
 
 - `src/utils/finishingPresets.ts` — pure: the preset document
-  (`schema`/`version`/`name`/`apply`/`finishing`), one declarative field spec
-  per pass (`FINISHING_PASS_SPECS`) that drives both strict, all-or-nothing
+  (`schema`/`version`/`name`/`apply`/`finishing`), strict, all-or-nothing
   validation (path-specific errors, unknown keys rejected) and the generated
-  JSON Schema, `apply: "replace"` (omitted passes off) vs `"merge"`
-  (deep-merge onto the current stack), built-ins (`BUILT_IN_FINISHING_PRESETS`).
+  JSON Schema, both driven by one declarative field spec per pass
+  (`FINISHING_PASS_SPECS` in `finishingPresetSpecs.ts`, re-exported),
+  `apply: "replace"` (omitted passes off) vs `"merge"` (deep-merge onto the
+  current stack), built-ins (`BUILT_IN_FINISHING_PRESETS`).
   **Adding a finishing pass or field means adding it to the spec** — the
   coverage test fails otherwise — and regenerating the schema file.
 - `src/store/finishingPresetStore.ts` — user presets in localStorage
@@ -882,7 +883,7 @@ Library macro that alternates two or three clips at a configurable (accelerating
 
 `forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz.
 
-Rendering (`src/ffmpeg/intercutGenerator.ts` + `src/utils/intercutRender.ts`) does **not** use the concat demuxer. Its `inpoint`/`outpoint` is packet-granular: each cut pulled in the GOP before the inpoint and the AAC frames around it, so the picture ran long and `+genpts` stacked dozens of audio packets on one timestamp at every cut (audibly out of sync, worse as the strobe sped up). Instead:
+Rendering (`src/ffmpeg/intercutGenerator.ts` + `src/utils/intercutRender.ts`; the pure argv builders are in `src/ffmpeg/intercutArgs.ts`) does **not** use the concat demuxer. Its `inpoint`/`outpoint` is packet-granular: each cut pulled in the GOP before the inpoint and the AAC frames around it, so the picture ran long and `+genpts` stacked dozens of audio packets on one timestamp at every cut (audibly out of sync, worse as the strobe sped up). Instead:
 
 1. `quantizeIntercutSlices` snaps slices (relative to each trim start) to a 30 fps output grid from cumulative time, so rounding never drifts; one source's slices never share a frame.
 2. Picture: one `filter_complex` — per source `fps=30` → `select` (source frame ranges) → `setpts` (output frame numbers) → scale/pad — merged with `interleave`. Mixed resolution / fps / stills are handled in-graph; there is no separate normalize pass.

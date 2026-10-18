@@ -36,6 +36,15 @@ export default defineConfig(
     },
   },
   {
+    // Split a module before it passes 700 lines (tests are exempt): files
+    // grew past this unnoticed when it was only a convention.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/**/*.test.{ts,tsx}'],
+    rules: {
+      'max-lines': ['error', { max: 700 }],
+    },
+  },
+  {
     files: ['*.{js,ts}', 'scripts/**/*.{js,mjs}'],
     languageOptions: {
       globals: globals.node,

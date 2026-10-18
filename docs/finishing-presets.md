@@ -65,7 +65,7 @@ deleting your preset brings the built-in back.
 Every field, its range and meaning is in the JSON Schema
 [`finishing-preset.schema.json`](./finishing-preset.schema.json) (draft
 2020-12). It is generated from the same field specs the validator uses
-(`src/utils/finishingPresets.ts`), and a test fails if the committed file is
+(`src/utils/finishingPresetSpecs.ts`), and a test fails if the committed file is
 stale — regenerate with
 `UPDATE_FINISHING_SCHEMA=1 npx vitest --run src/utils/finishingPresets.test.ts`.
 
