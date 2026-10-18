@@ -3,14 +3,15 @@
  * compositing on the WebGPU preview and GPU export paths.
  *
  * Pass order (professional):
- *   noise reduction → primary color → secondary color → LUT → sharpen →
+ *   noise reduction → primary color → curves & levels → secondary color →
+ *   LUT → sharpen →
  *   chromatic aberration → grain
  *
  * Primary color (exposure / WB / lift-gamma-gain), secondary color (hue /
  * window qualifiers), noise reduction (spatial bilateral + optional temporal),
  * sharpening (unsharp + midtone detail), and film grain / optical emulation
  * are implemented on WebGPU with best-effort FFmpeg WASM parity. Chromatic
- * aberration is WebGPU-only (reported in `RenderPlan.ffmpegFinishingGaps`).
+ * aberration and curves & levels are WebGPU-only (reported in `RenderPlan.ffmpegFinishingGaps`).
  * Canvas2D does not apply finishing (grain is not WYSIWYG on Canvas2D).
  */
 
@@ -55,12 +56,20 @@ import {
   normalizeChromaticAberrationPass,
   type ChromaticAberrationSettings,
 } from './chromaticAberration';
+import {
+  DEFAULT_CURVES_PARAMS,
+  identityCurves,
+  isCurvesNeutral,
+  normalizeCurvesPass,
+  type CurvesSettings,
+} from './curves';
 import { clamp01 } from './math';
 
 export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
 export type { SharpenSettings } from './sharpen';
 export type { ChromaticAberrationSettings } from './chromaticAberration';
+export type { CurvesSettings, CurvePoint, CurveChannel, LevelsSettings } from './curves';
 export type { SecondaryColorSettings, SecondaryGrade, SecondaryMaskType } from './secondaryColor';
 export type {
   GrainSettings,
@@ -80,6 +89,9 @@ export type NoiseReductionPass = NoiseReductionSettings;
 
 /** Primary color correction / balancing — before creative LUT. */
 export type PrimaryColorPass = PrimaryColorSettings;
+
+/** Curves & levels — after primary, before secondary; WebGPU only. */
+export type CurvesPass = CurvesSettings;
 
 /** Secondary / selective color — hue qualifiers + power windows (≤3 grades). */
 export type SecondaryColorPass = SecondaryColorSettings;
@@ -107,6 +119,7 @@ export type GrainPass = GrainSettings;
 export interface FinishingSettings {
   noiseReduction?: NoiseReductionPass;
   primaryColor?: PrimaryColorPass;
+  curves?: CurvesPass;
   secondaryColor?: SecondaryColorPass;
   lut?: LutFinishingPass;
   sharpen?: SharpenPass;
@@ -127,6 +140,13 @@ export const DEFAULT_PRIMARY_COLOR: PrimaryColorPass = {
   lift: [...DEFAULT_PRIMARY_COLOR_PARAMS.lift] as [number, number, number],
   gamma: [...DEFAULT_PRIMARY_COLOR_PARAMS.gamma] as [number, number, number],
   gain: [...DEFAULT_PRIMARY_COLOR_PARAMS.gain] as [number, number, number],
+};
+
+export const DEFAULT_CURVES: CurvesPass = {
+  enabled: false,
+  amount: 1,
+  levels: { ...DEFAULT_CURVES_PARAMS.levels },
+  curves: identityCurves(),
 };
 
 export const DEFAULT_SECONDARY_COLOR: SecondaryColorPass = {
@@ -164,6 +184,7 @@ export const DEFAULT_GRAIN: GrainPass = {
 export const DEFAULT_FINISHING: FinishingSettings = {
   noiseReduction: { ...DEFAULT_NOISE_REDUCTION },
   primaryColor: { ...DEFAULT_PRIMARY_COLOR },
+  curves: { ...DEFAULT_CURVES, levels: { ...DEFAULT_CURVES.levels }, curves: identityCurves() },
   secondaryColor: { ...DEFAULT_SECONDARY_COLOR, grades: [] },
   lut: { ...DEFAULT_LUT_PASS },
   sharpen: { ...DEFAULT_SHARPEN },
@@ -191,6 +212,10 @@ export function isNoiseReductionActive(pass: NoiseReductionPass | undefined): bo
 
 export function isPrimaryColorActive(pass: PrimaryColorPass | undefined): boolean {
   return passAmount(pass) > 0;
+}
+
+export function isCurvesActive(pass: CurvesPass | undefined): boolean {
+  return !isCurvesNeutral(pass);
 }
 
 export function isSecondaryColorActive(pass: SecondaryColorPass | undefined): boolean {
@@ -229,6 +254,7 @@ export function isFinishingActive(settings: FinishingSettings | undefined): bool
   return (
     isNoiseReductionActive(settings.noiseReduction) ||
     isPrimaryColorActive(settings.primaryColor) ||
+    isCurvesActive(settings.curves) ||
     isSecondaryColorActive(settings.secondaryColor) ||
     isLutFinishingPassActive(settings.lut) ||
     isSharpenActive(settings.sharpen) ||
@@ -298,6 +324,7 @@ export function normalizeFinishingSettings(
   return {
     noiseReduction: normalizeNoiseReductionPass(raw?.noiseReduction, DEFAULT_NOISE_REDUCTION),
     primaryColor: normalizePrimaryColorPass(raw?.primaryColor, DEFAULT_PRIMARY_COLOR),
+    curves: normalizeCurvesPass(raw?.curves, DEFAULT_CURVES),
     secondaryColor: normalizeSecondaryColorPass(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
     lut: normalizeLutPass(raw?.lut),
     sharpen: normalizeSharpenPass(raw?.sharpen, DEFAULT_SHARPEN),
