@@ -357,6 +357,17 @@ audio {
   cursor: pointer;
 }
 
+.effects-preset-select {
+  max-width: 9rem;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
 .effects-bypass.is-active,
 .effects-before.is-active {
   border-color: #f6ad55;

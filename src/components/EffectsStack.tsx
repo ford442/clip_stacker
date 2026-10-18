@@ -12,6 +12,11 @@ import {
   type FinishingPassKey,
 } from '../utils/finishingStack';
 import { loadSectionState, revealSection, saveSectionOpen, isSectionOpen } from '../utils/sectionState';
+import {
+  applyFinishingPresetDocument,
+  finishingPresetStore,
+  listFinishingPresets,
+} from '../store/finishingPresetStore';
 
 const DETAILS_SECTION_ID = 'preview.effectsStack';
 const FINISHING_SECTION_ID = 'export.finishing';
@@ -32,6 +37,8 @@ function editPass() {
  */
 function EffectsStackImpl() {
   const finishing = useStore(settingsStore, (s) => s.finishing);
+  const userPresets = useStore(finishingPresetStore, (s) => s.presets);
+  const presets = listFinishingPresets(userPresets);
   const view = useFinishingView();
   const [detailsOpen, setDetailsOpen] = useState(() =>
     isSectionOpen(DETAILS_SECTION_ID, false, loadSectionState()),
@@ -74,6 +81,23 @@ function EffectsStackImpl() {
             );
           })}
         </div>
+        <select
+          className="effects-preset-select"
+          aria-label="Apply a finishing preset"
+          title="Apply a saved finishing preset (one undo step). Manage presets under Edit."
+          value=""
+          onChange={(e) => {
+            const preset = presets.find((p) => p.key === e.target.value);
+            if (preset) applyFinishingPresetDocument(preset.doc);
+          }}
+        >
+          <option value="">Preset…</option>
+          {presets.map((p) => (
+            <option key={p.key} value={p.key}>
+              {p.doc.name}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           className={`effects-bypass${view.bypassAll ? ' is-active' : ''}`}
