@@ -9,8 +9,22 @@
 
 import { TIMELINE_EXPORT_FPS } from './webcodecs-timeline';
 import { clamp, clamp01, finiteOr } from './math';
+import {
+  FLAT_GRAIN_RESPONSE,
+  getGrainFilmStock,
+  normalizeGrainResponse,
+  type GrainFilmStockId,
+  type GrainResponseCurve,
+} from './filmGrain';
 
-export const GRAIN_UNIFORM_FLOATS = 16;
+export const GRAIN_UNIFORM_FLOATS = 24;
+
+/**
+ * `classic` is the original hash grain (and what an omitted field means, so
+ * older projects render unchanged); `film` is the blue-noise model in
+ * `filmGrain.ts` with monochrome bias, temporal coherence and a response curve.
+ */
+export type GrainQuality = 'classic' | 'film';
 
 /** Recommended grain amount when enabling the pass. */
 export const GRAIN_AMOUNT_RECOMMENDED = 0.35;
@@ -52,6 +66,14 @@ export interface GrainSettings {
   halation: GrainHalationSettings;
   /** Soft highlight bloom 0 … 1 (shares blur with halation). */
   bloomAmount: number;
+  /** Grain model; omitted = `classic`. The fields below only apply to `film`. */
+  quality?: GrainQuality;
+  /** 0 = per-channel colour grain … 1 = monochrome; omitted = `monochrome ? 1 : 0`. */
+  monochromeBias?: number;
+  /** 0 = fresh grain every frame … 1 = each field evolves over ~12 frames. */
+  temporalCoherence?: number;
+  /** Grain gain across shadows / midtones / highlights; omitted = flat. */
+  response?: GrainResponseCurve;
 }
 
 export const DEFAULT_GRAIN_VIGNETTE: GrainVignetteSettings = {
@@ -221,14 +243,21 @@ export function isGrainNeutral(pass: GrainSettings | undefined): boolean {
   return amount <= 1e-6 && !vignetteOn && !halationOn && bloom <= 1e-6;
 }
 
+/** Monochrome bias the film shader uses (falls back to the classic toggle). */
+export function grainMonochromeBias(pass: GrainSettings): number {
+  return clamp01(finiteOr(pass.monochromeBias, pass.monochrome !== false ? 1 : 0));
+}
+
 /**
  * Pack GrainSettings into a Float32Array matching WGSL GrainUniforms.
  *
- * Layout (4 × vec4):
+ * Layout (6 × vec4):
  *   [0] amount, size, softness, monochrome
  *   [1] vignetteAmount, vignetteMidpoint, vignetteRoundness, frameSeed
  *   [2] halationAmount,halationThreshold,halationRadius, bloomAmount
- *   [3] texelSize.x, texelSize.y, pad, pad
+ *   [3] texelSize.x, texelSize.y, blurAxis (set per draw), pad
+ *   [4] quality (0 classic / 1 film), monochromeBias, temporalCoherence, pad
+ *   [5] response shadows, midtones, highlights, pad
  */
 export function packGrainUniforms(
   pass: GrainSettings,
@@ -268,6 +297,44 @@ export function packGrainUniforms(
   out[14] = 0;
   out[15] = 0;
 
+  const response = normalizeGrainResponse(pass.response);
+  out[16] = pass.quality === 'film' ? 1 : 0;
+  out[17] = grainMonochromeBias(pass);
+  out[18] = clamp01(finiteOr(pass.temporalCoherence, 0));
+  out[19] = 0;
+  out[20] = response.shadows;
+  out[21] = response.midtones;
+  out[22] = response.highlights;
+  out[23] = 0;
+
+  return out;
+}
+
+/**
+ * The film-mode fields, normalized — only the ones `raw` or `defaults` carry,
+ * so a project saved before they existed round-trips without gaining keys.
+ */
+function normalizeGrainQualityFields(
+  raw: Partial<GrainSettings>,
+  defaults: GrainSettings,
+): Pick<GrainSettings, 'quality' | 'monochromeBias' | 'temporalCoherence' | 'response'> {
+  const out: Pick<
+    GrainSettings,
+    'quality' | 'monochromeBias' | 'temporalCoherence' | 'response'
+  > = {};
+  const quality =
+    raw.quality === 'film' || raw.quality === 'classic' ? raw.quality : defaults.quality;
+  if (quality) out.quality = quality;
+  const bias = finiteOr(raw.monochromeBias, finiteOr(defaults.monochromeBias, NaN));
+  if (Number.isFinite(bias)) out.monochromeBias = clamp01(bias);
+  const coherence = finiteOr(
+    raw.temporalCoherence,
+    finiteOr(defaults.temporalCoherence, NaN),
+  );
+  if (Number.isFinite(coherence)) out.temporalCoherence = clamp01(coherence);
+  const response =
+    raw.response && typeof raw.response === 'object' ? raw.response : defaults.response;
+  if (response) out.response = normalizeGrainResponse(response, FLAT_GRAIN_RESPONSE);
   return out;
 }
 
@@ -281,6 +348,7 @@ export function normalizeGrainPass(
       ...defaults,
       vignette: cloneVignette(defaults.vignette),
       halation: cloneHalation(defaults.halation),
+      ...(defaults.response ? { response: { ...defaults.response } } : {}),
     };
   }
   const d = DEFAULT_GRAIN_PARAMS;
@@ -302,6 +370,7 @@ export function normalizeGrainPass(
     bloomAmount: clamp01(
       finiteOr(raw.bloomAmount, defaults.bloomAmount ?? d.bloomAmount),
     ),
+    ...normalizeGrainQualityFields(raw, defaults),
   };
 }
 
@@ -416,6 +485,32 @@ export function applyGrainPreset(
       ...preset.settings,
       vignette: { ...preset.settings.vignette },
       halation: { ...preset.settings.halation },
+    },
+    current,
+  );
+}
+
+/**
+ * Switch to `film` quality and apply a film stock's size / softness / amount /
+ * monochrome bias / response. Optical settings and temporal coherence are the
+ * user's and are kept.
+ */
+export function applyGrainFilmStock(
+  current: GrainSettings,
+  stockId: GrainFilmStockId,
+): GrainSettings {
+  const stock = getGrainFilmStock(stockId);
+  if (!stock) return current;
+  return normalizeGrainPass(
+    {
+      ...current,
+      quality: 'film',
+      amount: stock.amount,
+      size: stock.size,
+      softness: stock.softness,
+      monochrome: stock.monochromeBias >= 0.5,
+      monochromeBias: stock.monochromeBias,
+      response: { ...stock.response },
     },
     current,
   );
