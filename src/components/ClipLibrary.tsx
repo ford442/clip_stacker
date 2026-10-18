@@ -225,7 +225,7 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
       <AutoCutPanel />
       <ProxyPlaybackToggle />
       {clips.length === 0 && activeGroups.length === 0 && (
-        <p className="muted">No clips yet. Add clips above.</p>
+        <p className="muted">No clips yet. Add clips above, or try “Load demo clips”.</p>
       )}
       <ul className="clip-list" role="list" aria-label="Clip library">
         {activeGroups.map((group) => (

@@ -511,3 +511,36 @@
   font-size: 0.68rem;
   word-break: break-word;
 }
+
+/* ── Collapsible Inspector sections (Export tab) ───────────── */
+.inspector-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.35rem;
+}
+
+.inspector-section > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.inspector-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.inspector-section > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1em;
+  transition: transform 0.15s ease;
+}
+
+.inspector-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.inspector-section-body {
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.3rem;
+}

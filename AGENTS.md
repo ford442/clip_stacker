@@ -80,6 +80,12 @@ resizes; the layout is per-browser view state (localStorage
   (`min(100%, --ws-preview-max-h × --preview-aspect)`) so it keeps its aspect
   ratio and never widens the page (#305).
 
+## Demo clips, Export-tab sections, encoder badge
+
+- **Demo clips** — `public/demo/demo-clip-{a,b}.mp4` (generated 640x360 H.264/AAC test media, ~300 KB total) and `src/utils/demoClips.ts`. The toolbar's **Load demo clips** fetches them (resolved against `document.baseURI`, so a sub-path deploy works) and feeds them through `handleAddClips`, so they behave like uploads.
+- **Collapsible Inspector sections** — `InspectorSection` (`components/inspector/`) is a `<details>` whose open state is remembered per browser by `utils/sectionState.ts` (`clip_stacker.inspectorSections.v1`, view state — never in a project or undo history). New Export-tab groups should use it with a stable `export.*` id; sections that are long or advanced default closed.
+- **Encoder badge** — `describeEncoderBadge` (`utils/encoderPathLabel.ts`) derives the toolbar badge from probed `BrowserCapabilities` (`⚡ HW H.264` only with a hardware encoder, else `WebCodecs (SW)` / `🖥 CPU`) and flags WebGPU separately.
+
 ## Text overlay fonts
 
 Text overlays (`TextOverlay`) carry an optional `font` id (string). When omitted or unknown on load, the overlay falls back to the default Roboto Regular for backward compatibility with old projects.

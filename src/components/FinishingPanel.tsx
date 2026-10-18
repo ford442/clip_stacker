@@ -31,7 +31,6 @@ export function FinishingPanel({ settings, onChange }: Props) {
 
   return (
     <div className="finishing-panel">
-      <div className="inspector-group-label">Finishing</div>
       <p className="inspector-hint">
         <span className="finishing-parity-badge">WebGPU + GPU export</span>
         {' — '}
