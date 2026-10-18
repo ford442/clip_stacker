@@ -60,3 +60,27 @@ export function saveSectionOpen(
     // ignore
   }
 }
+
+type RevealListener = (id: string) => void;
+const revealListeners = new Set<RevealListener>();
+const pendingReveals = new Set<string>();
+
+/**
+ * Ask a section (possibly not mounted yet — the Export tab loads lazily) to
+ * open and scroll into view. Remembered as open, so a late mount starts open.
+ */
+export function revealSection(id: string): void {
+  saveSectionOpen(id, true);
+  pendingReveals.add(id);
+  revealListeners.forEach((listener) => listener(id));
+}
+
+export function subscribeSectionReveal(listener: RevealListener): () => void {
+  revealListeners.add(listener);
+  return () => void revealListeners.delete(listener);
+}
+
+/** True once per reveal request; mounting sections call it to consume theirs. */
+export function consumePendingReveal(id: string): boolean {
+  return pendingReveals.delete(id);
+}

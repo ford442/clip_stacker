@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { InspectorSection } from './InspectorSection';
-import { SECTION_STATE_STORAGE_KEY } from '../../utils/sectionState';
+import { SECTION_STATE_STORAGE_KEY, revealSection } from '../../utils/sectionState';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;
@@ -47,5 +47,17 @@ describe('InspectorSection', () => {
       details.dispatchEvent(new Event('toggle'));
     });
     expect(JSON.parse(localStorage.getItem(SECTION_STATE_STORAGE_KEY)!)).toEqual({ 't.one': false });
+  });
+
+  it('opens when revealed, whether mounted already or mounted later', () => {
+    expect(mount(false).open).toBe(false);
+    act(() => revealSection('t.one'));
+    expect(container.querySelector('details')!.open).toBe(true);
+
+    act(() => root.unmount());
+    root = createRoot(container);
+    localStorage.clear();
+    act(() => revealSection('t.one'));
+    expect(mount(false).open).toBe(true);
   });
 });

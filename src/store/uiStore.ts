@@ -2,6 +2,12 @@ import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import type { StateUpdater } from './editorStore';
 import type { DropEditMode, TimelineEditTool } from '../utils/editModes';
+import {
+  DEFAULT_FINISHING_PREVIEW_VIEW,
+  toggleBefore,
+  type FinishingPassKey,
+  type FinishingPreviewView,
+} from '../utils/finishingStack';
 
 function resolveUpdater<T>(action: StateUpdater<T>, prev: T): T {
   return typeof action === 'function' ? (action as (prev: T) => T)(prev) : action;
@@ -33,6 +39,13 @@ export interface UiState {
   snapEnabled: boolean;
   /** Ripple every unlocked lane together instead of only the edited lane. */
   linkedRipple: boolean;
+  /**
+   * Effects Stack audition state: bypass the whole finishing chain, or show
+   * single passes "before". Preview-only — export always applies the chain.
+   */
+  finishingView: FinishingPreviewView;
+  /** Ask the Inspector to switch tabs (`seq` makes repeat requests distinct). */
+  inspectorTabRequest: { tab: 'clip' | 'export' | 'captions'; seq: number } | null;
 
   /** Accepts a value or an updater, mirroring React's `SetStateAction`. */
   setSelectedTextOverlayId: (id: StateUpdater<string | null>) => void;
@@ -42,6 +55,10 @@ export interface UiState {
   setDropEditMode: (mode: DropEditMode) => void;
   setSnapEnabled: (enabled: StateUpdater<boolean>) => void;
   setLinkedRipple: (linked: StateUpdater<boolean>) => void;
+  setFinishingBypassAll: (bypass: boolean) => void;
+  toggleFinishingBefore: (key: FinishingPassKey) => void;
+  resetFinishingView: () => void;
+  requestInspectorTab: (tab: 'clip' | 'export' | 'captions') => void;
 }
 
 export const uiStore = createStore<UiState>()((set) => ({
@@ -52,6 +69,8 @@ export const uiStore = createStore<UiState>()((set) => ({
   dropEditMode: 'overwrite',
   snapEnabled: true,
   linkedRipple: false,
+  finishingView: DEFAULT_FINISHING_PREVIEW_VIEW,
+  inspectorTabRequest: null,
 
   setSelectedTextOverlayId: (id) =>
     set((s) => ({ selectedTextOverlayId: resolveUpdater(id, s.selectedTextOverlayId) })),
@@ -65,6 +84,13 @@ export const uiStore = createStore<UiState>()((set) => ({
     set((s) => ({ snapEnabled: resolveUpdater(enabled, s.snapEnabled) })),
   setLinkedRipple: (linked) =>
     set((s) => ({ linkedRipple: resolveUpdater(linked, s.linkedRipple) })),
+  setFinishingBypassAll: (bypassAll) =>
+    set((s) => ({ finishingView: { ...s.finishingView, bypassAll } })),
+  toggleFinishingBefore: (key) =>
+    set((s) => ({ finishingView: toggleBefore(s.finishingView, key) })),
+  resetFinishingView: () => set({ finishingView: DEFAULT_FINISHING_PREVIEW_VIEW }),
+  requestInspectorTab: (tab) =>
+    set((s) => ({ inspectorTabRequest: { tab, seq: (s.inspectorTabRequest?.seq ?? 0) + 1 } })),
 }));
 
 /**
@@ -80,6 +106,10 @@ export const uiActions: Pick<
   | 'setDropEditMode'
   | 'setSnapEnabled'
   | 'setLinkedRipple'
+  | 'setFinishingBypassAll'
+  | 'toggleFinishingBefore'
+  | 'resetFinishingView'
+  | 'requestInspectorTab'
 > = uiStore.getState();
 
 export const useSelectedTextOverlayId = () =>
@@ -99,6 +129,8 @@ export function __resetUiStoreForTests(): void {
     dropEditMode: 'overwrite',
     snapEnabled: true,
     linkedRipple: false,
+    finishingView: DEFAULT_FINISHING_PREVIEW_VIEW,
+    inspectorTabRequest: null,
   });
 }
 
@@ -106,3 +138,4 @@ export const useTimelineTool = () => useStore(uiStore, (s) => s.timelineTool);
 export const useDropEditMode = () => useStore(uiStore, (s) => s.dropEditMode);
 export const useSnapEnabled = () => useStore(uiStore, (s) => s.snapEnabled);
 export const useLinkedRipple = () => useStore(uiStore, (s) => s.linkedRipple);
+export const useFinishingView = () => useStore(uiStore, (s) => s.finishingView);

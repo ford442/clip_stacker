@@ -32,6 +32,7 @@ export {
   useDropEditMode,
   useSnapEnabled,
   useLinkedRipple,
+  useFinishingView,
   type UiState,
 } from './uiStore';
 export {

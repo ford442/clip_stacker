@@ -86,6 +86,15 @@ resizes; the layout is per-browser view state (localStorage
 - **Collapsible Inspector sections** — `InspectorSection` (`components/inspector/`) is a `<details>` whose open state is remembered per browser by `utils/sectionState.ts` (`clip_stacker.inspectorSections.v1`, view state — never in a project or undo history). New Export-tab groups should use it with a stable `export.*` id; sections that are long or advanced default closed.
 - **Encoder badge** — `describeEncoderBadge` (`utils/encoderPathLabel.ts`) derives the toolbar badge from probed `BrowserCapabilities` (`⚡ HW H.264` only with a hardware encoder, else `WebCodecs (SW)` / `🖥 CPU`) and flags WebGPU separately.
 
+## Effects Stack (finishing audition)
+
+`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → secondary → LUT → sharpen → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
+
+- Chip / checkbox / amount edits are real `settingsStore.finishing` edits — the same `FinishingSettings` the detailed Export-tab panels edit (the LUT's amount is its `intensity`). Detailed panels and export are unchanged.
+- **Bypass all** and **Before** are preview-only view state (`uiStore.finishingView`, never serialized or exported). `Preview.tsx` feeds the compositor `applyFinishingPreviewView(finishing, view)` (`undefined` for a full bypass, the same object when nothing is hidden); export reads the store's `finishing` directly. The stack says so while a view is active.
+- **Edit** opens the Inspector's Export tab and reveals the *Finishing* section (`uiStore.requestInspectorTab` + `revealSection` in `utils/sectionState.ts`, which also covers the lazily mounted tab). The stack's details-open state is remembered in `clip_stacker.inspectorSections.v1`.
+- Not built: a draggable before/after split, and whole-chain presets.
+
 ## Text overlay fonts
 
 Text overlays (`TextOverlay`) carry an optional `font` id (string). When omitted or unknown on load, the overlay falls back to the default Roboto Regular for backward compatibility with old projects.

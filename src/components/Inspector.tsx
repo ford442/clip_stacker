@@ -8,6 +8,7 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   settingsActions,
   settingsStore,
+  uiStore,
   useEditorClip,
   useEditorClipGroups,
   useEditorClips,
@@ -98,6 +99,15 @@ function InspectorImpl({
     return resolved?.localTime ?? 0;
   }, [clip, clips, clipGroups, transitions, playheadTime]);
   const [tab, setTab] = useState<InspectorTab>('clip');
+  // Other panels (the preview's Effects Stack) can ask for a tab.
+  useEffect(
+    () =>
+      uiStore.subscribe((state, prev) => {
+        const request = state.inspectorTabRequest;
+        if (request && request !== prev.inspectorTabRequest) setTab(request.tab);
+      }),
+    [],
+  );
   const [rifeMultiplier, setRifeMultiplier] = useState<2 | 4>(2);
   const [activeKeyframeProp, setActiveKeyframeProp] = useState<ClipAnimatableProp>('x');
   const inspectorRef = useRef<HTMLDivElement>(null);
