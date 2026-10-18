@@ -383,6 +383,23 @@ describe("calculateRenderPlan", () => {
       expect(plan.ffmpegFinishingGaps).toContain('Creative LUT');
     });
 
+    it('reports curves & levels as an FFmpeg gap (WebGPU-only pass)', () => {
+      const finishing = {
+        ...DEFAULT_FINISHING,
+        curves: {
+          ...DEFAULT_FINISHING.curves!,
+          enabled: true,
+          levels: { ...DEFAULT_FINISHING.curves!.levels, gamma: 1.4 },
+        },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+        finishing,
+      });
+      expect(plan.finishingActive).toBe(true);
+      expect(plan.ffmpegFinishingGaps).toEqual(['Curves & levels']);
+    });
+
     it('reports chromatic aberration as an FFmpeg gap (WebGPU-only pass)', () => {
       const finishing = {
         ...DEFAULT_FINISHING,

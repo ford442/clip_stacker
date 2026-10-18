@@ -88,12 +88,42 @@ resizes; the layout is per-browser view state (localStorage
 
 ## Effects Stack (finishing audition)
 
-`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → secondary → LUT → sharpen → CA → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
+`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → curves → secondary → LUT → sharpen → CA → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
 
 - Chip / checkbox / amount edits are real `settingsStore.finishing` edits — the same `FinishingSettings` the detailed Export-tab panels edit (the LUT's amount is its `intensity`). Detailed panels and export are unchanged.
 - **Bypass all** and **Before** are preview-only view state (`uiStore.finishingView`, never serialized or exported). `Preview.tsx` feeds the compositor `applyFinishingPreviewView(finishing, view)` (`undefined` for a full bypass, the same object when nothing is hidden); export reads the store's `finishing` directly. The stack says so while a view is active.
 - **Edit** opens the Inspector's Export tab and reveals the *Finishing* section (`uiStore.requestInspectorTab` + `revealSection` in `utils/sectionState.ts`, which also covers the lazily mounted tab). The stack's details-open state is remembered in `clip_stacker.inspectorSections.v1`.
 - Not built: a draggable before/after split, and whole-chain presets.
+
+## Curves & levels (finishing, after primary, before secondary)
+
+`CurvesGpuPass` (`src/webgpu/curvesPass.ts` + `shaders/curves.wgsl`) is the
+`curves` slot of `FinishingSettings`. Order: noise → primary → **curves** →
+secondary → LUT → sharpen → CA → grain. Primary color is untouched.
+
+- Model (`src/utils/curves.ts`): per channel, levels (input black / white,
+  gamma, output black / white) → master curve → that channel's curve, then
+  mixed with the source by `amount`. Curves are ≤ 16 knots, monotone cubic
+  (Fritsch–Carlson): through every knot, flat outside the end knots, and no
+  overshoot or ringing between knots. Slopes are computed on the CPU; the
+  shader evaluates the Hermite segments from a uniform array of knots, so
+  there is no LUT texture and no quantization. `curvesPixel` is the CPU
+  reference the WGSL mirrors; identity channels pack as count 0.
+- Managed colour runs the scene-linear variant, which grades in an extended
+  sRGB encoding and decodes back: a knot at 0.5 means mid-grey in both modes,
+  and values above 1 continue with slope 1 instead of clipping.
+- Serialized as plain knots + levels; `normalizeCurvesPass` sorts, clamps,
+  merges near-duplicate knots and keeps ≥ 2 of them. Projects saved before
+  it existed load it disabled.
+- UI: `CurvesPanel` (Export tab → Finishing; channel tabs, an SVG editor —
+  click adds, drag moves between neighbours, double-click / Delete removes,
+  arrows nudge — presets, levels sliders) and the Effects Stack's *Curves*
+  chip. The pure edit helpers (`insertCurvePoint`, `moveCurvePoint`,
+  `removeCurvePoint`) are unit tested; the tab's "edited" dot always reserves
+  its space so the first edit never re-flows the editor mid-drag.
+- **WebGPU only.** FFmpeg skips it and `RenderPlan.ffmpegFinishingGaps` lists
+  "Curves & levels" (FFmpeg's `curves` / `colorlevels` could give
+  best-effort parity later); Canvas2D does not apply finishing.
 
 ## Noise reduction quality tiers (first finishing pass)
 

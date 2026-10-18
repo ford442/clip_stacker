@@ -386,3 +386,126 @@
   font-weight: 600;
   color: var(--gold-bright, var(--gold));
 }
+
+.curves-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.5rem 0;
+}
+
+.curves-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem 1rem;
+}
+
+.curves-group-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.75;
+  margin-top: 0.35rem;
+}
+
+.curves-channel-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.curves-channel-tab {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.6rem;
+}
+
+.curves-channel-tab.is-active {
+  border-color: var(--border-active);
+  background: var(--accent-dim);
+}
+
+/* The "edited" dot always takes its space (hidden until the channel is
+   edited), so the first edit never re-flows the tabs and moves the editor
+   under the pointer mid-drag. */
+.curves-channel-tab::after {
+  content: ' •';
+  color: var(--accent);
+  visibility: hidden;
+}
+
+.curves-channel-tab.is-edited::after {
+  visibility: visible;
+}
+
+.curves-editor {
+  width: 100%;
+  max-width: 260px;
+  aspect-ratio: 1;
+  touch-action: none;
+  cursor: crosshair;
+  user-select: none;
+}
+
+.curves-editor-bg {
+  fill: var(--panel-alt);
+  stroke: var(--border);
+}
+
+.curves-editor-grid line,
+.curves-editor-diagonal {
+  stroke: var(--muted);
+  stroke-width: 0.5;
+  opacity: 0.35;
+}
+
+.curves-editor-diagonal {
+  stroke-dasharray: 3 3;
+}
+
+.curves-editor-curve,
+.curves-editor-other {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+
+.curves-editor-other {
+  stroke-width: 1;
+  opacity: 0.4;
+}
+
+.curves-editor-knot {
+  fill: var(--panel);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  cursor: grab;
+}
+
+.curves-editor-knot.is-active,
+.curves-editor-knot:focus-visible {
+  fill: var(--accent);
+  outline: none;
+}
+
+.curves-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.curves-preset-chip {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+}
+
+.curves-point-count {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.curves-reset-levels {
+  justify-self: start;
+  font-size: 0.78rem;
+}

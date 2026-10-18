@@ -1,5 +1,5 @@
 /**
- * The Effects Stack's model: the seven finishing passes as a flat list that can
+ * The Effects Stack's model: the eight finishing passes as a flat list that can
  * be toggled, scaled and A/B-compared without opening the detailed panels.
  *
  * Everything here is pure over `FinishingSettings`. Enabling and amount edits
@@ -10,6 +10,7 @@
 
 import {
   DEFAULT_CHROMATIC_ABERRATION,
+  DEFAULT_CURVES,
   DEFAULT_GRAIN,
   DEFAULT_LUT_PASS,
   DEFAULT_NOISE_REDUCTION,
@@ -17,6 +18,7 @@ import {
   DEFAULT_SECONDARY_COLOR,
   DEFAULT_SHARPEN,
   isChromaticAberrationActive,
+  isCurvesActive,
   isGrainActive,
   isLutFinishingPassActive,
   isNoiseReductionActive,
@@ -35,10 +37,11 @@ export interface FinishingStackPass {
   chip: string;
 }
 
-/** Chain order: noise → primary → secondary → LUT → sharpen → CA → grain. */
+/** Chain order: noise → primary → curves → secondary → LUT → sharpen → CA → grain. */
 export const FINISHING_STACK_PASSES: readonly FinishingStackPass[] = [
   { key: 'noiseReduction', label: 'Noise reduction', chip: 'Noise' },
   { key: 'primaryColor', label: 'Primary color', chip: 'Primary' },
+  { key: 'curves', label: 'Curves & levels', chip: 'Curves' },
   { key: 'secondaryColor', label: 'Secondary color', chip: 'Secondary' },
   { key: 'lut', label: 'Creative LUT', chip: 'LUT' },
   { key: 'sharpen', label: 'Sharpen', chip: 'Sharpen' },
@@ -52,6 +55,17 @@ function defaultPass(key: FinishingPassKey): NonNullable<FinishingSettings[Finis
       return { ...DEFAULT_NOISE_REDUCTION };
     case 'primaryColor':
       return { ...DEFAULT_PRIMARY_COLOR };
+    case 'curves':
+      return {
+        ...DEFAULT_CURVES,
+        levels: { ...DEFAULT_CURVES.levels },
+        curves: {
+          master: [...DEFAULT_CURVES.curves.master],
+          red: [...DEFAULT_CURVES.curves.red],
+          green: [...DEFAULT_CURVES.curves.green],
+          blue: [...DEFAULT_CURVES.curves.blue],
+        },
+      };
     case 'secondaryColor':
       return { ...DEFAULT_SECONDARY_COLOR, grades: [] };
     case 'lut':
@@ -88,6 +102,8 @@ export function isPassContributing(settings: FinishingSettings, key: FinishingPa
       return isNoiseReductionActive(settings.noiseReduction);
     case 'primaryColor':
       return isPrimaryColorActive(settings.primaryColor);
+    case 'curves':
+      return isCurvesActive(settings.curves);
     case 'secondaryColor':
       return isSecondaryColorActive(settings.secondaryColor);
     case 'lut':

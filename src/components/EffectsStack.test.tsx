@@ -37,7 +37,7 @@ describe('EffectsStack', () => {
     )!;
 
   it('shows one chip per finishing pass', () => {
-    expect(container.querySelectorAll('.effects-chip')).toHaveLength(7);
+    expect(container.querySelectorAll('.effects-chip')).toHaveLength(8);
   });
 
   it('toggling a chip edits the project finishing settings', () => {
@@ -60,7 +60,7 @@ describe('EffectsStack', () => {
 
   it('details list offers per-pass amount and Before', () => {
     click(container.querySelector('.effects-details-toggle'));
-    expect(container.querySelectorAll('.effects-row')).toHaveLength(7);
+    expect(container.querySelectorAll('.effects-row')).toHaveLength(8);
     click(chip('Grain').querySelector('input'));
     const grainRow = Array.from(container.querySelectorAll('.effects-row')).find((r) =>
       r.textContent?.includes('Grain'),

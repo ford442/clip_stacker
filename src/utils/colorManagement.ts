@@ -39,6 +39,7 @@ export const COLOR_MANAGED_PASS_ORDER = [
   'input',
   'noise',
   'primary',
+  'curves',
   'secondary',
   'lut',
   'sharpen',

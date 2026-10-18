@@ -11,10 +11,12 @@ import { SecondaryColorGpuPass } from './secondaryColorPass';
 import { SharpenGpuPass } from './sharpenPass';
 import { GrainGpuPass } from './grainPass';
 import { ChromaticAberrationGpuPass } from './chromaticAberrationPass';
+import { CurvesGpuPass } from './curvesPass';
 import { ColorManagementGpuPass } from './colorManagementPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
   isChromaticAberrationActive,
+  isCurvesActive,
   isGrainActive,
   isLutFinishingPassActive,
   isNoiseReductionActive,
@@ -51,6 +53,7 @@ interface ManagedFinishing {
   xformUnorm: ColorManagementGpuPass;
   noise: NoiseReductionGpuPass;
   primary: PrimaryColorGpuPass;
+  curves: CurvesGpuPass;
   secondary: SecondaryColorGpuPass;
   lut: LutPass;
   sharpen: SharpenGpuPass;
@@ -69,7 +72,7 @@ export class ManagedFinishingChain {
   /**
    * Scene-linear Rec.2020 finishing. The 8-bit chain in `finishingPassChain.ts`
    * is not used.
-   * Order: input → noise → primary → secondary → LUT → sharpen → chromatic
+   * Order: input → noise → primary → curves → secondary → LUT → sharpen → chromatic
    * aberration → output → grain → present. CA is a lens effect, so it runs in
    * the scene-linear working space, before the output transform.
    */
@@ -149,6 +152,19 @@ export class ManagedFinishingChain {
         settings.primaryColor,
         encoder,
         true,
+      );
+      swap();
+    }
+
+    if (isCurvesActive(settings.curves) && settings.curves) {
+      managed.curves.applyBetweenTextures(
+        device,
+        current,
+        next.createView(),
+        width,
+        height,
+        settings.curves,
+        encoder,
       );
       swap();
     }
@@ -286,6 +302,7 @@ export class ManagedFinishingChain {
       xformUnorm: ColorManagementGpuPass.create(device, 'rgba8unorm'),
       noise: NoiseReductionGpuPass.create(device, WORKING_FORMAT, true),
       primary: PrimaryColorGpuPass.create(device, WORKING_FORMAT),
+      curves: CurvesGpuPass.create(device, WORKING_FORMAT, true),
       secondary: SecondaryColorGpuPass.create(device, WORKING_FORMAT, true),
       lut: LutPass.create(device, WORKING_FORMAT, true),
       sharpen: SharpenGpuPass.create(device, WORKING_FORMAT, true),
@@ -336,6 +353,7 @@ export class ManagedFinishingChain {
     managed.xformUnorm.destroy();
     managed.noise.destroy();
     managed.primary.destroy();
+    managed.curves.destroy();
     managed.secondary.destroy();
     managed.lut.destroy();
     managed.sharpen.destroy();
