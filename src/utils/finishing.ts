@@ -3,13 +3,15 @@
  * compositing on the WebGPU preview and GPU export paths.
  *
  * Pass order (professional):
- *   noise reduction → primary color → secondary color → LUT → sharpen → grain
+ *   noise reduction → primary color → secondary color → LUT → sharpen →
+ *   chromatic aberration → grain
  *
  * Primary color (exposure / WB / lift-gamma-gain), secondary color (hue /
  * window qualifiers), noise reduction (spatial bilateral + optional temporal),
  * sharpening (unsharp + midtone detail), and film grain / optical emulation
- * are implemented on WebGPU with best-effort FFmpeg WASM parity. Canvas2D does
- * not apply finishing (grain is not WYSIWYG on Canvas2D).
+ * are implemented on WebGPU with best-effort FFmpeg WASM parity. Chromatic
+ * aberration is WebGPU-only (reported in `RenderPlan.ffmpegFinishingGaps`).
+ * Canvas2D does not apply finishing (grain is not WYSIWYG on Canvas2D).
  */
 
 import {
@@ -46,11 +48,19 @@ import {
   normalizeGrainPass,
   type GrainSettings,
 } from './grain';
+import {
+  CA_AMOUNT_RECOMMENDED,
+  DEFAULT_CHROMATIC_ABERRATION_PARAMS,
+  isChromaticAberrationNeutral,
+  normalizeChromaticAberrationPass,
+  type ChromaticAberrationSettings,
+} from './chromaticAberration';
 import { clamp01 } from './math';
 
 export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
 export type { SharpenSettings } from './sharpen';
+export type { ChromaticAberrationSettings } from './chromaticAberration';
 export type { SecondaryColorSettings, SecondaryGrade, SecondaryMaskType } from './secondaryColor';
 export type {
   GrainSettings,
@@ -84,6 +94,9 @@ export interface LutFinishingPass extends FinishingPassBase {
 /** Sharpening / detail enhancement — after LUT, before grain. */
 export type SharpenPass = SharpenSettings;
 
+/** Chromatic aberration (lens colour fringe) — after sharpen, before grain; WebGPU only. */
+export type ChromaticAberrationPass = ChromaticAberrationSettings;
+
 /** Film grain + optical emulation — applied last (WebGPU + best-effort FFmpeg). */
 export type GrainPass = GrainSettings;
 
@@ -97,6 +110,7 @@ export interface FinishingSettings {
   secondaryColor?: SecondaryColorPass;
   lut?: LutFinishingPass;
   sharpen?: SharpenPass;
+  chromaticAberration?: ChromaticAberrationPass;
   grain?: GrainPass;
 }
 
@@ -133,6 +147,12 @@ export const DEFAULT_SHARPEN: SharpenPass = {
   ...DEFAULT_SHARPEN_PARAMS,
 };
 
+export const DEFAULT_CHROMATIC_ABERRATION: ChromaticAberrationPass = {
+  enabled: false,
+  amount: CA_AMOUNT_RECOMMENDED,
+  ...DEFAULT_CHROMATIC_ABERRATION_PARAMS,
+};
+
 export const DEFAULT_GRAIN: GrainPass = {
   enabled: false,
   amount: GRAIN_AMOUNT_RECOMMENDED,
@@ -147,6 +167,7 @@ export const DEFAULT_FINISHING: FinishingSettings = {
   secondaryColor: { ...DEFAULT_SECONDARY_COLOR, grades: [] },
   lut: { ...DEFAULT_LUT_PASS },
   sharpen: { ...DEFAULT_SHARPEN },
+  chromaticAberration: { ...DEFAULT_CHROMATIC_ABERRATION },
   grain: {
     ...DEFAULT_GRAIN,
     vignette: { ...DEFAULT_GRAIN.vignette },
@@ -191,6 +212,12 @@ export function isSharpenActive(pass: SharpenPass | undefined): boolean {
   return amount > 0 || midtone > 0;
 }
 
+export function isChromaticAberrationActive(
+  pass: ChromaticAberrationPass | undefined,
+): boolean {
+  return !isChromaticAberrationNeutral(pass);
+}
+
 export function isGrainActive(pass: GrainPass | undefined): boolean {
   if (!pass?.enabled) return false;
   return !isGrainNeutral(pass);
@@ -205,6 +232,7 @@ export function isFinishingActive(settings: FinishingSettings | undefined): bool
     isSecondaryColorActive(settings.secondaryColor) ||
     isLutFinishingPassActive(settings.lut) ||
     isSharpenActive(settings.sharpen) ||
+    isChromaticAberrationActive(settings.chromaticAberration) ||
     isGrainActive(settings.grain)
   );
 }
@@ -273,6 +301,10 @@ export function normalizeFinishingSettings(
     secondaryColor: normalizeSecondaryColorPass(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
     lut: normalizeLutPass(raw?.lut),
     sharpen: normalizeSharpenPass(raw?.sharpen, DEFAULT_SHARPEN),
+    chromaticAberration: normalizeChromaticAberrationPass(
+      raw?.chromaticAberration,
+      DEFAULT_CHROMATIC_ABERRATION,
+    ),
     grain: normalizeGrainPass(raw?.grain, DEFAULT_GRAIN),
   };
 }

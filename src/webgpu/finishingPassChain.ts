@@ -1,7 +1,8 @@
 /**
  * Ordered finishing pass chain — runs after compositing on WebGPU preview/export.
  *
- * Pass order: noise reduction → primary color → secondary color → LUT → sharpen → grain.
+ * Pass order: noise reduction → primary color → secondary color → LUT → sharpen →
+ * chromatic aberration → grain.
  * Grain / optical emulation is always last so later steps cannot soften the grain.
  *
  * One `queue.submit` per `apply()`: all copies and passes share a command encoder.
@@ -13,8 +14,10 @@ import { PrimaryColorGpuPass } from './primaryColorPass';
 import { SecondaryColorGpuPass } from './secondaryColorPass';
 import { SharpenGpuPass } from './sharpenPass';
 import { GrainGpuPass } from './grainPass';
+import { ChromaticAberrationGpuPass } from './chromaticAberrationPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
+  isChromaticAberrationActive,
   isFinishingActive,
   isGrainActive,
   isLutFinishingPassActive,
@@ -43,6 +46,7 @@ export class FinishingPassChain {
   private readonly secondaryColorPass: SecondaryColorGpuPass;
   private readonly noiseReductionPass: NoiseReductionGpuPass;
   private readonly sharpenPass: SharpenGpuPass;
+  private readonly chromaticAberrationPass: ChromaticAberrationGpuPass;
   private readonly grainPass: GrainGpuPass;
   private readonly format: GPUTextureFormat;
   private pingTexture: GPUTexture | null = null;
@@ -61,6 +65,7 @@ export class FinishingPassChain {
     secondaryColorPass: SecondaryColorGpuPass,
     noiseReductionPass: NoiseReductionGpuPass,
     sharpenPass: SharpenGpuPass,
+    chromaticAberrationPass: ChromaticAberrationGpuPass,
     grainPass: GrainGpuPass,
     format: GPUTextureFormat,
   ) {
@@ -69,6 +74,7 @@ export class FinishingPassChain {
     this.secondaryColorPass = secondaryColorPass;
     this.noiseReductionPass = noiseReductionPass;
     this.sharpenPass = sharpenPass;
+    this.chromaticAberrationPass = chromaticAberrationPass;
     this.grainPass = grainPass;
     this.format = format;
     this.managed = new ManagedFinishingChain(format);
@@ -81,6 +87,7 @@ export class FinishingPassChain {
       SecondaryColorGpuPass.create(device, format),
       NoiseReductionGpuPass.create(device, format),
       SharpenGpuPass.create(device, format),
+      ChromaticAberrationGpuPass.create(device, format),
       GrainGpuPass.create(device, format),
       format,
     );
@@ -130,7 +137,7 @@ export class FinishingPassChain {
     };
 
     const hasLaterGpuPass = (
-      after: 'noise' | 'primary' | 'secondary' | 'lut' | 'sharpen',
+      after: 'noise' | 'primary' | 'secondary' | 'lut' | 'sharpen' | 'ca',
     ): boolean => {
       if (after === 'noise') {
         return (
@@ -138,6 +145,7 @@ export class FinishingPassChain {
           isSecondaryColorActive(settings.secondaryColor) ||
           isLutFinishingPassActive(settings.lut) ||
           isSharpenActive(settings.sharpen) ||
+          isChromaticAberrationActive(settings.chromaticAberration) ||
           isGrainActive(settings.grain)
         );
       }
@@ -146,6 +154,7 @@ export class FinishingPassChain {
           isSecondaryColorActive(settings.secondaryColor) ||
           isLutFinishingPassActive(settings.lut) ||
           isSharpenActive(settings.sharpen) ||
+          isChromaticAberrationActive(settings.chromaticAberration) ||
           isGrainActive(settings.grain)
         );
       }
@@ -153,11 +162,22 @@ export class FinishingPassChain {
         return (
           isLutFinishingPassActive(settings.lut) ||
           isSharpenActive(settings.sharpen) ||
+          isChromaticAberrationActive(settings.chromaticAberration) ||
           isGrainActive(settings.grain)
         );
       }
       if (after === 'lut') {
-        return isSharpenActive(settings.sharpen) || isGrainActive(settings.grain);
+        return (
+          isSharpenActive(settings.sharpen) ||
+          isChromaticAberrationActive(settings.chromaticAberration) ||
+          isGrainActive(settings.grain)
+        );
+      }
+      if (after === 'sharpen') {
+        return (
+          isChromaticAberrationActive(settings.chromaticAberration) ||
+          isGrainActive(settings.grain)
+        );
       }
       return isGrainActive(settings.grain);
     };
@@ -336,6 +356,37 @@ export class FinishingPassChain {
       }
     }
 
+    if (
+      isChromaticAberrationActive(settings.chromaticAberration) &&
+      settings.chromaticAberration
+    ) {
+      const ca = settings.chromaticAberration;
+      if (!hasLaterGpuPass('ca')) {
+        this.chromaticAberrationPass.applyBetweenTextures(
+          device,
+          current,
+          canvasTexture.createView(),
+          width,
+          height,
+          ca,
+          encoder,
+        );
+        wroteToCanvas = true;
+      } else {
+        runPass(() => {
+          this.chromaticAberrationPass.applyBetweenTextures(
+            device,
+            current,
+            next.createView(),
+            width,
+            height,
+            ca,
+            encoder,
+          );
+        });
+      }
+    }
+
     if (isGrainActive(settings.grain) && settings.grain) {
       this.grainPass.applyBetweenTextures(
         device,
@@ -388,6 +439,7 @@ export class FinishingPassChain {
     this.secondaryColorPass.destroy();
     this.noiseReductionPass.destroy();
     this.sharpenPass.destroy();
+    this.chromaticAberrationPass.destroy();
     this.grainPass.destroy();
     this.pingTexture = null;
     this.pongTexture = null;
