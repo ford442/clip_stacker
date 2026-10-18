@@ -7,3 +7,8 @@
         Header always set Cache-Control "no-cache, no-store, must-revalidate"
     </FilesMatch>
 </IfModule>
+
+# Stylesheets are UTF-8. Without a charset a browser decodes a linked stylesheet
+# with the encoding of the page that links it, so a UTF-16 index.html turns the
+# whole stylesheet into mojibake (unstyled page).
+AddCharset UTF-8 .css
