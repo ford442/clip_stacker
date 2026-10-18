@@ -12,7 +12,8 @@ struct SharpenUniforms {
   midtoneDetail: f32,
   // vec4 1
   texelSize: vec2<f32>,
-  _pad0: f32,
+  // 0 = classic unsharp, 1 = edge-aware, 2 = multi-scale.
+  mode: f32,
   _pad1: f32,
 };
 
@@ -97,6 +98,99 @@ fn midtoneWeight(y: f32) -> f32 {
   return smoothstep(0.15, 0.3, y) * (1.0 - smoothstep(0.7, 0.85, y));
 }
 
+// ---------------------------------------------------------------------------
+// Edge-aware / multi-scale modes — mirror `src/utils/sharpenReference.ts`
+// (the tested reference). Exact texels via textureLoad (clamp-to-edge).
+
+const SHARPEN_EDGE_SIGMA: f32 = 0.08;
+const SHARPEN_MS_SIGMA_RATIO: f32 = 2.5;
+const SHARPEN_MS_MEDIUM_GAIN: f32 = 0.75;
+const SHARPEN_MS_MIDTONE_GAIN: f32 = 1.5;
+const SHARPEN_MS_WINDOW: i32 = 3;
+
+fn loadLuma(p: vec2<i32>) -> f32 {
+  let maxP = vec2<i32>(textureDimensions(inputTex)) - vec2<i32>(1);
+  return luma(textureLoad(inputTex, clamp(p, vec2<i32>(0), maxP), 0).rgb);
+}
+
+/// Soft threshold gate: 0 below `thr` (like classic), full strength from 2·thr.
+fn softGate(v: f32, thr: f32) -> f32 {
+  if (thr <= 1e-6) {
+    return 1.0;
+  }
+  return smoothstep(thr, 2.0 * thr, abs(v));
+}
+
+/// Texture detail from a range-weighted blur (strong edges stay in its base)
+/// plus edge detail (the rest of the classic unsharp detail) clamped to the
+/// source [min, max] inside the window — edges steepen but cannot halo.
+/// Soft threshold gates; multi-scale adds a 2.5× wider medium band that
+/// midtone detail drives. The luma change is added to RGB (chroma exact).
+fn edgeAwareSharpen(pix: vec2<i32>, src: vec3<f32>) -> vec3<f32> {
+  let amount = clamp(u.amount, 0.0, 1.0);
+  let midtone = clamp(u.midtoneDetail, 0.0, 1.0);
+  let multi = u.mode > 1.5;
+  let yc = luma(src);
+
+  let radius = clamp(u.radius, 0.5, 3.0);
+  let sigmaF = max(radius * 0.5, 0.2);
+  let sigmaM = sigmaF * SHARPEN_MS_SIGMA_RATIO;
+  let twoF = 2.0 * sigmaF * sigmaF;
+  let twoM = 2.0 * sigmaM * sigmaM;
+  let twoR = 2.0 * SHARPEN_EDGE_SIGMA * SHARPEN_EDGE_SIGMA;
+  let limit = select(i32(ceil(radius)), SHARPEN_MS_WINDOW, multi);
+
+  var sumG = 0.0;
+  var wG = 0.0;
+  var sumF = 0.0;
+  var wF = 0.0;
+  var sumM = 0.0;
+  var wM = 0.0;
+  var mn = yc;
+  var mx = yc;
+  for (var dy = -limit; dy <= limit; dy++) {
+    for (var dx = -limit; dx <= limit; dx++) {
+      let s = loadLuma(pix + vec2<i32>(dx, dy));
+      let d = s - yc;
+      let rw = exp(-(d * d) / twoR);
+      let r2 = f32(dx * dx + dy * dy);
+      let g = exp(-r2 / twoF);
+      sumG += s * g;
+      wG += g;
+      let w1 = g * rw;
+      sumF += s * w1;
+      wF += w1;
+      let w2 = exp(-r2 / twoM) * rw;
+      sumM += s * w2;
+      wM += w2;
+      mn = min(mn, s);
+      mx = max(mx, s);
+    }
+  }
+  let baseF = sumF / wF;
+  let fine = yc - baseF;
+  let medium = select(0.0, baseF - sumM / wM, multi);
+  let detail = fine + SHARPEN_MS_MEDIUM_GAIN * medium;
+
+  let edge = yc - sumG / wG - fine;
+
+  let thr = clamp(u.threshold, 0.0, 1.0);
+  let textured = yc + amount * detail * softGate(detail, thr);
+  let sharpened = clamp(
+    textured + amount * edge * softGate(edge + fine, thr),
+    min(mn, textured),
+    max(mx, textured),
+  );
+  let band = select(fine, SHARPEN_MS_MIDTONE_GAIN * medium, multi);
+  let outY = sharpened + midtone * midtoneWeight(yc) * band;
+
+  let rgb = src + vec3<f32>(outY - yc);
+  if (SCENE_LINEAR) {
+    return rgb;
+  }
+  return clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   let src = textureSampleLevel(inputTex, inputSampler, in.uv, 0.0);
@@ -104,6 +198,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   let midtone = clamp(u.midtoneDetail, 0.0, 1.0);
   if (amount <= 0.0 && midtone <= 0.0) {
     return src;
+  }
+  if (u.mode > 0.5) {
+    return vec4<f32>(edgeAwareSharpen(vec2<i32>(floor(in.pos.xy)), src.rgb), src.a);
   }
 
   let yuv = rgbToYuv(src.rgb);

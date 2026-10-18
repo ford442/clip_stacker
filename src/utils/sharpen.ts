@@ -6,6 +6,7 @@
  */
 
 import { clamp, clamp01, finiteOr } from './math';
+import { SHARPEN_MODE_SLOT } from './sharpenReference';
 
 export const SHARPEN_UNIFORM_FLOATS = 8;
 
@@ -18,6 +19,44 @@ export const SHARPEN_AMOUNT_RECOMMENDED = 0.15;
 export const SHARPEN_RADIUS_MIN = 0.5;
 export const SHARPEN_RADIUS_MAX = 3;
 
+/**
+ * `classic` (and an omitted field — old projects) is the original unsharp
+ * mask; `edge` is the edge-aware unsharp (range-weighted blur, overshoot
+ * clamp, soft threshold); `multiscale` adds a medium detail band for
+ * micro-contrast. See `sharpenReference.ts`.
+ */
+export type SharpenMode = 'classic' | 'edge' | 'multiscale';
+
+export const SHARPEN_MODE_CODE: Record<SharpenMode, number> = {
+  classic: 0,
+  edge: 1,
+  multiscale: 2,
+};
+
+export const SHARPEN_MODE_OPTIONS: { id: SharpenMode; label: string; description: string }[] = [
+  {
+    id: 'classic',
+    label: 'Classic unsharp',
+    description: 'The original unsharp mask (can halo on high-contrast edges).',
+  },
+  {
+    id: 'edge',
+    label: 'Edge-aware',
+    description:
+      'Unsharp that leaves strong edges alone and clamps overshoot — little to no haloing, gentler on noise.',
+  },
+  {
+    id: 'multiscale',
+    label: 'Multi-scale detail',
+    description:
+      'Edge-aware fine detail plus a wider micro-contrast band; Midtone detail drives the wider band.',
+  },
+];
+
+export function isSharpenMode(v: unknown): v is SharpenMode {
+  return v === 'classic' || v === 'edge' || v === 'multiscale';
+}
+
 export interface SharpenSettings {
   enabled: boolean;
   /** Unsharp strength 0 (bypass) → 1. Soft-cap warning above 0.3. */
@@ -28,6 +67,8 @@ export interface SharpenSettings {
   threshold: number;
   /** Optional midtone local-contrast boost 0 … 1 (separate from edge unsharp). */
   midtoneDetail: number;
+  /** Sharpening model; omitted = `classic`. */
+  mode?: SharpenMode;
 }
 
 export const DEFAULT_SHARPEN_PARAMS = {
@@ -49,7 +90,7 @@ export function isSharpenNeutral(pass: SharpenSettings | undefined): boolean {
  *
  * Layout (2 × vec4):
  *   [0] amount, radius, threshold, midtoneDetail
- *   [1] texelSize.x, texelSize.y, pad, pad
+ *   [1] texelSize.x, texelSize.y, mode (0 classic / 1 edge / 2 multiscale), pad
  */
 export function packSharpenUniforms(
   pass: SharpenSettings,
@@ -73,7 +114,7 @@ export function packSharpenUniforms(
 
   out[4] = texelWidth > 0 ? 1 / texelWidth : 0;
   out[5] = texelHeight > 0 ? 1 / texelHeight : 0;
-  out[6] = 0;
+  out[SHARPEN_MODE_SLOT] = isSharpenMode(pass.mode) ? SHARPEN_MODE_CODE[pass.mode] : 0;
   out[7] = 0;
 
   return out;
@@ -104,6 +145,12 @@ export function normalizeSharpenPass(
     midtoneDetail: clamp01(
       finiteOr(raw.midtoneDetail, defaults.midtoneDetail ?? d.midtoneDetail),
     ),
+    // Only carried when set, so an old project round-trips without new keys.
+    ...(isSharpenMode(raw.mode)
+      ? { mode: raw.mode }
+      : isSharpenMode(defaults.mode)
+        ? { mode: defaults.mode }
+        : {}),
   };
 }
 
