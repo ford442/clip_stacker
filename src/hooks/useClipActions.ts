@@ -91,7 +91,7 @@ export function useClipActions({
     }
     const currentPlayheadTime = playbackStore.getState().playheadTime;
     if (currentPlayheadTime === null) {
-      setStatus("Move the preview playhead before splitting.");
+      setStatus("Click the timeline ruler to place the playhead before splitting.");
       return;
     }
 
