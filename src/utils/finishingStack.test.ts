@@ -25,7 +25,7 @@ const sharpened: FinishingSettings = {
 };
 
 describe('finishingStack', () => {
-  it('lists the eight passes in chain order', () => {
+  it('lists the nine passes in chain order', () => {
     expect(FINISHING_STACK_PASSES.map((p) => p.key)).toEqual([
       'noiseReduction',
       'primaryColor',
@@ -34,6 +34,7 @@ describe('finishingStack', () => {
       'lut',
       'sharpen',
       'chromaticAberration',
+      'bloom',
       'grain',
     ]);
   });

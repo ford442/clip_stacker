@@ -5,13 +5,13 @@
  * Pass order (professional):
  *   noise reduction → primary color → curves & levels → secondary color →
  *   LUT → sharpen →
- *   chromatic aberration → grain
+ *   chromatic aberration → bloom → grain
  *
  * Primary color (exposure / WB / lift-gamma-gain), secondary color (hue /
  * window qualifiers), noise reduction (spatial bilateral + optional temporal),
  * sharpening (unsharp + midtone detail), and film grain / optical emulation
  * are implemented on WebGPU with best-effort FFmpeg WASM parity. Chromatic
- * aberration and curves & levels are WebGPU-only (reported in `RenderPlan.ffmpegFinishingGaps`).
+ * aberration, bloom and curves & levels are WebGPU-only (reported in `RenderPlan.ffmpegFinishingGaps`).
  * Canvas2D does not apply finishing (grain is not WYSIWYG on Canvas2D).
  */
 
@@ -63,12 +63,20 @@ import {
   normalizeCurvesPass,
   type CurvesSettings,
 } from './curves';
+import {
+  BLOOM_AMOUNT_RECOMMENDED,
+  DEFAULT_BLOOM_PARAMS,
+  isBloomNeutral,
+  normalizeBloomPass,
+  type BloomSettings,
+} from './bloom';
 import { clamp01 } from './math';
 
 export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
 export type { SharpenSettings } from './sharpen';
 export type { ChromaticAberrationSettings } from './chromaticAberration';
+export type { BloomSettings, BloomMode } from './bloom';
 export type { CurvesSettings, CurvePoint, CurveChannel, LevelsSettings } from './curves';
 export type { SecondaryColorSettings, SecondaryGrade, SecondaryMaskType } from './secondaryColor';
 export type {
@@ -109,6 +117,9 @@ export type SharpenPass = SharpenSettings;
 /** Chromatic aberration (lens colour fringe) — after sharpen, before grain; WebGPU only. */
 export type ChromaticAberrationPass = ChromaticAberrationSettings;
 
+/** Bloom / glow / light wrap — after CA, before grain; WebGPU only. */
+export type BloomPass = BloomSettings;
+
 /** Film grain + optical emulation — applied last (WebGPU + best-effort FFmpeg). */
 export type GrainPass = GrainSettings;
 
@@ -124,6 +135,7 @@ export interface FinishingSettings {
   lut?: LutFinishingPass;
   sharpen?: SharpenPass;
   chromaticAberration?: ChromaticAberrationPass;
+  bloom?: BloomPass;
   grain?: GrainPass;
 }
 
@@ -173,6 +185,13 @@ export const DEFAULT_CHROMATIC_ABERRATION: ChromaticAberrationPass = {
   ...DEFAULT_CHROMATIC_ABERRATION_PARAMS,
 };
 
+export const DEFAULT_BLOOM: BloomPass = {
+  enabled: false,
+  amount: BLOOM_AMOUNT_RECOMMENDED,
+  ...DEFAULT_BLOOM_PARAMS,
+  tint: [...DEFAULT_BLOOM_PARAMS.tint],
+};
+
 export const DEFAULT_GRAIN: GrainPass = {
   enabled: false,
   amount: GRAIN_AMOUNT_RECOMMENDED,
@@ -189,6 +208,7 @@ export const DEFAULT_FINISHING: FinishingSettings = {
   lut: { ...DEFAULT_LUT_PASS },
   sharpen: { ...DEFAULT_SHARPEN },
   chromaticAberration: { ...DEFAULT_CHROMATIC_ABERRATION },
+  bloom: { ...DEFAULT_BLOOM, tint: [...DEFAULT_BLOOM.tint] },
   grain: {
     ...DEFAULT_GRAIN,
     vignette: { ...DEFAULT_GRAIN.vignette },
@@ -243,6 +263,10 @@ export function isChromaticAberrationActive(
   return !isChromaticAberrationNeutral(pass);
 }
 
+export function isBloomActive(pass: BloomPass | undefined): boolean {
+  return !isBloomNeutral(pass);
+}
+
 export function isGrainActive(pass: GrainPass | undefined): boolean {
   if (!pass?.enabled) return false;
   return !isGrainNeutral(pass);
@@ -259,6 +283,7 @@ export function isFinishingActive(settings: FinishingSettings | undefined): bool
     isLutFinishingPassActive(settings.lut) ||
     isSharpenActive(settings.sharpen) ||
     isChromaticAberrationActive(settings.chromaticAberration) ||
+    isBloomActive(settings.bloom) ||
     isGrainActive(settings.grain)
   );
 }
@@ -332,6 +357,7 @@ export function normalizeFinishingSettings(
       raw?.chromaticAberration,
       DEFAULT_CHROMATIC_ABERRATION,
     ),
+    bloom: normalizeBloomPass(raw?.bloom, DEFAULT_BLOOM),
     grain: normalizeGrainPass(raw?.grain, DEFAULT_GRAIN),
   };
 }

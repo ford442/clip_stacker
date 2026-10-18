@@ -1,5 +1,6 @@
 import type { FinishingSettings } from '../utils/finishing';
 import {
+  DEFAULT_BLOOM,
   DEFAULT_CHROMATIC_ABERRATION,
   DEFAULT_CURVES,
   DEFAULT_GRAIN,
@@ -11,6 +12,7 @@ import {
   withColorGrade,
   withFinishingPass,
 } from '../utils/finishing';
+import { BloomPanel } from './BloomPanel';
 import { ChromaticAberrationPanel } from './ChromaticAberrationPanel';
 import { ColorGradePicker } from './ColorGradePicker';
 import { CurvesPanel } from './CurvesPanel';
@@ -33,6 +35,7 @@ export function FinishingPanel({ settings, onChange }: Props) {
   const noise = settings.noiseReduction ?? DEFAULT_NOISE_REDUCTION;
   const sharpen = settings.sharpen ?? DEFAULT_SHARPEN;
   const chromaticAberration = settings.chromaticAberration ?? DEFAULT_CHROMATIC_ABERRATION;
+  const bloom = settings.bloom ?? DEFAULT_BLOOM;
   const grain = settings.grain ?? DEFAULT_GRAIN;
 
   return (
@@ -42,9 +45,9 @@ export function FinishingPanel({ settings, onChange }: Props) {
         {' — '}
         Noise, primary, secondary (hue→lut3d), sharpen, and grain have
         best-effort FFmpeg parity; curves &amp; levels, window secondaries,
-        creative LUT and chromatic aberration are WebGPU-only. Canvas2D does not apply
+        creative LUT, chromatic aberration and bloom are WebGPU-only. Canvas2D does not apply
         finishing. Order: noise → primary → curves → secondary → LUT → sharpen →
-        chromatic aberration → grain.
+        chromatic aberration → bloom → grain.
       </p>
 
       <NoiseReductionPanel
@@ -86,6 +89,11 @@ export function FinishingPanel({ settings, onChange }: Props) {
         onChange={(next) =>
           onChange(withFinishingPass(settings, 'chromaticAberration', next))
         }
+      />
+
+      <BloomPanel
+        settings={bloom}
+        onChange={(next) => onChange(withFinishingPass(settings, 'bloom', next))}
       />
 
       <GrainPanel

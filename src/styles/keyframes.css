@@ -509,3 +509,33 @@
   justify-self: start;
   font-size: 0.78rem;
 }
+
+.bloom-panel {
+  display: grid;
+  gap: 0.55rem;
+  margin: 0.5rem 0;
+}
+
+.bloom-toolbar,
+.bloom-tint-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.75rem;
+}
+
+.bloom-tint-row input[type='color'] {
+  margin-left: 0.4rem;
+  width: 2.2rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  vertical-align: middle;
+}
+
+.bloom-tint-chip {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.55rem;
+}

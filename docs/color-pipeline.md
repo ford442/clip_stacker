@@ -1,6 +1,6 @@
 # Color pipeline
 
-The default picture is Rec.709 / sRGB, limited range, end to end. That path does not run the transforms in this document: finishing stays the existing 8-bit chain (noise → primary → curves → secondary → LUT → sharpen → chromatic aberration → grain), the canvas is `colorSpace: 'srgb'` with `toneMapping.mode: 'standard'`, and `VideoEncoder` is tagged `bt709` / `bt709` / `bt709` / `fullRange: false`.
+The default picture is Rec.709 / sRGB, limited range, end to end. That path does not run the transforms in this document: finishing stays the existing 8-bit chain (noise → primary → curves → secondary → LUT → sharpen → chromatic aberration → bloom → grain), the canvas is `colorSpace: 'srgb'` with `toneMapping.mode: 'standard'`, and `VideoEncoder` is tagged `bt709` / `bt709` / `bt709` / `fullRange: false`.
 
 Managed mode turns on when **Output color** is Display P3 or HDR10, or **Working space** is scene-linear Rec.2020. Untagged imports are assumed Rec.709. There is no per-clip ICC and no OpenColorIO.
 
@@ -24,13 +24,13 @@ Managed frames only:
 ```
 encoded Rec.709
   → input (linearize, matrix to Rec.2020)     rgba16float
-  → noise → primary → curves → secondary → LUT → sharpen → chromatic aberration
+  → noise → primary → curves → secondary → LUT → sharpen → chromatic aberration → bloom
   → output transform
   → grain (display-referred codes)
   → present (swapchain)
 ```
 
-Curves & levels are display-referred tools, so the scene-linear variant grades in an extended sRGB encoding and decodes back (values above 1 continue with slope 1). Chromatic aberration is a lens effect, so it runs in the working space before the output transform; it only resamples, so it has no clamp to relax. Grain stays last so a later pass cannot soften it. On the Rec.709 default the output transform is not dispatched, so grain still sees the same encoded 8-bit image.
+Curves & levels are display-referred tools, so the scene-linear variant grades in an extended sRGB encoding and decodes back (values above 1 continue with slope 1). Chromatic aberration is a lens effect, so it runs in the working space before the output transform; it only resamples, so it has no clamp to relax. Bloom also runs there and adds light (the 8-bit chain screens it instead, so highlights roll off). Grain stays last so a later pass cannot soften it. On the Rec.709 default the output transform is not dispatched, so grain still sees the same encoded 8-bit image.
 
 Primary skips its internal sRGB decode/encode when the sample is already linear (`PrimaryColorUniforms._pad4.x`). Secondary, LUT, sharpen, and denoise relax the 0–1 clamps only on the scene-linear shader variant. The default pipelines keep `const SCENE_LINEAR = false`.
 

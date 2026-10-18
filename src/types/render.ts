@@ -142,7 +142,7 @@ export interface RenderPlan {
    * (`no-preference` on a machine with no hardware encoder). Resolved plans only.
    */
   videoEncoder?: { codec: string; hardwareAcceleration: HardwareAcceleration };
-  /** True when any finishing pass (noise reduction / color / curves / LUT / sharpen / CA / grain) is enabled. */
+  /** True when any finishing pass (noise reduction / color / curves / LUT / sharpen / CA / bloom / grain) is enabled. */
   finishingActive?: boolean;
   /** True when any clip has an active stabilization matrix that will be applied. */
   stabilizeActive?: boolean;
@@ -158,7 +158,7 @@ export interface RenderPlan {
   /**
    * Finishing features present in the project that FFmpeg cannot apply:
    * creative LUT, curves & levels, secondary-color window / power-window
-   * grades and chromatic aberration are WebGPU-only (FFmpeg only bakes hue-only secondary grades
+   * grades, chromatic aberration and bloom are WebGPU-only (FFmpeg only bakes hue-only secondary grades
    * into a `lut3d`, and has no radial per-channel scale for CA).
    * Populated whenever `encoderIntent` is `'ffmpeg'` and one of these is
    * active; absent otherwise.

@@ -12,9 +12,11 @@ import { SharpenGpuPass } from './sharpenPass';
 import { GrainGpuPass } from './grainPass';
 import { ChromaticAberrationGpuPass } from './chromaticAberrationPass';
 import { CurvesGpuPass } from './curvesPass';
+import { BloomGpuPass } from './bloomPass';
 import { ColorManagementGpuPass } from './colorManagementPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
+  isBloomActive,
   isChromaticAberrationActive,
   isCurvesActive,
   isGrainActive,
@@ -58,6 +60,7 @@ interface ManagedFinishing {
   lut: LutPass;
   sharpen: SharpenGpuPass;
   chromaticAberration: ChromaticAberrationGpuPass;
+  bloom: BloomGpuPass;
   grain: GrainGpuPass;
 }
 
@@ -73,8 +76,9 @@ export class ManagedFinishingChain {
    * Scene-linear Rec.2020 finishing. The 8-bit chain in `finishingPassChain.ts`
    * is not used.
    * Order: input → noise → primary → curves → secondary → LUT → sharpen → chromatic
-   * aberration → output → grain → present. CA is a lens effect, so it runs in
-   * the scene-linear working space, before the output transform.
+   * aberration → bloom → output → grain → present. CA and bloom are optical
+   * effects, so they run in the scene-linear working space, before the output
+   * transform (bloom adds light there instead of screening).
    */
   apply(
     device: GPUDevice,
@@ -228,6 +232,19 @@ export class ManagedFinishingChain {
       swap();
     }
 
+    if (isBloomActive(settings.bloom) && settings.bloom) {
+      managed.bloom.applyBetweenTextures(
+        device,
+        current,
+        next.createView(),
+        width,
+        height,
+        settings.bloom,
+        encoder,
+      );
+      swap();
+    }
+
     managed.xformFloat.applyBetweenTextures(
       device,
       current,
@@ -307,6 +324,7 @@ export class ManagedFinishingChain {
       lut: LutPass.create(device, WORKING_FORMAT, true),
       sharpen: SharpenGpuPass.create(device, WORKING_FORMAT, true),
       chromaticAberration: ChromaticAberrationGpuPass.create(device, WORKING_FORMAT),
+      bloom: BloomGpuPass.create(device, WORKING_FORMAT, true),
       grain: GrainGpuPass.create(device, WORKING_FORMAT),
     };
   }
@@ -358,6 +376,7 @@ export class ManagedFinishingChain {
     managed.lut.destroy();
     managed.sharpen.destroy();
     managed.chromaticAberration.destroy();
+    managed.bloom.destroy();
     managed.grain.destroy();
     this.managed = null;
   }

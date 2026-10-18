@@ -44,6 +44,7 @@ export const COLOR_MANAGED_PASS_ORDER = [
   'lut',
   'sharpen',
   'chromaticAberration',
+  'bloom',
   'output',
   'grain',
   'present',
