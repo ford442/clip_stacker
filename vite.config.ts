@@ -73,6 +73,28 @@ function wasmDebugPlugin(): Plugin {
   };
 }
 
+/**
+ * Pin every emitted stylesheet to UTF-8. Without an HTTP charset, a BOM or an
+ * @charset rule a browser decodes a linked stylesheet with the encoding of the
+ * document that links it, and the minifier drops any @charset we write in the
+ * source. A host that serves index.html as UTF-16 (the .1ijs experiment's
+ * iconv workflow) would otherwise turn the whole stylesheet into mojibake and
+ * leave the page unstyled.
+ */
+function cssCharsetPlugin(): Plugin {
+  return {
+    name: 'clip-stacker-css-charset',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      for (const [fileName, asset] of Object.entries(bundle)) {
+        if (asset.type !== 'asset' || !fileName.endsWith('.css')) continue;
+        const css = typeof asset.source === 'string' ? asset.source : Buffer.from(asset.source).toString('utf8');
+        if (!css.startsWith('@charset')) asset.source = `@charset "UTF-8";${css}`;
+      }
+    },
+  };
+}
+
 // COOP/COEP make the page cross-origin isolated: SharedArrayBuffer and the
 // multi-threaded FFmpeg core depend on them.
 const CROSS_ORIGIN_ISOLATION_HEADERS = {
@@ -82,7 +104,7 @@ const CROSS_ORIGIN_ISOLATION_HEADERS = {
 
 export default defineConfig({
   base: './',
-  plugins: [react(), utf16JsMimePlugin(), wasmDebugPlugin(), cspMetaPlugin()],
+  plugins: [react(), utf16JsMimePlugin(), wasmDebugPlugin(), cspMetaPlugin(), cssCharsetPlugin()],
   build: {
     outDir: 'dist',
     emptyOutDir: true,
