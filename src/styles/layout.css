@@ -202,8 +202,8 @@
   }
 
   .workspace-zone--preview {
-    /* Room for the heading and transport row under the canvas. */
-    --ws-preview-max-h: max(8rem, calc(var(--ws-upper-h) - 10rem));
+    /* Room for the heading, transport row and Effects Stack under the canvas. */
+    --ws-preview-max-h: max(8rem, calc(var(--ws-upper-h) - 13rem));
   }
 }
 

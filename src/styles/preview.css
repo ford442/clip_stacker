@@ -273,3 +273,142 @@ audio {
   gap: 0.25rem;
   font-size: 0.75rem;
 }
+
+/* ── Effects Stack (finishing passes docked under the preview) ── */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.effects-stack {
+  margin-top: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(6, 9, 15, 0.5);
+  font-size: 0.78rem;
+}
+
+.effects-stack-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+}
+
+.effects-stack-title {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--gold);
+  opacity: 0.75;
+}
+
+.effects-stack-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  flex: 1 1 auto;
+}
+
+.effects-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.effects-chip.is-on {
+  color: var(--text);
+  border-color: var(--gold);
+  background: rgba(201, 162, 39, 0.12);
+}
+
+/* Enabled, but nothing to apply yet (no LUT chosen, zero strength, ...). */
+.effects-chip.is-idle {
+  border-style: dashed;
+}
+
+.effects-chip input {
+  margin: 0;
+}
+
+.effects-bypass,
+.effects-details-toggle,
+.effects-before,
+.effects-edit,
+.effects-reset {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.effects-bypass.is-active,
+.effects-before.is-active {
+  border-color: #f6ad55;
+  color: #f6ad55;
+  background: rgba(246, 173, 85, 0.12);
+}
+
+.effects-before:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.effects-stack-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.effects-row {
+  display: grid;
+  grid-template-columns: minmax(8rem, 1.2fr) minmax(6rem, 2fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.effects-row.is-off .effects-row-name {
+  color: var(--muted);
+}
+
+.effects-row-name,
+.effects-row-amount {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.effects-row-amount input[type='range'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.effects-row-amount output {
+  min-width: 2.5em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.effects-stack-note {
+  margin: 0.4rem 0 0;
+  color: #f6ad55;
+}
