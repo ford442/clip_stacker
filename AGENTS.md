@@ -95,6 +95,35 @@ resizes; the layout is per-browser view state (localStorage
 - **Edit** opens the Inspector's Export tab and reveals the *Finishing* section (`uiStore.requestInspectorTab` + `revealSection` in `utils/sectionState.ts`, which also covers the lazily mounted tab). The stack's details-open state is remembered in `clip_stacker.inspectorSections.v1`.
 - Not built: a draggable before/after split, and whole-chain presets.
 
+## Finishing presets (named stacks, AI-agent JSON)
+
+Format, built-ins and the agent API are documented in
+`docs/finishing-presets.md`; the JSON Schema is
+`docs/finishing-preset.schema.json`.
+
+- `src/utils/finishingPresets.ts` — pure: the preset document
+  (`schema`/`version`/`name`/`apply`/`finishing`), one declarative field spec
+  per pass (`FINISHING_PASS_SPECS`) that drives both strict, all-or-nothing
+  validation (path-specific errors, unknown keys rejected) and the generated
+  JSON Schema, `apply: "replace"` (omitted passes off) vs `"merge"`
+  (deep-merge onto the current stack), built-ins (`BUILT_IN_FINISHING_PRESETS`).
+  **Adding a finishing pass or field means adding it to the spec** — the
+  coverage test fails otherwise — and regenerating the schema file.
+- `src/store/finishingPresetStore.ts` — user presets in localStorage
+  (`clip_stacker.finishingPresets.v1`; quota errors are returned, never
+  thrown), list / save / rename / delete, built-in shadowing by name, and the
+  one apply path (`applyFinishingPresetDocument` / `applyFinishingPresetInput`).
+- Undo: `editorStore.applyFinishing` pushes one history entry that also
+  carries the pre-apply `FinishingSettings` (`EditSnapshot.finishing`). Undo /
+  redo restore finishing **only** for entries that carry it, so every other
+  undo step still leaves finishing alone (finishing slider edits are not
+  undoable, as before).
+- `src/utils/finishingPresetApi.ts` — `window.clipStacker.finishing.*` and the
+  `clip-stacker:apply-finishing-preset` event (installed in `main.tsx`);
+  same-page only, no cross-origin `postMessage`.
+- UI: `FinishingPresetsPanel` (top of Export → Finishing) and the Effects
+  Stack's *Preset…* picker.
+
 ## Curves & levels (finishing, after primary, before secondary)
 
 `CurvesGpuPass` (`src/webgpu/curvesPass.ts` + `shaders/curves.wgsl`) is the

@@ -38,6 +38,8 @@ import { cloneTracks } from '../utils/trackModel';
 import type { EditState } from '../utils/editModes';
 import { normalizeCaptions } from '../utils/subtitles';
 import { planAddClip } from '../utils/planAddClip';
+import type { FinishingSettings } from '../utils/finishing';
+import { settingsStore } from './settingsStore';
 
 /**
  * Durable editing state (#144).
@@ -132,6 +134,11 @@ export interface EditorState {
   redo: () => void;
   /** Replace editing state and clear undo/redo stacks (e.g. after project load). */
   resetHistory: (snapshot: EditSnapshot) => void;
+  /**
+   * Replace the whole finishing stack as one undo step (finishing presets).
+   * Ordinary finishing edits do not touch the edit history.
+   */
+  applyFinishing: (next: FinishingSettings) => void;
 }
 
 /**
@@ -146,9 +153,10 @@ const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let isRestoring = false;
 
 export const editorStore = createStore<EditorState>()((set, get) => {
-  const snapshotOf = (): EditSnapshot => {
+  const snapshotOf = (includeFinishing = false): EditSnapshot => {
     const state = get();
     return {
+      ...(includeFinishing ? { finishing: settingsStore.getState().finishing } : {}),
       clips: state.clips,
       tracks: state.tracks,
       clipGroups: state.clipGroups,
@@ -186,6 +194,9 @@ export const editorStore = createStore<EditorState>()((set, get) => {
           ? { ...snapshot.masterAudio, objectUrl: snapshot.masterAudio.objectUrl }
           : null,
       });
+      if (snapshot.finishing) {
+        settingsStore.getState().setFinishing(structuredClone(snapshot.finishing));
+      }
     } finally {
       isRestoring = false;
     }
@@ -318,18 +329,31 @@ export const editorStore = createStore<EditorState>()((set, get) => {
 
     undo: () => {
       if (undoStack.length === 0) return;
-      redoStack.push(cloneSnapshot(snapshotOf()));
+      const target = undoStack.pop()!;
+      // The redo entry carries finishing only when the undone step did.
+      redoStack.push(cloneSnapshot(snapshotOf(target.finishing !== undefined)));
       trimHistoryStack(redoStack);
-      applySnapshot(undoStack.pop()!);
+      applySnapshot(target);
       publishDepths();
     },
 
     redo: () => {
       if (redoStack.length === 0) return;
-      undoStack.push(cloneSnapshot(snapshotOf()));
+      const target = redoStack.pop()!;
+      undoStack.push(cloneSnapshot(snapshotOf(target.finishing !== undefined)));
       trimHistoryStack(undoStack);
-      applySnapshot(redoStack.pop()!);
+      applySnapshot(target);
       publishDepths();
+    },
+
+    applyFinishing: (next) => {
+      if (!isRestoring) {
+        undoStack.push(cloneSnapshot(snapshotOf(true)));
+        trimHistoryStack(undoStack);
+        redoStack.length = 0;
+        publishDepths();
+      }
+      settingsStore.getState().setFinishing(next);
     },
 
     resetHistory: (snapshot) => {
@@ -461,6 +485,7 @@ export const editorActions: Pick<
   | 'undo'
   | 'redo'
   | 'resetHistory'
+  | 'applyFinishing'
 > = editorStore.getState();
 
 /** Test-only reset so specs start from a clean store and empty history. */

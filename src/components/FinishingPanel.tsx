@@ -15,6 +15,7 @@ import {
 import { BloomPanel } from './BloomPanel';
 import { ChromaticAberrationPanel } from './ChromaticAberrationPanel';
 import { ColorGradePicker } from './ColorGradePicker';
+import { FinishingPresetsPanel } from './FinishingPresetsPanel';
 import { CurvesPanel } from './CurvesPanel';
 import { GrainPanel } from './GrainPanel';
 import { NoiseReductionPanel } from './NoiseReductionPanel';
@@ -49,6 +50,8 @@ export function FinishingPanel({ settings, onChange }: Props) {
         finishing. Order: noise → primary → curves → secondary → LUT → sharpen →
         chromatic aberration → bloom → grain.
       </p>
+
+      <FinishingPresetsPanel />
 
       <NoiseReductionPanel
         settings={noise}
