@@ -5,7 +5,7 @@ const SHORTCUTS = [
   { key: "Ctrl/Cmd+Shift+Z", description: "Redo last edit" },
   { key: "Ctrl/Cmd+S", description: "Save local project" },
   { key: "Ctrl/Cmd+D", description: "Duplicate selected clip" },
-  { key: "S", description: "Split selected clip at preview playhead" },
+  { key: "S", description: "Split selected clip at the playhead (click or drag the timeline ruler to place it)" },
   { key: "C", description: "Add a caption at the preview playhead" },
   { key: "L", description: "Load local project" },
   { key: "Delete / Backspace", description: "Delete selected clip" },

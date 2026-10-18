@@ -17,7 +17,7 @@
 }
 
 .timeline-track-label {
-  flex: 0 0 88px;
+  flex: 0 0 var(--timeline-gutter, 132px);
   display: flex;
   align-items: center;
   padding: 0 0.5rem;
@@ -36,7 +36,6 @@
 
 /* ── Lane chrome (M / L toggles, rename, resize) ──────────── */
 .timeline-lane-header {
-  flex: 0 0 132px;
   gap: 0.25rem;
   position: relative;
 }
@@ -284,6 +283,8 @@
 
 /* Shared scroll container for ruler + track */
 .timeline-scroll-container {
+  /* Lane-header column; the time axis starts right after it on every track row. */
+  --timeline-gutter: 132px;
   overflow-x: auto;
   padding-bottom: 4px;
   border-radius: var(--radius-sm);
@@ -291,8 +292,37 @@
   background: rgba(4, 6, 12, 0.7);
 }
 
+/* Ruler / marker / caption lanes have no header column of their own. */
+.timeline-axis-offset {
+  margin-left: var(--timeline-gutter, 132px);
+  width: max-content;
+}
+
+/* The playhead spans every lane; the ruler is its scrub handle. */
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid #ff5252;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.timeline-playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -6px;
+  border: 5px solid transparent;
+  border-top: 7px solid #ff5252;
+}
+
 /* ── Ruler ──────────────────────────────────────────────── */
 .timeline-ruler {
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
   display: flex;
   align-items: flex-end;
   height: 22px;

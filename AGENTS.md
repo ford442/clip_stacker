@@ -159,6 +159,18 @@ delete; the guards live in the action hooks (`useTimelineActions`,
 `useClipActions`, `useInspectorActions`), not in the components, so keyboard
 shortcuts and programmatic callers are blocked too.
 
+### Playhead
+
+`playbackStore.playheadTime` is **output** time and has two writers: the
+preview (playback tick, its scrub slider) and the timeline ruler
+(`TimelineRuler` — click / drag, independent of whether the preview can run,
+so Split works when WebGPU is unavailable). A ruler drag sets
+`playbackStore.scrubbing`, which pauses preview playback in place.
+`TimelinePlayhead` draws the line and subscribes on its own so the Timeline
+does not re-render per tick. The ruler, marker and caption lanes sit in
+`.timeline-axis-offset`, inset by `--timeline-gutter` (the lane-header
+column, `TIMELINE_GUTTER_PX`), so one x is one time on every row.
+
 ### Edit modes (overwrite / insert / ripple / roll / slip / slide / snap)
 
 - `src/utils/editModes.ts` — the pure NLE edits (entry point; shared state and
