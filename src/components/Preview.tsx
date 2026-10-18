@@ -73,7 +73,7 @@ function PreviewImpl({
       ? sanitizeFilename(exportFilename)
       : 'stacked.mp4';
     return (
-      <section className="panel">
+      <section id="preview-panel" className="panel preview-panel">
         <h2>Preview</h2>
         <video
           controls
@@ -89,7 +89,7 @@ function PreviewImpl({
 
   if (timelineClips.some((item) => item.kind === 'video')) {
     return (
-      <section className="panel">
+      <section id="preview-panel" className="panel preview-panel">
         <h2>Preview</h2>
         <TimelineCompositorPreview
           timelineClips={timelineClips}
@@ -116,7 +116,7 @@ function PreviewImpl({
 
   if (!clip || clip.kind !== 'audio') {
     return (
-      <section className="panel">
+      <section id="preview-panel" className="panel preview-panel">
         <h2>Preview</h2>
         <div className="muted">No clip selected.</div>
       </section>
@@ -124,7 +124,7 @@ function PreviewImpl({
   }
 
   return (
-    <section className="panel">
+    <section id="preview-panel" className="panel preview-panel">
       <h2>Preview</h2>
       <AudioClipPreview clip={clip} />
     </section>

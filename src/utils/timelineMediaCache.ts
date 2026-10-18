@@ -1,7 +1,7 @@
 import type { Clip } from '../types';
 import { extractThumbnails } from './media';
 import { analyzeImportedStillFile } from '../gpu-chores/stillImport';
-import { extractWaveformPeaks } from './waveform';
+import { clipHasExtractableAudio, extractWaveformPeaks } from './waveform';
 
 const thumbnailCache = new Map<string, string[]>();
 const waveformCache = new Map<string, Float32Array>();
@@ -100,6 +100,7 @@ export function requestTimelineWaveform(
 ): void {
   const allowVideo = options.allowVideo ?? false;
   if (clip.kind !== 'audio' && !(allowVideo && clip.kind === 'video')) return;
+  if (!clipHasExtractableAudio(clip)) return;
 
   const cached = waveformCache.get(clip.id);
   if (cached) {

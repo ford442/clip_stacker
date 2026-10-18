@@ -124,7 +124,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     <>
       <div className="toolbar">
         <label className="button-like">
-          Add clips (MP4 / WAV / MP3)
+          Add clips (MP4 / WAV / MP3 / JPG / PNG / WEBP)
           <input
             ref={clipInputRef}
             type="file"
