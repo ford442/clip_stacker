@@ -29,6 +29,7 @@ import {
   isSharpenActive,
   type FinishingSettings,
 } from './finishing';
+import { clamp01 } from './math';
 
 export type FinishingPassKey = keyof FinishingSettings;
 
@@ -154,10 +155,6 @@ export function setPassAmount(
     ...settings,
     [key]: key === 'lut' ? { ...pass, intensity: value } : { ...pass, amount: value },
   };
-}
-
-function clamp01(v: number): number {
-  return Math.min(1, Math.max(0, v));
 }
 
 /** Preview-only audition state; never serialized, never exported. */

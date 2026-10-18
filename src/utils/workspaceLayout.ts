@@ -9,6 +9,8 @@
  * saved project or undo history.
  */
 
+import { clamp } from './math';
+
 export type LayoutDensity = 'compact' | 'comfortable' | 'spacious';
 export type WorkspaceSide = 'library' | 'inspector';
 
@@ -70,10 +72,6 @@ const DENSITIES: readonly LayoutDensity[] = ['compact', 'comfortable', 'spacious
 
 export function isLayoutDensity(value: unknown): value is LayoutDensity {
   return typeof value === 'string' && (DENSITIES as readonly string[]).includes(value);
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
 }
 
 export function sideLimits(side: WorkspaceSide): { min: number; max: number } {
