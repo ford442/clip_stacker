@@ -88,7 +88,7 @@ resizes; the layout is per-browser view state (localStorage
 
 ## Effects Stack (finishing audition)
 
-`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → secondary → LUT → sharpen → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
+`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → secondary → LUT → sharpen → CA → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
 
 - Chip / checkbox / amount edits are real `settingsStore.finishing` edits — the same `FinishingSettings` the detailed Export-tab panels edit (the LUT's amount is its `intensity`). Detailed panels and export are unchanged.
 - **Bypass all** and **Before** are preview-only view state (`uiStore.finishingView`, never serialized or exported). `Preview.tsx` feeds the compositor `applyFinishingPreviewView(finishing, view)` (`undefined` for a full bypass, the same object when nothing is hidden); export reads the store's `finishing` directly. The stack says so while a view is active.
@@ -149,6 +149,32 @@ in all of them.
   uniforms; `sharpenReference.test.ts` measures halo energy, edge rise
   width, texture gain and noise gain per mode and pins the shader constants.
   FFmpeg (`unsharp`) and Canvas2D are unaffected.
+
+## Chromatic aberration (finishing, after sharpen, before grain)
+
+`ChromaticAberrationGpuPass` (`src/webgpu/chromaticAberrationPass.ts` +
+`shaders/chromaticAberration.wgsl`) is the `chromaticAberration` slot of
+`FinishingSettings`. Order: noise → primary → secondary → LUT → sharpen →
+**CA** → grain (grain stays last); in managed colour it runs in the working
+space before the output transform (`COLOR_MANAGED_PASS_ORDER`).
+
+- Model (`src/utils/chromaticAberration.ts`): red is sampled at uv − o and
+  blue at uv + o, o(uv) = radialK · (uv − 0.5) + a directional offset.
+  `radial` blends lateral lens CA (zero at the centre) with a uniform shift
+  along `angle`; `amount` is the fringe width (≤ 0.8 % of frame height).
+  Offsets are fractions of the frame height, so the preview canvas and a
+  larger export show the same fringe.
+- `spectral` (default on) spreads each channel over 7 taps with per-channel
+  weights that sum to 1 — a soft fringe, and flat areas stay untouched.
+- The sampler is `mirror-repeat`: edge taps land outside the frame, and
+  clamp-to-edge would smear the border pixel into a coloured stripe.
+- `chromaticAberrationPixel` is the CPU reference the WGSL mirrors.
+- **WebGPU only.** FFmpeg has no radial per-channel scale, so the FFmpeg path
+  skips it and `RenderPlan.ffmpegFinishingGaps` lists "Chromatic
+  aberration"; Canvas2D does not apply finishing. It is part of
+  `isFinishingActive`, so every finishing-aware gate (remote concat, canvas
+  demotion) already accounts for it. Projects saved before it existed load it
+  disabled.
 
 ## Film grain (final finishing pass)
 

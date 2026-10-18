@@ -25,13 +25,14 @@ const sharpened: FinishingSettings = {
 };
 
 describe('finishingStack', () => {
-  it('lists the six passes in chain order', () => {
+  it('lists the seven passes in chain order', () => {
     expect(FINISHING_STACK_PASSES.map((p) => p.key)).toEqual([
       'noiseReduction',
       'primaryColor',
       'secondaryColor',
       'lut',
       'sharpen',
+      'chromaticAberration',
       'grain',
     ]);
   });

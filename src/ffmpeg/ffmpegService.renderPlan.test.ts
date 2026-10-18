@@ -383,6 +383,24 @@ describe("calculateRenderPlan", () => {
       expect(plan.ffmpegFinishingGaps).toContain('Creative LUT');
     });
 
+    it('reports chromatic aberration as an FFmpeg gap (WebGPU-only pass)', () => {
+      const finishing = {
+        ...DEFAULT_FINISHING,
+        chromaticAberration: { enabled: true, amount: 0.5, radial: 1, angle: 0, spectral: true },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+        finishing,
+      });
+      expect(plan.finishingActive).toBe(true);
+      expect(plan.ffmpegFinishingGaps).toEqual(['Chromatic aberration']);
+      const gpu = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        webGpuAvailable: true,
+        finishing,
+      });
+      expect(gpu.ffmpegFinishingGaps).toBeUndefined();
+    });
+
     it('omits ffmpegFinishingGaps when the GPU encoder is estimated (nothing is skipped)', () => {
       const finishing = {
         ...DEFAULT_FINISHING,

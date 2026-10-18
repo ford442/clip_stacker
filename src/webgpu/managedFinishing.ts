@@ -10,9 +10,11 @@ import { PrimaryColorGpuPass } from './primaryColorPass';
 import { SecondaryColorGpuPass } from './secondaryColorPass';
 import { SharpenGpuPass } from './sharpenPass';
 import { GrainGpuPass } from './grainPass';
+import { ChromaticAberrationGpuPass } from './chromaticAberrationPass';
 import { ColorManagementGpuPass } from './colorManagementPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
+  isChromaticAberrationActive,
   isGrainActive,
   isLutFinishingPassActive,
   isNoiseReductionActive,
@@ -52,6 +54,7 @@ interface ManagedFinishing {
   secondary: SecondaryColorGpuPass;
   lut: LutPass;
   sharpen: SharpenGpuPass;
+  chromaticAberration: ChromaticAberrationGpuPass;
   grain: GrainGpuPass;
 }
 
@@ -66,7 +69,9 @@ export class ManagedFinishingChain {
   /**
    * Scene-linear Rec.2020 finishing. The 8-bit chain in `finishingPassChain.ts`
    * is not used.
-   * Order: input → noise → primary → secondary → LUT → sharpen → output → grain → present.
+   * Order: input → noise → primary → secondary → LUT → sharpen → chromatic
+   * aberration → output → grain → present. CA is a lens effect, so it runs in
+   * the scene-linear working space, before the output transform.
    */
   apply(
     device: GPUDevice,
@@ -191,6 +196,22 @@ export class ManagedFinishingChain {
       swap();
     }
 
+    if (
+      isChromaticAberrationActive(settings.chromaticAberration) &&
+      settings.chromaticAberration
+    ) {
+      managed.chromaticAberration.applyBetweenTextures(
+        device,
+        current,
+        next.createView(),
+        width,
+        height,
+        settings.chromaticAberration,
+        encoder,
+      );
+      swap();
+    }
+
     managed.xformFloat.applyBetweenTextures(
       device,
       current,
@@ -268,6 +289,7 @@ export class ManagedFinishingChain {
       secondary: SecondaryColorGpuPass.create(device, WORKING_FORMAT, true),
       lut: LutPass.create(device, WORKING_FORMAT, true),
       sharpen: SharpenGpuPass.create(device, WORKING_FORMAT, true),
+      chromaticAberration: ChromaticAberrationGpuPass.create(device, WORKING_FORMAT),
       grain: GrainGpuPass.create(device, WORKING_FORMAT),
     };
   }
@@ -317,6 +339,7 @@ export class ManagedFinishingChain {
     managed.secondary.destroy();
     managed.lut.destroy();
     managed.sharpen.destroy();
+    managed.chromaticAberration.destroy();
     managed.grain.destroy();
     this.managed = null;
   }

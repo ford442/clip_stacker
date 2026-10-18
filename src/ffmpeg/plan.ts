@@ -21,6 +21,7 @@ import {
 } from "../utils/resolution";
 import {
   isFinishingActive,
+  isChromaticAberrationActive,
   isLutFinishingPassActive,
   type FinishingSettings,
 } from "../utils/finishing";
@@ -171,6 +172,9 @@ export function calculateRenderPlan(
     }
     if (secondaryHasWindowGrades(context.finishing?.secondaryColor)) {
       ffmpegFinishingGaps.push('Secondary color window grades');
+    }
+    if (isChromaticAberrationActive(context.finishing?.chromaticAberration)) {
+      ffmpegFinishingGaps.push('Chromatic aberration');
     }
   }
 

@@ -1,5 +1,5 @@
 /**
- * The Effects Stack's model: the six finishing passes as a flat list that can
+ * The Effects Stack's model: the seven finishing passes as a flat list that can
  * be toggled, scaled and A/B-compared without opening the detailed panels.
  *
  * Everything here is pure over `FinishingSettings`. Enabling and amount edits
@@ -9,12 +9,14 @@
  */
 
 import {
+  DEFAULT_CHROMATIC_ABERRATION,
   DEFAULT_GRAIN,
   DEFAULT_LUT_PASS,
   DEFAULT_NOISE_REDUCTION,
   DEFAULT_PRIMARY_COLOR,
   DEFAULT_SECONDARY_COLOR,
   DEFAULT_SHARPEN,
+  isChromaticAberrationActive,
   isGrainActive,
   isLutFinishingPassActive,
   isNoiseReductionActive,
@@ -33,13 +35,14 @@ export interface FinishingStackPass {
   chip: string;
 }
 
-/** Chain order: noise → primary → secondary → LUT → sharpen → grain. */
+/** Chain order: noise → primary → secondary → LUT → sharpen → CA → grain. */
 export const FINISHING_STACK_PASSES: readonly FinishingStackPass[] = [
   { key: 'noiseReduction', label: 'Noise reduction', chip: 'Noise' },
   { key: 'primaryColor', label: 'Primary color', chip: 'Primary' },
   { key: 'secondaryColor', label: 'Secondary color', chip: 'Secondary' },
   { key: 'lut', label: 'Creative LUT', chip: 'LUT' },
   { key: 'sharpen', label: 'Sharpen', chip: 'Sharpen' },
+  { key: 'chromaticAberration', label: 'Chromatic aberration', chip: 'CA' },
   { key: 'grain', label: 'Grain & optical', chip: 'Grain' },
 ];
 
@@ -55,6 +58,8 @@ function defaultPass(key: FinishingPassKey): NonNullable<FinishingSettings[Finis
       return { ...DEFAULT_LUT_PASS };
     case 'sharpen':
       return { ...DEFAULT_SHARPEN };
+    case 'chromaticAberration':
+      return { ...DEFAULT_CHROMATIC_ABERRATION };
     case 'grain':
       return {
         ...DEFAULT_GRAIN,
@@ -89,6 +94,8 @@ export function isPassContributing(settings: FinishingSettings, key: FinishingPa
       return isLutFinishingPassActive(settings.lut);
     case 'sharpen':
       return isSharpenActive(settings.sharpen);
+    case 'chromaticAberration':
+      return isChromaticAberrationActive(settings.chromaticAberration);
     case 'grain':
       return isGrainActive(settings.grain);
   }
