@@ -1,5 +1,5 @@
 /**
- * The Effects Stack's model: the eight finishing passes as a flat list that can
+ * The Effects Stack's model: the nine finishing passes as a flat list that can
  * be toggled, scaled and A/B-compared without opening the detailed panels.
  *
  * Everything here is pure over `FinishingSettings`. Enabling and amount edits
@@ -9,6 +9,7 @@
  */
 
 import {
+  DEFAULT_BLOOM,
   DEFAULT_CHROMATIC_ABERRATION,
   DEFAULT_CURVES,
   DEFAULT_GRAIN,
@@ -17,6 +18,7 @@ import {
   DEFAULT_PRIMARY_COLOR,
   DEFAULT_SECONDARY_COLOR,
   DEFAULT_SHARPEN,
+  isBloomActive,
   isChromaticAberrationActive,
   isCurvesActive,
   isGrainActive,
@@ -37,7 +39,7 @@ export interface FinishingStackPass {
   chip: string;
 }
 
-/** Chain order: noise → primary → curves → secondary → LUT → sharpen → CA → grain. */
+/** Chain order: noise → primary → curves → secondary → LUT → sharpen → CA → bloom → grain. */
 export const FINISHING_STACK_PASSES: readonly FinishingStackPass[] = [
   { key: 'noiseReduction', label: 'Noise reduction', chip: 'Noise' },
   { key: 'primaryColor', label: 'Primary color', chip: 'Primary' },
@@ -46,6 +48,7 @@ export const FINISHING_STACK_PASSES: readonly FinishingStackPass[] = [
   { key: 'lut', label: 'Creative LUT', chip: 'LUT' },
   { key: 'sharpen', label: 'Sharpen', chip: 'Sharpen' },
   { key: 'chromaticAberration', label: 'Chromatic aberration', chip: 'CA' },
+  { key: 'bloom', label: 'Bloom & glow', chip: 'Bloom' },
   { key: 'grain', label: 'Grain & optical', chip: 'Grain' },
 ];
 
@@ -74,6 +77,8 @@ function defaultPass(key: FinishingPassKey): NonNullable<FinishingSettings[Finis
       return { ...DEFAULT_SHARPEN };
     case 'chromaticAberration':
       return { ...DEFAULT_CHROMATIC_ABERRATION };
+    case 'bloom':
+      return { ...DEFAULT_BLOOM, tint: [...DEFAULT_BLOOM.tint] };
     case 'grain':
       return {
         ...DEFAULT_GRAIN,
@@ -112,6 +117,8 @@ export function isPassContributing(settings: FinishingSettings, key: FinishingPa
       return isSharpenActive(settings.sharpen);
     case 'chromaticAberration':
       return isChromaticAberrationActive(settings.chromaticAberration);
+    case 'bloom':
+      return isBloomActive(settings.bloom);
     case 'grain':
       return isGrainActive(settings.grain);
   }

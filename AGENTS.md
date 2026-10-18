@@ -88,7 +88,7 @@ resizes; the layout is per-browser view state (localStorage
 
 ## Effects Stack (finishing audition)
 
-`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → curves → secondary → LUT → sharpen → CA → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
+`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → curves → secondary → LUT → sharpen → CA → bloom → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
 
 - Chip / checkbox / amount edits are real `settingsStore.finishing` edits — the same `FinishingSettings` the detailed Export-tab panels edit (the LUT's amount is its `intensity`). Detailed panels and export are unchanged.
 - **Bypass all** and **Before** are preview-only view state (`uiStore.finishingView`, never serialized or exported). `Preview.tsx` feeds the compositor `applyFinishingPreviewView(finishing, view)` (`undefined` for a full bypass, the same object when nothing is hidden); export reads the store's `finishing` directly. The stack says so while a view is active.
@@ -205,6 +205,34 @@ space before the output transform (`COLOR_MANAGED_PASS_ORDER`).
   `isFinishingActive`, so every finishing-aware gate (remote concat, canvas
   demotion) already accounts for it. Projects saved before it existed load it
   disabled.
+
+## Bloom & glow (finishing, after CA, before grain)
+
+`BloomGpuPass` (`src/webgpu/bloomPass.ts` + `shaders/bloom.wgsl`) is the
+`bloom` slot of `FinishingSettings`: noise → primary → curves → secondary →
+LUT → sharpen → CA → **bloom** → grain. It is independent of the grain pass's
+own halation / bloom, which are unchanged (a chain test compares grain output
+byte-for-byte against `main`).
+
+- Pipeline (`src/utils/bloom.ts`): prefilter (13-tap downsample to half res
+  with Karis-weighted groups so a hot pixel cannot flicker the glow, then a
+  soft-knee threshold) → 13-tap downsample pyramid in `rgba16float` → 9-tap
+  tent upsample added back up (the up pipeline blends one + one; the deepest
+  level gets a fractional weight so the radius is continuous) → composite.
+- Radius is a fraction of frame height; `planBloom` picks the level count
+  per resolution (half res = one level fewer), so preview and export glow
+  alike. The glow is normalized by the level count, so a flat field blooms
+  to itself. The level chain is allocated once per frame size
+  (`bloomLevelChain`) and a plan uses a prefix — a radius drag never
+  reallocates.
+- Composite: tinted glow × gain (amount × `BLOOM_GAIN`) — `screen` on the
+  8-bit chain, plain add in the managed working space (before the output
+  transform). `lightWrap` mode blurs the whole frame (no threshold) and pulls
+  that light over pixels darker than their surround — soft edges where a
+  subject meets a bright background.
+- `bloomImage` is the CPU reference the WGSL mirrors (`bloom.test.ts`).
+- **WebGPU only.** FFmpeg skips it and `RenderPlan.ffmpegFinishingGaps` lists
+  "Bloom & glow"; Canvas2D does not apply finishing.
 
 ## Film grain (final finishing pass)
 

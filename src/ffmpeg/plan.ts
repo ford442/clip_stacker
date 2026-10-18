@@ -21,6 +21,7 @@ import {
 } from "../utils/resolution";
 import {
   isFinishingActive,
+  isBloomActive,
   isChromaticAberrationActive,
   isCurvesActive,
   isLutFinishingPassActive,
@@ -179,6 +180,9 @@ export function calculateRenderPlan(
     }
     if (isChromaticAberrationActive(context.finishing?.chromaticAberration)) {
       ffmpegFinishingGaps.push('Chromatic aberration');
+    }
+    if (isBloomActive(context.finishing?.bloom)) {
+      ffmpegFinishingGaps.push('Bloom & glow');
     }
   }
 

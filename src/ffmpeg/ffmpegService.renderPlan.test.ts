@@ -383,6 +383,19 @@ describe("calculateRenderPlan", () => {
       expect(plan.ffmpegFinishingGaps).toContain('Creative LUT');
     });
 
+    it('reports bloom as an FFmpeg gap (WebGPU-only pass)', () => {
+      const finishing = {
+        ...DEFAULT_FINISHING,
+        bloom: { ...DEFAULT_FINISHING.bloom!, enabled: true, amount: 0.5 },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+        finishing,
+      });
+      expect(plan.finishingActive).toBe(true);
+      expect(plan.ffmpegFinishingGaps).toEqual(['Bloom & glow']);
+    });
+
     it('reports curves & levels as an FFmpeg gap (WebGPU-only pass)', () => {
       const finishing = {
         ...DEFAULT_FINISHING,
