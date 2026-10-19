@@ -17,7 +17,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm run preview`: serve the built app locally for verification.
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
 - `npm run sync:ffmpeg-core`: copy `@ffmpeg/core` / `@ffmpeg/core-mt` ESM dist into `public/ffmpeg-core{,-mt}/` (the self-hosted cores; CDNs are fallbacks). `-- --check` exits non-zero if `public/` or `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts` drifts from `node_modules`.
-- `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, video stabilize, media engine incl. time stretch) via the shared CMake toolchain into `public/wasm/`. Requires Emscripten (`emcmake` / `emcc`); use the SDK pinned in `native/emsdk-version` to reproduce the committed bytes.
+- `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, video stabilize, media engine incl. time stretch, and its glue-free bus-FX build `media_engine_fx.wasm`) via the shared CMake toolchain into `public/wasm/`. Requires Emscripten (`emcmake` / `emcc`); use the SDK pinned in `native/emsdk-version` to reproduce the committed bytes.
 - `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF), written to `native/build-debug/wasm/` (never over `public/wasm`). The dev/preview servers serve it at `/wasm-debug/`; open the app with `?wasm_debug`.
 - `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan). No Emscripten needed.
 - `npm run build:audio-analysis` / `build:video-stabilize` / `build:media-engine`: rebuild one module. `npm run build:whisper`: the opt-in auto-caption module (not committed).
@@ -366,7 +366,10 @@ element identities every render and spin React into an update loop.
 
 Lane **mute** drops a lane's audio from the preview, the WebCodecs premix and
 the FFmpeg mix (as a `volume=0` segment, so the concat graph keeps one stream
-per clip). It does not hide video. Lane **lock** blocks trim, drag, split and
+per clip), and a muted lane keys no sidechain duck. It does not hide video.
+Audio lanes are part of the export mix: the premix schedule is built with the
+tracks, as the preview's is, and FFmpeg paths premix whenever an unmuted audio
+lane holds clips (see *Lane buses* below). Lane **lock** blocks trim, drag, split and
 delete; the guards live in the action hooks (`useTimelineActions`,
 `useClipActions`, `useInspectorActions`), not in the components, so keyboard
 shortcuts and programmatic callers are blocked too.
@@ -563,10 +566,11 @@ Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approv
 
 ## Native WASM toolchain
 
-Three shipped Emscripten modules (plus the opt-in whisper target) share one flag file. Do not copy-paste `emcc` invocations.
+Three shipped Emscripten modules (plus the glue-free `media_engine_fx` build and the opt-in whisper target) share one flag file. Do not copy-paste `emcc` invocations.
 
 - `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / `-Wall -Wextra` / strict C++17 / `EXPORTED_RUNTIME_METHODS` / `INCOMING_MODULE_JS_API=locateFile,instantiateWasm`; per-module `GZIP_BUDGET`, `THREADS` (pthreads — whisper only) and `EXCEPTIONS` (throw support — whisper only)
-- `native/CMakeLists.txt` — builds `audio_analysis`, `video_stabilize`, `media_engine` into `public/wasm/`; `-DCLIP_STACKER_WHISPER=ON` adds `native/whisper/` (whisper.cpp via its own CMake, `EXCLUDE_FROM_ALL`)
+- `native/CMakeLists.txt` — builds `audio_analysis`, `video_stabilize`, `media_engine` (and `media_engine_fx`) into `public/wasm/`; `-DCLIP_STACKER_WHISPER=ON` adds `native/whisper/` (whisper.cpp via its own CMake, `EXCLUDE_FROM_ALL`)
+- `clip_stacker_standalone_wasm` (toolchain.cmake) — `-sSTANDALONE_WASM --no-entry`: plain `extern "C"` exports, no JS runtime, for realms that cannot load MODULARIZE glue (the AudioWorkletGlobalScope). Its only import is `env.emscripten_notify_memory_growth`; call `_initialize` after instantiating. Keep such modules free of static initializers
 - `native/emsdk-version` — the pinned SDK (CI installs it; the committed artifacts come from it). `scripts/emscripten-flags.sh` is the cmake driver: it rejects SDKs < 3.1.64, warns above the tested major, and sends `WASM_DEBUG=1` builds to `native/build-debug/`
 - `native/common/include/` — `cs_status.h` (every `int` entry point returns a `cs_status`; `cs_span_ok` bounds check), `cs_alloc.h` (`cs::Buffer` / `try_reserve` / `can_allocate`: OOM returns `CS_ENOMEM` instead of aborting under `-fno-exceptions`), `cs_math.h` (`cs::kPi`; no `M_PI`)
 - `src/wasm/emscriptenLoader.ts` — the JS side of the boundary: `loadEmscriptenModule(name, factory)` (one instance per realm, transient fetch failures retry with backoff, then a cooldown instead of "disabled until reload"; a trap retires the instance) and `withHeap(mod, (heap) => …)` — **every `_malloc` goes through it**: null-checked, views rebuilt from the current buffer after each call, everything freed when the scope ends; null on OOM so callers fall back. `CS_STATUS` mirrors `cs_status.h`
@@ -590,11 +594,75 @@ C++ owns the export premix DSP: polyphase resample, volume/pan automation curves
 - `src/utils/webcodecs-audio.ts` — `encodeScheduleAudioStreaming` feeds chunks straight to `AudioEncoder` (no length cap); `renderTimelineAudioMix` prefers WASM; OfflineAudioContext fallback (≤ `MAX_OFFLINE_AUDIO_SECONDS`)
 - Kill switch: `?no_media_engine` (curves and everything else go back to OfflineAudioContext). Debug: `?media_engine_resampler=linear`.
 - Keyframe semantics must match `sampleKeyframes` / `applyGainEnvelope` (`src/audio/gainEnvelope.ts`, the TS twin of `fade_gain` / `Curve` / `Panner`) / `StereoPannerNode`; change both sides together. Packed strides in `audio_mix.h` are mirrored in `mediaEngine.ts`.
-- **Insert effects** (`Clip.audioEffects`, `src/utils/audioEffects.ts`): ≤ 4 RBJ biquads then one compressor per clip (`native/media_engine/src/eq.cpp`, `dynamics.cpp`), after resample and before the volume curve; a look-ahead **bus limiter** from `ExportSettings.masterLimiter` (off by default). They are effect-block rows (`MIX_FX_STRIDE`) plus three fields on an fx entry (`MIX_ENTRY_FX_STRIDE`, `MIX_FLAG_EFFECTS`), run through a stateful `mix_fx_session_*` (contiguous calls from frame 0; the bus reads `mix_fx_session_latency` frames ahead). No enabled block and no limiter → the stream stays on `mix_timeline_audio_range`, byte-identical to before (host test pins it).
-- Preview gets inserts from the same C++: `src/audio/processedAudioCache.ts` runs `insert_chain_*` over a copy of the decoded buffer. Never add `BiquadFilterNode` / `DynamicsCompressorNode`; with the media engine off, inserts are bypassed everywhere. The limiter is export-only. FFmpeg paths premix whenever `timelineNeedsAudioPremix` (automation, inserts, limiter).
+- **Insert effects** (`Clip.audioEffects`, `src/utils/audioEffects.ts`): ≤ 4 RBJ biquads then one compressor per clip (`native/media_engine/src/eq.cpp`, `dynamics.cpp`), after resample and before the volume curve; a look-ahead true-peak **bus limiter** from `ExportSettings.masterLimiter` (off by default). They are effect-block rows (`MIX_FX_STRIDE`) plus four fields on an fx entry (`MIX_ENTRY_FX_STRIDE`, `MIX_FLAG_EFFECTS`; the fourth routes it to a lane bus), run through a stateful `mix_fx_session_*` (contiguous calls from frame 0; the bus reads `mix_fx_session_latency` frames ahead). No enabled block, no bus processing and no limiter → the stream stays on `mix_timeline_audio_range`, byte-identical to before (host test pins it).
+- Preview gets inserts from the same C++: `src/audio/processedAudioCache.ts` runs `insert_chain_*` over a copy of the decoded buffer. Never add `BiquadFilterNode` / `DynamicsCompressorNode`; with the media engine off, inserts are bypassed everywhere. The limiter is export-only. FFmpeg paths premix whenever `timelineNeedsAudioPremix` (automation, inserts, limiter, lane buses, loudness, audio lanes).
 - No pthreads until the mix is multi-threaded by design; COOP/COEP is already paid for FFmpeg.
 
 Do not add more DSP inside `canvas-renderer` or FFmpeg `filter_complex` for mix/fade/resample this engine should own.
+
+## Lane buses, master bus and loudness (media engine)
+
+Every lane that can carry audio is a bus. The bus stage is C++
+(`native/media_engine/src/fx/bus.cpp`, `BusGraph`), run by the export premix
+(`mix_bus_session_create`) and, live, by the preview's AudioWorklet
+(`bus_graph_*` in the glue-free `media_engine_fx.wasm`): one implementation,
+so preview and export process identical samples (a 10 s all-FX chain nulls
+bit for bit in `audioFx.parity.test.ts`).
+
+```
+lane input -> lane chain -> delay compensation -> sidechain duck --+
+direct (unrouted) input -> delay compensation --------------------+-> sum
+sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
+```
+
+- **Model** (`src/utils/audioBus.ts`, pure): `Track.audioFx` (ordered
+  `BusEffect[]`: EQ ≤ 8 bands incl. low-pass, compressor, gate, de-esser,
+  true-peak limiter; ≤ 8 effects), `Track.duck` (absent = the legacy
+  `BED_DUCK_LINEAR` step on audio lanes, `'off'`, or a sidechain duck under
+  another lane), `Project.masterBus` (`fx`, `loudness` target). All optional:
+  no schema bump; coerced on load (malformed effects dropped, fields
+  clamped). Undo: `editorStore.setTrackAudioFx` / `setTrackDuck` /
+  `setMasterBus` push one step (drags coalesce with a key); locked and titles
+  lanes refuse.
+- **Plan** (`src/audio/fxGraph.ts`): packs the lanes in timeline order except
+  that a duck's key lane must come first (the engine runs lanes in packed
+  order, frame by frame); a missing / self / cyclic key drops that duck. Text
+  lanes are not buses. Entries route by `AudioScheduleEntry.trackId`.
+- **Engine rows** (`audio_mix.h`, mirrored in `mediaEngineLayout.ts`):
+  `MIX_FX_STRIDE` 13 (adds HOLD, RANGE_DB, KEY), kinds 7–10 (low-pass, gate,
+  de-esser, ducker), `MIX_BUS_STRIDE` 2, `MIX_ENTRY_FX_BUS`. A ducker row in a
+  lane's range runs after the chain and delay compensation.
+- **Limiter** is true peak: detection on 4× oversampled audio using the
+  mixer's own polyphase sinc (`TruePeakDetector`, 32 frames of delay), a
+  0.05 dB detection margin (ten times the worst overshoot the host battery
+  measures without it), then a sample clamp. Latency = 32 + look-ahead (≥ 32).
+- **Meter** (`src/fx/loudness.cpp`): BS.1770-4 K-weighting at any rate,
+  100 ms grid, momentary / short-term, gated integrated, EBU Tech 3342 LRA,
+  true / sample peak. Readings are chunk-invariant. The graph meters its
+  delivered output (skipping its own priming frames).
+- **Export** (`src/utils/exportAudioBus.ts`, `webcodecs-audio.ts`): with lane
+  FX, ducks, master FX or a loudness target the premix runs the bus graph; a
+  target makes it two passes — meter, then `target − measured` as a static
+  gain plus a true-peak limiter at the target's ceiling (it replaces
+  `ExportSettings.masterLimiter`). `RenderPlan.audioFx` (`engine` /
+  `offline-fallback` / `none`) and `RenderPlan.loudness` report what ran.
+  OfflineAudioContext fallback mixes dry. Auto-caption audio stays pre-bus.
+- **Preview** (`src/audio/busRouting.ts`, `src/wasm/audioFx.ts`,
+  `public/worklets/audio-fx-processor.js`): each lane sums into one input of
+  a bus-graph `AudioWorkletNode` (inputs = lanes + direct, ≤ 32); the main
+  thread compiles `media_engine_fx.wasm` and posts the `WebAssembly.Module`.
+  Parameter edits retune in place (`bus_graph_update`); a lane-set or order
+  change builds a new node and reschedules sources. Without FX (and no LUFS
+  meter open) the graph is not inserted at all. The playhead subtracts the
+  graph's look-ahead. `?no_audio_fx` / a failed load → dry preview with an
+  "FX not previewed" badge; never a `DynamicsCompressorNode` stand-in.
+- **UI** (`src/components/audio/`): lane header **FX** → lane bus dialog
+  (chain editor, "Duck under", gain-reduction meter); Master row FX + **LUFS**
+  meter; Export → **Loudness** target.
+- Every recursive DSP path flushes values below 1e-30 (WASM has no FTZ/DAZ);
+  `silence_after_a_tone_stays_out_of_subnormals` guards it.
+- Not built yet: keyframe automation of bus FX parameters, gate / de-esser on
+  clip inserts, sends / aux buses.
 
 ## WebGPU transitions
 

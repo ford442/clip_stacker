@@ -7,6 +7,7 @@ import type { ColorManagementSettings } from '../../utils/colorManagement';
 import { PRESETS } from './helpers';
 import { InspectorSection } from './InspectorSection';
 import { LIMITER_LIMITS, normalizeMasterLimiter, type MasterLimiterSettings } from '../../utils/audioEffects';
+import { LoudnessTargetFields } from '../audio/LoudnessTargetFields';
 
 interface InspectorExportTabProps {
   exportSettings: ExportSettings;
@@ -136,10 +137,14 @@ export function InspectorExportTab({
 
       </InspectorSection>
 
+      <InspectorSection id="export.loudness" title="Loudness">
+        <LoudnessTargetFields />
+      </InspectorSection>
+
       <InspectorSection id="export.audio" title="Master audio">
         <label
           className="inspector-checkbox-label"
-          title="Look-ahead brickwall limiter on the exported mix bus."
+          title="True-peak look-ahead limiter on the exported mix bus (replaced by the loudness target's limiter when one is set)."
         >
           <input
             type="checkbox"
@@ -151,7 +156,7 @@ export function InspectorExportTab({
         {limiter.enabled && (
           <>
             <label className="inspector-volume-slider">
-              Ceiling {limiter.ceilingDb.toFixed(1)} dBFS
+              Ceiling {limiter.ceilingDb.toFixed(1)} dBTP
               <input
                 type="range"
                 min={-12}
@@ -175,8 +180,9 @@ export function InspectorExportTab({
           </>
         )}
         <p className="inspector-hint">
-          No exported sample exceeds the ceiling (pre-encode). Runs in the media engine on export only:
-          preview plays the unlimited mix, and <code>?no_media_engine</code> exports without it.
+          True peak: neither the exported samples nor the peaks between them (4× oversampled) exceed the
+          ceiling (pre-encode). Runs in the media engine on export only: preview plays the unlimited mix, and{' '}
+          <code>?no_media_engine</code> exports without it. A loudness target brings its own limiter.
         </p>
 
       </InspectorSection>

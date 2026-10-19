@@ -315,6 +315,16 @@ TEST_CASE(true_peak_reads_tech3341_cases_15_to_19) {
   CHECK_NEAR(m[MIX_METER_SAMPLE_PEAK], -9.03, 0.05);
 }
 
+TEST_CASE(momentary_reads_silence_once_the_programme_stops) {
+  // The K-filters ring down for a while after the last sample: that tail is
+  // silence (-inf), not a reading hundreds of LU down.
+  // 10 s, so the partial gating blocks at the end barely move the integrated value.
+  const auto m = measure(concat({tone(10.0, -20), silence(5.0)}));
+  CHECK(std::isinf(m[MIX_METER_MOMENTARY]) && m[MIX_METER_MOMENTARY] < 0);
+  CHECK(std::isinf(m[MIX_METER_SHORT_TERM]) && m[MIX_METER_SHORT_TERM] < 0);
+  CHECK_NEAR(m[MIX_METER_INTEGRATED], -20.0, 0.1);
+}
+
 TEST_CASE(meter_readings_do_not_depend_on_chunking) {
   const auto x = programme(7.3, 0.5, 11);
   const auto whole = measure(x, static_cast<int>(x.size() / 2));

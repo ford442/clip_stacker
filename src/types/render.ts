@@ -187,8 +187,8 @@ export interface RenderPlan {
    * - `engine` — the media engine's bus graph mixed the export.
    * - `offline-fallback` — the media engine was unavailable, so the premix
    *   ran on OfflineAudioContext: dry, with no bus FX, ducks or loudness.
-   * - `none` — the encoder path has no premix step (the MediaRecorder canvas
-   *   path), so the bus settings were dropped.
+   * - `none` — no audio premix ran for this render, so the bus settings
+   *   never reached the file.
    */
   audioFx?: 'engine' | 'offline-fallback' | 'none';
   /**

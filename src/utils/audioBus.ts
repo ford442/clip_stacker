@@ -177,10 +177,10 @@ export const BUS_EFFECT_LABELS: Record<BusEffectKind, string> = {
 };
 
 /** Delivery presets for the export loudness target. */
-export const LOUDNESS_PRESETS: ReadonlyArray<{ id: string; label: string; targetLufs: number }> = [
-  { id: 'streaming', label: 'Streaming (YouTube / TikTok / Instagram)', targetLufs: -14 },
-  { id: 'podcast', label: 'Podcast', targetLufs: -16 },
-  { id: 'broadcast', label: 'Broadcast (EBU R 128)', targetLufs: -23 },
+export const LOUDNESS_PRESETS: ReadonlyArray<{ id: string; label: string; targetLufs: number; detail: string }> = [
+  { id: 'streaming', label: 'Streaming', targetLufs: -14, detail: 'YouTube, TikTok, Instagram, Spotify' },
+  { id: 'podcast', label: 'Podcast', targetLufs: -16, detail: 'Apple Podcasts and most podcast hosts' },
+  { id: 'broadcast', label: 'Broadcast', targetLufs: -23, detail: 'EBU R 128 (European TV and radio)' },
 ];
 
 export const DEFAULT_TRUE_PEAK_DB = -1;
