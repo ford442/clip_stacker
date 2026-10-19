@@ -47,6 +47,9 @@ const float* sinc_table(double cutoff);
  */
 int sinc_prepare(const float* rows, double pos, float* coeff);
 
+/** `kSincTaps`-tap inner product (SIMD): coefficients from `sinc_prepare` against a contiguous window. */
+float sinc_dot(const float* coeff, const float* window);
+
 /** One channel at `base + frac`, with coefficients from `sinc_prepare`. */
 float sinc_read(const SourceSlice& slice, int base, const float* coeff);
 

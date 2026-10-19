@@ -195,7 +195,7 @@ export function InspectorClipAudioEffectsSection({
                 onCommit={(q) => updateBand(index, { q })}
               />
             </div>
-            {band.type !== 'highPass' && (
+            {band.type !== 'highPass' && band.type !== 'lowPass' && (
               <label className="inspector-volume-slider">
                 Gain {band.gainDb > 0 ? '+' : ''}
                 {band.gainDb.toFixed(1)} dB

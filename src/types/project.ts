@@ -82,6 +82,11 @@ export interface Project {
    * an earlier save).
    */
   mediaMode?: 'metadata' | 'embed' | 'remote';
+  /**
+   * Master bus: FX after the lanes are summed, and the export loudness
+   * target. Omitted on projects without either (they mix as before).
+   */
+  masterBus?: import('../utils/audioBus').MasterBusSettings;
   /** External music reference for lip-sync (visual anchor + export scratch track). */
   masterAudio?: SerializedMasterAudio;
   /** Global anchor points for text-based sync */

@@ -181,6 +181,28 @@ export interface RenderPlan {
    */
   pictureTransform?: 'gpu' | 'ffmpeg';
   /**
+   * Where lane-bus / master FX, sidechain ducks and the loudness target ran,
+   * when the project has any. Resolved plans only.
+   *
+   * - `engine` — the media engine's bus graph mixed the export.
+   * - `offline-fallback` — the media engine was unavailable, so the premix
+   *   ran on OfflineAudioContext: dry, with no bus FX, ducks or loudness.
+   * - `none` — the encoder path has no premix step (the MediaRecorder canvas
+   *   path), so the bus settings were dropped.
+   */
+  audioFx?: 'engine' | 'offline-fallback' | 'none';
+  /**
+   * Loudness normalization the export applied: the target, what pass 1
+   * measured, the gain it applied, and what the delivered file reads.
+   */
+  loudness?: {
+    targetLufs: number;
+    measuredLufs: number;
+    gainDb: number;
+    outputLufs: number;
+    outputTruePeakDb: number;
+  };
+  /**
    * What the FFmpeg picture-transform fallback cannot reproduce (e.g. the
    * optical-flow stabilization warp on a rotated clip — `@ffmpeg/core` has no
    * libvidstab). Present only when `pictureTransform` is `ffmpeg` and

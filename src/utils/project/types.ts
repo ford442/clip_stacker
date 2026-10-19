@@ -44,6 +44,8 @@ export interface AppliedProjectData {
   captionStyle: Partial<TextOverlayStyle>;
   masterAudio: MasterAudio | null;
   masterAudioMarkers: SyncMarker[];
+  /** Master bus FX / loudness target; undefined when the project has none. */
+  masterBus: import('../audioBus').MasterBusSettings | undefined;
   colorGrade: ColorGradeSettings;
   finishing: FinishingSettings;
   colorManagement: ColorManagementSettings;

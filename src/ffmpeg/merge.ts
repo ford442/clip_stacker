@@ -383,9 +383,9 @@ export async function mergeClips(
     finalFileName = "stacked_final.mp4";
   }
 
-  // When automation, insert effects or the bus limiter are present, replace FFmpeg-filter audio with a
-  // browser premix — media-engine WASM, else OfflineAudioContext (curves aren't
-  // expressible as filters).
+  // When automation, insert effects, lane buses, audio lanes or the bus limiter
+  // are present, replace FFmpeg-filter audio with a browser premix —
+  // media-engine WASM, else OfflineAudioContext (none of them are filters).
   if (timelineNeedsAudioPremix(workingClips)) {
     onStatus("Rendering automated audio mix for FFmpeg remux...");
     emitProgress(onProgress, "Premixing automated audio", 0.97, true);

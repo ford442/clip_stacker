@@ -38,6 +38,7 @@ import { deserializeTextOverlays, usesPixelLayoutForProject } from './applyTextO
 import type { AppliedProjectData, ApplyProjectDataOptions } from './types';
 import { normalizeClipAutomation } from '../clipAutomation';
 import { normalizeClipAudioEffects } from '../audioEffects';
+import { normalizeBusEffects, normalizeLaneDuck, normalizeMasterBus } from '../audioBus';
 import { createCaptionId, normalizeCaptions } from '../subtitles';
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
@@ -430,10 +431,14 @@ export async function applyProjectData(
   const colorManagement = normalizeColorManagement(project.colorManagement);
 
   const savedTracks = Array.isArray(project.tracks)
-    ? project.tracks.map(
-        (t): Track => ({
+    ? project.tracks.map((t): Track => {
+        const kind = t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video';
+        // Malformed effects are dropped, not thrown on; titles lanes carry no audio.
+        const audioFx = kind === 'text' ? undefined : normalizeBusEffects(t.audioFx);
+        const duck = kind === 'text' ? undefined : normalizeLaneDuck(t.duck);
+        return {
           id: String(t.id),
-          kind: t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video',
+          kind,
           ...(t.label ? { label: String(t.label) } : {}),
           items: Array.isArray(t.items)
             ? t.items.map((item) => ({
@@ -444,8 +449,10 @@ export async function applyProjectData(
           ...(t.muted ? { muted: true } : {}),
           ...(t.locked ? { locked: true } : {}),
           ...(t.height != null ? { height: Number(t.height) } : {}),
-        }),
-      )
+          ...(audioFx ? { audioFx } : {}),
+          ...(duck ? { duck } : {}),
+        };
+      })
     : undefined;
 
   let tracks = resolveProjectTracks(savedTracks, mapped, transitions, clipGroups);
@@ -463,6 +470,7 @@ export async function applyProjectData(
     captionStyle,
     masterAudio,
     masterAudioMarkers: project.masterAudioMarkers ?? [],
+    masterBus: normalizeMasterBus(project.masterBus),
     colorGrade,
     finishing,
     colorManagement,

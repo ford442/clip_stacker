@@ -109,16 +109,16 @@ describe('mediaEngine insert effects', { timeout: 30_000 }, () => {
       },
     });
     expect(rows).toHaveLength(3 * MIX_FX_STRIDE);
-    expect(rows.slice(0, MIX_FX_STRIDE)).toEqual([2, 1, 120, 3, 0.7, 0, 0, 0, 0, 0]);
-    expect(rows.slice(MIX_FX_STRIDE, 2 * MIX_FX_STRIDE)).toEqual([4, 1, 60, 0, 0.7, 0, 0, 0, 0, 0]);
-    expect(rows.slice(2 * MIX_FX_STRIDE)).toEqual([5, 1, 0, 2, 0, -18, 3, 0.005, 0.12, 4]);
+    expect(rows.slice(0, MIX_FX_STRIDE)).toEqual([2, 1, 120, 3, 0.7, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(rows.slice(MIX_FX_STRIDE, 2 * MIX_FX_STRIDE)).toEqual([4, 1, 60, 0, 0.7, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect(rows.slice(2 * MIX_FX_STRIDE)).toEqual([5, 1, 0, 2, 0, -18, 3, 0.005, 0.12, 4, 0, 0, 0]);
     expect(
       packAudioEffectRows({
         eq: [{ type: 'peaking', frequency: 900, gainDb: -4, q: 2, enabled: false }],
         compressor: { enabled: false, thresholdDb: -18, ratio: 3, attack: 0.005, release: 0.12, kneeDb: 4, makeupDb: 2 },
       }),
     ).toEqual([]);
-    expect(packLimiterRow(LIMITER)).toEqual([6, 1, 0, 0, 0, -1, 0, 0.005, 0.08, 0]);
+    expect(packLimiterRow(LIMITER)).toEqual([6, 1, 0, 0, 0, -1, 0, 0.005, 0.08, 0, 0, 0, 0]);
     expect(packLimiterRow({ ...LIMITER, enabled: false })).toEqual([]);
   });
 
