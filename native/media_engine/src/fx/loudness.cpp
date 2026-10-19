@@ -21,8 +21,13 @@ constexpr double kOffset = -0.691;
  */
 constexpr double kAbsoluteGateEnergy = 1.1724653045822981e-07;
 constexpr double kNegInf = -std::numeric_limits<double>::infinity();
+/**
+ * Below this (about -130 LUFS) a window holds only the K-filters' decaying
+ * tail after the programme stopped: report silence, not "-560 LUFS".
+ */
+constexpr double kSilenceEnergy = 1e-13;
 
-double energy_to_lufs(double z) { return z > 0.0 ? kOffset + 10.0 * std::log10(z) : kNegInf; }
+double energy_to_lufs(double z) { return z > kSilenceEnergy ? kOffset + 10.0 * std::log10(z) : kNegInf; }
 
 double peak_db(float peak) { return peak > 0.f ? 20.0 * std::log10(static_cast<double>(peak)) : kNegInf; }
 

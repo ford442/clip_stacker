@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, forwardRef } from 'react';
+import { RenderPlanAudioNotes } from './audio/RenderPlanAudioNotes';
 import type { BrowserCapabilities } from '../utils/feature-detector';
 import { detectCapabilities } from '../utils/feature-detector';
 import { fetchDemoClips } from '../utils/demoClips';
@@ -378,6 +379,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
                 Force FFmpeg / Canvas renderer to preserve the shader look.
               </p>
             )}
+          <RenderPlanAudioNotes plan={renderPlan} />
           {renderPlan.ffmpegFinishingGaps && renderPlan.ffmpegFinishingGaps.length > 0 && (
             <p className="render-plan-warning" role="alert">
               ⚠ {renderPlan.ffmpegFinishingGaps.join(' and ')}{' '}

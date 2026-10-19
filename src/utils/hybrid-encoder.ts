@@ -141,12 +141,13 @@ export async function hybridMergeClips(
     delete keyed.pictureTransform;
     delete keyed.pictureTransformGaps;
     Object.assign(keyed, pictureTransformPlanFields(clips, path));
-    // Bus FX / ducks / loudness: what the premix reported, or `none` for the
-    // canvas path, which has no premix step.
+    // Bus FX / ducks / loudness: what the audio premix reported, or `none`
+    // when no premix ran for this render (the settings never reached it).
     delete keyed.audioFx;
     delete keyed.loudness;
     if (busActive) {
-      Object.assign(keyed, path === 'canvas' ? { audioFx: 'none' } : getLastExportAudioReport());
+      const report = getLastExportAudioReport();
+      Object.assign(keyed, report.audioFx ? report : { audioFx: 'none' });
     }
     return wideColorWhere
       ? stampWideColor(keyed, wideColorWhere, colorManagement)
