@@ -11,13 +11,13 @@
  * Curves are constant per clip (not automated).
  */
 
-export type AudioEqBandType = 'peaking' | 'lowShelf' | 'highShelf' | 'highPass';
+export type AudioEqBandType = 'peaking' | 'lowShelf' | 'highShelf' | 'highPass' | 'lowPass';
 
 export interface AudioEqBand {
   type: AudioEqBandType;
   /** Centre / corner frequency (Hz). */
   frequency: number;
-  /** Boost or cut (dB). Ignored by `highPass`. */
+  /** Boost or cut (dB). Ignored by `highPass` / `lowPass`. */
   gainDb: number;
   q: number;
   /** False = bypassed (kept so the settings survive a toggle). */
@@ -45,10 +45,14 @@ export interface ClipAudioEffects {
   compressor?: AudioCompressorSettings;
 }
 
-/** Look-ahead brickwall limiter on the export mix bus. */
+/**
+ * Look-ahead brickwall limiter on the export mix bus. True peak: it detects
+ * on a 4x-oversampled signal (ITU-R BS.1770-4 Annex 2), so neither samples
+ * nor the peaks between them exceed the ceiling.
+ */
 export interface MasterLimiterSettings {
   enabled: boolean;
-  /** Ceiling (dBFS): no exported sample exceeds it. */
+  /** Ceiling (dBTP). */
   ceilingDb: number;
   /** Look-ahead (seconds); also the bus delay the media engine compensates. */
   lookahead: number;
@@ -64,6 +68,7 @@ export const EQ_BAND_TYPES: ReadonlyArray<{ value: AudioEqBandType; label: strin
   { value: 'lowShelf', label: 'Low shelf' },
   { value: 'highShelf', label: 'High shelf' },
   { value: 'highPass', label: 'High-pass' },
+  { value: 'lowPass', label: 'Low-pass' },
 ];
 
 /** Ranges mirror the clamps in native/media_engine (eq.cpp / dynamics.cpp). */

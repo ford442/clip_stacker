@@ -6,6 +6,11 @@
  * `mix_timeline_audio_range`, uploading only the source frames each chunk
  * reads, so a 2-hour timeline never needs a full-length PCM buffer.
  *
+ * With insert effects or lane buses the stream drives a stateful fx session
+ * instead (`mediaEngineSession.ts`), which also runs the bus graph — lane
+ * chains, sidechain ducks, the master chain, loudness gain, final limiter
+ * and the output meter.
+ *
  * Feature gracefully disables when the module fails to load (no crash);
  * export premix falls back to OfflineAudioContext.
  */
@@ -21,8 +26,18 @@ import {
 } from './emscriptenLoader';
 import type { Keyframe } from '../utils/keyframes';
 import type { ClipAudioEffects, MasterLimiterSettings } from '../utils/audioEffects';
+import type { BusGraphPlan } from '../audio/fxGraph';
+import {
+  createBusSession,
+  createFxSession,
+  decodeMeterReading,
+  type FxSession,
+  type MediaEngineWasmModule as WasmModule,
+  type MixMeterReading,
+} from './mediaEngineSession';
 import {
   MEDIA_ENGINE_CHANNELS,
+  MIX_METER,
   MIX_ENTRY_FX_STRIDE,
   MIX_ENTRY_STRIDE,
   MIX_FLAG_EFFECTS,
@@ -37,8 +52,12 @@ import {
   sanitizedRate,
 } from './mediaEngineLayout';
 
+export { decodeMeterReading, type MixMeterReading } from './mediaEngineSession';
 export {
   MEDIA_ENGINE_CHANNELS,
+  MIX_BUS_FLAG_METER,
+  MIX_BUS_STRIDE,
+  MIX_METER,
   MIX_ENTRY_FX_STRIDE,
   MIX_ENTRY_STRIDE,
   MIX_FLAG_EFFECTS,
@@ -83,6 +102,8 @@ export interface MediaEngineMixEntry {
   panAutomation?: Keyframe[];
   /** Insert chain (EQ → compressor), run after resample and before the volume curve. */
   effects?: ClipAudioEffects;
+  /** Lane bus (`BusGraphPlan.laneIndex`) with the `bus` option; absent = the master sum. */
+  bus?: number;
 }
 
 export interface MixTimelineResult {
@@ -119,8 +140,15 @@ export interface TimelineMixStreamOptions {
   baseUrl?: string;
   /** Defaults to polyphase unless `?media_engine_resampler=linear`. */
   resampler?: 'polyphase' | 'linear';
-  /** Look-ahead limiter on the mix bus; omitted / disabled = none. */
+  /** Look-ahead limiter on the mix bus; omitted / disabled = none. Ignored with `bus`. */
   limiter?: MasterLimiterSettings | null;
+  /**
+   * Lane buses, master chain, output gain and final stage
+   * (`planBusGraph`). Entries route with `MediaEngineMixEntry.bus`.
+   */
+  bus?: BusGraphPlan | null;
+  /** Run the BS.1770 meter on the output (`TimelineMixStream.readMeters`). */
+  meter?: boolean;
 }
 
 export interface TimelineMixChunk {
@@ -131,56 +159,6 @@ export interface TimelineMixChunk {
   frames: Float32Array;
 }
 
-interface WasmModule {
-  _mix_timeline_audio_range(
-    outPtr: number,
-    outFrames: number,
-    startFrame: number,
-    outSampleRate: number,
-    outChannels: number,
-    pcmPtr: number,
-    pcmFloats: number,
-    slicesPtr: number,
-    sliceCount: number,
-    entriesPtr: number,
-    entryCount: number,
-    keyframesPtr: number,
-    keyframeCount: number,
-    flags: number,
-  ): number;
-  _mix_fx_session_create?(
-    outSampleRate: number,
-    outChannels: number,
-    stateCount: number,
-    effectsPtr: number,
-    effectCount: number,
-    busFirst: number,
-    busCount: number,
-  ): number;
-  _mix_fx_session_destroy?(session: number): void;
-  _mix_fx_session_latency?(session: number): number;
-  _mix_fx_session_range?(
-    session: number,
-    outPtr: number,
-    outFrames: number,
-    startFrame: number,
-    pcmPtr: number,
-    pcmFloats: number,
-    slicesPtr: number,
-    sliceCount: number,
-    entriesPtr: number,
-    entryCount: number,
-    keyframesPtr: number,
-    keyframeCount: number,
-    flags: number,
-  ): number;
-  _insert_chain_create?(designSampleRate: number, effectsPtr: number, effectCount: number): number;
-  _insert_chain_process?(chain: number, planarPtr: number, frames: number, channels: number): number;
-  _insert_chain_destroy?(chain: number): void;
-  _malloc(size: number): number;
-  _free(ptr: number): void;
-  HEAPU8: Uint8Array;
-}
 
 /** Module name shared with `timeStretch.ts` (one module, one heap). */
 export const MEDIA_ENGINE_MODULE = 'media_engine';
@@ -261,12 +239,6 @@ interface EntryState {
   released: boolean;
 }
 
-/** The C++ fx session behind a stream with inserts or a bus limiter. */
-interface FxSession {
-  handle: number;
-  /** Bus look-ahead (frames): entries are mixed this far ahead of the output. */
-  latency: number;
-}
 
 /**
  * Chunked timeline mix over the media-engine WASM. Obtain one from
@@ -335,6 +307,23 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
     this.mixRange(begin, frameCount, busBegin, busEnd, active);
     this.position = end;
     return { startFrame: begin, frameCount, frames: this.chunkOut.subarray(0, frameCount * this.channels) };
+  }
+
+  /**
+   * The output meter so far (`meter` option), or null without one. Covers
+   * every chunk produced; read after the last chunk for the whole programme.
+   */
+  readMeters(): MixMeterReading | null {
+    const fx = this.fx;
+    const mod = this.mod;
+    if (this.closed || !fx || typeof mod._mix_fx_session_meters !== 'function') return null;
+    const capacity = MIX_METER.laneGainReduction + fx.lanes;
+    const values = withHeap(mod, (heap) => {
+      const out = heap.alloc(capacity * 8);
+      const n = mod._mix_fx_session_meters!(fx.handle, out, capacity);
+      return n > 0 ? heap.readF64(out, n) : null;
+    });
+    return values ? decodeMeterReading(values) : null;
   }
 
   async *[Symbol.asyncIterator](): AsyncIterator<TimelineMixChunk> {
@@ -521,8 +510,9 @@ export async function openTimelineMixStream(
     }
   }
 
-  // Insert chains and the bus limiter need the stateful fx session; without
-  // either the stream stays on the stateless, bit-exact legacy entry point.
+  // Insert chains, buses and the bus limiter need the stateful fx session;
+  // without any of them the stream stays on the stateless, bit-exact legacy
+  // entry point.
   const fxValues: number[] = [];
   const fxRanges = schedule.map((entry) => {
     const first = fxValues.length / MIX_FX_STRIDE;
@@ -531,10 +521,20 @@ export async function openTimelineMixStream(
     return [first, packed.length / MIX_FX_STRIDE] as const;
   });
   const busFirst = fxValues.length / MIX_FX_STRIDE;
-  for (const v of packLimiterRow(options?.limiter)) fxValues.push(v);
-  const useFx = fxValues.length > 0;
+  const bus = options?.bus && (options.bus.processing || options.meter) ? options.bus : null;
+  const meter = Boolean(options?.meter && bus);
+  if (bus) {
+    for (const v of bus.effects) fxValues.push(v);
+  } else {
+    for (const v of packLimiterRow(options?.limiter)) fxValues.push(v);
+  }
+  const useFx = fxValues.length > 0 || bus !== null;
   if (useFx && typeof mod._mix_fx_session_create !== 'function') {
     // A stale cached module without the fx exports: no inserts rather than wrong ones.
+    lastMixBackend = 'unavailable';
+    return null;
+  }
+  if (bus && typeof mod._mix_bus_session_create !== 'function') {
     lastMixBackend = 'unavailable';
     return null;
   }
@@ -561,6 +561,7 @@ export async function openTimelineMixStream(
       rows[base + 12] = fxRanges[i]![0];
       rows[base + 13] = fxRanges[i]![1];
       rows[base + 14] = i; // filter-state slot: stable across chunks
+      rows[base + 15] = bus && e.bus != null ? e.bus : -1;
     }
   }
   // A heap that cannot hold one chunk's output will not mix: fall back now
@@ -572,12 +573,14 @@ export async function openTimelineMixStream(
 
   let fx: FxSession | null = null;
   if (useFx) {
-    const handle = createFxSession(mod, sampleRate, channels, schedule.length, fxValues, busFirst);
+    const handle = bus
+      ? createBusSession(mod, sampleRate, channels, schedule.length, fxValues, busFirst, bus, meter)
+      : createFxSession(mod, sampleRate, channels, schedule.length, fxValues, busFirst);
     if (!handle) {
       lastMixBackend = 'unavailable';
       return null;
     }
-    fx = { handle, latency: mod._mix_fx_session_latency!(handle) };
+    fx = { handle, latency: mod._mix_fx_session_latency!(handle), lanes: bus ? bus.laneTrackIds.length : 0 };
   }
 
   lastMixBackend = 'wasm';
@@ -596,30 +599,7 @@ export async function openTimelineMixStream(
   );
 }
 
-/** Session handle (0 on failure). The session copies the effect rows. */
-function createFxSession(
-  mod: WasmModule,
-  sampleRate: number,
-  channels: number,
-  stateCount: number,
-  fxValues: number[],
-  busFirst: number,
-): number {
-  const effectCount = fxValues.length / MIX_FX_STRIDE;
-  return (
-    withHeap(mod, (heap) =>
-      mod._mix_fx_session_create!(
-        sampleRate,
-        channels,
-        stateCount,
-        heap.f64(fxValues),
-        effectCount,
-        busFirst,
-        effectCount - busFirst,
-      ),
-    ) ?? 0
-  );
-}
+
 
 /**
  * Mix scheduled clip PCM into one interleaved buffer (streams internally).

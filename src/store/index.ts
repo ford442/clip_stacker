@@ -15,6 +15,7 @@ export {
   useEditorCaptionStyle,
   useEditorMasterAudio,
   useEditorMasterAudioMarkers,
+  useEditorMasterBus,
   useSelectedClipId,
   useIsClipSelected,
   useCanUndo,

@@ -47,6 +47,9 @@ export function useAutoSave({
   enabled?: boolean;
 }) {
   const exportSettings = useStore(settingsStore, (s) => s.exportSettings);
+  // Subscribed (not read through the store in `persist`) so a bus edit alone
+  // schedules a save like any other edit.
+  const masterBus = useStore(editorStore, (s) => s.masterBus);
   const [recoveryOffer, setRecoveryOffer] = useState<AutoSaveOffer | null>(() =>
     readAutoSaveOffer(),
   );
@@ -69,6 +72,7 @@ export function useAutoSave({
       editorStore.getState().captions,
       editorStore.getState().captionStyle,
       settingsStore.getState().colorManagement,
+      masterBus,
     );
     if (stateHash === lastSavedHashRef.current) return;
 
@@ -90,7 +94,7 @@ export function useAutoSave({
         textOverlays,
         clipGroups,
         tracks,
-        { colorManagement: settingsStore.getState().colorManagement },
+        { colorManagement: settingsStore.getState().colorManagement, masterBus },
         editorStore.getState().captions,
         editorStore.getState().captionStyle,
       );
@@ -107,6 +111,7 @@ export function useAutoSave({
           {
             forceMetadataOnly: true,
             colorManagement: settingsStore.getState().colorManagement,
+            masterBus,
           },
           editorStore.getState().captions,
           editorStore.getState().captionStyle,
@@ -133,6 +138,7 @@ export function useAutoSave({
     clipGroups,
     selectedClipId,
     exportSettings,
+    masterBus,
   ]);
 
   useEffect(() => {
@@ -180,6 +186,7 @@ export function useAutoSave({
         invalidColorWarnings,
         mediaDownloadWarnings,
         colorManagement: restoredColor,
+        masterBus: restoredMasterBus,
       } = await applyProjectData(session.project, []);
 
       const selectedId =
@@ -202,6 +209,7 @@ export function useAutoSave({
         masterAudioMarkers: session.project.masterAudioMarkers ?? [],
         selectedClipId: selectedId,
         masterAudio: null,
+        ...(restoredMasterBus ? { masterBus: restoredMasterBus } : {}),
       });
       const { setStatus, setExportSettings } = settingsStore.getState();
       if (session.exportSettings) {
@@ -232,6 +240,7 @@ export function useAutoSave({
         restoredCaptions,
         restoredCaptionStyle,
         restoredColor,
+        restoredMasterBus,
       );
     } catch (error) {
       settingsStore.getState().setStatus(`Could not recover autosave: ${(error as Error).message}`);

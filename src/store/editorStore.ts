@@ -21,6 +21,8 @@ import {
   getEffectiveTimelineClips,
   removeTrack as removeTrackFromList,
   renameTrack as renameTrackInList,
+  setTrackAudioFx as setTrackAudioFxInList,
+  setTrackDuck as setTrackDuckInList,
   setTrackHeight as setTrackHeightInList,
   setTrackLocked as setTrackLockedInList,
   setTrackMuted as setTrackMutedInList,
@@ -39,6 +41,12 @@ import type { EditState } from '../utils/editModes';
 import { normalizeCaptions } from '../utils/subtitles';
 import { planAddClip } from '../utils/planAddClip';
 import type { FinishingSettings } from '../utils/finishing';
+import {
+  normalizeMasterBus,
+  type BusEffect,
+  type LaneDuck,
+  type MasterBusSettings,
+} from '../utils/audioBus';
 import { settingsStore } from './settingsStore';
 
 /**
@@ -79,6 +87,8 @@ export interface EditorState {
   masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
   masterAudio: MasterAudio | null;
+  /** Master bus FX and export loudness target (`utils/audioBus.ts`); undefined = none. */
+  masterBus: MasterBusSettings | undefined;
   /** Undo/redo depths, published so `canUndo`/`canRedo` re-render on change. */
   undoDepth: number;
   redoDepth: number;
@@ -101,6 +111,16 @@ export interface EditorState {
   setTrackHeight: (trackId: string, height: number) => void;
   /** Rename a lane. */
   renameTrack: (trackId: string, label: string) => void;
+  /**
+   * Replace a lane's bus FX chain as one undo step. `coalesce` (a stable key
+   * per drag, e.g. `busfx:${trackId}`) folds rapid slider moves into one step.
+   * Locked and titles lanes refuse the edit.
+   */
+  setTrackAudioFx: (trackId: string, fx: BusEffect[] | undefined, coalesce?: string) => void;
+  /** Set a lane's ducking (sidechain / `'off'` / legacy); same rules as `setTrackAudioFx`. */
+  setTrackDuck: (trackId: string, duck: LaneDuck | undefined, coalesce?: string) => void;
+  /** Replace the master bus (FX + loudness target) as one undo step. */
+  setMasterBus: (next: MasterBusSettings | undefined, coalesce?: string) => void;
   /**
    * Commit a pure edit-mode result (`utils/editModes.ts`) as one undo step:
    * lane placements, clip trims and base-lane transitions change together, so a
@@ -167,6 +187,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       masterAudioMarkers: state.masterAudioMarkers,
       selectedClipId: state.selectedClipId,
       masterAudio: state.masterAudio,
+      ...(state.masterBus ? { masterBus: state.masterBus } : {}),
     };
   };
 
@@ -193,6 +214,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
         masterAudio: snapshot.masterAudio
           ? { ...snapshot.masterAudio, objectUrl: snapshot.masterAudio.objectUrl }
           : null,
+        masterBus: snapshot.masterBus ? structuredClone(snapshot.masterBus) : undefined,
       });
       if (snapshot.finishing) {
         settingsStore.getState().setFinishing(structuredClone(snapshot.finishing));
@@ -221,6 +243,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     masterAudioMarkers: [],
     selectedClipId: null,
     masterAudio: null,
+    masterBus: undefined,
     undoDepth: 0,
     redoDepth: 0,
 
@@ -255,6 +278,27 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     renameTrack: (trackId, label) => {
       pushHistory();
       set((s) => ({ tracks: renameTrackInList(s.tracks, trackId, label) }));
+    },
+    setTrackAudioFx: (trackId, fx, coalesce) => {
+      const next = setTrackAudioFxInList(get().tracks, trackId, fx);
+      if (next === get().tracks) return;
+      if (coalesce) get().pushHistoryDebounced(coalesce);
+      else pushHistory();
+      set({ tracks: next });
+    },
+    setTrackDuck: (trackId, duck, coalesce) => {
+      const next = setTrackDuckInList(get().tracks, trackId, duck);
+      if (next === get().tracks) return;
+      if (coalesce) get().pushHistoryDebounced(coalesce);
+      else pushHistory();
+      set({ tracks: next });
+    },
+    setMasterBus: (raw, coalesce) => {
+      const next = normalizeMasterBus(raw);
+      if (JSON.stringify(next ?? null) === JSON.stringify(get().masterBus ?? null)) return;
+      if (coalesce) get().pushHistoryDebounced(coalesce);
+      else pushHistory();
+      set({ masterBus: next });
     },
     commitEdit: (next) => {
       pushHistory();
@@ -442,6 +486,9 @@ export const useEditorTotalDuration = () =>
     ),
   );
 
+/** The master bus settings (FX chain + loudness target). */
+export const useEditorMasterBus = () => useStore(editorStore, (s) => s.masterBus);
+
 /** Per-row selection subscription — only re-renders when this clip's selected state toggles. */
 export const useIsClipSelected = (clipId: string) =>
   useStore(editorStore, (s) => s.selectedClipId === clipId);
@@ -470,6 +517,9 @@ export const editorActions: Pick<
   | 'toggleTrackLocked'
   | 'setTrackHeight'
   | 'renameTrack'
+  | 'setTrackAudioFx'
+  | 'setTrackDuck'
+  | 'setMasterBus'
   | 'commitEdit'
   | 'addClip'
   | 'setClipGroups'
@@ -507,6 +557,7 @@ export function __resetEditorStoreForTests(): void {
     masterAudioMarkers: [],
     selectedClipId: null,
     masterAudio: null,
+    masterBus: undefined,
     undoDepth: 0,
     redoDepth: 0,
   });
