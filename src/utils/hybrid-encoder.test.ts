@@ -427,8 +427,8 @@ describe('utils/hybrid-encoder', () => {
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({ willReencode: false, path: 'lossless-concat' });
       const matchedClips = [
-        createTestClip('a', 5, { videoWidth: 1280, videoHeight: 720 }),
-        createTestClip('b', 3, { videoWidth: 1280, videoHeight: 720 }),
+        createTestClip('a', 5, { videoWidth: 1920, videoHeight: 1080 }),
+        createTestClip('b', 3, { videoWidth: 1920, videoHeight: 1080 }),
       ];
 
       const result = await hybridMergeClips(

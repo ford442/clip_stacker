@@ -39,8 +39,8 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   preset: 'medium',
   videoBitrate: 8_000_000,
   filename: 'stacked',
-  outputResolution: RESOLUTION_PRESETS['720p'],
-  resolutionPreset: '720p',
+  outputResolution: RESOLUTION_PRESETS['1080p'],
+  resolutionPreset: '1080p',
   videoCodec: 'h264',
 };
 
