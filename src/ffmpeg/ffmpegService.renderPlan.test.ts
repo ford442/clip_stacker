@@ -67,8 +67,8 @@ describe("calculateRenderPlan", () => {
 
   it('does not force re-encoding for loopCount 1 (default, matches current behavior)', () => {
     const clips = [
-      makeClip({ videoWidth: 1280, videoHeight: 720, loopCount: 1 }),
-      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1280, videoHeight: 720 }),
+      makeClip({ videoWidth: 1920, videoHeight: 1080, loopCount: 1 }),
+      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1920, videoHeight: 1080 }),
     ];
 
     const plan = calculateRenderPlan(clips, [], [], DEFAULT_EXPORT_SETTINGS);
@@ -79,8 +79,8 @@ describe("calculateRenderPlan", () => {
 
   it('uses lossless concat when fixed resolution already matches all clips', () => {
     const clips = [
-      makeClip({ videoWidth: 1280, videoHeight: 720 }),
-      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1280, videoHeight: 720 }),
+      makeClip({ videoWidth: 1920, videoHeight: 1080 }),
+      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1920, videoHeight: 1080 }),
     ];
 
     const plan = calculateRenderPlan(clips, [], [], DEFAULT_EXPORT_SETTINGS);
