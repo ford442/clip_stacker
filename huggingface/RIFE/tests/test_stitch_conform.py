@@ -634,3 +634,16 @@ def test_separate_runs_claim_chunks_independently(app, monkeypatch):
     assert app.advance_batch_job(first) is not None
     assert app.advance_batch_job(second) is not None
     assert len(calls) == 2
+
+
+def test_make_batch_zip_keeps_parentheses(tmp_path, monkeypatch):
+    import zipfile
+    app.WORKSPACE_DIR = str(tmp_path)
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"data")
+    named = tmp_path / "shot (1).mp4"
+    named.write_bytes(b"data")
+    job = {"run": "abc", "results": [str(named)]}
+    zip_path = app.make_batch_zip(job)
+    with zipfile.ZipFile(zip_path) as zf:
+        assert "shot (1).mp4" in zf.namelist()
