@@ -10,8 +10,12 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - Reorder clips in a timeline editor
 - Apply per-clip fade in/out controls for video and audio
 - **Picture-in-Picture overlays**: select a video clip and hit **Use as overlay (PiP)** in the Inspector to composite it over the base video in any corner; **Use as base layer** puts it back. Size, position and opacity stay editable under *Picture-in-Picture layout (advanced)*
+- **Channel logos / bugs**: **Use as channel logo** snaps the clip to a corner at ~10% of the canvas width, locked to the source's own aspect ratio, muted, and keyed on the source alpha — so a non-square mark composites without a black box on both the GPU export and the FFmpeg fallback. Transparency mode is editable under *Picture-in-Picture layout (advanced)*: source alpha (straight or premultiplied), chroma key, luma key, or an opaque rectangle. The mask has to exist in the file: use PNG/WebP for stills and WebM (VP8/VP9 + alpha) for motion — H.264 MP4 carries no alpha, so key those with chroma/luma instead. Chroma and luma keying run in the compositor itself (`src/utils/overlayKey.ts` — one `keyPixel()` shared by the WGSL shader, the Canvas2D path, and the unit tests), so the Inspector's sliders update the live preview and the default WebGPU + WebCodecs export matches it. FFmpeg's `chromakey` / `lumakey` stay as the Force-FFmpeg fallback and are tuned to the same maths, so the two paths look alike rather than merely similar. The render-plan line under the toolbar says which one ran
+- **News tickers / lower thirds**: use a scrolling text overlay (`scrolling` + `scrollSpeed`), which matches between preview and FFmpeg `drawtext`. Only bake a designed motion lower third to video (as WebM + alpha, placed as a full-width bottom overlay) when `drawtext` cannot express it
+- **Captions / subtitles**: a time-coded caption track with its own timeline lane. Import `.srt` / `.ass`, edit text and timings in the Inspector's *Captions* tab, drag a chip's edges to retime, press <kbd>C</kbd> to add a cue at the playhead, and export burned-in, as a toggle-able soft subtitle track, or as a sidecar `.srt` — see [Captions and subtitles](#captions-and-subtitles)
+- **Resizable workspace**: drag the splitters between Library, Preview and Inspector, and the divider above the timeline (or focus one and use the arrow keys; double-click resets it). Collapse the side panels, pick S / M / L control density, fill the window or centre it, and **Reset layout** from the header. The layout is remembered per browser
 - Merge timeline into one MP4 via FFmpeg (WebAssembly, fully in-browser)
-- **Intercut generator**: pick two or three library clips and bake an accelerating strobe (local FFmpeg concat — no cloud GPU / RIFE)
+- **Intercut generator**: pick two or three library clips and bake an accelerating strobe or explicit interval-list cut pattern (for example `2, 1, 1, 2, 3, 2`) via local FFmpeg (frame-accurate cuts; sound can follow picture, or every source can stay a steady audio stream for the whole output) — no cloud GPU / RIFE
 - **Intelligent render plan**: Before rendering, see whether the merge will be lossless concat (fast, no quality loss) or re-encoding, with the specific reason
 - Save/load projects locally as JSON with embedded source media
 - Save/load projects remotely via a contabo_storage_manager-compatible HTTP endpoint with uploaded source media ([ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager))
@@ -30,10 +34,19 @@ When you click "Render", the app automatically decides whether to use **lossless
 
 The app shows you the plan and reason before rendering starts, so you understand why a "simple" merge might take longer or look slightly different.
 
+## Hugging Face RIFE
+
+Frame interpolation for the app runs on the Space sourced from
+[`huggingface/RIFE/`](huggingface/RIFE/)
+([1inkusFace/RIFE](https://huggingface.co/spaces/1inkusFace/RIFE)).
+To run that same v4.26 pipeline on a Colab GPU:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ford442/clip_stacker/blob/main/huggingface/RIFE/RIFE_Colab.ipynb)
+
 ## Tech Stack
 
 - React 18 + TypeScript
-- Vite 5 (bundler and dev server)
+- Vite 8 (bundler and dev server; Node `^20.19.0 || >=22.12.0`)
 - FFmpeg WebAssembly (`@ffmpeg/ffmpeg`)
 - WebGPU preview compositor (shared device) + **gpu-chores** for import histogram / library thumbs (CPU/Worker fallback; never a second `GPUDevice`)
 
@@ -67,6 +80,8 @@ npm run preview
 
 ```bash
 npm run typecheck   # tsc --noEmit, matches the CI gate
+npm run lint        # ESLint: 0 errors required, warnings allowed
+npm run check:cycles  # madge: 0 import cycles in src/
 npm test -- --run   # Vitest suite
 ```
 
@@ -80,7 +95,7 @@ npm run deploy
 
 Runs `npm run build` then uploads `dist/` to `test.1ink.us/clip-stacker` via SFTP using `deploy.py`.
 
-For Apache deployments, `public/.htaccess` is copied into `dist/` during the build so the deployed `/clip-stacker/` directory serves the required COOP/COEP headers for FFmpeg WASM, plus a `Content-Security-Policy` header aligned with the CSP meta tag in `index.html`. nginx deployments still need the equivalent headers configured in the server's location block.
+For Apache deployments, `public/.htaccess` is copied into `dist/` during the build so the deployed `/clip-stacker/` directory serves the required COOP/COEP headers for FFmpeg WASM, plus a `Content-Security-Policy` header matching `src/utils/csp.ts` (a test fails if they drift). nginx deployments still need the equivalent headers configured in the server's location block.
 
 ### Content-Security-Policy
 
@@ -91,6 +106,12 @@ The app ships with a CSP that allows:
 - `https:` / `wss:` for user-configurable storage endpoints, CDN fallbacks, and HuggingFace RIFE
 
 `connect-src` and `media-src` intentionally allow `https:` because storage endpoints and signed media URLs are not known at build time.
+
+The policy lives only in `src/utils/csp.ts`: `cspMetaPlugin` writes the `<meta>` tag into `index.html` at build time (do not hand-write one — the build refuses it), and `vite.config.ts` sends the same policy as the dev/preview header.
+
+### Self-hosted FFmpeg cores
+
+Both FFmpeg cores are served from the app itself — `public/ffmpeg-core/` (single-threaded) and `public/ffmpeg-core-mt/` (multi-threaded, used when the page is cross-origin isolated) — with jsDelivr/unpkg only as fallbacks. They are copied verbatim from the `@ffmpeg/core` / `@ffmpeg/core-mt` devDependencies by `npm run sync:ffmpeg-core`; after bumping either package, run it, update `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts`, and commit `public/`. `npm run sync:ffmpeg-core -- --check` fails when they disagree.
 
 ### Storage backend hardening
 
@@ -110,7 +131,6 @@ clip_stacker/
 ├── public/
 │   └── .htaccess          # Apache headers for SharedArrayBuffer/FFmpeg WASM
 ├── deploy.py              # SFTP deployment script
-├── git.sh                 # Git helper script
 ├── src/
 │   ├── main.tsx           # React app bootstrap
 │   ├── App.tsx            # Root component, app-level state
@@ -123,15 +143,55 @@ clip_stacker/
 │   ├── utils/
 │   │   ├── media.ts       # Media loading helpers (duration, objectURL)
 │   │   └── project.ts     # Project serialization and storage client
-│   └── components/
-│       ├── Toolbar.tsx    # Add clips / render / save / load buttons
-│       ├── StorageRow.tsx # Remote storage endpoint controls
-│       ├── ClipLibrary.tsx # Clip list panel
-│       ├── Inspector.tsx  # Per-clip trim and fade editor
-│       ├── Preview.tsx    # Video/audio preview and download link
-│       └── Timeline.tsx   # Ordered timeline with reorder controls
+│   ├── components/
+│   │   ├── Toolbar.tsx    # Add clips / render / save / load buttons
+│   │   ├── StorageRow.tsx # Remote storage endpoint controls
+│   │   ├── ClipLibrary.tsx # Clip list panel
+│   │   ├── Inspector.tsx  # Per-clip trim and fade editor
+│   │   ├── Preview.tsx    # Video/audio preview and download link
+│   │   └── Timeline.tsx   # Ordered timeline with reorder controls
+│   └── wasm/              # emscriptenLoader.ts (load + heap boundary) and module bindings
+├── native/                # C++ WASM (CMake + Emscripten)
+│   ├── toolchain.cmake    # Shared compile/link flags
+│   ├── emsdk-version      # Pinned Emscripten SDK (CI + committed artifacts)
+│   ├── common/include/    # cs_status.h, cs_alloc.h, cs_math.h
+│   ├── audio_analysis/    # kissfft bands + beat envelope
+│   ├── video_stabilize/   # Lucas–Kanade affine matrices
+│   ├── media_engine/      # Timeline PCM mix, insert FX, lane buses / loudness, WSOLA time stretch
+│   └── whisper/           # Opt-in auto-caption module (whisper.cpp, not committed)
+├── public/wasm/           # Committed .js/.wasm artifacts
 └── dist/                  # Built output (generated by npm run build)
 ```
+
+## Native WASM modules
+
+Rebuild with the Emscripten SDK pinned in `native/emsdk-version` (6.0.6, what
+CI uses; any SDK >= 3.1.64 builds, but only the pinned one reproduces the
+committed bytes):
+
+```bash
+npm run build:wasm            # every module via CMake → public/wasm
+npm run build:wasm:debug      # -O0 -g, ASSERTIONS → native/build-debug/wasm; load with ?wasm_debug
+npm run build:whisper         # opt-in auto-caption module (clones whisper.cpp)
+npm run test:native           # host (non-Emscripten) DSP tests via ctest, -Werror + ASan/UBSan
+```
+
+The configure also exports `compile_commands.json` for clangd — see
+[`native/README.md`](native/README.md#clangd) (`WASM_BUILD_DIR`, `--query-driver`).
+
+CI fails if `public/wasm/` drifts from a clean rebuild, or if any module's gzipped `.wasm` exceeds **200 KB**.
+
+| Module | Role | TS binding |
+|--------|------|------------|
+| `audio_analysis` | FFT bands + beat envelope | `src/wasm/audioAnalysis.ts` |
+| `video_stabilize` | Optical-flow affine | `src/wasm/videoStabilize.ts` |
+| `media_engine` | Timeline mix / resample / insert FX / lane buses / loudness | `src/wasm/mediaEngine.ts` |
+| `media_engine` | WSOLA rate remap | `src/wasm/timeStretch.ts` |
+| `media_engine_fx` | The bus graph alone, glue-free, for the preview AudioWorklet | `src/wasm/audioFx.ts` |
+
+Export premix runs on the media engine when it loads: polyphase resampling, volume/pan automation curves and fades in C++, streamed in chunks straight into the AAC encoder, so long timelines no longer hit the 45-minute `OfflineAudioContext` cap. Disable with `?no_media_engine` to force `OfflineAudioContext` (and, past 45 minutes, FFmpeg audio mux). Do not put mix/EQ DSP in `canvas-renderer` or FFmpeg `filter_complex`.
+
+Each lane is also a bus (the lane header's **FX**): an insert chain (EQ, compressor, gate, de-esser, true-peak limiter) and an optional sidechain duck under another lane; the Master row has master-bus FX and a BS.1770 **LUFS** meter, and Export → **Loudness** normalizes the delivered mix to a target (−14 / −16 / −23 LUFS or custom) in two passes with a true-peak ceiling. Preview runs the same C++ bus graph in an AudioWorklet (`?no_audio_fx` turns it off).
 
 ## Notes on project persistence
 
@@ -147,6 +207,28 @@ Remote save/load expects an endpoint compatible with:
 **Canonical endpoint path:** `/webhook/clip-stacker`
 
 Example full URL: `https://storage.example.com/webhook/clip-stacker`
+
+### Preview proxies
+
+Big camera files (4K, multicam stacks) can get a **preview proxy**: click
+**Build proxy** on a library row. One clip builds at a time in the background
+(badge: *Original* → *Building n%* → *Proxy*). A proxy is H.264, short side
+960 px, the source frame rate capped at 30 (a 24 fps source stays 24), long
+GOP, no audio — the preview's audio graph still reads the original's sound.
+
+- Scrub, playback and stabilization analysis read the proxy. **Export, Force
+  FFmpeg and every path that writes the deliverable always read the original
+  file**, so the output resolution never comes from the proxy.
+- *Use proxies for playback* (in the Library, shown once a proxy exists) turns
+  them off for the session; preview then decodes originals and looks the same.
+- Saved projects keep a small `proxy` record per clip (`profile`, source
+  `hash`, `width`, `height`) — never the bytes. The bytes live in the
+  working-media store keyed by `(sourceHash, profile)`; deleting the last clip
+  that uses a proxy deletes it, and an undo writes it back while it is still
+  in memory.
+- **Until the persistent media store (#279) lands, that store is in memory**:
+  proxies do not survive a reload, and a reloaded project falls back to the
+  original (badge *Original*) until the proxy is rebuilt.
 
 ### Authentication
 
@@ -180,6 +262,74 @@ Text overlays can use a procedural shader fill (plasma, gradient, etc.) instead 
 | Canvas audio-reactive renderer | ❌ No — text overlays aren't composited on this path |
 
 If a render falls back to FFmpeg, the app warns in the status bar and on the render plan summary. Switch a shader overlay's Fill to Solid in the Text Overlay panel if you need the exact same look on every export path.
+
+### Captions and subtitles
+
+Captions are a separate track from text overlays: one list of time-coded cues
+(`CaptionEntry`) that round-trips through subtitle files rather than a pile of
+individually timed overlays.
+
+**Editing.** The **CC** lane sits under the timeline ruler. Click a chip to
+select it, drag either edge to retime it, or double-click empty lane space to
+add a cue there. <kbd>C</kbd> adds a cue at the preview playhead. Text, exact
+timings, and the project-wide style live in the Inspector's **Captions** tab.
+
+**Import.** *Import .srt / .ass* replaces the caption track with the cues from
+the file (undoable). The SubRip parser is deliberately lenient — CRLF and lone
+CR line endings, a UTF-8 BOM, missing sequence numbers, missing blank lines
+between cues, `.`-separated milliseconds and trailing SubRip coordinates all
+parse. ASS/SSA import reads the `[Events]` section's dialogue rows and strips
+inline override tags; styling comes from the project's caption style.
+
+**Export.** Three modes, chosen under *Caption export* in the Captions tab:
+
+| Mode | What you get | Cost |
+| --- | --- | --- |
+| Off | Captions stay on the timeline only | — |
+| Burn into video | Cues drawn into the picture with libass (`ass` filter) | One extra video re-encode; audio is stream-copied |
+| Soft subtitle track | A `mov_text` track players can toggle (VLC, QuickTime, Chrome) | Stream copy only |
+
+*Export .srt* downloads the track as a sidecar file with no re-encode at all.
+
+Burn-in is drawn by the compositor when the GPU (WebCodecs) path runs: the
+cues land in the same pass as the titles, so there is no second video encode.
+Every other case — the soft `mov_text` mux, Force FFmpeg, and no-WebGPU
+machines — still goes through the **post-pass over the finished MP4**
+(`src/ffmpeg/captions.ts`), which is why that post-pass stays. The soft mux is
+a stream copy either way and never burns anything into the picture.
+
+**Style.** One project-wide style with optional per-cue overrides, sharing the
+`TextOverlayStyle` fields (font, size, colour, background box, position). Note
+the anchor differs from a text overlay: a caption's `x`/`y` place its *bottom
+centre*, which is how subtitles are conventionally positioned. Burn-in
+generates an ASS document with one `Style:` row per distinct override, so
+per-cue styling survives.
+
+**Auto-captioning** transcribes the timeline (or just the selected clip) into
+cues. *Auto-caption* in the Captions tab mixes the audio exactly as the export
+premix does — trims, mute, volume automation and speed remaps included — hands
+it to a `CaptionProvider`, and puts the result on the CC lane as one undo step.
+Choose *Merge with existing cues* to keep what is already there; otherwise the
+track is replaced. Cancelling leaves the previous track untouched.
+
+Two providers ship, both behind `src/utils/captionProvider.ts` so the caption
+feature knows nothing about any model:
+
+| id | Runs | Needs |
+|----|------|-------|
+| `whisper-wasm` | In the page, in a worker | `public/wasm/whisper.js` (`npm run build:whisper`) + a ggml model (`public/models/ggml-tiny-q5_1.bin` by default, cached in IndexedDB) |
+| `whisper-http` | Your own server | An `https://` endpoint typed into the Captions tab; audio is POSTed as a WAV |
+
+Neither is required. Both WASM build and weights are optional downloads and are
+not committed, so with nothing deployed the Captions tab shows a one-line reason
+instead of the button — the same "missing WASM disables the feature" rule the
+audio analysis module follows. Only `tiny`/`base` are realistic in a tab;
+`small`+ belongs on a server. No API key is stored in the client: the HTTP
+provider expects an endpoint you control. See `native/whisper/README.md`.
+
+Captions are **drawn in the preview** at their CC-lane timings, bottom-centre
+anchored with the resolved per-cue style. *Show captions in preview* in the
+Inspector's Captions tab turns the overlay off without touching the track.
 
 ### Fonts for text overlays
 

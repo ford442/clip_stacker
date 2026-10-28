@@ -9,16 +9,17 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { audioVolumeFilterSegment } from "../utils/audioVolume";
 import {
   audioTempoFilterSegment,
   getClipPlaybackRate,
 } from "../utils/playbackRate";
+import { audioReversePrefix } from "../utils/reverseClip";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   renderTimelineAudioMixWav,
-  timelineHasAudioAutomation,
+  timelineNeedsAudioPremix,
 } from "../utils/webcodecs-audio";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import type { MasterAudio } from "../types";
@@ -341,10 +342,11 @@ export async function muxVideoWithAudio(
     0,
   );
 
-  // Volume/pan automation cannot be expressed as FFmpeg volume filters —
-  // offline-mix in the browser and mux the premixed WAV.
-  if (timelineHasAudioAutomation(clips)) {
-    onStatus("Rendering automated audio mix (OfflineAudioContext)...");
+  // Volume/pan automation, insert effects, lane buses, audio lanes and the bus
+  // limiter are not FFmpeg filters — offline-mix in the browser and mux the
+  // premixed WAV.
+  if (timelineNeedsAudioPremix(clips)) {
+    onStatus("Rendering automated audio mix...");
     emitProgress(onProgress, "Premixing automated audio", 0.88, true);
     const wavBytes = await renderTimelineAudioMixWav(
       clips,
@@ -417,7 +419,7 @@ export async function muxVideoWithAudio(
     const safeAudioOut = Math.max(0, duration - clip.audioFadeOut);
     const atempo = audioTempoFilterSegment(getClipPlaybackRate(clip));
 
-    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo}`;
+    let af = `[${inputIdx}:a]atrim=start=${trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS${atempo}`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAudioOut}:d=${clip.audioFadeOut}`;

@@ -1,3 +1,4 @@
+import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { StrictMode } from 'react';
@@ -7,6 +8,8 @@ import {
   editorStore,
 } from '../store/editorStore';
 import { createDefaultTracks } from '../utils/trackModel';
+import { __resetPlaybackStoreForTests, playbackStore } from '../store/playbackStore';
+import { DEFAULT_PIXELS_PER_SECOND } from '../utils/timelineLayout';
 import { planAddClip } from '../utils/planAddClip';
 import type { Clip } from '../types';
 
@@ -44,6 +47,7 @@ describe('Timeline render stability', () => {
     }
     container = null;
     __resetEditorStoreForTests();
+    __resetPlaybackStoreForTests();
   });
 
   it('does not exceed React update depth when a clip is added', async () => {
@@ -71,6 +75,8 @@ describe('Timeline render stability', () => {
           onMoveToTrack={noop}
           onTransitionUpdate={noop}
           onDelete={noop}
+          onCaptionResize={noop}
+          onCaptionAdd={noop}
         />
         <RenderProbe onRender={() => (renderCount += 1)} />
       </StrictMode>,
@@ -78,6 +84,60 @@ describe('Timeline render stability', () => {
 
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(renderCount).toBeLessThan(40);
+  });
+
+  it('moves the playhead from the ruler without any preview running', async () => {
+    const clip = makeClip('a');
+    const plan = planAddClip([], createDefaultTracks(), [], clip);
+    editorStore.setState({ clips: plan.clips, tracks: plan.tracks!, selectedClipId: clip.id });
+    const noop = () => undefined;
+
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(
+        <Timeline
+          onMoveUp={noop}
+          onMoveDown={noop}
+          onReorder={noop}
+          onMoveToTrack={noop}
+          onTransitionUpdate={noop}
+          onDelete={noop}
+          onCaptionResize={noop}
+          onCaptionAdd={noop}
+        />,
+      );
+    });
+
+    const ruler = container.querySelector<HTMLElement>('.timeline-ruler')!;
+    expect(ruler).not.toBeNull();
+    expect(container.querySelector('.timeline-playhead')).toBeNull();
+
+    // happy-dom lays nothing out, so the ruler's left edge is 0 and clientX is the offset.
+    const pointer = (type: string, clientX: number) =>
+      ruler.dispatchEvent(
+        new PointerEvent(type, { clientX, pointerId: 1, button: 0, bubbles: true }),
+      );
+    await act(async () => {
+      pointer('pointerdown', 2 * DEFAULT_PIXELS_PER_SECOND);
+    });
+    expect(playbackStore.getState().scrubbing).toBe(true);
+    expect(playbackStore.getState().playheadTime).toBeCloseTo(2, 5);
+
+    await act(async () => {
+      pointer('pointermove', 3 * DEFAULT_PIXELS_PER_SECOND);
+    });
+    expect(playbackStore.getState().playheadTime).toBeCloseTo(3, 5);
+    expect(container.querySelector('.timeline-playhead')).not.toBeNull();
+
+    // Dragging past the end clamps to the clip's duration.
+    await act(async () => {
+      pointer('pointermove', 99 * DEFAULT_PIXELS_PER_SECOND);
+      pointer('pointerup', 99 * DEFAULT_PIXELS_PER_SECOND);
+    });
+    expect(playbackStore.getState().playheadTime).toBeCloseTo(5, 5);
+    expect(playbackStore.getState().scrubbing).toBe(false);
   });
 });
 

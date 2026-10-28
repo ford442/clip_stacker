@@ -18,15 +18,17 @@ import type { Keyframe } from '../utils/keyframes';
 import { sortKeyframes, upsertKeyframe, removeKeyframeAt } from '../utils/keyframes';
 import {
   clampClipPlaybackRate,
+  getClipLoopCount,
   getClipPlaybackRate,
   MAX_CLIP_PLAYBACK_RATE,
   MIN_CLIP_PLAYBACK_RATE,
 } from '../utils/playbackRate';
 import {
-  remappedClipDuration,
+  cycleDurationForClip,
   samplePlaybackRateAt,
   sampleRemapCurve,
   sourceTimeAtOutputLocal,
+  wrapOutputLocalToCycle,
 } from '../utils/timeRemap';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
 import {
@@ -100,8 +102,19 @@ export function SpeedAutomationLane({
   );
   const [liveStatus, setLiveStatus] = useState('');
 
-  const duration = Math.max(0.1, durationSec ?? remappedClipDuration(clip));
-  const graphWidth = Math.max(1, width - SCALE_GUTTER);
+  // Speed automation keyframes live in ONE cycle's output-local time — the
+  // editable domain here is always a single cycle, even when `durationSec`
+  // (from timeline layout) reflects the full looped duration.
+  const loopCount = getClipLoopCount(clip);
+  const cycleDuration = cycleDurationForClip(clip);
+  const duration = Math.max(0.1, loopCount > 1 ? cycleDuration : (durationSec ?? cycleDuration));
+  const totalGraphWidth = Math.max(1, width - SCALE_GUTTER);
+  // Looped clips only get an editable curve for the first cycle; the rest of
+  // the block-width is a tiled "repeats" indicator (draw once, don't require
+  // N curve editors).
+  const graphWidth =
+    loopCount > 1 ? Math.max(1, totalGraphWidth / loopCount) : totalGraphWidth;
+  const loopTileWidth = loopCount > 1 ? Math.max(0, totalGraphWidth - graphWidth) : 0;
   const track = useMemo(
     () => sortKeyframes(clip.automation?.playbackRate ?? []),
     [clip.automation?.playbackRate],
@@ -292,9 +305,12 @@ export function SpeedAutomationLane({
     .join(' ');
 
   const baselineY = rateToY(1, height);
+  // Wrap the raw (possibly multi-cycle) output-local playhead back into this
+  // clip's single editable cycle, so the indicator tracks the correct
+  // in-cycle position on loop repeats 2+.
   const playheadClamped =
     playheadLocal != null
-      ? Math.min(duration, Math.max(0, playheadLocal))
+      ? wrapOutputLocalToCycle(clip, playheadLocal).cycleLocalT
       : null;
   const playheadX =
     playheadClamped != null ? (playheadClamped / duration) * graphWidth : null;
@@ -349,7 +365,11 @@ export function SpeedAutomationLane({
 
         <div
           className="speed-lane-graph-area"
-          style={{ width: graphWidth, height }}
+          style={
+            loopCount > 1
+              ? { width: graphWidth, height, flex: '0 0 auto' }
+              : { width: graphWidth, height }
+          }
           onClick={handleAdd}
           role="slider"
           aria-label="Speed curve"
@@ -468,6 +488,17 @@ export function SpeedAutomationLane({
             );
           })}
         </div>
+
+        {loopCount > 1 && loopTileWidth > 0 && (
+          <div
+            className="speed-lane-loop-tile"
+            style={{ width: loopTileWidth, height }}
+            aria-hidden="true"
+            title={`This curve repeats ${loopCount} times (loop)`}
+          >
+            <span className="speed-lane-loop-tile-badge">×{loopCount}</span>
+          </div>
+        )}
       </div>
 
       <div className="speed-lane-caption">

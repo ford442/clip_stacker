@@ -4,7 +4,7 @@
  */
 
 import type { Clip, ClipTransition, MorphTransitionSegment } from '../types';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 
 export const MORPH_TRANSITION_TYPE = 'morph';
 

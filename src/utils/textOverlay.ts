@@ -14,7 +14,7 @@ import { resolveTextOverlayPixels } from './overlayCoords';
 import {
   DEFAULT_CANVAS_HEIGHT,
   DEFAULT_CANVAS_WIDTH,
-} from './project';
+} from './canvasDefaults';
 import { resolvePublicAssetUrl } from './publicAssetUrl';
 
 /** Virtual font filename written to the FFmpeg VFS before rendering. */

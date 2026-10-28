@@ -96,7 +96,15 @@ export function useProjectSaveLoad({
         transitions,
         textOverlays,
         clipGroups,
-        { mediaMode: "embed", onEmbedWarning: (message) => embedWarnings.push(message), finishing },
+        {
+          mediaMode: "embed",
+          onEmbedWarning: (message) => embedWarnings.push(message),
+          finishing,
+          captions: editorStore.getState().captions,
+          captionStyle: editorStore.getState().captionStyle,
+          colorManagement: settingsStore.getState().colorManagement,
+          masterBus: editorStore.getState().masterBus,
+        },
         tracks,
         editorStore.getState().masterAudio,
       );
@@ -120,7 +128,7 @@ export function useProjectSaveLoad({
 
   const handleLoadProject = useCallback(
     async (file: File) => {
-      const { setFinishing, setStatus } = settingsStore.getState();
+      const { setFinishing, setColorManagement, setStatus } = settingsStore.getState();
       try {
         const parsed = JSON.parse(await file.text());
         const {
@@ -129,9 +137,13 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          captions: loadedCaptions,
+          captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           finishing: loadedFinishing,
+          colorManagement: loadedColorManagement,
           masterAudio: loadedMasterAudio,
+          masterBus: loadedMasterBus,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -145,11 +157,15 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          captions: loadedCaptions,
+          captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           selectedClipId: selectedId,
           masterAudio: loadedMasterAudio,
+          ...(loadedMasterBus ? { masterBus: loadedMasterBus } : {}),
         });
         setFinishing(loadedFinishing);
+        setColorManagement(loadedColorManagement);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
@@ -234,6 +250,9 @@ export function useProjectSaveLoad({
           {
             mediaMode: "remote",
             mediaClient: client,
+            captions: editorStore.getState().captions,
+            captionStyle: editorStore.getState().captionStyle,
+            masterBus: editorStore.getState().masterBus,
             onRemoteUploadProgress: (event) => {
               setRemoteUploadItems((prev) => {
                 const next = [...prev];
@@ -265,6 +284,7 @@ export function useProjectSaveLoad({
               });
             },
             finishing,
+            colorManagement: settingsStore.getState().colorManagement,
           },
           tracks,
         );
@@ -283,7 +303,7 @@ export function useProjectSaveLoad({
 
   const handleLoadRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
-      const { setStatus, setFinishing } = settingsStore.getState();
+      const { setStatus, setFinishing, setColorManagement } = settingsStore.getState();
       try {
         setIsRemoteLoading(true);
         setStatus("Loading project from remote storage...");
@@ -294,9 +314,13 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          captions: loadedCaptions,
+          captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           finishing: loadedFinishing,
+          colorManagement: loadedColorManagement,
           masterAudio: loadedMasterAudio,
+          masterBus: loadedMasterBus,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -322,11 +346,15 @@ export function useProjectSaveLoad({
           clipGroups: loadedClipGroups,
           transitions: loadedTransitions,
           textOverlays: loadedOverlays,
+          captions: loadedCaptions,
+          captionStyle: loadedCaptionStyle,
           masterAudioMarkers: loadedMasterMarkers,
           selectedClipId: selectedId,
           masterAudio: loadedMasterAudio,
+          ...(loadedMasterBus ? { masterBus: loadedMasterBus } : {}),
         });
         setFinishing(loadedFinishing);
+        setColorManagement(loadedColorManagement);
 
         let msg = `Remote project loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {

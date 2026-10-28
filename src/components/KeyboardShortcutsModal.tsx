@@ -1,17 +1,23 @@
-interface Props {
-  isOpen: boolean;
-  onClose: () => void;
-}
-
+import { uiActions, useShowKeyboardShortcuts } from '../store';
 const SHORTCUTS = [
   { key: "R", description: "Render merge" },
   { key: "Ctrl/Cmd+Z", description: "Undo last edit" },
   { key: "Ctrl/Cmd+Shift+Z", description: "Redo last edit" },
   { key: "Ctrl/Cmd+S", description: "Save local project" },
   { key: "Ctrl/Cmd+D", description: "Duplicate selected clip" },
-  { key: "S", description: "Split selected clip at preview playhead" },
+  { key: "S", description: "Split selected clip at the playhead (click or drag the timeline ruler to place it)" },
+  { key: "C", description: "Add a caption at the preview playhead" },
   { key: "L", description: "Load local project" },
   { key: "Delete / Backspace", description: "Delete selected clip" },
+  { key: "Shift+Delete / Shift+Backspace", description: "Ripple delete selected clip (closes the gap)" },
+  { key: "V", description: "Select tool" },
+  { key: "Q", description: "Ripple trim tool (out-point; later clips follow)" },
+  { key: "W", description: "Roll tool (move the edit after the selected clip)" },
+  { key: "Y", description: "Slip tool (move the source window, keep position)" },
+  { key: "U", description: "Slide tool (move the clip, neighbours compensate)" },
+  { key: "Alt+Arrow Left / Right", description: "Nudge the active tool by one frame (Shift: 10 frames)" },
+  { key: "I / O", description: "Insert / overwrite drop mode" },
+  { key: "N", description: "Toggle timeline snapping" },
   { key: "Arrow Left (with Ctrl/Cmd)", description: "Move selected clip left" },
   {
     key: "Arrow Right (with Ctrl/Cmd)",
@@ -22,7 +28,9 @@ const SHORTCUTS = [
   { key: "Enter / Space (in library)", description: "Select clip" },
 ];
 
-export function KeyboardShortcutsModal({ isOpen, onClose }: Props) {
+export function KeyboardShortcutsModal() {
+  const isOpen = useShowKeyboardShortcuts();
+  const onClose = () => uiActions.setShowKeyboardShortcuts(false);
   if (!isOpen) return null;
 
   return (

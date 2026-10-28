@@ -1,4 +1,7 @@
+import type { MasterBusSettings } from './audioBus';
+import type { ColorManagementSettings } from './colorManagement';
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipTransition,
@@ -6,6 +9,7 @@ import type {
   Project,
   SerializedClip,
   TextOverlay,
+  TextOverlayStyle,
   Track,
 } from '../types';
 import { serializeProject } from './project';
@@ -91,13 +95,20 @@ export async function buildAutoSaveProject(
     embedBudgetBytes?: number;
     maxClipBytes?: number;
     forceMetadataOnly?: boolean;
+    colorManagement?: ColorManagementSettings;
+    masterBus?: MasterBusSettings;
   } = {},
+  captions: CaptionEntry[] = [],
+  captionStyle: Partial<TextOverlayStyle> = {},
 ): Promise<Project> {
   const embedBudgetBytes = options.embedBudgetBytes ?? AUTO_SAVE_MAX_TOTAL_BYTES;
   const maxClipBytes = options.maxClipBytes ?? AUTO_SAVE_MAX_CLIP_BYTES;
   const forceMetadataOnly = options.forceMetadataOnly ?? false;
 
-  const project = serializeProject(clips, transitions, textOverlays, clipGroups, undefined, tracks);
+  const project = serializeProject(
+    clips, transitions, textOverlays, clipGroups, undefined, tracks,
+    undefined, null, captions, captionStyle, options.colorManagement, options.masterBus,
+  );
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));
   let embedBudgetRemaining = embedBudgetBytes;
   let usedEmbed = false;
@@ -242,8 +253,15 @@ export function hashAutoSaveState(
   selectedClipId: string | null,
   exportSettings: ExportSettings,
   tracks: Track[] = [],
+  captions: CaptionEntry[] = [],
+  captionStyle: Partial<TextOverlayStyle> = {},
+  colorManagement?: ColorManagementSettings,
+  masterBus?: MasterBusSettings,
 ): string {
-  const project = serializeProject(clips, transitions, textOverlays, clipGroups, undefined, tracks);
+  const project = serializeProject(
+    clips, transitions, textOverlays, clipGroups, undefined, tracks,
+    undefined, null, captions, captionStyle, colorManagement, masterBus,
+  );
   return JSON.stringify({
     project,
     selectedClipId,

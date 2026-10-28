@@ -400,3 +400,239 @@ def test_capped_morph_still_yields_the_requested_frame_count(app, tmp_path):
          "default=noprint_wrappers=1:nokey=1", out],
         check=True, capture_output=True, text=True).stdout.strip()
     assert int(count) == frame_count
+
+
+def test_name_like_source_uses_the_upload_stem(app, tmp_path):
+    result = tmp_path / "output_rife_abc123.mp4"
+    result.write_text("stub")
+    source = tmp_path / "uploads" / "vacation clip.mov"
+    source.parent.mkdir()
+    source.write_text("stub")
+
+    dest = app.name_like_source(str(result), str(source), set())
+
+    assert os.path.basename(dest) == "vacation clip.mp4"
+    assert os.path.exists(dest)
+    assert not result.exists()
+
+
+def test_name_like_source_dedupes_within_a_batch(app, tmp_path):
+    used = set()
+    first_result = tmp_path / "output_rife_1.mp4"
+    second_result = tmp_path / "output_rife_2.mp4"
+    first_result.write_text("stub")
+    second_result.write_text("stub")
+
+    first = app.name_like_source(str(first_result), "/uploads/a/clip.mp4", used)
+    second = app.name_like_source(str(second_result), "/uploads/b/clip.mp4", used)
+
+    assert os.path.basename(first) == "clip.mp4"
+    assert os.path.basename(second) == "clip_2.mp4"
+
+
+def test_name_like_source_passes_through_a_missing_result(app):
+    assert app.name_like_source(None, "/uploads/clip.mp4", set()) is None
+
+
+def test_name_like_source_keeps_parentheses_from_the_upload_name(app, tmp_path):
+    result = tmp_path / "output_rife_def456.mp4"
+    result.write_text("stub")
+    source = tmp_path / "uploads" / "my clip (1).mov"
+    source.parent.mkdir()
+    source.write_text("stub")
+
+    dest = app.name_like_source(str(result), str(source), set())
+
+    assert os.path.basename(dest) == "my clip (1).mp4"
+def test_name_like_source_preserves_parentheses(app, tmp_path):
+    # HuggingFace's own /upload route strips parentheses from the on-disk
+    # upload path before app.py runs, so this must be driven off orig_name
+    # (the filename exactly as the browser sent it), not that sanitized path.
+    result = tmp_path / "output_rife_xyz.mp4"
+    result.write_text("stub")
+
+    dest = app.name_like_source(str(result), "My Clip (1).mov", set())
+
+    assert os.path.basename(dest) == "My Clip (1).mp4"
+
+
+def test_resolve_batch_upload_entry_reads_orig_name_from_filedata(app):
+    # This is the shape batch_interpolate_videos receives per upload now that
+    # its button is wired with preprocess=False: `path` is the sanitized
+    # on-disk file, `orig_name` is the untouched browser-side filename.
+    entry = {
+        "path": "/gradio/cache/abcd/My Clip 1.mp4",
+        "orig_name": "My Clip (1).mp4",
+        "url": None,
+        "size": 123,
+        "mime_type": "video/mp4",
+        "is_stream": False,
+        "meta": {"_type": "gradio.FileData"},
+    }
+
+    path, orig_name = app._resolve_batch_upload_entry(entry)
+
+    assert path == "/gradio/cache/abcd/My Clip 1.mp4"
+    assert orig_name == "My Clip (1).mp4"
+
+
+def test_resolve_batch_upload_entry_falls_back_to_basename(app):
+    class Named:
+        name = "/tmp/whatever/clip.mp4"
+
+    path, orig_name = app._resolve_batch_upload_entry(Named())
+
+    assert path == "/tmp/whatever/clip.mp4"
+    assert orig_name == "clip.mp4"
+
+
+def test_batch_interpolate_videos_chunks_by_gpu_limit(app, monkeypatch):
+    calls = []
+
+    def fake_chunk(chunk_paths, multi_factor, output_fps):
+        calls.append(list(chunk_paths))
+        return [f"{p}.out.mp4" for p in chunk_paths]
+
+    monkeypatch.setattr(app, "_interpolate_batch_chunk", fake_chunk)
+    monkeypatch.setattr(app, "name_like_source", lambda result, orig_name, used: result)
+
+    files = [
+        {"path": f"/tmp/in{i}.mp4", "orig_name": f"clip{i}.mp4"} for i in range(7)
+    ]
+    results = app.batch_interpolate_videos(files, "4", output_fps=30)
+
+    assert [len(c) for c in calls] == [3, 3, 1]
+    assert len(results) == 7
+
+
+def test_batch_interpolate_videos_uses_size_1_at_60fps(app, monkeypatch):
+    calls = []
+
+    def fake_chunk(chunk_paths, multi_factor, output_fps):
+        calls.append(list(chunk_paths))
+        return [f"{p}.out.mp4" for p in chunk_paths]
+
+    monkeypatch.setattr(app, "_interpolate_batch_chunk", fake_chunk)
+    monkeypatch.setattr(app, "name_like_source", lambda result, orig_name, used: result)
+    # as_file_outputs wraps paths; keep the test focused on chunking.
+    monkeypatch.setattr(app, "as_file_outputs", lambda paths: paths)
+
+    files = [
+        {"path": f"/tmp/in{i}.mp4", "orig_name": f"clip{i}.mp4"} for i in range(4)
+    ]
+    results = app.batch_interpolate_videos(files, "4", output_fps="60")
+
+    assert [len(c) for c in calls] == [1, 1, 1, 1]
+    assert len(results) == 4
+
+
+def test_batch_chunk_duration_scales_with_clips_and_multiplier(app, monkeypatch):
+    # @spaces.GPU's default 60s budget is calibrated for one clip; a chunk
+    # running several RIFE passes back-to-back needs a bigger reservation or
+    # ZeroGPU reclaims the GPU mid-chunk with an "expired GPU token" error.
+    monkeypatch.setattr(app, "get_duration", lambda path: 10.0)
+
+    one_clip = app._batch_chunk_duration(["/tmp/a.mp4"], "2", 30)
+    three_clips = app._batch_chunk_duration(["/tmp/a.mp4", "/tmp/b.mp4", "/tmp/c.mp4"], "2", 30)
+    higher_multiplier = app._batch_chunk_duration(["/tmp/a.mp4"], "8", 30)
+
+    assert three_clips > one_clip
+    assert higher_multiplier > one_clip
+    # Comfortably above the 60s single-clip default this is replacing.
+    assert three_clips > 60
+
+
+def test_batch_chunk_duration_is_capped(app, monkeypatch):
+    monkeypatch.setattr(app, "get_duration", lambda path: 600.0)
+
+    duration = app._batch_chunk_duration(
+        ["/tmp/a.mp4", "/tmp/b.mp4", "/tmp/c.mp4"], "8", 30,
+    )
+
+    assert duration == app.BATCH_CHUNK_DURATION_CAP_SECONDS
+
+
+def _fake_chunk_recorder(app, monkeypatch):
+    calls = []
+
+    def fake_chunk(chunk_paths, multi_factor, output_fps):
+        calls.append(list(chunk_paths))
+        return [f"{p}.out.mp4" for p in chunk_paths]
+
+    monkeypatch.setattr(app, "_interpolate_batch_chunk", fake_chunk)
+    monkeypatch.setattr(app, "name_like_source",
+                        lambda result, orig_name, used: (used.add(orig_name), result)[1])
+    return calls
+
+
+def test_advance_batch_job_runs_one_gpu_chunk_per_call(app, monkeypatch):
+    # The "Process All" UI runs one advance per Gradio event so every
+    # @spaces.GPU call arrives with a fresh ZeroGPU proxy token; a single
+    # request running every chunk failed later chunks with "expired proxy
+    # token".
+    calls = _fake_chunk_recorder(app, monkeypatch)
+    files = [
+        {"path": f"/tmp/in{i}.mp4", "orig_name": f"clip ({i}).mp4"} for i in range(7)
+    ]
+    job = app.start_batch_job(files, "4", "60")
+    assert calls == []
+    assert job["total"] == 7
+
+    job = app.advance_batch_job(job)
+    assert len(calls) == 1 and len(calls[0]) == 3
+    assert len(job["results"]) == 3 and len(job["pending"]) == 4
+
+    job = app.advance_batch_job(job)
+    job = app.advance_batch_job(job)
+    assert [len(c) for c in calls] == [3, 3, 1]
+    assert job["results"] == [f"/tmp/in{i}.mp4.out.mp4" for i in range(7)]
+    assert job["pending"] == []
+    assert job["used_names"] == sorted(f"clip ({i}).mp4" for i in range(7))
+
+    assert app.advance_batch_job(job) is None
+    assert len(calls) == 3
+
+
+def test_advance_batch_job_does_not_mutate_its_input(app, monkeypatch):
+    _fake_chunk_recorder(app, monkeypatch)
+    job = app.start_batch_job([{"path": "/tmp/a.mp4", "orig_name": "a.mp4"}], "2", "30")
+    before = {k: (list(v) if isinstance(v, list) else v) for k, v in job.items()}
+    app.advance_batch_job(job)
+    assert job == before
+
+
+def test_batch_job_status_reports_progress_and_completion(app, monkeypatch):
+    _fake_chunk_recorder(app, monkeypatch)
+    files = [{"path": f"/tmp/in{i}.mp4", "orig_name": f"c{i}.mp4"} for i in range(4)]
+    # 30fps keeps the size-3 chunk; 60fps is size 1 (see batch_chunk_size).
+    job = app.start_batch_job(files, "4", "30")
+    assert "0/4" in app.batch_job_status(job)
+    job = app.advance_batch_job(job)
+    assert "3/4" in app.batch_job_status(job)
+    job = app.advance_batch_job(job)
+    assert app.batch_job_status(job).startswith("✅ Done: 4/4")
+
+
+def test_duplicate_trigger_does_not_rerun_a_chunk(app, monkeypatch):
+    # Gradio can deliver the same gr.State .change twice; the second event
+    # must not interpolate (and bill ZeroGPU for) the same clips again.
+    calls = _fake_chunk_recorder(app, monkeypatch)
+    files = [{"path": f"/tmp/in{i}.mp4", "orig_name": f"c{i}.mp4"} for i in range(5)]
+    job0 = app.start_batch_job(files, "4", "30")
+
+    job1 = app.advance_batch_job(job0)
+    assert app.advance_batch_job(job0) is None  # stale duplicate of step 1
+    job2 = app.advance_batch_job(job1)
+    assert app.advance_batch_job(job1) is None  # duplicate queued behind step 1
+    assert [len(c) for c in calls] == [3, 2]
+    assert job2["pending"] == [] and len(job2["results"]) == 5
+
+
+def test_separate_runs_claim_chunks_independently(app, monkeypatch):
+    calls = _fake_chunk_recorder(app, monkeypatch)
+    files = [{"path": "/tmp/a.mp4", "orig_name": "a.mp4"}]
+    first = app.start_batch_job(files, "2", "30")
+    second = app.start_batch_job(files, "2", "30")
+    assert app.advance_batch_job(first) is not None
+    assert app.advance_batch_job(second) is not None
+    assert len(calls) == 2

@@ -1,10 +1,8 @@
 import { fetchFile } from '@ffmpeg/util';
 import { DEFAULT_EXPORT_SETTINGS, type Clip } from '../types';
 import {
-  buildSilentAacLoopInputArgs,
   clipHasSourceAudio,
   ensureFfmpeg,
-  ensureSilentAacUnit,
   getSafeExtension,
   isNoAudioStreamError,
   isStillImageClip,
@@ -12,9 +10,7 @@ import {
   safeReadFile,
   safeWriteFile,
 } from './core';
-import { buildSilentAudioNleRemuxArgs } from './nleRemux';
 import {
-  buildConcatPlaylist,
   buildIntercutSlices,
   intercutOutputDuration,
   intercutShortageMessage,
@@ -27,16 +23,44 @@ import {
   type IntercutSlice,
   type IntercutSourceClock,
 } from '../utils/intercut';
+import {
+  assembleIntercutAudio,
+  buildIntercutVideoFilterGraph,
+  encodeWavPcm16,
+  INTERCUT_AUDIO_CHANNELS,
+  INTERCUT_AUDIO_SAMPLE_RATE,
+  INTERCUT_OUTPUT_FPS,
+  mixSteadyStreams,
+  parseWavPcm16,
+  quantizeIntercutSlices,
+  steadyStreamPcm,
+  toStereo,
+  type IntercutFramePlan,
+  type IntercutFrameSlice,
+} from '../utils/intercutRender';
 import { beatsInTrimWindow } from '../utils/beatMarkers';
 import { resolveTargetResolution } from '../utils/resolution';
 import type { IFfmpegRuntime } from './ffmpegRuntime';
+import {
+  buildIntercutAudioExtractArgs,
+  buildIntercutRenderArgs,
+  buildIntercutSourceInputArgs,
+} from './intercutArgs';
 import {
   emitProgress,
   type ProgressCallback,
   type StatusCallback,
 } from './ffmpegCommon';
 
-export type IntercutAudioPolicy = 'both' | 'aOnly' | 'silent';
+export {
+  buildIntercutAudioExtractArgs,
+  buildIntercutRenderArgs,
+  buildIntercutSourceInputArgs,
+  type IntercutAudioTrackInput,
+  type IntercutRenderArgsOptions,
+} from './intercutArgs';
+
+export type IntercutAudioPolicy = 'both' | 'aOnly' | 'silent' | 'steadyStreams';
 
 export interface IntercutGeneratorConfig {
   clipA: Clip;
@@ -46,7 +70,12 @@ export interface IntercutGeneratorConfig {
   automation: FrequencyAutomationConfig;
   /** When true, always re-encode (needed for strobe / short slices). */
   forceReencode?: boolean;
-  /** Default `both` — A/B audio follows picture. */
+  /**
+   * Default `both` — audio follows picture.
+   * `steadyStreams` keeps every source's audio running from its trim start
+   * for the whole output, muxed as its own AAC track (plus an equal-power mix
+   * as the default track so the library player hears all beds).
+   */
   audioPolicy?: IntercutAudioPolicy;
   /** Snap slice lengths to the reference clip's beat grid when metadata exists. */
   snapCutsToBeats?: boolean;
@@ -200,235 +229,24 @@ export function estimateIntercut(config: IntercutGeneratorConfig): IntercutEstim
   };
 }
 
-export function buildIntercutConcatArgs(
-  playlistName: string,
-  outputName: string,
-  useCopy: boolean,
-  audioPolicy: IntercutAudioPolicy,
-): string[] {
-  // +genpts rebuilds timestamps after concat inpoint/outpoint seeks.
-  const args: string[] = [
-    '-f',
-    'concat',
-    '-safe',
-    '0',
-    '-fflags',
-    '+genpts',
-    '-i',
-    playlistName,
-  ];
-  if (audioPolicy === 'silent') {
-    args.push(...buildSilentAacLoopInputArgs());
+/** Which source supplies each output frame's sound under `policy`. */
+export function intercutAudioSlices(
+  policy: IntercutAudioPolicy,
+  plan: IntercutFramePlan,
+): IntercutFrameSlice[] {
+  if (policy === 'silent' || policy === 'steadyStreams') return [];
+  if (policy === 'aOnly') {
+    // A's soundtrack runs continuously from its trim start, whatever is on screen.
+    return [{ slot: 'A', sourceFrame: 0, outputFrame: 0, frameCount: plan.totalFrames }];
   }
-  if (useCopy) {
-    if (audioPolicy === 'silent') {
-      args.push(
-        '-map',
-        '0:v:0',
-        '-map',
-        '1:a:0',
-        '-c:v',
-        'copy',
-        '-c:a',
-        'copy',
-        '-shortest',
-        '-avoid_negative_ts',
-        'make_zero',
-        '-movflags',
-        '+faststart',
-        outputName,
-      );
-    } else {
-      args.push(
-        '-c',
-        'copy',
-        '-avoid_negative_ts',
-        'make_zero',
-        '-movflags',
-        '+faststart',
-        outputName,
-      );
-    }
-    return args;
-  }
-
-  args.push(
-    '-c:v',
-    'libx264',
-    '-preset',
-    'veryfast',
-    '-crf',
-    '18',
-    '-pix_fmt',
-    'yuv420p',
-    '-r',
-    '30',
-    '-vsync',
-    'cfr',
-    '-bf',
-    '0',
-  );
-  if (audioPolicy === 'silent') {
-    args.push(
-      '-map',
-      '0:v:0',
-      '-map',
-      '1:a:0',
-      '-c:a',
-      'copy',
-      '-shortest',
-      '-movflags',
-      '+faststart',
-      outputName,
-    );
-  } else {
-    args.push(
-      '-c:a',
-      'aac',
-      '-ar',
-      '44100',
-      '-ac',
-      '2',
-      '-b:a',
-      '192k',
-      '-movflags',
-      '+faststart',
-      outputName,
-    );
-  }
-  return args;
+  return plan.slices;
 }
 
-export interface NormalizeIntercutOptions {
-  hasAudio?: boolean;
-  /** Input seek (seconds). Prefer seeking before decode to avoid full-file re-encodes. */
-  seekSec?: number;
-  /** Max output duration (seconds) after seek. */
-  durationSec?: number;
-}
-
-export function buildNormalizeIntercutArgs(
-  clip: Clip,
-  inputName: string,
-  outputName: string,
-  width: number,
-  height: number,
-  options?: NormalizeIntercutOptions,
-): string[] {
-  const vf =
-    `scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
-    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2,fps=30,format=yuv420p`;
-  const seekSec = options?.seekSec;
-  const durationSec = options?.durationSec;
-  const seekArgs =
-    typeof seekSec === 'number' && Number.isFinite(seekSec) && seekSec > 0
-      ? (['-ss', String(seekSec)] as string[])
-      : [];
-  const durationArgs =
-    typeof durationSec === 'number' &&
-    Number.isFinite(durationSec) &&
-    durationSec > 0
-      ? (['-t', String(durationSec)] as string[])
-      : [];
-  const prefix = isStillImageClip(clip) ? ['-loop', '1'] : [];
-  const encodeVideo = [
-    '-c:v',
-    'libx264',
-    '-preset',
-    'veryfast',
-    '-crf',
-    '18',
-    '-pix_fmt',
-    'yuv420p',
-  ];
-  const encodeAudio = ['-c:a', 'aac', '-ar', '44100', '-ac', '2', '-b:a', '192k'];
-  const hasAudio = options?.hasAudio ?? clipHasSourceAudio(clip);
-
-  if (hasAudio) {
-    return [
-      ...seekArgs,
-      ...prefix,
-      '-i',
-      inputName,
-      ...durationArgs,
-      '-filter_complex',
-      `[0:v]${vf}[vout];[0:a]aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo[aout]`,
-      '-map',
-      '[vout]',
-      '-map',
-      '[aout]',
-      ...encodeVideo,
-      ...encodeAudio,
-      '-movflags',
-      '+faststart',
-      outputName,
-    ];
-  }
-
-  // Video-only / still: loop pre-encoded silent AAC (caller must ensureSilentAacUnit).
-  return [
-    ...seekArgs,
-    ...prefix,
-    '-i',
-    inputName,
-    ...durationArgs,
-    ...buildSilentAacLoopInputArgs(),
-    '-filter_complex',
-    `[0:v]${vf}[vout]`,
-    '-map',
-    '[vout]',
-    '-map',
-    '1:a',
-    '-shortest',
-    ...encodeVideo,
-    '-c:a',
-    'copy',
-    '-movflags',
-    '+faststart',
-    outputName,
-  ];
-}
-
-export function buildReplaceAudioFromAArgs(
-  concatName: string,
-  clipAName: string,
-  clipA: Clip,
-  durationSec: number,
-  outputName: string,
-  options?: { audioSeekSec?: number },
-): string[] {
-  // When A was trim-window normalized, audio already starts at 0.
-  const audioSeek =
-    options?.audioSeekSec ??
-    (Number.isFinite(clipA.trimStart) ? clipA.trimStart : 0);
-  return [
-    '-i',
-    concatName,
-    '-ss',
-    String(Math.max(0, audioSeek)),
-    '-t',
-    String(durationSec),
-    '-i',
-    clipAName,
-    '-map',
-    '0:v:0',
-    '-map',
-    '1:a:0?',
-    '-c:v',
-    'copy',
-    '-c:a',
-    'aac',
-    '-ar',
-    '44100',
-    '-ac',
-    '2',
-    '-b:a',
-    '192k',
-    '-shortest',
-    '-movflags',
-    '+faststart',
-    outputName,
-  ];
+/** Frames of `slot` a plan reads, from the trim origin (plus the crossfade tail). */
+function framesNeeded(slices: IntercutFrameSlice[], slot: IntercutSlot): number {
+  return slices
+    .filter((s) => s.slot === slot)
+    .reduce((max, s) => Math.max(max, s.sourceFrame + s.frameCount), 0);
 }
 
 async function deleteQuiet(ffmpeg: IFfmpegRuntime, name: string): Promise<void> {
@@ -439,61 +257,56 @@ async function deleteQuiet(ffmpeg: IFfmpegRuntime, name: string): Promise<void> 
   }
 }
 
-async function normalizeSourceIfNeeded(
+interface IntercutSource {
+  slot: IntercutSlot;
+  clip: Clip;
+  vfsName: string;
+  trimStart: number;
+}
+
+/** Decode one source's audio to PCM; `undefined` (silence) when it has none. */
+async function extractSourcePcm(
   ffmpeg: IFfmpegRuntime,
-  clip: Clip,
-  inputName: string,
-  outputName: string,
-  width: number,
-  height: number,
+  source: IntercutSource,
+  durationSec: number,
   onStatus: StatusCallback,
-  window?: { seekSec: number; durationSec: number },
-): Promise<string> {
-  const rangeLabel =
-    window && window.durationSec > 0
-      ? ` (trim ${window.seekSec.toFixed(2)}s…${(window.seekSec + window.durationSec).toFixed(2)}s)`
-      : '';
-  onStatus(
-    `Intercut: normalizing "${clip.title}" to ${width}×${height} @ 30fps${rangeLabel}…`,
-  );
-  const windowOpts: NormalizeIntercutOptions | undefined = window
-    ? { seekSec: window.seekSec, durationSec: window.durationSec }
-    : undefined;
-  const knownSilent = !clipHasSourceAudio(clip);
-  if (knownSilent) {
-    await ensureSilentAacUnit(ffmpeg, onStatus);
-  }
-  const args = buildNormalizeIntercutArgs(
-    clip,
-    inputName,
-    outputName,
-    width,
-    height,
-    windowOpts,
-  );
+): Promise<Int16Array | undefined> {
+  if (!clipHasSourceAudio(source.clip)) return undefined;
+  const wavName = `intercut-pcm-${source.slot.toLowerCase()}.wav`;
+  await deleteQuiet(ffmpeg, wavName);
   try {
-    await safeExec(ffmpeg, args, null, `intercut normalize "${clip.title}"`);
+    await safeExec(
+      ffmpeg,
+      buildIntercutAudioExtractArgs(source.vfsName, wavName, source.trimStart, durationSec),
+      null,
+      `intercut decode audio "${source.clip.title}"`,
+    );
   } catch (err) {
     if (!isNoAudioStreamError(err)) throw err;
-    onStatus(
-      `Clip "${clip.title}" has no audio — muxing silent track (stream copy)…`,
-    );
-    await ensureSilentAacUnit(ffmpeg, onStatus);
-    const silentArgs = buildNormalizeIntercutArgs(
-      clip,
-      inputName,
-      outputName,
-      width,
-      height,
-      { ...windowOpts, hasAudio: false },
-    );
-    await safeExec(ffmpeg, silentArgs, null, `intercut normalize "${clip.title}" (silent)`);
+    onStatus(`Intercut: "${source.clip.title}" has no audio — using silence for its slices.`);
+    return undefined;
   }
-  return outputName;
+  try {
+    const pcm = parseWavPcm16(await safeReadFile(ffmpeg, wavName, 'intercut read audio'));
+    if (pcm.sampleRate !== INTERCUT_AUDIO_SAMPLE_RATE) {
+      throw new Error(
+        `Intercut audio: decoded "${source.clip.title}" at ${pcm.sampleRate} Hz, expected ${INTERCUT_AUDIO_SAMPLE_RATE}.`,
+      );
+    }
+    return toStereo(pcm);
+  } finally {
+    await deleteQuiet(ffmpeg, wavName);
+  }
 }
 
 /**
  * Generate an intercut MP4 from clips already written to the FFmpeg VFS.
+ *
+ * Slices are snapped to a 30 fps grid (`quantizeIntercutSlices`); picture is
+ * cut by one filter graph and sound is spliced sample-exactly in JS from the
+ * same grid, then both are encoded in one pass. The concat demuxer is not
+ * used: its packet-granular `inpoint` dragged pre-roll video and AAC priming
+ * into every cut, which stacked audio packets on the cut timestamps.
  */
 export async function generateIntercutFromVfs(
   ffmpeg: IFfmpegRuntime,
@@ -538,166 +351,151 @@ export async function generateIntercutFromVfs(
   }
 
   const audioPolicy: IntercutAudioPolicy = config.audioPolicy ?? 'both';
-  if (audioPolicy === 'silent') {
-    await ensureSilentAacUnit(ffmpeg, onStatus);
-  }
-  let workA = vfsNameA;
-  let workB = vfsNameB;
-  let workC = vfsNameC;
-  let didNormalize = false;
-  // After trim-window normalize, playlist times are relative to each trimStart.
-  let concatSlices = slices;
-
-  const normalizeSources = async () => {
-    didNormalize = true;
-    const { width, height } = resolveTargetResolution(
-      intercutSourceClips(config),
-      DEFAULT_EXPORT_SETTINGS,
-    );
-    const normA = 'intercut-norm-a.mp4';
-    const normB = 'intercut-norm-b.mp4';
-    const normC = 'intercut-norm-c.mp4';
-    await deleteQuiet(ffmpeg, normA);
-    await deleteQuiet(ffmpeg, normB);
-    await deleteQuiet(ffmpeg, normC);
-    // Only re-encode the trimmed windows — full-file normalize OOMs WASM on long clips.
-    const windowA = {
-      seekSec: boundsA.trimStart,
-      durationSec: Math.max(0.05, boundsA.trimEnd - boundsA.trimStart),
-    };
-    const windowB = {
-      seekSec: boundsB.trimStart,
-      durationSec: Math.max(0.05, boundsB.trimEnd - boundsB.trimStart),
-    };
-    workA = await normalizeSourceIfNeeded(
-      ffmpeg,
-      config.clipA,
-      vfsNameA,
-      normA,
-      width,
-      height,
-      onStatus,
-      windowA,
-    );
-    workB = await normalizeSourceIfNeeded(
-      ffmpeg,
-      config.clipB,
-      vfsNameB,
-      normB,
-      width,
-      height,
-      onStatus,
-      windowB,
-    );
-    if (config.clipC && vfsNameC && boundsC) {
-      const windowC = {
-        seekSec: boundsC.trimStart,
-        durationSec: Math.max(0.05, boundsC.trimEnd - boundsC.trimStart),
-      };
-      workC = await normalizeSourceIfNeeded(
-        ffmpeg,
-        config.clipC,
-        vfsNameC,
-        normC,
-        width,
-        height,
-        onStatus,
-        windowC,
-      );
-    }
-    concatSlices = remapIntercutSlicesToTrimOrigin(
+  const plan = quantizeIntercutSlices(
+    remapIntercutSlicesToTrimOrigin(
       slices,
       boundsA.trimStart,
       boundsB.trimStart,
       boundsC?.trimStart ?? 0,
-    );
-  };
+    ),
+  );
+  if (plan.totalFrames === 0) {
+    throw new Error('Intercut slices are shorter than one frame.');
+  }
+  const outputDurationSec = plan.totalFrames / INTERCUT_OUTPUT_FPS;
 
-  if (intercutNeedsNormalization(config.clipA, config.clipB, config.clipC)) {
-    await normalizeSources();
+  const sources: IntercutSource[] = [
+    { slot: 'A', clip: config.clipA, vfsName: vfsNameA, trimStart: boundsA.trimStart },
+    { slot: 'B', clip: config.clipB, vfsName: vfsNameB, trimStart: boundsB.trimStart },
+  ];
+  if (config.clipC && vfsNameC && boundsC) {
+    sources.push({ slot: 'C', clip: config.clipC, vfsName: vfsNameC, trimStart: boundsC.trimStart });
   }
 
-  // Always re-encode: stream-copy of multi-source inpoint cuts is rarely
-  // keyframe-aligned and often yields MP4s browsers cannot open.
-  const useCopy = false;
-  const playlistName = 'intercut_playlist.txt';
-  const concatName = audioPolicy === 'aOnly' ? 'intercut_concat.mp4' : outputName;
-  const outputDurationSec = intercutOutputDuration(slices);
-
-  const runConcat = async () => {
-    const playlist = buildConcatPlaylist(concatSlices, workA, workB, workC);
-    await safeWriteFile(ffmpeg, playlistName, playlist, 'intercut concat playlist');
-    onStatus(
-      `Intercut: stitching ${concatSlices.length} slice${concatSlices.length === 1 ? '' : 's'} (re-encode)…`,
+  // Sound first: decode each audible source once. Picture-following policies
+  // splice on the frame grid; steadyStreams keeps each bed running straight
+  // through and muxes it as its own track.
+  const steady = audioPolicy === 'steadyStreams';
+  const audioSlices = intercutAudioSlices(audioPolicy, plan);
+  const pcmBySlot: Partial<Record<IntercutSlot, Int16Array>> = {};
+  const audibleSources = steady
+    ? sources
+    : sources.filter((s) => framesNeeded(audioSlices, s.slot) > 0);
+  for (const [i, source] of audibleSources.entries()) {
+    onStatus(`Intercut: decoding audio from "${source.clip.title}"…`);
+    emitProgress(onProgress, 'Intercut audio', 0.1 + (0.2 * i) / Math.max(1, audibleSources.length), false);
+    // One frame of slack covers the crossfade tail, or a short source ending early.
+    const needSec = steady
+      ? outputDurationSec + 1 / INTERCUT_OUTPUT_FPS
+      : (framesNeeded(audioSlices, source.slot) + 1) / INTERCUT_OUTPUT_FPS;
+    pcmBySlot[source.slot] = await extractSourcePcm(ffmpeg, source, needSec, onStatus);
+  }
+  const audioName = 'intercut-audio.wav';
+  const audioTracks: { name: string; title: string }[] = [];
+  const writtenAudio: string[] = [];
+  if (steady) {
+    const beds = sources.map((source) => ({
+      name: `intercut-audio-${source.slot.toLowerCase()}.wav`,
+      title: `${source.slot} — ${source.clip.title}`,
+      pcm: steadyStreamPcm(pcmBySlot[source.slot], plan.totalFrames),
+    }));
+    const mixName = 'intercut-audio-mix.wav';
+    await safeWriteFile(
+      ffmpeg,
+      mixName,
+      encodeWavPcm16(
+        mixSteadyStreams(beds.map((bed) => bed.pcm)),
+        INTERCUT_AUDIO_SAMPLE_RATE,
+        INTERCUT_AUDIO_CHANNELS,
+      ),
+      'intercut write mix',
     );
-    emitProgress(onProgress, 'Intercut concat', 0.35, false);
+    writtenAudio.push(mixName);
+    audioTracks.push({ name: mixName, title: 'All (mix)' });
+    for (const bed of beds) {
+      await safeWriteFile(
+        ffmpeg,
+        bed.name,
+        encodeWavPcm16(bed.pcm, INTERCUT_AUDIO_SAMPLE_RATE, INTERCUT_AUDIO_CHANNELS),
+        `intercut write audio ${bed.title}`,
+      );
+      writtenAudio.push(bed.name);
+      audioTracks.push({ name: bed.name, title: bed.title });
+    }
+  } else {
+    await safeWriteFile(
+      ffmpeg,
+      audioName,
+      encodeWavPcm16(
+        assembleIntercutAudio({
+          slices: audioSlices,
+          totalFrames: plan.totalFrames,
+          sources: pcmBySlot,
+        }),
+        INTERCUT_AUDIO_SAMPLE_RATE,
+        INTERCUT_AUDIO_CHANNELS,
+      ),
+      'intercut write audio',
+    );
+    writtenAudio.push(audioName);
+  }
+
+  const visibleSources = sources.filter((s) => framesNeeded(plan.slices, s.slot) > 0);
+  const { width, height } = resolveTargetResolution(
+    intercutSourceClips(config),
+    DEFAULT_EXPORT_SETTINGS,
+  );
+  const filterGraph = buildIntercutVideoFilterGraph(
+    plan,
+    visibleSources.map((s, inputIndex) => ({ slot: s.slot, inputIndex })),
+    width,
+    height,
+  );
+  const sourceInputs = visibleSources.map((s) =>
+    buildIntercutSourceInputArgs(
+      s.clip,
+      s.vfsName,
+      s.trimStart,
+      // Two frames past the last one read so `fps` never runs dry on rounding.
+      (framesNeeded(plan.slices, s.slot) + 2) / INTERCUT_OUTPUT_FPS,
+    ),
+  );
+
+  onStatus(
+    `Intercut: rendering ${plan.slices.length} cut${plan.slices.length === 1 ? '' : 's'} at ${width}×${height}…`,
+  );
+  emitProgress(onProgress, 'Intercut render', 0.35, false);
+  try {
     await safeExec(
       ffmpeg,
-      buildIntercutConcatArgs(playlistName, concatName, useCopy, audioPolicy),
+      buildIntercutRenderArgs({
+        sourceInputs,
+        audioName: steady ? undefined : audioName,
+        audioTracks: steady ? audioTracks : undefined,
+        filterGraph,
+        totalFrames: plan.totalFrames,
+        outputName,
+      }),
       {
-        stage: 'Intercut concat',
+        stage: 'Intercut render',
         totalDuration: outputDurationSec,
         rangeStart: 0.35,
-        rangeEnd: audioPolicy === 'aOnly' ? 0.8 : 0.95,
+        rangeEnd: 0.95,
         onProgress,
       },
-      `intercut generate (${concatSlices.length} slices)`,
+      `intercut generate (${plan.slices.length} slices)`,
     );
+  } finally {
+    for (const name of writtenAudio) await deleteQuiet(ffmpeg, name);
+  }
+
+  emitProgress(onProgress, 'Intercut render', 1, false);
+  return {
+    slices,
+    usedStreamCopy: false,
+    outputDurationSec,
+    didNormalize: intercutNeedsNormalization(config.clipA, config.clipB, config.clipC),
   };
-
-  try {
-    await runConcat();
-  } catch (err) {
-    // Same-res video-only + A/V (or unknown hasAudio) can skip the first
-    // normalize pass and then fail concat. Rebuild sources with a
-    // shared layout (including synthetic silence) and retry once.
-    if (didNormalize) throw err;
-    onStatus('Intercut: concat failed — normalizing sources and retrying…');
-    await normalizeSources();
-    await runConcat();
-  }
-
-  if (audioPolicy === 'aOnly') {
-    onStatus('Intercut: keeping audio from clip A…');
-    await deleteQuiet(ffmpeg, outputName);
-    try {
-      await safeExec(
-        ffmpeg,
-        buildReplaceAudioFromAArgs(
-          concatName,
-          workA,
-          config.clipA,
-          outputDurationSec,
-          outputName,
-          // Normalized workA is already cropped to trimStart.
-          { audioSeekSec: didNormalize ? 0 : config.clipA.trimStart },
-        ),
-        null,
-        'intercut replace audio from A',
-      );
-    } catch (err) {
-      if (!isNoAudioStreamError(err)) throw err;
-      onStatus('Intercut: clip A has no audio — muxing a silent AAC track…');
-      await ensureSilentAacUnit(ffmpeg, onStatus);
-      await safeExec(
-        ffmpeg,
-        buildSilentAudioNleRemuxArgs(concatName, outputName),
-        null,
-        'intercut silent fallback',
-      );
-    }
-    await deleteQuiet(ffmpeg, concatName);
-  }
-
-  await deleteQuiet(ffmpeg, playlistName);
-  if (didNormalize) {
-    await deleteQuiet(ffmpeg, workA);
-    await deleteQuiet(ffmpeg, workB);
-    if (workC) await deleteQuiet(ffmpeg, workC);
-  }
-
-  emitProgress(onProgress, 'Intercut concat', 1, false);
-  return { slices, usedStreamCopy: useCopy, outputDurationSec, didNormalize };
 }
 
 /**
@@ -732,7 +530,7 @@ export async function generateIntercutClip(
     : undefined;
   const outputName = 'intercut_output.mp4';
 
-  const vfsNames = [vfsNameA, vfsNameB, vfsNameC, outputName, 'intercut_concat.mp4'].filter(
+  const vfsNames = [vfsNameA, vfsNameB, vfsNameC, outputName].filter(
     (n): n is string => !!n,
   );
   for (const name of vfsNames) {

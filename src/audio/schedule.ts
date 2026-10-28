@@ -3,14 +3,22 @@ import {
   buildClipTimelineSegments,
   filterBaseLayerTransitions,
 } from '../utils/previewComposition';
-import { getClipDuration } from '../utils/project';
+import { getClipDuration } from '../utils/clipTiming';
 import { getTimelineClips } from '../utils/timelineClips';
-import { audioTracks } from '../utils/trackModel';
+import { audioTracks, videoTracks } from '../utils/trackModel';
+import { placementWindow } from '../utils/trackStacking';
 import { clampClipVolume } from '../utils/audioVolume';
 import type { Keyframe } from '../utils/keyframes';
 import { normalizeClipAutomation } from '../utils/clipAutomation';
-import { getClipPlaybackRate } from '../utils/playbackRate';
-import { clipHasRateAutomation } from '../utils/timeRemap';
+import { getClipLoopCount, getClipPlaybackRate } from '../utils/playbackRate';
+import { clipIsReversed } from '../utils/reverseClip';
+import { clipHasRateAutomation, cycleDurationForClip } from '../utils/timeRemap';
+import {
+  audioEffectsSignature,
+  clipAudioEffectsActive,
+  normalizeClipAudioEffects,
+  type ClipAudioEffects,
+} from '../utils/audioEffects';
 
 /** One clip's audio placement on the output timeline. */
 export interface AudioScheduleEntry {
@@ -18,8 +26,12 @@ export interface AudioScheduleEntry {
   objectUrl: string;
   /** Output-timeline time when this clip's audio begins (seconds). */
   timelineStart: number;
-  /** Trimmed duration on the output timeline (seconds). */
+  /** Trimmed duration on the output timeline (seconds), including all loop cycles. */
   duration: number;
+  /** Duration of ONE play-through of the remapped window (seconds). `duration` = `cycleDuration * loopCount`. */
+  cycleDuration: number;
+  /** Number of times the cycle repeats back to back. 1 = no loop. */
+  loopCount: number;
   /** Offset into the source media / AudioBuffer (seconds). */
   bufferOffset: number;
   volume: number;
@@ -35,6 +47,12 @@ export interface AudioScheduleEntry {
   /** Stereo pan keyframes (−1 L … +1 R). Empty → centered (0). */
   panAutomation?: Keyframe[];
   /**
+   * Insert chain (EQ → compressor), present only when some block is enabled.
+   * Applied by the media engine before gain/pan on export and in the preview's
+   * processed buffer; never by Web Audio nodes.
+   */
+  audioEffects?: ClipAudioEffects;
+  /**
    * When true, audio is pitch-preserved WSOLA-remapped offline to `duration`
    * and played at rate 1 from buffer offset 0 (trim already baked in).
    */
@@ -42,20 +60,53 @@ export interface AudioScheduleEntry {
   /** Clip snapshot fields needed to rebuild a remapped buffer. */
   rateRemapClip?: Pick<
     Clip,
-    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'
+    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'reversed'
   >;
   /**
+   * Constant-rate reverse: play a buffer that is the trim window backward,
+   * still at `playbackRate`. Speed curves use `rateRemap` instead and flip
+   * the source-offset map.
+   */
+  reverseAudio?: boolean;
+  reverseClip?: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration'>;
+  /**
    * Audio-bed / music track clip. When its timeline range overlaps a non-bed
-   * (dialogue / base) entry, playback ducks its gain for intelligible speech.
+   * (dialogue / base) entry, playback ducks its gain for intelligible speech
+   * — unless its lane sets its own ducking (`laneDuck`).
    */
   isBed?: boolean;
+  /**
+   * The holding lane (`Track.id`): which lane bus the entry mixes into.
+   * Absent when the schedule was built without tracks (everything then mixes
+   * straight to the master sum).
+   */
+  trackId?: string;
+  /**
+   * The lane overrides the legacy bed step: `'sidechain'` (the bus graph
+   * ducks it under another lane) or `'off'`. Absent = legacy behaviour.
+   */
+  laneDuck?: 'sidechain' | 'off';
 }
 
-/** Linear gain applied to overlapping bed clips (≈ −9 dB). */
+/**
+ * Linear gain applied to overlapping bed clips (≈ −9 dB): the legacy duck,
+ * a fixed step for the whole entry. Lanes that set `Track.duck` replace it
+ * with the bus graph's sidechain envelope (or nothing).
+ */
 export const BED_DUCK_LINEAR = 0.35;
 
 function isBaseClip(clip: Clip): boolean {
   return (clip.layerIndex ?? 0) === 0;
+}
+
+/** The lane-routing fields an entry inherits from its holding track. */
+function laneFields(track: Track | undefined): Pick<AudioScheduleEntry, 'trackId' | 'laneDuck'> {
+  if (!track) return {};
+  const duck = track.duck;
+  return {
+    trackId: track.id,
+    ...(duck === 'off' ? { laneDuck: 'off' as const } : duck ? { laneDuck: 'sidechain' as const } : {}),
+  };
 }
 
 function entryFromClip(
@@ -63,16 +114,26 @@ function entryFromClip(
   timelineStart: number,
   duration: number,
   isBed = false,
+  track?: Track,
 ): AudioScheduleEntry {
   const automation = normalizeClipAutomation(clip.automation);
   const rateRemap = clipHasRateAutomation(clip);
+  const reversed = clipIsReversed(clip);
+  // A speed curve already rebuilds the buffer. Constant-rate reverse is a
+  // plain sample reversal of the trim, then the same playbackRate as forward.
+  const reverseAudio = reversed && !rateRemap;
+  const audioEffects = clipAudioEffectsActive(clip.audioEffects)
+    ? normalizeClipAudioEffects(clip.audioEffects)
+    : undefined;
   return {
     clipId: clip.id,
     objectUrl: clip.objectUrl,
     timelineStart,
     duration,
-    // Remapped buffers already start at the trim window.
-    bufferOffset: rateRemap ? 0 : Math.max(0, clip.trimStart),
+    cycleDuration: cycleDurationForClip(clip),
+    loopCount: getClipLoopCount(clip),
+    // Remapped and reversed buffers already start at the trim window.
+    bufferOffset: rateRemap || reverseAudio ? 0 : Math.max(0, clip.trimStart),
     volume: clampClipVolume(clip.volume),
     audioFadeIn: Math.max(0, clip.audioFadeIn),
     audioFadeOut: Math.max(0, clip.audioFadeOut),
@@ -81,6 +142,7 @@ function entryFromClip(
       ? { volumeAutomation: automation.volume }
       : {}),
     ...(automation?.pan?.length ? { panAutomation: automation.pan } : {}),
+    ...(audioEffects ? { audioEffects } : {}),
     ...(rateRemap
       ? {
           rateRemap: true,
@@ -90,10 +152,22 @@ function entryFromClip(
             duration: clip.duration,
             playbackRate: clip.playbackRate,
             automation: clip.automation,
+            ...(reversed ? { reversed: true } : {}),
+          },
+        }
+      : {}),
+    ...(reverseAudio
+      ? {
+          reverseAudio: true,
+          reverseClip: {
+            trimStart: clip.trimStart,
+            trimEnd: clip.trimEnd,
+            duration: clip.duration,
           },
         }
       : {}),
     ...(isBed ? { isBed: true } : {}),
+    ...laneFields(track),
   };
 }
 
@@ -101,8 +175,15 @@ function entryFromClip(
  * Build sample-accurate audio placements for every audible timeline clip.
  *
  * Base-layer clips follow xfade segment math (including transition overlaps so
- * adjacent clips share audio during dissolves — no hard gap). PiP overlays
- * begin at output time 0 (matches FFmpeg overlay timing).
+ * adjacent clips share audio during dissolves — no hard gap). Overlay-lane
+ * clips are placed at their track item's output time (`Clip.timelineStart`,
+ * derived in `utils/trackStacking.ts`).
+ *
+ * Lane mute is honored on every kind of lane: clips flattened from a muted
+ * video lane carry `trackMuted` and are skipped here, and muted audio lanes
+ * contribute no bed entries. Because the flag travels on the clip, the export
+ * premix (`utils/webcodecs-audio.ts`, which is handed the flattened view) drops
+ * the same entries the preview does.
  */
 export function buildAudioSchedule(
   clips: Clip[],
@@ -136,6 +217,10 @@ export function buildAudioSchedule(
     : transitions;
 
   const entries: AudioScheduleEntry[] = [];
+  // `layerIndex` is the clip's position among the video lanes (derived by
+  // `toLegacyTimelineView`), so it names the holding lane.
+  const vLanes = videoTracks(tracks);
+  const videoLane = (clip: Clip) => vLanes[clip.layerIndex ?? 0];
 
   if (scheduleClips.length > 0) {
     const segments = buildClipTimelineSegments(
@@ -144,12 +229,18 @@ export function buildAudioSchedule(
       scheduleTimelineIndices,
     );
     for (const segment of segments) {
-      entries.push(entryFromClip(segment.clip, segment.startTime, segment.duration));
+      if (segment.clip.trackMuted) continue;
+      entries.push(
+        entryFromClip(segment.clip, segment.startTime, segment.duration, false, videoLane(segment.clip)),
+      );
     }
   }
 
   for (const clip of pipClips) {
-    entries.push(entryFromClip(clip, 0, getClipDuration(clip)));
+    if (clip.trackMuted) continue;
+    const duration = getClipDuration(clip);
+    const { start } = placementWindow(clip, duration);
+    entries.push(entryFromClip(clip, start, duration, false, videoLane(clip)));
   }
 
   // Concurrent audio-bed clips from dedicated audio tracks.
@@ -159,7 +250,7 @@ export function buildAudioSchedule(
     for (const item of track.items) {
       const clip = clipsById.get(item.clipId);
       if (!clip || clip.kind !== 'audio') continue;
-      entries.push(entryFromClip(clip, item.startTime, getClipDuration(clip), true));
+      entries.push(entryFromClip(clip, item.startTime, getClipDuration(clip), true, track));
     }
   }
 
@@ -192,12 +283,20 @@ export function schedulesMatchStructure(
       left.objectUrl !== right.objectUrl ||
       left.timelineStart !== right.timelineStart ||
       left.duration !== right.duration ||
+      left.cycleDuration !== right.cycleDuration ||
+      left.loopCount !== right.loopCount ||
       left.bufferOffset !== right.bufferOffset ||
       left.playbackRate !== right.playbackRate ||
       Boolean(left.rateRemap) !== Boolean(right.rateRemap) ||
+      Boolean(left.reverseAudio) !== Boolean(right.reverseAudio) ||
+      Boolean(left.rateRemapClip?.reversed) !== Boolean(right.rateRemapClip?.reversed) ||
       Boolean(left.isBed) !== Boolean(right.isBed) ||
+      left.trackId !== right.trackId ||
+      left.laneDuck !== right.laneDuck ||
       !keyframesMatch(left.volumeAutomation, right.volumeAutomation) ||
       !keyframesMatch(left.panAutomation, right.panAutomation) ||
+      // Insert changes swap the processed buffer, so live gain updates are not enough.
+      audioEffectsSignature(left.audioEffects) !== audioEffectsSignature(right.audioEffects) ||
       !keyframesMatch(
         left.rateRemapClip?.automation?.playbackRate,
         right.rateRemapClip?.automation?.playbackRate,
@@ -239,7 +338,7 @@ export function bedOverlapsDialogue(
   entry: AudioScheduleEntry,
   schedule: AudioScheduleEntry[],
 ): boolean {
-  if (!entry.isBed) return false;
+  if (!entry.isBed || entry.laneDuck) return false;
   const entryEnd = entry.timelineStart + entry.duration;
   return schedule.some((other) => {
     if (other.isBed || other.clipId === entry.clipId) return false;

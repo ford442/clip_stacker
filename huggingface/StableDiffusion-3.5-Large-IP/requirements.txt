@@ -1,21 +1,27 @@
+spaces
 torch
 torchvision
 torchaudio
 accelerate
-#git+https://github.com/huggingface/accelerate.git
-bitsandbytes
 transformers
-#git+https://github.com/huggingface/transformers.git
-optimum
-#git+https://github.com/huggingface/optimum.git
 huggingface_hub[hf_transfer]
 sentencepiece
 paramiko
 gradio
 numpy
 opencv-python
+einops
 git+https://github.com/asomoza/image_gen_aux.git
 diffusers
 peft
-#git+https://github.com/huggingface/diffusers.git
+# The ford442/diffusers@pre_upcast_offload fork was dropped deliberately. Its
+# three patches are all dead weight for this Space:
+#   - pipeline_stable_diffusion_3.py / pipeline_stable_diffusion_xl.py: this
+#     Space imports its own vendored pipeline_stable_diffusion_3_ipa.py and no
+#     SDXL pipeline, so neither patch is ever loaded.
+#   - autoencoder_kl.py: casts z to float32 in _decode, but
+#     pipeline_stable_diffusion_3_ipa.py already calls
+#     self.vae.decode(latents.to(torch.float32)) and VAE tiling is never
+#     enabled, so z is float32 before post_quant_conv either way.
 #git+https://github.com/ford442/diffusers.git@pre_upcast_offload
+#git+https://github.com/huggingface/diffusers.git

@@ -1,0 +1,777 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:clip-stacker:finishing-preset:v1",
+  "title": "Clip Stacker finishing preset",
+  "description": "A finishing stack for Clip Stacker. Every pass and field is optional; missing fields take defaults. apply \"replace\" (default) makes this the whole stack (omitted passes are switched off); \"merge\" changes only the passes listed. Pass order: noiseReduction → primaryColor → curves → secondaryColor → lut → sharpen → chromaticAberration → bloom → grain.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "finishing"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "schema": {
+      "const": "clip_stacker.finishing-preset"
+    },
+    "version": {
+      "const": 1
+    },
+    "name": {
+      "type": "string",
+      "maxLength": 80
+    },
+    "description": {
+      "type": "string"
+    },
+    "apply": {
+      "enum": [
+        "replace",
+        "merge"
+      ],
+      "default": "replace"
+    },
+    "finishing": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "noiseReduction": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Noise reduction — first pass.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Strength / mix 0 (bypass) … 1 (full)."
+            },
+            "quality": {
+              "enum": [
+                "standard",
+                "high",
+                "nlm"
+              ],
+              "description": "Spatial tier: standard (fast), high (edge-aware), nlm (strongest)."
+            },
+            "spatialStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Spatial denoise strength."
+            },
+            "spatialRadius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 4,
+              "description": "Spatial radius in pixels."
+            },
+            "temporal": {
+              "type": "boolean",
+              "description": "Blend with the previous frame on static areas."
+            },
+            "temporalStrength": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Temporal blend strength."
+            },
+            "temporalMotionThreshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Luma change above which temporal blending stops (anti-ghost)."
+            },
+            "lumaOnly": {
+              "type": "boolean",
+              "description": "Denoise luminance only and keep source colour (recommended)."
+            },
+            "draft": {
+              "type": "boolean",
+              "description": "Cheaper kernel for live preview."
+            }
+          }
+        },
+        "primaryColor": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Primary colour balance (exposure, white balance, lift / gamma / gain).",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Strength / mix 0 (bypass) … 1 (full)."
+            },
+            "exposure": {
+              "type": "number",
+              "minimum": -3,
+              "maximum": 3,
+              "description": "Exposure, EV."
+            },
+            "contrast": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2,
+              "description": "Contrast multiplier (1 = neutral)."
+            },
+            "saturation": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 2,
+              "description": "Saturation (1 = neutral)."
+            },
+            "temperature": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1,
+              "description": "Cool (−1) … warm (+1)."
+            },
+            "tint": {
+              "type": "number",
+              "minimum": -1,
+              "maximum": 1,
+              "description": "Magenta (−1) … green (+1)."
+            },
+            "lift": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": -1,
+                "maximum": 1
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Shadow offset per channel [r, g, b] (0 = neutral)."
+            },
+            "gamma": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0.1,
+                "maximum": 3
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Midtone power per channel [r, g, b] (1 = neutral)."
+            },
+            "gain": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Highlight multiply per channel [r, g, b] (1 = neutral)."
+            }
+          }
+        },
+        "curves": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Curves & levels — after primary.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Strength / mix 0 (bypass) … 1 (full)."
+            },
+            "levels": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Levels, applied before the curves.",
+              "properties": {
+                "inBlack": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Input black point."
+                },
+                "inWhite": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Input white point (must exceed inBlack)."
+                },
+                "gamma": {
+                  "type": "number",
+                  "minimum": 0.1,
+                  "maximum": 10,
+                  "description": "Midtone gamma (>1 brightens)."
+                },
+                "outBlack": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Output black (lift for a matte look)."
+                },
+                "outWhite": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Output white."
+                }
+              }
+            },
+            "curves": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Monotone cubic curves: master, then per channel.",
+              "properties": {
+                "master": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "One curve knot.",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Input 0 … 1."
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Output 0 … 1."
+                      }
+                    }
+                  },
+                  "maxItems": 16,
+                  "description": "Master curve knots, sorted by x, at least 2. [{x:0,y:0},{x:1,y:1}] = identity."
+                },
+                "red": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "One curve knot.",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Input 0 … 1."
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Output 0 … 1."
+                      }
+                    }
+                  },
+                  "maxItems": 16,
+                  "description": "Red curve knots, sorted by x, at least 2. [{x:0,y:0},{x:1,y:1}] = identity."
+                },
+                "green": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "One curve knot.",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Input 0 … 1."
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Output 0 … 1."
+                      }
+                    }
+                  },
+                  "maxItems": 16,
+                  "description": "Green curve knots, sorted by x, at least 2. [{x:0,y:0},{x:1,y:1}] = identity."
+                },
+                "blue": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "One curve knot.",
+                    "properties": {
+                      "x": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Input 0 … 1."
+                      },
+                      "y": {
+                        "type": "number",
+                        "minimum": 0,
+                        "maximum": 1,
+                        "description": "Output 0 … 1."
+                      }
+                    }
+                  },
+                  "maxItems": 16,
+                  "description": "Blue curve knots, sorted by x, at least 2. [{x:0,y:0},{x:1,y:1}] = identity."
+                }
+              }
+            }
+          }
+        },
+        "secondaryColor": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Secondary / selective colour (hue qualifiers and power windows).",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Strength / mix 0 (bypass) … 1 (full)."
+            },
+            "grades": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "One selective grade.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "description": "Turn the pass on. Omitted = off."
+                  },
+                  "maskType": {
+                    "enum": [
+                      "hue",
+                      "window",
+                      "hue+window"
+                    ],
+                    "description": "What selects the pixels."
+                  },
+                  "hueCenter": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 360,
+                    "description": "Hue qualifier centre, degrees."
+                  },
+                  "hueWidth": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 360,
+                    "description": "Hue qualifier width, degrees."
+                  },
+                  "hueSoftness": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 180,
+                    "description": "Hue qualifier soft falloff, degrees."
+                  },
+                  "windowCenterX": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Power window centre X (0 … 1 of the frame)."
+                  },
+                  "windowCenterY": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Power window centre Y (0 … 1 of the frame)."
+                  },
+                  "windowWidth": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Power window width (0 … 1)."
+                  },
+                  "windowHeight": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Power window height (0 … 1)."
+                  },
+                  "windowRotation": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180,
+                    "description": "Power window rotation, degrees."
+                  },
+                  "windowFeather": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "Power window soft edge (0 … 1 of the radius)."
+                  },
+                  "hueShift": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180,
+                    "description": "Hue rotation inside the mask, degrees."
+                  },
+                  "satScale": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 3,
+                    "description": "Saturation multiplier inside the mask (1 = neutral)."
+                  },
+                  "lumOffset": {
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 1,
+                    "description": "Luminance offset inside the mask."
+                  },
+                  "satOffset": {
+                    "type": "number",
+                    "minimum": -1,
+                    "maximum": 1,
+                    "description": "Saturation offset inside the mask."
+                  },
+                  "invertMask": {
+                    "type": "boolean",
+                    "description": "Adjust outside the mask instead of inside."
+                  }
+                }
+              },
+              "maxItems": 3,
+              "description": "Up to 3 stacked selective grades."
+            }
+          }
+        },
+        "lut": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Creative 3D LUT.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "lutId": {
+              "enum": [
+                "none",
+                "teal-orange",
+                "film",
+                "bleach",
+                "warm",
+                "custom"
+              ],
+              "description": "Creative LUT: a bundled id, 'none', or 'custom' with customCubeText."
+            },
+            "intensity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "LUT mix 0 … 1."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Alias of intensity (ignored on load; intensity wins)."
+            },
+            "customCubeText": {
+              "type": "string",
+              "maxLength": 4000000,
+              "description": "Adobe .cube text, embedded, when lutId is 'custom'."
+            },
+            "customFileName": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Original .cube file name (display only)."
+            }
+          }
+        },
+        "sharpen": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Sharpening — after the LUT.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Strength / mix 0 (bypass) … 1 (full)."
+            },
+            "mode": {
+              "enum": [
+                "classic",
+                "edge",
+                "multiscale"
+              ],
+              "description": "classic unsharp, edge-aware (no halos), or multi-scale detail."
+            },
+            "radius": {
+              "type": "number",
+              "minimum": 0.5,
+              "maximum": 3,
+              "description": "Radius in pixels."
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Skip detail below this luma difference (keep ~0.01–0.05)."
+            },
+            "midtoneDetail": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Midtone local contrast."
+            }
+          }
+        },
+        "chromaticAberration": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Chromatic aberration — after sharpen.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Fringe width (1 ≈ 0.8 % of the frame height)."
+            },
+            "radial": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "1 = radial lens fringe, 0 = uniform shift along angle."
+            },
+            "angle": {
+              "type": "number",
+              "minimum": -360,
+              "maximum": 360,
+              "description": "Direction of the uniform shift, degrees clockwise."
+            },
+            "spectral": {
+              "type": "boolean",
+              "description": "Soft spectral fringe (recommended)."
+            }
+          }
+        },
+        "bloom": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Bloom & glow — after chromatic aberration.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Glow strength."
+            },
+            "mode": {
+              "enum": [
+                "bloom",
+                "lightWrap"
+              ],
+              "description": "bloom (highlights glow) or lightWrap (light over dark edges)."
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Brightness where bloom starts."
+            },
+            "softness": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Soft knee around the threshold."
+            },
+            "radius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Spread: 0 → 1 % … 1 → 25 % of the frame height."
+            },
+            "tint": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Glow colour multiplier [r, g, b] (1 = neutral)."
+            }
+          }
+        },
+        "grain": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Film grain & optical — always last.",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Turn the pass on. Omitted = off."
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Strength / mix 0 (bypass) … 1 (full)."
+            },
+            "quality": {
+              "enum": [
+                "classic",
+                "film"
+              ],
+              "description": "classic hash grain or film (blue-noise) grain."
+            },
+            "size": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Fine (0) … coarse (1)."
+            },
+            "softness": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Bias grain toward the midtones."
+            },
+            "monochrome": {
+              "type": "boolean",
+              "description": "Monochrome grain (classic)."
+            },
+            "monochromeBias": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Film: colour (0) … monochrome (1) grain."
+            },
+            "temporalCoherence": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Film: 0 = new grain every frame … 1 = slowly evolving."
+            },
+            "response": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Film: grain response curve.",
+              "properties": {
+                "shadows": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2,
+                  "description": "Grain gain in the shadows."
+                },
+                "midtones": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2,
+                  "description": "Grain gain in the midtones."
+                },
+                "highlights": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2,
+                  "description": "Grain gain in the highlights."
+                }
+              }
+            },
+            "bloomAmount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Grain pass's own soft highlight bloom."
+            },
+            "vignette": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Vignette.",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Turn the pass on. Omitted = off."
+                },
+                "amount": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Edge darkening."
+                },
+                "midpoint": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Where the falloff starts."
+                },
+                "roundness": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Circular (0) … rectangular (1)."
+                }
+              }
+            },
+            "halation": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "Film halation (red glow around highlights).",
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Turn the pass on. Omitted = off."
+                },
+                "threshold": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Brightness threshold."
+                },
+                "amount": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "description": "Red halation strength."
+                },
+                "radius": {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 32,
+                  "description": "Blur radius in pixels."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

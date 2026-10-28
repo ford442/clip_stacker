@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 #
-# Push RIFE/ to the HuggingFace Space it is the source of truth for.
+# Push huggingface/RIFE/ to the HuggingFace Space it is the source of truth for.
 #
-# The Space is a git repo on huggingface.co. This clones it, copies RIFE/ over
-# the working tree, and pushes. Files the Space has but RIFE/ does not are left
-# alone — remove those on the Space directly if you need to.
+# The Space is a git repo on huggingface.co. This clones it, copies
+# huggingface/RIFE/ over the working tree, and pushes. Files the Space has but
+# huggingface/RIFE/ does not are left alone — remove those on the Space
+# directly if you need to.
 #
 # Auth: set HF_TOKEN to a token with write access to the Space, or rely on an
 # already-configured git credential helper.
@@ -15,7 +16,7 @@ set -euo pipefail
 
 SPACE_ID="1inkusFace/RIFE"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SOURCE_DIR="$REPO_ROOT/RIFE"
+SOURCE_DIR="$REPO_ROOT/huggingface/RIFE"
 
 DRY_RUN=0
 if [[ "${1:-}" == "--dry-run" ]]; then
@@ -47,14 +48,14 @@ git clone --depth 1 "$REMOTE" "$WORKDIR/space" >/dev/null 2>&1 || {
   exit 1
 }
 
-echo "==> Copying RIFE/ into the Space working tree"
+echo "==> Copying huggingface/RIFE/ into the Space working tree"
 # --exclude keeps repo-only files (tests, __pycache__) off the Space.
 rsync -a --exclude='.git' --exclude='tests' --exclude='__pycache__' \
   "$SOURCE_DIR"/ "$WORKDIR/space"/
 
 cd "$WORKDIR/space"
 if git diff --quiet && git diff --cached --quiet; then
-  echo "==> Space already matches RIFE/, nothing to deploy"
+  echo "==> Space already matches huggingface/RIFE/, nothing to deploy"
   exit 0
 fi
 

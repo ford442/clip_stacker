@@ -8,24 +8,39 @@
  *   3. Worker posts `initialized` once the real compositor is up.
  * A failed probe is a hard-fail for GPU preview — not a Canvas2D stand-in.
  *
- * Main → Worker: init, render, frames-ready, cancel, resize, sync-clips,
- *                pause-decoders, reset-finishing, chore-jobs, destroy
+ * Frame sourcing: the worker decodes what it can itself (`clip-media` gives it
+ * the clip blobs once) and only asks main for the layers its decoder cannot
+ * serve, so the happy path never touches `HTMLVideoElement.currentTime`.
+ *
+ * Main → Worker: init, clip-media, render, frames-ready, cancel, resize,
+ *                sync-clips, pause-decoders, reset-finishing, set-scopes,
+ *                chore-jobs, destroy
  * Worker → Main: ready, initialized, need-frames, render-complete,
- *                render-cancelled, chore-jobs-result, error
+ *                render-cancelled, scopes, chore-jobs-result, error,
+ *                gpu-error, gpu-lost, gpu-recovered, gpu-recovery-failed
+ *
+ * The worker owns its own `GPUDevice` (see `gpuDevice.ts`), so the `gpu-*`
+ * messages are the only way main learns the preview's device died or
+ * misbehaved.
  */
 
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipTransition,
   ExportSettings,
   TextOverlay,
+  TextOverlayStyle,
 } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
+import type { ColorDebugSnapshot, ColorManagementSettings } from '../utils/colorManagement';
 import type { ColorGradeSettings } from '../utils/lut';
 import type { PreviewCompositionPlan } from '../utils/previewComposition';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
 import type { WebGpuProbeResult } from './webgpuProbe';
+import type { GpuErrorLogEntry } from './gpuDevice';
+import type { PreviewMediaSource } from '../utils/proxyMedia';
 
 /**
  * Clip descriptor sent to the worker — identical to Clip but without the
@@ -110,6 +125,39 @@ export interface CapturedFrame {
   /** Video element dimensions at the time of capture (for letterbox UV). */
   videoWidth: number;
   videoHeight: number;
+  /** True when main captured this from the clip's preview proxy, not the original. */
+  proxy?: boolean;
+}
+
+/** Which scopes the worker should compute from the composed preview texture. */
+export interface ScopeSettings {
+  waveform: boolean;
+  vectorscope: boolean;
+}
+
+export const SCOPES_OFF: ScopeSettings = { waveform: false, vectorscope: false };
+
+/** One frame's scope readback (bins are plain typed arrays, transferred). */
+export interface ScopeData {
+  /** 256 Rec.709 luma bins. */
+  histogram?: Uint32Array;
+  /** `vectorscopeSize²` CbCr bins, row-major (V rows, U columns). */
+  vectorscope?: Uint32Array;
+  vectorscopeSize?: number;
+  /** Composed frame size the scopes were measured on. */
+  width: number;
+  height: number;
+}
+
+/** How each layer of a rendered frame was sourced (decoder vs `<video>` seek). */
+export interface FrameSourceStats {
+  decoder: number;
+  element: number;
+  /**
+   * Layers (of `decoder` + `element`) served from a preview proxy rather than
+   * the original file. Omitted by older senders — treat as 0.
+   */
+  proxy?: number;
 }
 
 /** How long main waits for the worker GPU probe / init before falling back. */
@@ -125,6 +173,20 @@ export type PreviewWorkerInbound =
       canvas: OffscreenCanvas;
       width: number;
       height: number;
+      /**
+       * Resolved on main (a worker's `location.search` is the worker script's,
+       * not the page's). False keeps every layer on the `<video>` fallback.
+       */
+      decoderEnabled?: boolean;
+    }
+  | {
+      /**
+       * Hand the worker the source bytes for clips it should decode itself.
+       * `Blob`/`File` is structured-cloneable by reference — no copy.
+       */
+      type: 'clip-media';
+      /** `source` says whether `blob` is the clip's proxy or its original (default). */
+      media: Array<{ clipId: string; blob: Blob; source?: PreviewMediaSource }>;
     }
   | {
       type: 'render';
@@ -138,8 +200,13 @@ export type PreviewWorkerInbound =
       maxWidth?: number;
       maxHeight?: number;
       finishing?: FinishingSettings;
+      /** Output color / working space for the managed pipeline. */
+      colorManagement?: ColorManagementSettings;
       /** @deprecated Prefer `finishing`. */
       colorGrade?: ColorGradeSettings;
+      /** Caption cues to plan for; omitted or empty means no caption layers. */
+      captions?: CaptionEntry[];
+      captionStyle?: Partial<TextOverlayStyle>;
     }
   | {
       type: 'frames-ready';
@@ -161,6 +228,7 @@ export type PreviewWorkerInbound =
     }
   | { type: 'pause-decoders' }
   | { type: 'reset-finishing' }
+  | { type: 'set-scopes'; scopes: ScopeSettings }
   | {
       type: 'chore-jobs';
       id: number;
@@ -174,6 +242,27 @@ export type PreviewWorkerInbound =
 // --------------------------------------------------------------------------
 
 export type PreviewWorkerOutbound =
+  | {
+      /** An uncaptured error on the worker's device (validation / OOM / internal). */
+      type: 'gpu-error';
+      entry: GpuErrorLogEntry;
+    }
+  | {
+      /** The worker's device was lost; it is recreating one. */
+      type: 'gpu-lost';
+      message: string;
+      timestamp: number;
+    }
+  | {
+      /** The worker's compositor is running on a freshly recreated device. */
+      type: 'gpu-recovered';
+    }
+  | {
+      /** Recreating the worker's device failed — the preview cannot draw. */
+      type: 'gpu-recovery-failed';
+      message: string;
+      timestamp: number;
+    }
   | {
       /** GPU probe result — posted before any canvas is transferred. */
       type: 'ready';
@@ -193,6 +282,13 @@ export type PreviewWorkerOutbound =
       type: 'render-complete';
       renderId: number;
       plan: PreviewCompositionPlan;
+      /** Per-layer frame sourcing for this frame (decoder path vs `<video>`). */
+      frameSources?: FrameSourceStats;
+    }
+  | {
+      type: 'scopes';
+      renderId: number;
+      scopes: ScopeData;
     }
   | {
       type: 'render-cancelled';
@@ -209,6 +305,10 @@ export type PreviewWorkerOutbound =
       id: number;
       ok: false;
       message: string;
+    }
+  | {
+      type: 'color-state';
+      snapshot: ColorDebugSnapshot;
     }
   | {
       type: 'error';

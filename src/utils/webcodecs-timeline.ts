@@ -1,4 +1,4 @@
-/** Frame rate used for timeline WebCodecs export (matches `TARGET_FPS` in webcodecs.ts). */
+/** Frame rate used for timeline WebCodecs export (aliased as `TARGET_FPS` in webcodecs-codec.ts). */
 export const TIMELINE_EXPORT_FPS = 30;
 
 /** Minimum interval between `onStatus` updates during timeline export. */
@@ -57,14 +57,6 @@ export function shouldEmitTimelineStatusUpdate(
   if (totalFrames <= 0) return false;
   if (frameIndex === 0 || frameIndex >= totalFrames - 1) return true;
   return frameIndex - lastEmittedFrameIndex >= throttleFrames;
-}
-
-/** True when the encoder queue is deeper than the configured backpressure limit. */
-export function shouldWaitForEncoderBackpressure(
-  encodeQueueSize: number,
-  maxDepth: number = MAX_ENCODE_QUEUE_DEPTH,
-): boolean {
-  return encodeQueueSize > maxDepth;
 }
 
 /**

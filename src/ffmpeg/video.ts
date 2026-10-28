@@ -7,7 +7,8 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration, clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
+import { clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
 import { resolveClipLayoutPixels } from "../utils/overlayCoords";
 import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
 import {
@@ -15,7 +16,18 @@ import {
   getClipPlaybackRate,
   videoSetptsFilter,
 } from "../utils/playbackRate";
+import { audioReversePrefix, videoReversePrefix } from "../utils/reverseClip";
 import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
+import {
+  buildOverlayAlphaFilters,
+  buildOverlayFilter,
+} from "../utils/overlayBlend";
+import { resolveAnimatedPictureTransform } from "../utils/animatedLayout";
+import {
+  buildFfmpegFramePictureFilters,
+  buildFfmpegPictureFilters,
+  isIdentityPictureTransform,
+} from "../utils/clipTransform";
 import { appendPrimaryColorFilters, type PrimaryColorSettings } from "../utils/primaryColor";
 import {
   appendNoiseReductionFilters,
@@ -57,6 +69,8 @@ import {
   clipNeedsEffects,
   getSafeExtension,
   buildSingleClipFilter,
+  buildClipInputArgs,
+  clipHasSourceAudio,
   getFfmpegEnvironmentDiagnostics,
   toBlobURLWithRetry,
   toBlobURLWithFallback,
@@ -95,10 +109,18 @@ export function buildPipFilterComplex(
   onWarning?: (message: string) => void,
 ): string {
   const parts: string[] = [];
+  // Overlay positions moved by a picture transform (bounding-box top-left).
+  const transformedOverlayPos = new Map<number, { x: number; y: number }>();
 
   // ── Phase 1: per-clip pre-processing ────────────────────────────────────────
   for (let i = 0; i < clips.length; i++) {
     const clip = clips[i];
+    // Picture transform: `scale` + `rotate` only. Keyframed transforms hold
+    // their first value (this graph has no per-frame layout), and there is no
+    // libvidstab, so the optical-flow warp is not composed in — the render
+    // plan's `pictureTransformGaps` says so rather than pretending.
+    const picture = resolveAnimatedPictureTransform(clip, 0);
+    const transformed = !isIdentityPictureTransform(picture);
     const dur = getClipDuration(clip);
     const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     const isBase = (clip.layerIndex ?? 0) === 0;
@@ -109,12 +131,16 @@ export function buildPipFilterComplex(
     const atempo = audioTempoFilterSegment(rate);
 
     if (clip.kind === "video") {
-      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},${setpts}`;
+      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},${videoReversePrefix(clip)}${setpts}`;
 
       if (isBase) {
         // Normalise to output canvas size
         vf += `,scale=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease`;
         vf += `,pad=${OUTPUT_WIDTH}:${OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
+        if (transformed) {
+          const frame = { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT };
+          vf += `,${buildFfmpegFramePictureFilters(picture, frame).join(",")},format=yuv420p`;
+        }
       } else {
         // Scale overlay to requested dimensions (0 means keep original)
         const layout = resolveClipLayoutPixels(clip, {
@@ -130,10 +156,28 @@ export function buildPipFilterComplex(
         } else if (h > 0) {
           vf += `,scale=-2:${h}`;
         }
-        // Apply opacity when < 1
-        const opacity = clip.opacity ?? 1;
-        if (opacity < 1) {
-          vf += `,format=rgba,colorchannelmixer=aa=${opacity.toFixed(4)}`;
+        // Keep an alpha plane alive through the overlay: source alpha (PNG /
+        // WebP / WebM+alpha), a chroma/luma key, or an explicit opaque wipe.
+        // Opacity is folded in as a multiplier on the resulting alpha.
+        const alphaFilters = buildOverlayAlphaFilters(clip);
+        if (alphaFilters.length > 0) {
+          vf += `,${alphaFilters.join(",")}`;
+        }
+        // After the key, so the rotated corners stay transparent (`c=none`
+        // needs the rgba plane the alpha filters leave behind).
+        if (transformed && w > 0 && h > 0) {
+          const { x, y } = clampOverlayPosition(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+          const placed = buildFfmpegPictureFilters(
+            picture,
+            { x, y, width: w, height: h },
+            { width: OUTPUT_WIDTH, height: OUTPUT_HEIGHT },
+          );
+          vf += `,${placed.filters.join(",")}`;
+          transformedOverlayPos.set(i, { x: placed.x, y: placed.y });
+        } else if (transformed) {
+          onWarning?.(
+            `Overlay clip ${i + 1} has a picture transform but no resolved size; the FFmpeg path renders it untransformed.`,
+          );
         }
       }
 
@@ -148,12 +192,18 @@ export function buildPipFilterComplex(
       );
     }
 
-    // Audio — normalize to 44100 Hz stereo so amix / concat always gets matching streams
-    let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
+    // Audio — normalize to 44100 Hz stereo so amix / concat always gets matching streams.
+    // Still images (and sources proven to be silent) have no `[i:a]` to trim;
+    // synthesize silence so the concat / amix graph still sees matching streams.
+    let af = clipHasSourceAudio(clip)
+      ? `[${i}:a]atrim=start=${clip.trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`
+      : `anullsrc=r=44100:cl=stereo:d=${dur},aformat=sample_rates=44100:channel_layouts=stereo`;
     if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
     if (clip.audioFadeOut > 0)
       af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
-    af += audioVolumeFilterSegment(clip.volume ?? 1);
+    // A muted lane contributes silence rather than being dropped, so the concat
+    // / amix graph keeps a stream per clip (#168 Phase A).
+    af += audioVolumeFilterSegment(clip.trackMuted ? 0 : (clip.volume ?? 1));
     parts.push(`${af}[a${i}]`);
   }
 
@@ -237,18 +287,37 @@ export function buildPipFilterComplex(
         `Overlay clip ${idx + 1} is positioned fully off-canvas (x=${clip.x ?? 0}, y=${clip.y ?? 0}) and will not be visible. Its position has been clamped back into view.`,
       );
     }
-    const { x, y } = clampOverlayPosition(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT);
+    const { x, y } =
+      transformedOverlayPos.get(idx) ??
+      clampOverlayPosition(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT);
     const isLast = o === overlayEntries.length - 1;
     const outV = isLast ? "vout" : `vcomp${idx}`;
 
+    // Shift the overlay's PTS to its lane placement so it composites at its own
+    // output time rather than at 0 (#168 Phase B). `timelineStart` is derived
+    // from the track item by `toLegacyTimelineView`; legacy clips have none and
+    // keep the historical "start at 0" behaviour.
+    const overlayStart = clip.timelineStart ?? 0;
+    let overlayIn = `v${idx}`;
+    if (overlayStart > 0) {
+      overlayIn = `v${idx}d`;
+      parts.push(`[v${idx}]setpts=PTS-STARTPTS+${overlayStart}/TB[${overlayIn}]`);
+    }
+
     parts.push(
-      `[${currentV}][v${idx}]overlay=${x}:${y}:eof_action=pass[${outV}]`,
+      `[${currentV}][${overlayIn}]${buildOverlayFilter(clip, x, y)}[${outV}]`,
     );
     currentV = outV;
 
-    // Muted overlays are omitted from the final mix (volume is applied per-clip in phase 1).
-    if (getClipVolume(clip) > 0) {
-      audioStreams.push(`a${idx}`);
+    // Muted overlays are omitted from the final mix (volume is applied per-clip
+    // in phase 1); so are clips on a muted lane.
+    if (getClipVolume(clip) > 0 && !clip.trackMuted) {
+      if (overlayStart > 0) {
+        parts.push(`[a${idx}]adelay=${Math.round(overlayStart * 1000)}:all=1[a${idx}d]`);
+        audioStreams.push(`a${idx}d`);
+      } else {
+        audioStreams.push(`a${idx}`);
+      }
     }
   }
 
@@ -308,7 +377,8 @@ export async function mergeClipsWithCompositing(
 
   const inputArgs: string[] = [];
   for (const clip of clips) {
-    inputArgs.push("-i", clip.inputName!);
+    // Still images need `-loop 1` so trim/overlay can reach the clip length.
+    inputArgs.push(...buildClipInputArgs(clip));
   }
 
   await safeExec(

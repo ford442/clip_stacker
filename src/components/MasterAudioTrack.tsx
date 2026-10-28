@@ -1,9 +1,15 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { MasterAudio } from '../types';
 import { editorActions } from '../store';
 import { WaveformCanvas } from './WaveformCanvas';
 import { extractWaveformPeaks } from '../utils/waveform';
 import { getMediaInfo } from '../utils/media';
+import { buildMasterBeatMarkerLayouts } from '../utils/beatMarkers';
+import { useEditorMasterBus } from '../store';
+import { activeBusEffectCount } from '../utils/audioBus';
+import { MasterBusDialog } from './audio/BusFxDialog';
+import { LoudnessMeterReadout, LoudnessMeterToggle, useLoudnessMeterOpen } from './audio/LoudnessMeter';
+import { AudioFxStatusNote } from './audio/AudioFxStatusNote';
 
 interface Props {
   masterAudio: MasterAudio | null;
@@ -21,6 +27,9 @@ export function MasterAudioTrack({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [peaks, setPeaks] = useState<Float32Array | null>(null);
   const [loading, setLoading] = useState(false);
+  const [masterFxOpen, setMasterFxOpen] = useState(false);
+  const [meterOpen, toggleMeter] = useLoudnessMeterOpen();
+  const masterFxCount = activeBusEffectCount(useEditorMasterBus()?.fx);
 
   useEffect(() => {
     if (!masterAudio) {
@@ -77,71 +86,115 @@ export function MasterAudioTrack({
 
   const handleRemove = useCallback(() => {
     editorActions.pushHistory();
-    editorActions.setMasterAudio((prev) => {
-      if (prev?.objectUrl) URL.revokeObjectURL(prev.objectUrl);
-      return null;
-    });
+    // The URL is not revoked here: undo can bring this master track back.
+    // `resetHistory` revokes it once no history entry can reference it.
+    editorActions.setMasterAudio(null);
   }, []);
 
   const trackWidth = Math.max(contentWidth, (masterAudio?.duration ?? 0) * pixelsPerSecond);
   const displayPeaks = peaks ?? new Float32Array(0);
+  const beatMarkers = useMemo(
+    () => buildMasterBeatMarkerLayouts(masterAudio, pixelsPerSecond),
+    [masterAudio, pixelsPerSecond],
+  );
 
   return (
-    <div className="timeline-track-row timeline-track-row--master-audio" data-track-id="master-audio">
-      <div className="timeline-track-label" title="External music reference for lip-sync timing">
-        Master
-      </div>
-      <div className="timeline-track timeline-track--master-audio" style={{ width: contentWidth }}>
-        <div className="master-audio-track-inner" style={{ width: trackWidth }}>
-          {masterAudio ? (
-            <div
-              className="master-audio-block"
-              style={{
-                left: masterAudio.startTime * pixelsPerSecond,
-                width: masterAudio.duration * pixelsPerSecond,
-              }}
-            >
-              <div className={`master-audio-waveform${loading ? ' is-loading' : ''}`}>
-                <WaveformCanvas peaks={displayPeaks} height={48} />
-              </div>
-              <div className="master-audio-footer">
-                <span className="master-audio-label" title={masterAudio.fileName}>
-                  ♫ {masterAudio.fileName}
-                </span>
-                <span className="master-audio-dur">{masterAudio.duration.toFixed(1)}s</span>
-                <button
-                  type="button"
-                  className="master-audio-remove"
-                  onClick={handleRemove}
-                  title="Remove master audio"
-                  aria-label="Remove master audio"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-          ) : (
-            <button
-              type="button"
-              className="master-audio-add"
-              onClick={() => fileInputRef.current?.click()}
-              title="Load external MP3/WAV for lip-sync reference"
-            >
-              + Load master audio (MP3)
-            </button>
-          )}
+    <>
+      <div className="timeline-track-row timeline-track-row--master-audio" data-track-id="master-audio">
+        <div className="timeline-track-label timeline-master-label" title="External music reference for lip-sync timing, and the master bus">
+          <span>Master</span>
+          <button
+            type="button"
+            className={`timeline-lane-toggle timeline-lane-fx${masterFxCount > 0 ? ' has-fx' : ''}`}
+            aria-haspopup="dialog"
+            aria-label={`Master bus FX${masterFxCount > 0 ? ` (${masterFxCount})` : ''}`}
+            title="Master bus: FX on the sum of every lane"
+            onClick={() => setMasterFxOpen(true)}
+          >
+            FX
+            {masterFxCount > 0 && <span className="timeline-lane-fx-count">{masterFxCount}</span>}
+          </button>
+          <LoudnessMeterToggle open={meterOpen} onToggle={toggleMeter} />
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
-          className="sr-only"
-          onChange={handleInputChange}
-        />
+        <div className="timeline-track timeline-track--master-audio" style={{ width: contentWidth }}>
+          <div className="master-audio-track-inner" style={{ width: trackWidth }}>
+            {masterAudio ? (
+              <>
+              <div
+                className="master-audio-block"
+                style={{
+                  left: masterAudio.startTime * pixelsPerSecond,
+                  width: masterAudio.duration * pixelsPerSecond,
+                }}
+              >
+                <div className={`master-audio-waveform${loading ? ' is-loading' : ''}`}>
+                  <WaveformCanvas peaks={displayPeaks} height={48} />
+                </div>
+                <div className="master-audio-footer">
+                  <span className="master-audio-label" title={masterAudio.fileName}>
+                    ♫ {masterAudio.fileName}
+                  </span>
+                  <span className="master-audio-dur">{masterAudio.duration.toFixed(1)}s</span>
+                  {masterAudio.bpmEstimate != null && masterAudio.bpmEstimate > 0 && (
+                    <span
+                      className="master-audio-bpm"
+                      title={`Detected tempo from ${beatMarkers.length} beats`}
+                    >
+                      {masterAudio.bpmEstimate.toFixed(1)} BPM
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    className="master-audio-remove"
+                    onClick={handleRemove}
+                    title="Remove master audio"
+                    aria-label="Remove master audio"
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+              {beatMarkers.length > 0 && (
+                <div className="master-audio-beats" aria-hidden="true">
+                  {beatMarkers.map((m) => (
+                    <span
+                      key={m.sourceTime}
+                      className="master-audio-beat-tick"
+                      style={{ left: m.leftPx }}
+                    />
+                  ))}
+                </div>
+              )}
+              </>
+            ) : (
+              <button
+                type="button"
+                className="master-audio-add"
+                onClick={() => fileInputRef.current?.click()}
+                title="Load external MP3/WAV for lip-sync reference"
+              >
+                + Load master audio (MP3)
+              </button>
+            )}
+          </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.flac"
+            className="sr-only"
+            onChange={handleInputChange}
+          />
+        </div>
+        {totalDuration > 0 && !masterAudio && (
+          <span className="master-audio-hint muted">Visual sync anchor — not mixed in browser playback</span>
+        )}
+        {masterFxOpen && <MasterBusDialog onClose={() => setMasterFxOpen(false)} />}
       </div>
-      {totalDuration > 0 && !masterAudio && (
-        <span className="master-audio-hint muted">Visual sync anchor — not mixed in browser playback</span>
-      )}
-    </div>
+      {/* Sticky to the left edge so it stays in view however far the timeline scrolls. */}
+      <div className="master-bus-strip">
+        <AudioFxStatusNote compact />
+        {meterOpen && <LoudnessMeterReadout />}
+      </div>
+    </>
   );
 }

@@ -4,6 +4,8 @@
 @group(0) @binding(3) var lutTex: texture_3d<f32>;
 @group(0) @binding(4) var<uniform> u: LutUniforms;
 
+const SCENE_LINEAR: bool = false;
+
 struct LutUniforms {
   intensity: f32,
   lutSize: f32,
@@ -43,8 +45,13 @@ fn vs_main(@builtin(vertex_index) idx: u32) -> VertexOutput {
 fn sampleLut(color: vec3<f32>) -> vec3<f32> {
   let scale = (u.lutSize - 1.0) / u.lutSize;
   let offset = 0.5 / u.lutSize;
-  let coord = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)) * scale + offset;
-  return textureSample(lutTex, lutSampler, coord).rgb;
+  let lookup = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+  let coord = lookup * scale + offset;
+  let graded = textureSample(lutTex, lutSampler, coord).rgb;
+  if (SCENE_LINEAR) {
+    return select(graded, color, color > vec3<f32>(1.0));
+  }
+  return graded;
 }
 
 @fragment

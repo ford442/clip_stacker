@@ -4,6 +4,7 @@
  */
 
 import sharpenShader from './shaders/sharpen.wgsl?raw';
+import { shaderForSceneLinear } from '../utils/colorManagement';
 import type { SharpenPass } from '../utils/finishing';
 import {
   SHARPEN_UNIFORM_FLOATS,
@@ -29,8 +30,10 @@ export class SharpenGpuPass {
     this.uniformBuffer = uniformBuffer;
   }
 
-  static create(device: GPUDevice, format: GPUTextureFormat): SharpenGpuPass {
-    const shaderModule = device.createShaderModule({ code: sharpenShader });
+  static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): SharpenGpuPass {
+    const shaderModule = device.createShaderModule({
+      code: shaderForSceneLinear(sharpenShader, sceneLinear),
+    });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',

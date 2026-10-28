@@ -1,4 +1,4 @@
-import type { Clip } from '../types';
+import type { Clip, MasterAudio } from '../types';
 import type { VirtualClipLayout } from '../components/timelineClipTypes';
 import { getClipPlaybackRate } from './playbackRate';
 import {
@@ -34,12 +34,17 @@ export function buildBeatMarkerLayouts(
     const pxPerSec = width / duration;
     const hasCurve = clipHasRateAutomation(clip);
     const rate = getClipPlaybackRate(clip);
+    const sourceLen = Math.max(0, trimEnd - trimStart);
 
     for (const t of beats) {
       if (!Number.isFinite(t) || t < trimStart || t > trimEnd) continue;
+      // A reversed clip shows the trim end first, so a beat at the end of
+      // the source sits at the start of the output span.
+      const fromTrim = t - trimStart;
+      const forwardOffset = clip.reversed ? Math.max(0, sourceLen - fromTrim) : fromTrim;
       const local = hasCurve
-        ? outputLocalAtSourceOffset(clip, t - trimStart)
-        : (t - trimStart) / rate;
+        ? outputLocalAtSourceOffset(clip, forwardOffset)
+        : forwardOffset / rate;
       markers.push({
         clipId: clip.id,
         sourceTime: t,
@@ -57,4 +62,37 @@ export function beatsInTrimWindow(clip: Clip): number[] {
   const trimStart = clip.trimStart;
   const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
   return beats.filter((t) => Number.isFinite(t) && t >= trimStart && t <= trimEnd);
+}
+
+export interface MasterBeatMarkerLayout {
+  /** Beat time in seconds from the start of the master audio file. */
+  sourceTime: number;
+  /** Beat time in timeline seconds (source time + master `startTime`). */
+  timelineTime: number;
+  /** Pixel offset from the left of the timeline content. */
+  leftPx: number;
+}
+
+/**
+ * Master-lane sibling of {@link buildBeatMarkerLayouts}. The master track is
+ * never time-stretched, so beats map straight through its timeline offset.
+ */
+export function buildMasterBeatMarkerLayouts(
+  masterAudio: Pick<MasterAudio, 'startTime' | 'duration' | 'beatTimestamps'> | null,
+  pixelsPerSecond: number,
+): MasterBeatMarkerLayout[] {
+  const beats = masterAudio?.beatTimestamps;
+  if (!masterAudio || !beats?.length || !(pixelsPerSecond > 0)) return [];
+
+  const markers: MasterBeatMarkerLayout[] = [];
+  for (const t of beats) {
+    if (!Number.isFinite(t) || t < 0 || t > masterAudio.duration) continue;
+    const timelineTime = masterAudio.startTime + t;
+    markers.push({
+      sourceTime: t,
+      timelineTime,
+      leftPx: timelineTime * pixelsPerSecond,
+    });
+  }
+  return markers;
 }

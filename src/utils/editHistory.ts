@@ -1,5 +1,17 @@
-import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track, SyncMarker } from '../types';
+import type {
+  CaptionEntry,
+  Clip,
+  ClipGroup,
+  ClipTransition,
+  MasterAudio,
+  TextOverlay,
+  TextOverlayStyle,
+  Track,
+  SyncMarker,
+} from '../types';
 import { cloneTracks } from './trackModel';
+import type { FinishingSettings } from './finishing';
+import type { MasterBusSettings } from './audioBus';
 
 /** Maximum undo snapshots kept in memory. */
 export const MAX_EDIT_HISTORY = 50;
@@ -11,9 +23,28 @@ export interface EditSnapshot {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  captions: CaptionEntry[];
+  captionStyle: Partial<TextOverlayStyle>;
   masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
+  /**
+   * Multi-select ids (includes the primary selectedClipId when set). Optional
+   * until the store carries a multi-selection; `cloneSnapshot` defaults it.
+   */
+  selectedClipIds?: string[];
   masterAudio: MasterAudio | null;
+  /**
+   * Master bus FX and loudness target. Optional so snapshots built before
+   * buses (and callers that never set it) restore "no master bus".
+   */
+  masterBus?: MasterBusSettings;
+  /**
+   * Finishing lives in the settings store, not the edit history. Only an
+   * entry that changed the whole stack at once (applying a finishing preset)
+   * carries it; undo / redo restore finishing for those entries alone, so
+   * every other undo step leaves finishing exactly as it is.
+   */
+  finishing?: FinishingSettings;
 }
 
 /** Shallow-clone clip metadata while reusing File / objectUrl references. */
@@ -34,11 +65,19 @@ export function cloneSnapshot(snapshot: EditSnapshot): EditSnapshot {
     })),
     transitions: snapshot.transitions.map((transition) => ({ ...transition })),
     textOverlays: snapshot.textOverlays.map((overlay) => ({ ...overlay })),
+    captions: (snapshot.captions ?? []).map((caption) => ({
+      ...caption,
+      ...(caption.style ? { style: { ...caption.style } } : {}),
+    })),
+    captionStyle: { ...(snapshot.captionStyle ?? {}) },
     masterAudioMarkers: snapshot.masterAudioMarkers ? snapshot.masterAudioMarkers.map(m => ({...m})) : [],
     selectedClipId: snapshot.selectedClipId,
+    selectedClipIds: [...(snapshot.selectedClipIds ?? [])],
     masterAudio: snapshot.masterAudio
       ? { ...snapshot.masterAudio }
       : null,
+    ...(snapshot.masterBus ? { masterBus: structuredClone(snapshot.masterBus) } : {}),
+    ...(snapshot.finishing ? { finishing: structuredClone(snapshot.finishing) } : {}),
   };
 }
 
@@ -75,11 +114,16 @@ export function syncClipGroups(groups: ClipGroup[], clips: Clip[]): ClipGroup[] 
   }));
 }
 
-/** Revoke blob URLs for clips removed from the timeline. */
+/**
+ * Revoke blob URLs for clips removed from the timeline. A URL still used by a
+ * surviving clip is kept: split pieces and edit-mode tails share their source's
+ * object URL, so undoing a split must not revoke the media the head still plays.
+ */
 export function revokeOrphanedUrls(previousClips: Clip[], nextClips: Clip[]): void {
   const nextIds = new Set(nextClips.map((clip) => clip.id));
+  const liveUrls = new Set(nextClips.map((clip) => clip.objectUrl));
   for (const clip of previousClips) {
-    if (!nextIds.has(clip.id)) {
+    if (!nextIds.has(clip.id) && !liveUrls.has(clip.objectUrl)) {
       URL.revokeObjectURL(clip.objectUrl);
     }
   }

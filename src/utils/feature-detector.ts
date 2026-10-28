@@ -1,5 +1,7 @@
 import { probeWebGpu, publishWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
+import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
+import { probeH264EncoderAcceleration } from './webcodecs-codec';
 
 export interface BrowserCapabilities {
   /** WebCodecs API (VideoEncoder / VideoDecoder / VideoFrame) available. */
@@ -10,6 +12,12 @@ export interface BrowserCapabilities {
   offscreenCanvas: boolean;
   /** Hardware-accelerated H.264 VideoEncoder reported as supported. */
   hardwareH264: boolean;
+  /**
+   * The acceleration hint an H.264 encoder actually configures with at 720p
+   * (`no-preference` on machines with no hardware encoder), or null when no
+   * H.264 encoder is available at all.
+   */
+  h264EncoderAcceleration: HardwareAcceleration | null;
   /** MediaRecorder can produce MP4 container output. */
   mediaRecorderMp4: boolean;
   /** SharedArrayBuffer available (required for FFmpeg.wasm multi-threaded). */
@@ -49,7 +57,7 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
     typeof VideoDecoder !== "undefined" &&
     typeof VideoFrame !== "undefined";
 
-  let webgpu = false;
+  let webgpu: boolean;
   try {
     const probe = await probeWebGpu();
     publishWebGpuProbe('main', probe);
@@ -71,26 +79,17 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
   const videoFrameCallback =
     "requestVideoFrameCallback" in HTMLVideoElement.prototype;
 
-  let hardwareH264 = false;
-  if (webcodecs) {
-    try {
-      const result = await VideoEncoder.isConfigSupported({
-        codec: "avc1.42001e",
-        width: 1280,
-        height: 720,
-        hardwareAcceleration: "prefer-hardware",
-      });
-      hardwareH264 = result.supported === true;
-    } catch {
-      // API exists but configuration not supported — keep false
-    }
-  }
+  const h264EncoderAcceleration = webcodecs
+    ? await probeH264EncoderAcceleration(1280, 720)
+    : null;
+  const hardwareH264 = h264EncoderAcceleration === "prefer-hardware";
 
   _cached = {
     webcodecs,
     webgpu,
     offscreenCanvas,
     hardwareH264,
+    h264EncoderAcceleration,
     mediaRecorderMp4,
     sharedArrayBuffer,
     crossOriginIsolated,
@@ -156,8 +155,14 @@ export function formatCapabilities(caps: BrowserCapabilities): string {
   const lines: string[] = [];
   lines.push(`WebCodecs: ${caps.webcodecs ? "✓" : "✗"}`);
   lines.push(`Hardware H.264: ${caps.hardwareH264 ? "✓" : "✗"}`);
+  if (!caps.hardwareH264) {
+    lines.push(
+      `Software H.264: ${caps.h264EncoderAcceleration ? "✓" : "✗"}`,
+    );
+  }
   lines.push(`WebGPU: ${caps.webgpu ? "✓" : "✗"}`);
   lines.push(formatGpuChoreDiagnostics());
+  lines.push(formatMediaEngineDiagnostics());
   lines.push(`OffscreenCanvas: ${caps.offscreenCanvas ? "✓" : "✗"}`);
   lines.push(`MediaRecorder MP4: ${caps.mediaRecorderMp4 ? "✓" : "✗"}`);
   lines.push(`SharedArrayBuffer: ${caps.sharedArrayBuffer ? "✓" : "✗"}`);

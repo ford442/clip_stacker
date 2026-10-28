@@ -147,6 +147,45 @@ describe('applyGainEnvelope', () => {
   });
 });
 
+describe('applyGainEnvelope on a looped clip (per-cycle sources, global fade window)', () => {
+  // A 12s-total, 4-cycle (3s each) looped clip with 0.5s fades. Each loop
+  // cycle gets its own AudioBufferSourceNode/GainNode, but fades and
+  // volume/pan automation are authored (and sampled) across the WHOLE
+  // looped span — the Inspector's automation editor shows the full 12s,
+  // not one 3s cycle — so only the true first/last cycle should show a
+  // fade ramp; interior cycles stay flat at full volume.
+  const entry = {
+    volume: 1,
+    audioFadeIn: 0.5,
+    audioFadeOut: 0.5,
+    duration: 12,
+  };
+
+  it('fades in only on the first cycle (global elapsed 0)', () => {
+    const param = new FakeAudioParam();
+    applyGainEnvelope(param as unknown as AudioParam, entry, 0, 3, 0, 0);
+    const setEvent = param.events.find((e) => e.type === 'set');
+    expect(setEvent).toMatchObject({ type: 'set', value: 0, time: 0 });
+    expect(param.events.some((e) => e.type === 'ramp' && e.value === 1)).toBe(true);
+  });
+
+  it('stays flat at full volume on interior cycles (global elapsed 3s, 6s)', () => {
+    for (const globalElapsed of [3, 6]) {
+      const param = new FakeAudioParam();
+      applyGainEnvelope(param as unknown as AudioParam, entry, 0, 3, globalElapsed, 0);
+      expect(param.events.every((e) => e.value === undefined || e.value === 1)).toBe(true);
+    }
+  });
+
+  it('fades out only on the last cycle (global elapsed 9s, ending at 12s)', () => {
+    const param = new FakeAudioParam();
+    applyGainEnvelope(param as unknown as AudioParam, entry, 0, 3, 9, 0);
+    const lastRamp = [...param.events].reverse().find((e) => e.type === 'ramp');
+    expect(lastRamp?.value).toBeCloseTo(0);
+    expect(lastRamp?.time).toBeCloseTo(3);
+  });
+});
+
 describe('applyPanEnvelope', () => {
   it('centers pan when automation is empty', () => {
     const param = new FakeAudioParam();
@@ -229,6 +268,37 @@ describe('AudioPlaybackManager lifecycle', () => {
     await disposeAudioPlaybackManager();
     const c = getAudioPlaybackManager();
     expect(c).not.toBe(a);
+  });
+
+  it('constructs its AudioContext with interactive latency and a 48kHz sample rate', async () => {
+    const recordedOptions: unknown[] = [];
+    class FakeAudioContext {
+      sampleRate: number;
+      constructor(options?: { sampleRate?: number }) {
+        recordedOptions.push(options);
+        this.sampleRate = options?.sampleRate ?? 44_100;
+      }
+      createGain() {
+        return { gain: { value: 0 }, connect: () => {} } as unknown as GainNode;
+      }
+      createAnalyser() {
+        return {
+          fftSize: 0,
+          connect: () => {},
+        } as unknown as AnalyserNode;
+      }
+    }
+    const original = window.AudioContext;
+    // @ts-expect-error test double stands in for the real constructor
+    window.AudioContext = FakeAudioContext;
+
+    const manager = new AudioPlaybackManager();
+    const ok = await manager.ensureContext();
+    expect(ok).toBe(true);
+    expect(recordedOptions).toEqual([{ latencyHint: 'interactive', sampleRate: 48_000 }]);
+
+    window.AudioContext = original;
+    await manager.dispose();
   });
 
   it('falls back gracefully when AudioContext is unavailable', async () => {

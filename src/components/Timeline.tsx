@@ -1,19 +1,12 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ClipTransition } from '../types';
-import { useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTransitions, useSelectedClipId, editorActions } from '../store';
-import { editorStore } from '../store/editorStore';
-import { getEffectiveTimelineClips } from '../utils/timelineClips';
+import { useEditorCaptions, useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTextOverlays, useEditorTransitions, useSelectedCaptionId, useSelectedTextOverlayId, editorActions, uiActions } from '../store';
 import {
-  buildRulerTicks,
   clampPixelsPerSecond,
   clipPixelWidth,
   DEFAULT_PIXELS_PER_SECOND,
-  formatTimelineTime,
-  MAX_PIXELS_PER_SECOND,
   MIN_CLIP_PIXEL_WIDTH,
-  MIN_PIXELS_PER_SECOND,
-  rulerTickInterval,
   timelineContentWidth,
 } from '../utils/timelineLayout';
 import { buildBeatMarkerLayouts } from '../utils/beatMarkers';
@@ -29,25 +22,42 @@ import { computeTotalDuration } from '../utils/transitions';
 import {
   buildTrackClipLayouts,
   computeTracksDuration,
-  DEFAULT_TRACK_HEIGHT,
   MAIN_VIDEO_TRACK_ID,
 } from '../utils/trackModel';
+import { TrackLaneHeader } from './TrackLaneHeader';
 import type { VirtualClipLayout } from './timelineClipTypes';
 import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
 import { MasterAudioTrack } from './MasterAudioTrack';
 import { clipHasRateAutomation } from '../utils/timeRemap';
 import SyncMarkerLane from './SyncMarkerLane';
+import { CaptionLane } from './CaptionLane';
 import MarkerConnectionCanvas from './MarkerConnectionCanvas';
 import { SyncDragProvider } from '../context/SyncDragContext';
+import { useTimelineDragDrop } from '../hooks/useTimelineDragDrop';
+import { TimelineHeader } from './TimelineHeader';
+import { TimelineLaneRows } from './TimelineLaneRows';
+import { TimelinePlayhead } from './TimelinePlayhead';
+import { TimelineRuler } from './TimelineRuler';
+import { TimelineSelectionScroll } from './TimelineSelectionScroll';
 
 interface Props {
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
-  onMoveToTrack: (clipId: string, targetTrackId: string, startTime: number) => void;
+  /** Drop onto a lane; `snapThresholdSec` is the magnet radius at the current zoom. */
+  onMoveToTrack: (
+    clipId: string,
+    targetTrackId: string,
+    startTime: number,
+    snapThresholdSec?: number,
+  ) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
   onDelete: (id: string) => void;
+  /** Retime one edge of a caption cue (drag on the CC lane). */
+  onCaptionResize: (id: string, edge: 'start' | 'end', timeSec: number) => void;
+  /** Add a caption cue at an output time (double-click on the CC lane). */
+  onCaptionAdd: (startSec: number) => void;
   morphProcessingIndex?: number | null;
 }
 
@@ -65,71 +75,6 @@ const TRANSITION_COLORS: Record<string, string> = {
 
 const VIRTUAL_OVERSCAN = 3;
 
-/** Scrolls the virtualizer when selection changes without re-rendering the timeline track. */
-function TimelineSelectionScroll({
-  virtualizerRef,
-}: {
-  virtualizerRef: RefObject<ReturnType<typeof useVirtualizer<HTMLDivElement, Element>> | null>;
-}) {
-  const selectedClipId = useSelectedClipId();
-  const scrolledForRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    if (!selectedClipId) {
-      scrolledForRef.current = null;
-      return;
-    }
-    if (scrolledForRef.current === selectedClipId) return;
-    scrolledForRef.current = selectedClipId;
-
-    const { tracks, clips, clipGroups } = editorStore.getState();
-    const timelineClips = getEffectiveTimelineClips(tracks, clips, clipGroups);
-    const selectedIndex = timelineClips.findIndex((clip) => clip.id === selectedClipId);
-    if (selectedIndex < 0) return;
-    virtualizerRef.current?.scrollToIndex(selectedIndex, { align: 'auto' });
-  }, [selectedClipId, virtualizerRef]);
-
-  return null;
-}
-
-// ─── Time Ruler ─────────────────────────────────────────────────────────────
-
-interface RulerProps {
-  totalDuration: number;
-  pixelsPerSecond: number;
-  beatMarkers?: { clipId: string; sourceTime: number; leftPx: number }[];
-}
-
-function TimelineRuler({ totalDuration, pixelsPerSecond, beatMarkers = [] }: RulerProps) {
-  if (totalDuration <= 0) return null;
-
-  const contentWidth = timelineContentWidth(totalDuration, pixelsPerSecond);
-  const interval = rulerTickInterval(totalDuration);
-  const ticks = buildRulerTicks(totalDuration, interval);
-
-  return (
-    <div className="timeline-ruler" style={{ width: contentWidth }} aria-hidden="true">
-      {ticks.map((tick) => (
-        <span
-          key={tick}
-          className={`ruler-tick${tick === 0 ? ' ruler-tick--start' : ''}`}
-          style={{ left: tick === 0 ? 0 : tick * pixelsPerSecond }}
-        >
-          <span className="ruler-tick-label">{formatTimelineTime(tick)}</span>
-        </span>
-      ))}
-      {beatMarkers.map((m) => (
-        <span
-          key={`${m.clipId}-${m.sourceTime}`}
-          className="ruler-beat-marker"
-          style={{ left: m.leftPx }}
-          title={`Beat @ ${m.sourceTime.toFixed(2)}s`}
-        />
-      ))}
-    </div>
-  );
-}
-
 // ─── Main Timeline ───────────────────────────────────────────────────────────
 
 function TimelineImpl({
@@ -139,6 +84,8 @@ function TimelineImpl({
   onMoveToTrack,
   onTransitionUpdate,
   onDelete,
+  onCaptionResize,
+  onCaptionAdd,
   morphProcessingIndex = null,
 }: Props) {
   const clips = useEditorTimelineClips();
@@ -148,20 +95,15 @@ function TimelineImpl({
   const masterAudio = useEditorMasterAudio();
   const transitions = useEditorTransitions();
   const masterAudioMarkers = useEditorMasterAudioMarkers();
+  const captions = useEditorCaptions();
+  const textOverlays = useEditorTextOverlays();
+  const selectedCaptionId = useSelectedCaptionId();
+  const selectedTextOverlayId = useSelectedTextOverlayId();
   const [thumbMap, setThumbMap] = useState<Record<string, string[]>>({});
   const [waveMap, setWaveMap] = useState<Record<string, Float32Array>>({});
   const [editingTransition, setEditingTransition] = useState<ClipTransition | null>(null);
   const [pixelsPerSecond, setPixelsPerSecond] = useState(DEFAULT_PIXELS_PER_SECOND);
   const scrollRef = useRef<HTMLDivElement>(null);
-
-  // ── Drag-and-drop state ──────────────────────────────────────────────────
-  const [dragIndex, setDragIndex] = useState<number | null>(null);
-  const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
-  const [dragClipId, setDragClipId] = useState<string | null>(null);
-  const [dropTargetTrackId, setDropTargetTrackId] = useState<string | null>(null);
-  const touchDragRef = useRef<number | null>(null);
-  const lastTouchPos = useRef<{ x: number; y: number } | null>(null);
-  const trackRef = useRef<HTMLDivElement>(null);
 
   const trackLayouts = useMemo(
     () => buildTrackClipLayouts(tracks, allClips, clipGroups, pixelsPerSecond),
@@ -180,6 +122,37 @@ function TimelineImpl({
   }, [trackLayouts]);
 
   const beatMarkers = useMemo(() => buildBeatMarkerLayouts(clipLayouts), [clipLayouts]);
+
+  const mainTrackLocked = useMemo(
+    () => tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID)?.locked ?? false,
+    [tracks],
+  );
+
+  const {
+    dragIndex,
+    dropTargetIndex,
+    setDropTargetIndex,
+    dragClipId,
+    setDragClipId,
+    dropTargetTrackId,
+    trackRef,
+    handleDragStart,
+    handleDragOver,
+    handleDrop,
+    handleDragEnd,
+    handleTouchStart,
+    handleTouchMoveOnTrack,
+    handleTouchEnd,
+  } = useTimelineDragDrop({
+    clipLayouts,
+    tracks,
+    allClips,
+    scrollRef,
+    pixelsPerSecond,
+    mainTrackLocked,
+    onReorder,
+    onMoveToTrack,
+  });
 
   const estimateSize = useCallback(
     (index: number) => clipLayouts[index]?.width ?? MIN_CLIP_PIXEL_WIDTH,
@@ -281,43 +254,6 @@ function TimelineImpl({
     [transitions],
   );
 
-  const calcInsertIndex = (clientX: number): number => {
-    const track = trackRef.current;
-    const scroll = scrollRef.current;
-    if (!track || !scroll) return 0;
-
-    const rect = track.getBoundingClientRect();
-    const x = clientX - rect.left + scroll.scrollLeft;
-
-    for (const layout of clipLayouts) {
-      const midpoint = layout.start + layout.width / 2;
-      if (x < midpoint) return layout.index;
-    }
-    return clipLayouts.length;
-  };
-
-  const calcDropOnTrack = (clientX: number, clientY: number): { trackId: string; startTime: number } | null => {
-    const rows = scrollRef.current?.querySelectorAll<HTMLElement>('.timeline-track-row');
-    if (!rows?.length) return null;
-
-    let targetTrackId: string | null = null;
-    for (const row of Array.from(rows)) {
-      const rect = row.getBoundingClientRect();
-      if (clientY >= rect.top && clientY <= rect.bottom) {
-        targetTrackId = row.dataset.trackId ?? null;
-        break;
-      }
-    }
-    if (!targetTrackId) return null;
-
-    const row = scrollRef.current?.querySelector<HTMLElement>(`[data-track-id="${targetTrackId}"]`);
-    if (!row) return null;
-    const rect = row.getBoundingClientRect();
-    const x = clientX - rect.left + (scrollRef.current?.scrollLeft ?? 0);
-    const startTime = Math.max(0, x / pixelsPerSecond);
-    return { trackId: targetTrackId, startTime };
-  };
-
   const adjustZoom = (factor: number) => {
     setPixelsPerSecond((current) => clampPixelsPerSecond(current * factor));
   };
@@ -325,17 +261,6 @@ function TimelineImpl({
   const scrollTimeline = (delta: number) => {
     scrollRef.current?.scrollBy({ left: delta, behavior: 'smooth' });
   };
-
-  // Attach non-passive touchmove listener so we can call preventDefault
-  useEffect(() => {
-    const el = trackRef.current;
-    if (!el) return;
-    const onTouchMove = (e: TouchEvent) => {
-      if (touchDragRef.current !== null) e.preventDefault();
-    };
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    return () => el.removeEventListener('touchmove', onTouchMove);
-  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -351,84 +276,6 @@ function TimelineImpl({
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
-
-  // ── HTML5 Drag handlers (desktop) ────────────────────────────────────────
-  // useCallback here keeps these stable across renders so the memoized
-  // VirtualClipBlock rows (which receive them as props) don't all re-render
-  // just because Timeline re-rendered for an unrelated reason.
-  const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
-    setDragIndex(index);
-    const layout = clipLayouts[index];
-    if (layout) setDragClipId(layout.clip.id);
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('text/plain', String(index));
-  }, [clipLayouts]);
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-    const drop = calcDropOnTrack(e.clientX, e.clientY);
-    if (drop) {
-      setDropTargetTrackId(drop.trackId);
-    }
-    setDropTargetIndex(calcInsertIndex(e.clientX));
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const from = dragIndex ?? Number(e.dataTransfer.getData('text/plain'));
-    const drop = calcDropOnTrack(e.clientX, e.clientY);
-    const insertBefore = calcInsertIndex(e.clientX);
-
-    if (drop && dragClipId && drop.trackId !== MAIN_VIDEO_TRACK_ID) {
-      onMoveToTrack(dragClipId, drop.trackId, drop.startTime);
-    } else if (from !== insertBefore && from !== insertBefore - 1) {
-      onReorder(from, insertBefore);
-    }
-
-    setDragIndex(null);
-    setDragClipId(null);
-    setDropTargetIndex(null);
-    setDropTargetTrackId(null);
-  };
-
-  const handleDragEnd = useCallback(() => {
-    setDragIndex(null);
-    setDragClipId(null);
-    setDropTargetIndex(null);
-    setDropTargetTrackId(null);
-  }, []);
-
-  // ── Touch handlers (mobile) ──────────────────────────────────────────────
-  // Long-press is now initiated inside VirtualClipBlock; this only receives
-  // the index once the long-press timer fires so full free-reorder can start.
-  const handleTouchStart = useCallback((index: number) => {
-    touchDragRef.current = index;
-    lastTouchPos.current = null;
-    setDragIndex(index);
-  }, []);
-
-  const handleTouchMoveOnTrack = (e: React.TouchEvent) => {
-    if (touchDragRef.current === null) return;
-    const touch = e.touches[0];
-    if (lastTouchPos.current) {
-      const dx = Math.abs(touch.clientX - lastTouchPos.current.x);
-      const dy = Math.abs(touch.clientY - lastTouchPos.current.y);
-      if (dx < 4 && dy < 4) return;
-    }
-    lastTouchPos.current = { x: touch.clientX, y: touch.clientY };
-    setDropTargetIndex(calcInsertIndex(touch.clientX));
-  };
-
-  const handleTouchEnd = () => {
-    if (touchDragRef.current !== null && dropTargetIndex !== null) {
-      onReorder(touchDragRef.current, dropTargetIndex);
-    }
-    touchDragRef.current = null;
-    lastTouchPos.current = null;
-    setDragIndex(null);
-    setDropTargetIndex(null);
-  };
 
   const orphanTransitions = useMemo(
     () => orphanTransitionIndices(
@@ -464,6 +311,7 @@ function TimelineImpl({
         transition={transition}
         showTransition={showTransition}
         clipCount={clips.length}
+        locked={mainTrackLocked}
         onMoveUp={onMoveUp}
         onMoveDown={onMoveDown}
         onDelete={onDelete}
@@ -490,75 +338,16 @@ function TimelineImpl({
     <SyncDragProvider>
       <section className="panel timeline-panel">
         <TimelineSelectionScroll virtualizerRef={virtualizerRef} />
-      <div className="timeline-header-row">
-        <h2>Timeline</h2>
-        <span className="timeline-total-dur muted">
-          {formatTimelineTime(outputDuration)} total
-          {outputDuration !== totalDuration && (
-            <span className="timeline-total-note"> ({formatTimelineTime(totalDuration)} source)</span>
-          )}
-        </span>
-        <div className="timeline-zoom-controls">
-          <button
-            type="button"
-            className="timeline-zoom-btn"
-            onClick={() => adjustZoom(1 / 1.25)}
-            aria-label="Zoom out"
-            title="Zoom out"
-          >
-            −
-          </button>
-          <input
-            type="range"
-            className="timeline-zoom-slider"
-            min={MIN_PIXELS_PER_SECOND}
-            max={MAX_PIXELS_PER_SECOND}
-            step={4}
-            value={pixelsPerSecond}
-            onChange={(e) => setPixelsPerSecond(clampPixelsPerSecond(Number(e.target.value)))}
-            aria-label="Timeline zoom"
-            title="Timeline zoom"
-          />
-          <button
-            type="button"
-            className="timeline-zoom-btn"
-            onClick={() => adjustZoom(1.25)}
-            aria-label="Zoom in"
-            title="Zoom in"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            className="timeline-scroll-btn"
-            onClick={() => scrollTimeline(-Math.max(160, scrollRef.current?.clientWidth ? scrollRef.current.clientWidth * 0.6 : 160))}
-            aria-label="Scroll timeline left"
-            title="Scroll left"
-          >
-            ←
-          </button>
-          <button
-            type="button"
-            className="timeline-scroll-btn"
-            onClick={() => scrollTimeline(Math.max(160, scrollRef.current?.clientWidth ? scrollRef.current.clientWidth * 0.6 : 160))}
-            aria-label="Scroll timeline right"
-            title="Scroll right"
-          >
-            →
-          </button>
-        </div>
-      </div>
-      <p className="timeline-hint muted">
-        Swipe left/right on a clip to swap with its neighbor. Long-press then drag to reorder freely
-        or move between tracks. Shift + scroll wheel zooms.
-      </p>
-      {hasOverlayClips && (
-        <p className="timeline-hint timeline-hint--pip muted">
-          🖼 Clips marked <strong>PiP</strong> are Picture-in-Picture overlays — they composite on
-          top of the base video starting at the beginning of the output, regardless of where they
-          sit on their track.
-        </p>
-      )}
+      <TimelineHeader
+        outputDuration={outputDuration}
+        totalDuration={totalDuration}
+        pixelsPerSecond={pixelsPerSecond}
+        setPixelsPerSecond={setPixelsPerSecond}
+        adjustZoom={adjustZoom}
+        scrollTimeline={scrollTimeline}
+        scrollRef={scrollRef}
+        hasOverlayClips={hasOverlayClips}
+      />
 
       <div
         className="timeline-scroll-container"
@@ -578,6 +367,11 @@ function TimelineImpl({
           }}
         />
 
+        <TimelinePlayhead totalDuration={totalDuration} pixelsPerSecond={pixelsPerSecond} />
+
+        {/* Ruler and the lanes without a header column start where the track
+            lanes' time axis starts, so one x maps to one time on every row. */}
+        <div className="timeline-axis-offset">
         <TimelineRuler
           totalDuration={totalDuration}
           pixelsPerSecond={pixelsPerSecond}
@@ -593,6 +387,25 @@ function TimelineImpl({
           onUpdateMarkers={(markers) => editorActions.setMasterAudioMarkers(markers)}
         />
 
+        <CaptionLane
+          captions={captions}
+          duration={totalDuration}
+          width={contentWidth}
+          pixelsPerSecond={pixelsPerSecond}
+          selectedCaptionId={selectedCaptionId}
+          onSelect={uiActions.setSelectedCaptionId}
+          onResize={onCaptionResize}
+          onAddAt={onCaptionAdd}
+        />
+        </div>
+
+        <div
+          className={`timeline-track-row timeline-track-row--main${
+            dropTargetTrackId === MAIN_VIDEO_TRACK_ID ? ' timeline-track-row--drop-target' : ''
+          }`}
+          data-track-id={MAIN_VIDEO_TRACK_ID}
+        >
+          <TrackLaneHeader trackId={MAIN_VIDEO_TRACK_ID} showRemove={false} />
         <div
           className="timeline-track"
           ref={trackRef}
@@ -684,65 +497,26 @@ function TimelineImpl({
             )}
 
         </div>
+        </div>
 
-        {tracks.filter((t) => t.id !== MAIN_VIDEO_TRACK_ID).map((track) => {
-          const rowLayouts = trackLayouts.get(track.id) ?? [];
-          const rowHeight = track.height ?? DEFAULT_TRACK_HEIGHT;
-          return (
-            <div
-              key={track.id}
-              className={`timeline-track-row${dropTargetTrackId === track.id ? ' timeline-track-row--drop-target' : ''}`}
-              data-track-id={track.id}
-            >
-              <div
-                className="timeline-track-label"
-                title={
-                  track.kind === 'video'
-                    ? `${track.label ?? track.kind} — Picture-in-Picture overlay track. Clips here composite on top of Video 1 starting at output time 0, independent of their position on this row.`
-                    : track.label
-                }
-              >
-                {track.label ?? track.kind}
-              </div>
-              <div className="timeline-track timeline-track--overlay" style={{ width: contentWidth, height: rowHeight }}>
-                {rowLayouts.map((layout) => (
-                  <VirtualClipBlock
-                    key={layout.clip.id}
-                    layout={{
-                      clip: layout.clip,
-                      index: layout.itemIndex,
-                      duration: layout.duration,
-                      width: layout.width,
-                      start: layout.left,
-                    }}
-                    style={{
-                      position: 'absolute',
-                      top: 0,
-                      left: 0,
-                      width: layout.width,
-                      transform: `translateX(${layout.left}px)`,
-                    }}
-                    isDragging={dragClipId === layout.clip.id}
-                    thumbs={thumbMap[layout.clip.id]}
-                    waves={waveMap[layout.clip.id]}
-                    clipCount={rowLayouts.length}
-                    showTransition={false}
-                    onMoveUp={onMoveUp}
-                    onMoveDown={onMoveDown}
-                    onDelete={onDelete}
-                    onEditTransition={() => {}}
-                    onDragStart={(e, clipIndex) => {
-                      setDragClipId(layout.clip.id);
-                      handleDragStart(e, clipIndex);
-                    }}
-                    onDragEnd={handleDragEnd}
-                    onTouchStart={() => setDragClipId(layout.clip.id)}
-                  />
-                ))}
-              </div>
-            </div>
-          );
-        })}
+        <TimelineLaneRows
+          tracks={tracks}
+          trackLayouts={trackLayouts}
+          textOverlays={textOverlays}
+          selectedTextOverlayId={selectedTextOverlayId}
+          contentWidth={contentWidth}
+          pixelsPerSecond={pixelsPerSecond}
+          dropTargetTrackId={dropTargetTrackId}
+          dragClipId={dragClipId}
+          setDragClipId={setDragClipId}
+          thumbMap={thumbMap}
+          waveMap={waveMap}
+          onMoveUp={onMoveUp}
+          onMoveDown={onMoveDown}
+          onDelete={onDelete}
+          handleDragStart={handleDragStart}
+          handleDragEnd={handleDragEnd}
+        />
         <MasterAudioTrack
           masterAudio={masterAudio}
           totalDuration={totalDuration}

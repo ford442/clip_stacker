@@ -1,3 +1,5 @@
+import type { Affine2x3 } from '../../utils/clipTransform';
+
 /** Schema for a per-transition uniform exposed in the editor. */
 export interface TransitionParamDef {
   key: string;
@@ -37,5 +39,16 @@ export interface TransitionRenderParams {
   destRect?: { x: number; y: number; w: number; h: number };
   /** Per-transition custom uniforms (keys match registry param defs). */
   custom?: Record<string, number>;
+  /**
+   * Layer warp for the outgoing clip (`[a, b, tx, c, d, ty]`): stabilization
+   * composed with its picture transform — see `utils/clipTransform.ts`.
+   */
+  fromWarpMatrix?: Affine2x3;
+  /** Layer warp for the incoming clip. */
+  toWarpMatrix?: Affine2x3;
+  /** Outgoing clip has a picture transform: mask samples outside the picture. */
+  fromWarpMasked?: boolean;
+  /** Incoming clip has a picture transform: mask samples outside the picture. */
+  toWarpMasked?: boolean;
   clear?: boolean;
 }

@@ -5,6 +5,8 @@
  */
 #pragma once
 
+#include "cs_status.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -26,9 +28,10 @@ void* createAnalyzer(int sampleRate, int fftSize);
  * @param numSamples Number of samples (ideally == fftSize; shorter frames are zero-padded)
  * @param outBands   Exactly AUDIO_ANALYSIS_BAND_COUNT floats (energy 0..1)
  * @param outBeat    Single float: onset impulse (0..1), decays between beats
+ * @return           CS_OK, or CS_EINVAL for a null handle / buffer
  */
-void analyzeFrame(void* handle, const float* pcm, int numSamples,
-                  float* outBands, float* outBeat);
+int analyzeFrame(void* handle, const float* pcm, int numSamples,
+                 float* outBands, float* outBeat);
 
 /** Reset spectral / onset state (e.g. when seeking). */
 void resetAnalyzer(void* handle);

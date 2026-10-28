@@ -1,3 +1,16 @@
+import { createAudioContext } from '../audio/context';
+import type { Clip } from '../types';
+
+/**
+ * False for media with no audio track to decode: stills, and files probed as
+ * silent. `decodeAudioData` rejects those with "Unable to decode audio data",
+ * so callers skip extraction instead of triggering (and logging) the failure.
+ * Unknown (`hasAudio` omitted) counts as having audio.
+ */
+export function clipHasExtractableAudio(clip: Pick<Clip, 'hasAudio' | 'stillImage'>): boolean {
+  return !clip.stillImage && clip.hasAudio !== false;
+}
+
 /**
  * Decode the audio track of an audio or video file into an AudioBuffer.
  * Works for both audio and video containers via `decodeAudioData`.
@@ -31,7 +44,7 @@ export async function extractWaveformPeaks(
   const { signal } = options;
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-  const audioCtx = new AudioContext();
+  const audioCtx = createAudioContext();
   try {
     const audioBuffer = await decodeAudioBuffer(objectUrl, audioCtx);
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');

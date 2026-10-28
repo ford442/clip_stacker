@@ -1,12 +1,15 @@
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipKind,
+  ClipProxy,
   ClipTransition,
   MasterAudio,
   Project,
   SerializedClip,
   SerializedClipGroup,
+  TextOverlayStyle,
   Track,
 } from '../../types';
 import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from '../media';
@@ -19,6 +22,7 @@ import {
   getColorGradeFromFinishing,
   resolveFinishingFromProject,
 } from '../finishing';
+import { normalizeColorManagement } from '../colorManagement';
 import { resolveProjectTracks, syncTracksWithClips } from '../trackModel';
 import { sanitizeClipAdjustments } from './clipHelpers';
 import { downloadRemoteMedia } from './remoteMedia';
@@ -33,6 +37,9 @@ import {
 import { deserializeTextOverlays, usesPixelLayoutForProject } from './applyTextOverlays';
 import type { AppliedProjectData, ApplyProjectDataOptions } from './types';
 import { normalizeClipAutomation } from '../clipAutomation';
+import { normalizeClipAudioEffects } from '../audioEffects';
+import { normalizeBusEffects, normalizeLaneDuck, normalizeMasterBus } from '../audioBus';
+import { createCaptionId, normalizeCaptions } from '../subtitles';
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
@@ -42,12 +49,35 @@ function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   return 'video';
 }
 
+/**
+ * Beat metadata saved with a master track. Absent (or unparsable) values leave
+ * the track without tempo, and `useMasterAudioBeatAnalysis` re-derives it.
+ */
+function restoredMasterTempo(
+  saved: NonNullable<Project['masterAudio']>,
+): Pick<MasterAudio, 'beatTimestamps' | 'bpmEstimate' | 'bpmConfidence'> {
+  const beats = Array.isArray(saved.beatTimestamps)
+    ? saved.beatTimestamps.map((t) => Number(t)).filter((t) => Number.isFinite(t) && t >= 0)
+    : [];
+  return {
+    ...(beats.length > 0 ? { beatTimestamps: beats } : {}),
+    ...(saved.bpmEstimate != null && Number(saved.bpmEstimate) > 0
+      ? { bpmEstimate: Number(saved.bpmEstimate) }
+      : {}),
+    ...(saved.bpmConfidence != null && Number.isFinite(Number(saved.bpmConfidence))
+      ? { bpmConfidence: Math.min(1, Math.max(0, Number(saved.bpmConfidence))) }
+      : {}),
+  };
+}
+
 async function restoreMasterAudio(
   project: Project,
   clips: Clip[],
 ): Promise<MasterAudio | null> {
   const saved = project.masterAudio;
   if (!saved?.fileName) return null;
+
+  const tempo = restoredMasterTempo(saved);
 
   const byName = clips.find((c) => c.file.name === saved.fileName);
   if (byName) {
@@ -57,6 +87,7 @@ async function restoreMasterAudio(
       fileName: saved.fileName,
       duration: saved.duration,
       startTime: saved.startTime ?? 0,
+      ...tempo,
     };
   }
 
@@ -78,10 +109,41 @@ async function restoreMasterAudio(
       fileName: saved.fileName,
       duration: saved.duration,
       startTime: saved.startTime ?? 0,
+      ...tempo,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * Restore caption cues from a saved project.
+ *
+ * Everything is coerced and clamped rather than trusted: project JSON can come
+ * from remote storage or a hand-edited file, and one malformed cue must not
+ * take the whole timeline down. Cues missing usable text or timings are
+ * dropped, and ids are regenerated when absent so the lane can key on them.
+ */
+function deserializeCaptions(raw: Project['captions']): CaptionEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const entries: CaptionEntry[] = [];
+  for (const saved of raw) {
+    const text = typeof saved?.text === 'string' ? saved.text : '';
+    if (text.trim() === '') continue;
+    const startSec = Number(saved.startSec);
+    const endSec = Number(saved.endSec);
+    if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) continue;
+    entries.push({
+      id: typeof saved.id === 'string' && saved.id ? saved.id : createCaptionId(),
+      startSec,
+      endSec,
+      text,
+      ...(saved.style && typeof saved.style === 'object'
+        ? { style: { ...saved.style } }
+        : {}),
+    });
+  }
+  return normalizeCaptions(entries);
 }
 
 export async function applyProjectData(
@@ -227,13 +289,30 @@ export async function applyProjectData(
     if (savedClip.width != null) liveClip.width = Number(savedClip.width);
     if (savedClip.height != null) liveClip.height = Number(savedClip.height);
     if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
+    if (savedClip.overlayBlend) liveClip.overlayBlend = savedClip.overlayBlend;
+    if (savedClip.chromaKey) {
+      liveClip.chromaKey = {
+        color: String(savedClip.chromaKey.color),
+        similarity: Number(savedClip.chromaKey.similarity),
+        blend: Number(savedClip.chromaKey.blend),
+      };
+    }
     if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
     if (savedClip.playbackRate != null) {
       liveClip.playbackRate = Number(savedClip.playbackRate);
     }
+    if (savedClip.loopCount != null) {
+      liveClip.loopCount = Number(savedClip.loopCount);
+    }
+    if (savedClip.reversed === true) liveClip.reversed = true;
+    else delete liveClip.reversed;
     const automation = normalizeClipAutomation(savedClip.automation);
     if (automation) liveClip.automation = automation;
     else delete liveClip.automation;
+    // Malformed bands are dropped rather than failing the load.
+    const audioEffects = normalizeClipAudioEffects(savedClip.audioEffects);
+    if (audioEffects) liveClip.audioEffects = audioEffects;
+    else delete liveClip.audioEffects;
     if (usesPixelLayout && (savedClip.layerIndex ?? 0) > 0) {
       const migrated = migratePixelClipLayout(liveClip, layoutReference);
       liveClip.x = migrated.x;
@@ -258,6 +337,12 @@ export async function applyProjectData(
     if (savedClip.bpmEstimate != null && Number.isFinite(Number(savedClip.bpmEstimate))) {
       liveClip.bpmEstimate = Number(savedClip.bpmEstimate);
     }
+    if (savedClip.bpmConfidence != null && Number.isFinite(Number(savedClip.bpmConfidence))) {
+      liveClip.bpmConfidence = Math.min(1, Math.max(0, Number(savedClip.bpmConfidence)));
+    }
+    if (savedClip.bpmOverride != null && Number(savedClip.bpmOverride) > 0) {
+      liveClip.bpmOverride = Number(savedClip.bpmOverride);
+    }
     if (Array.isArray(savedClip.lumaHistogram) && savedClip.lumaHistogram.length === 256) {
       liveClip.lumaHistogram = savedClip.lumaHistogram.map((n) => Number(n) || 0);
     }
@@ -267,6 +352,17 @@ export async function applyProjectData(
         white: Number(savedClip.lumaLevels.white) || 255,
         mean: Number(savedClip.lumaLevels.mean) || 0,
       };
+    }
+    if (savedClip.stabilize) {
+      // Only the toggle round-trips; useClipStabilization recomputes the
+      // matrices from the source on load.
+      liveClip.stabilize = true;
+    }
+    const proxy = sanitizeClipProxy(savedClip.proxy);
+    if (proxy) {
+      // useProxyBuilder looks the bytes up in the media store; a miss leaves
+      // the clip on its original, never broken.
+      liveClip.proxy = proxy;
     }
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
@@ -303,6 +399,7 @@ export async function applyProjectData(
         type: t.type ?? 'dissolve',
         duration: Number(t.duration ?? 0.5),
         ...(t.params ? { params: t.params } : {}),
+        ...(typeof t.customShader === 'string' ? { customShader: t.customShader } : {}),
         ...(t.morphSegment
           ? {
               morphSegment: {
@@ -323,14 +420,25 @@ export async function applyProjectData(
     project.layoutReferenceResolution,
   );
 
+  const captions = deserializeCaptions(project.captions);
+  const captionStyle: Partial<TextOverlayStyle> =
+    project.captionStyle && typeof project.captionStyle === 'object'
+      ? { ...project.captionStyle }
+      : {};
+
   const finishing = resolveFinishingFromProject(project);
   const colorGrade = getColorGradeFromFinishing(finishing);
+  const colorManagement = normalizeColorManagement(project.colorManagement);
 
   const savedTracks = Array.isArray(project.tracks)
-    ? project.tracks.map(
-        (t): Track => ({
+    ? project.tracks.map((t): Track => {
+        const kind = t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video';
+        // Malformed effects are dropped, not thrown on; titles lanes carry no audio.
+        const audioFx = kind === 'text' ? undefined : normalizeBusEffects(t.audioFx);
+        const duck = kind === 'text' ? undefined : normalizeLaneDuck(t.duck);
+        return {
           id: String(t.id),
-          kind: t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video',
+          kind,
           ...(t.label ? { label: String(t.label) } : {}),
           items: Array.isArray(t.items)
             ? t.items.map((item) => ({
@@ -341,8 +449,10 @@ export async function applyProjectData(
           ...(t.muted ? { muted: true } : {}),
           ...(t.locked ? { locked: true } : {}),
           ...(t.height != null ? { height: Number(t.height) } : {}),
-        }),
-      )
+          ...(audioFx ? { audioFx } : {}),
+          ...(duck ? { duck } : {}),
+        };
+      })
     : undefined;
 
   let tracks = resolveProjectTracks(savedTracks, mapped, transitions, clipGroups);
@@ -356,13 +466,29 @@ export async function applyProjectData(
     clipGroups,
     transitions,
     textOverlays,
+    captions,
+    captionStyle,
     masterAudio,
     masterAudioMarkers: project.masterAudioMarkers ?? [],
+    masterBus: normalizeMasterBus(project.masterBus),
     colorGrade,
     finishing,
+    colorManagement,
     skippedClipCount: skippedCount,
     skippedClipFileNames,
     invalidColorWarnings,
     mediaDownloadWarnings,
   };
+}
+
+/** Coerce a saved proxy record; anything malformed is dropped rather than thrown on. */
+export function sanitizeClipProxy(value: unknown): ClipProxy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const width = Number(v.width);
+  const height = Number(v.height);
+  if (typeof v.profile !== 'string' || !v.profile) return undefined;
+  if (typeof v.hash !== 'string' || !/^[0-9a-f]{16,128}$/i.test(v.hash)) return undefined;
+  if (!(width > 0 && height > 0)) return undefined;
+  return { profile: v.profile, hash: v.hash, width: Math.round(width), height: Math.round(height) };
 }

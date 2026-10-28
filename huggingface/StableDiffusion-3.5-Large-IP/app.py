@@ -138,11 +138,25 @@ def infer(
     # UltraReal lives on the same Attention linears the IP processor still
     # calls (to_q/to_k/to_v/to_out). IP-only layers (to_k_ip/to_v_ip) stay
     # un-adapted. Load after the IP processors exist; PEFT wraps the linears.
+    #
+    # UltraReal.safetensors is stored in kohya/sd-scripts layout
+    # (`lora_unet_joint_blocks_*`). diffusers has kohya converters for Flux but
+    # none for SD3, so `load_lora_weights` returns without raising while every
+    # key fails the `transformer.` prefix filter — it only logs "No LoRA keys
+    # associated to ...". So do not trust the absence of an exception: confirm
+    # an adapter actually registered before claiming the LoRA is on.
     if not _ultrareal_loaded:
         try:
             pipe.load_lora_weights(ULTRAREAL_LORA_REPO, weight_name=ULTRAREAL_LORA_WEIGHT)
-            _ultrareal_loaded = True
-            print("-- loaded UltraReal LoRA --")
+            adapters = pipe.get_list_adapters()
+            if adapters.get("transformer"):
+                _ultrareal_loaded = True
+                print(f"-- loaded UltraReal LoRA: {adapters} --")
+            else:
+                print(
+                    "-- UltraReal LoRA NOT applied: kohya-format keys need "
+                    "conversion to diffusers layout for SD3 (no adapter registered) --"
+                )
         except Exception as e:
             print(f"-- UltraReal LoRA not loaded: {e} --")
     if _ultrareal_loaded:
@@ -312,12 +326,12 @@ with gr.Blocks(theme=gr.themes.Origin(),css=css) as demo:
                     value=0.5,
                 )
                 lora_scale = gr.Slider(
-                    label="UltraReal LoRA scale (0 = off)",
+                    label="UltraReal LoRA scale (0 = off; inert until the kohya weights are converted for SD3)",
                     minimum=0.0,
                     maximum=1.5,
                     step=0.01,
-                    value=0.8,
-                )            
+                    value=0.0,
+                )
                 negative_prompt_1 = gr.Text(
                     label="Negative prompt 1",
                     max_lines=1,

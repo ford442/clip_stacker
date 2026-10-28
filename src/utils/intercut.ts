@@ -1,5 +1,6 @@
 /**
- * Intercut (strobe / flash-cut) slice planning for FFmpeg concat demuxer.
+ * Intercut (strobe / flash-cut) slice planning. `intercutRender.ts` snaps
+ * these slices to the output frame grid for rendering.
  *
  * Each slice references a source inpoint/outpoint on clip A, B, or optional C.
  *
@@ -39,6 +40,8 @@ export interface FrequencyAutomationConfig {
   totalDurationSec: number;
   startFrequencyHz: number;
   endFrequencyHz: number;
+  /** Optional explicit slice holds (seconds); cycles when more slices are needed. */
+  sliceIntervalsSec?: number[];
   /** Optional Hz keyframes over [0, totalDurationSec]. Overrides start/end ramp. */
   frequencyKeyframes?: Keyframe[];
   /** Easing for the implicit start→end ramp when frequencyKeyframes is omitted. */
@@ -136,6 +139,32 @@ export function hzToSecondsPerCut(hz: number): number {
 /** Convert seconds per cut to frequency (Hz). */
 export function secondsPerCutToHz(secondsPerCut: number): number {
   return 1 / Math.max(secondsPerCut, 0.01);
+}
+
+/** Keep finite, strictly-positive hold intervals in seconds. */
+export function sanitizeSliceIntervals(raw: number[] | null | undefined): number[] {
+  if (!raw?.length) return [];
+  return raw.filter((v) => Number.isFinite(v) && v > 0);
+}
+
+/** Parse a user-entered interval list like "2, 1; 0 foo" -> [2, 1]. */
+export function parseSliceIntervalList(text: string): number[] {
+  if (!text.trim()) return [];
+  const parsed = text
+    .split(/[,\s;]+/)
+    .map((part) => Number(part.trim()))
+    .filter((v) => Number.isFinite(v) && v > 0);
+  return sanitizeSliceIntervals(parsed);
+}
+
+/** Sum of sanitized slice intervals in seconds. */
+export function sliceIntervalListSum(intervals: number[]): number {
+  return sanitizeSliceIntervals(intervals).reduce((sum, sec) => sum + sec, 0);
+}
+
+/** UI-facing interval list formatter. */
+export function formatSliceIntervalList(intervals: number[]): string {
+  return sanitizeSliceIntervals(intervals).join(', ');
 }
 
 /** Median interval between consecutive beat timestamps, or null. */
@@ -285,7 +314,7 @@ function entireMaterialBudget(
 }
 
 /**
- * Build alternating A/B (or A/B/C) slices for concat demuxer `inpoint` / `outpoint`.
+ * Build alternating A/B (or A/B/C) slices as source `inpoint` / `outpoint` ranges.
  *
  * `sourceClock` controls whether offscreen clips freeze (`freezeHidden`) or
  * all playheads track output wall time (`parallel`).
@@ -305,6 +334,8 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
     sourceClock = 'freezeHidden',
   } = config;
   const beatInterval = beatSync ? medianBeatInterval(beatSync.beatTimestamps) : null;
+  const sliceIntervalsSec = sanitizeSliceIntervals(automation.sliceIntervalsSec);
+  const hasSliceIntervalList = sliceIntervalsSec.length > 0;
 
   const slots: IntercutSlot[] = sourceC ? ['A', 'B', 'C'] : ['A', 'B'];
   const sources: SlotSources = { A: sourceA, B: sourceB };
@@ -327,6 +358,7 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
   const slices: IntercutSlice[] = [];
   let outputTime = 0;
   let rotation = startWithA ? 0 : 1 % slots.length;
+  let intervalIndex = 0;
   let offsets: SlotOffsets = {};
   for (const slot of slots) {
     offsets[slot] = sources[slot]!.trimStart;
@@ -339,13 +371,15 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
       break;
     }
 
-    let sliceDuration = sliceDurationAtTime(
-      frequencyAutomation,
-      outputTime,
-      minSliceSec,
-      beatSync,
-      beatInterval,
-    );
+    let sliceDuration = hasSliceIntervalList
+      ? Math.max(sliceIntervalsSec[intervalIndex % sliceIntervalsSec.length]!, minSliceSec)
+      : sliceDurationAtTime(
+          frequencyAutomation,
+          outputTime,
+          minSliceSec,
+          beatSync,
+          beatInterval,
+        );
 
     if (consumeMode === 'targetDuration') {
       const remaining = swapBudgetSec - outputTime;
@@ -391,6 +425,7 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
     offsets = taken.offsets;
     outputTime += taken.actual;
     rotation = (rotation + 1) % slots.length;
+    intervalIndex++;
   }
 
   const landing: IntercutSlot =
@@ -434,34 +469,6 @@ export function buildIntercutSlices(config: BuildIntercutSlicesConfig): Intercut
 }
 
 /**
- * FFmpeg concat demuxer v2 playlist (file + inpoint + outpoint per slice).
- */
-export function buildConcatPlaylist(
-  slices: IntercutSlice[],
-  fileA: string,
-  fileB: string,
-  fileC?: string,
-): string {
-  const files: Record<IntercutSlot, string | undefined> = {
-    A: fileA,
-    B: fileB,
-    C: fileC,
-  };
-  const lines: string[] = [];
-  for (const slice of slices) {
-    const file = files[slice.slot];
-    if (!file) {
-      throw new Error(`Intercut playlist is missing a file for clip ${slice.slot}.`);
-    }
-    const escaped = file.replace(/'/g, "'\\''");
-    lines.push(`file '${escaped}'`);
-    lines.push(`inpoint ${slice.inpoint.toFixed(6)}`);
-    lines.push(`outpoint ${slice.outpoint.toFixed(6)}`);
-  }
-  return `${lines.join('\n')}\n`;
-}
-
-/**
  * True when every slice is long enough that stream-copy *might* be keyframe-safe.
  * Intercut generation still re-encodes: alternating multi-source `inpoint` cuts
  * are almost never on keyframes, and stream-copy outputs often fail to load in
@@ -474,7 +481,7 @@ export function canUseStreamCopyForIntercut(slices: IntercutSlice[]): boolean {
   );
 }
 
-/** Shift slice times so 0 is each source's trimStart (after trim-window normalize). */
+/** Shift slice times so 0 is each source's trimStart (the generator reads every source from there). */
 export function remapIntercutSlicesToTrimOrigin(
   slices: IntercutSlice[],
   trimStartA: number,

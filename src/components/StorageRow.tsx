@@ -1,11 +1,9 @@
 import { useState, useCallback, useRef } from "react";
 import { ContaboStorageManagerClient } from "../utils/project";
 import { ProgressBar } from "./ProgressBar";
+import { projectActions, useStorageAuthToken, useStorageEndpoint } from "../store";
 
 interface Props {
-  endpoint: string;
-  authToken: string;
-  onAuthTokenChange: (value: string) => void;
   onSaveRemote: (
     endpoint: string,
     authToken: string,
@@ -42,9 +40,6 @@ interface Props {
 }
 
 export function StorageRow({
-  endpoint,
-  authToken,
-  onAuthTokenChange,
   onSaveRemote,
   onLoadRemote,
   isRemoteSaving,
@@ -56,6 +51,9 @@ export function StorageRow({
   pendingRemoteUploadError,
   onResolveRemoteUploadError,
 }: Props) {
+  const endpoint = useStorageEndpoint();
+  const authToken = useStorageAuthToken();
+  const onAuthTokenChange = projectActions.setStorageAuthToken;
   const [projectName, setProjectName] = useState("default-project");
   const [projects, setProjects] = useState<
     { name: string; modified: number }[]

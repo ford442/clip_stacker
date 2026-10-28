@@ -1,4 +1,5 @@
 import type {
+  CaptionEntry,
   Clip,
   ClipGroup,
   ClipTransition,
@@ -8,6 +9,7 @@ import type {
   SerializedMasterAudio,
   SerializedTransition,
   TextOverlay,
+  TextOverlayStyle,
   SerializedClipGroup,
   Track,
   SerializedTrack,
@@ -18,7 +20,19 @@ import {
   isFinishingActive,
 } from '../finishing';
 import type { FinishingSettings } from '../finishing';
+import {
+  isColorManagementActive,
+  type ColorManagementSettings,
+} from '../colorManagement';
 import { normalizeClipAutomation } from '../clipAutomation';
+import { normalizeClipAudioEffects } from '../audioEffects';
+import {
+  normalizeBusEffects,
+  normalizeLaneDuck,
+  normalizeMasterBus,
+  type MasterBusSettings,
+} from '../audioBus';
+import { normalizeCaptions } from '../subtitles';
 export function serializeProject(
   clips: Clip[],
   transitions: ClipTransition[] = [],
@@ -28,19 +42,31 @@ export function serializeProject(
   tracks: Track[] = [],
   layoutReferenceResolution?: string,
   masterAudio: MasterAudio | null = null,
+  captions: CaptionEntry[] = [],
+  captionStyle: Partial<TextOverlayStyle> = {},
+  colorManagement?: ColorManagementSettings,
+  masterBus?: MasterBusSettings,
 ): Project {
-  const serializedTracks: SerializedTrack[] = tracks.map((track) => ({
-    id: track.id,
-    kind: track.kind,
-    ...(track.label ? { label: track.label } : {}),
-    items: track.items.map((item) => ({
-      clipId: item.clipId,
-      startTime: item.startTime,
-    })),
-    ...(track.muted ? { muted: true } : {}),
-    ...(track.locked ? { locked: true } : {}),
-    ...(track.height != null ? { height: track.height } : {}),
-  }));
+  const serializedTracks: SerializedTrack[] = tracks.map((track) => {
+    // Bypassed effects round-trip too, like clip inserts.
+    const audioFx = normalizeBusEffects(track.audioFx);
+    const duck = normalizeLaneDuck(track.duck);
+    return {
+      id: track.id,
+      kind: track.kind,
+      ...(track.label ? { label: track.label } : {}),
+      items: track.items.map((item) => ({
+        clipId: item.clipId,
+        startTime: item.startTime,
+      })),
+      ...(track.muted ? { muted: true } : {}),
+      ...(track.locked ? { locked: true } : {}),
+      ...(track.height != null ? { height: track.height } : {}),
+      ...(audioFx ? { audioFx } : {}),
+      ...(duck ? { duck } : {}),
+    };
+  });
+  const savedMasterBus = normalizeMasterBus(masterBus);
 
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
@@ -50,6 +76,8 @@ export function serializeProject(
     ...(serializedTracks.length > 0 ? { tracks: serializedTracks } : {}),
     clips: clips.map((clip): SerializedClip => {
       const automation = normalizeClipAutomation(clip.automation);
+      // Bypassed blocks round-trip too: the settings survive a toggle.
+      const audioEffects = normalizeClipAudioEffects(clip.audioEffects);
       return {
       id: clip.id,
       title: clip.title,
@@ -70,7 +98,12 @@ export function serializeProject(
       ...(clip.playbackRate != null && clip.playbackRate !== 1
         ? { playbackRate: clip.playbackRate }
         : {}),
+      ...(clip.loopCount != null && clip.loopCount !== 1
+        ? { loopCount: clip.loopCount }
+        : {}),
+      ...(clip.reversed ? { reversed: true } : {}),
       ...(automation ? { automation } : {}),
+      ...(audioEffects ? { audioEffects } : {}),
       fileName: clip.file.name,
       fileType: clip.file.type || undefined,
       ...(clip.groupId ? { groupId: clip.groupId } : {}),
@@ -100,16 +133,23 @@ export function serializeProject(
             opacity: clip.opacity ?? 1,
           }
         : {}),
+      ...(clip.overlayBlend ? { overlayBlend: clip.overlayBlend } : {}),
+      ...(clip.chromaKey ? { chromaKey: { ...clip.chromaKey } } : {}),
       ...(clip.keyframes ? { keyframes: clip.keyframes } : {}),
       ...(clip.stillImage ? { stillImage: true } : {}),
       ...(clip.beatTimestamps && clip.beatTimestamps.length > 0
         ? { beatTimestamps: clip.beatTimestamps.slice() }
         : {}),
       ...(clip.bpmEstimate != null ? { bpmEstimate: clip.bpmEstimate } : {}),
+      ...(clip.bpmConfidence != null ? { bpmConfidence: clip.bpmConfidence } : {}),
+      ...(clip.bpmOverride != null ? { bpmOverride: clip.bpmOverride } : {}),
       ...(clip.lumaHistogram && clip.lumaHistogram.length === 256
         ? { lumaHistogram: clip.lumaHistogram.slice() }
         : {}),
       ...(clip.lumaLevels ? { lumaLevels: { ...clip.lumaLevels } } : {}),
+      ...(clip.stabilize ? { stabilize: true } : {}),
+      // The record only — proxy bytes live in the media store, never in JSON.
+      ...(clip.proxy ? { proxy: { ...clip.proxy } } : {}),
     };
     }),
     transitions: transitions.map((t): SerializedTransition => ({
@@ -117,6 +157,7 @@ export function serializeProject(
       type: t.type,
       duration: t.duration,
       ...(t.params ? { params: t.params } : {}),
+      ...(t.customShader ? { customShader: t.customShader } : {}),
       ...(t.morphSegment
         ? {
             morphSegment: {
@@ -137,7 +178,23 @@ export function serializeProject(
       }
     : {}),
     ...(textOverlays.length > 0 ? { textOverlays } : {}),
+    ...(captions.length > 0
+      ? {
+          captions: normalizeCaptions(captions).map((caption): CaptionEntry => ({
+            id: caption.id,
+            startSec: caption.startSec,
+            endSec: caption.endSec,
+            text: caption.text,
+            ...(caption.style && Object.keys(caption.style).length > 0
+              ? { style: { ...caption.style } }
+              : {}),
+          })),
+        }
+      : {}),
+    ...(Object.keys(captionStyle).length > 0 ? { captionStyle: { ...captionStyle } } : {}),
     ...(isFinishingActive(finishing) ? { finishing } : {}),
+    ...(isColorManagementActive(colorManagement) ? { colorManagement } : {}),
+    ...(savedMasterBus ? { masterBus: savedMasterBus } : {}),
     ...(masterAudio
       ? {
           masterAudio: {
@@ -145,6 +202,15 @@ export function serializeProject(
             duration: masterAudio.duration,
             ...(masterAudio.startTime > 0 ? { startTime: masterAudio.startTime } : {}),
             ...(masterAudio.file.type ? { fileType: masterAudio.file.type } : {}),
+            ...(masterAudio.beatTimestamps && masterAudio.beatTimestamps.length > 0
+              ? { beatTimestamps: masterAudio.beatTimestamps.slice() }
+              : {}),
+            ...(masterAudio.bpmEstimate != null
+              ? { bpmEstimate: masterAudio.bpmEstimate }
+              : {}),
+            ...(masterAudio.bpmConfidence != null
+              ? { bpmConfidence: masterAudio.bpmConfidence }
+              : {}),
           } satisfies SerializedMasterAudio,
         }
       : {}),

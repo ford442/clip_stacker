@@ -9,7 +9,7 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   DEFAULT_FINISHING,
@@ -27,7 +27,7 @@ import { buildSharpenFfmpegFilters } from "../utils/sharpen";
 import { buildGrainFfmpegFilters } from "../utils/grain";
 import {
   renderTimelineAudioMixWav,
-  timelineHasAudioAutomation,
+  timelineNeedsAudioPremix,
 } from "../utils/webcodecs-audio";
 import {
   isFfmpegLoadFailed,
@@ -84,6 +84,7 @@ import {
   FFMPEG_LOAD_TIMEOUT_MS,
 } from "./core";
 import { mergeClipsWithCompositing } from "./video";
+import { clipHasPictureTransform } from "../utils/animatedLayout";
 import { calculateRenderPlan } from "./plan";
 import { remuxVideoWithPremixWav, remuxVideoWithMasterAudio } from "./mux";
 
@@ -219,7 +220,11 @@ export async function mergeClips(
     (t) => t.type !== "none" && t.duration > 0,
   );
   const effectClips = workingClips.filter(clipNeedsEffects);
-  const hasPipClips = workingClips.some((c) => (c.layerIndex ?? 0) > 0);
+  // A picture transform needs the compositing graph too (its per-clip
+  // `scale` + `rotate` lives there), even with no overlay lanes.
+  const hasPipClips = workingClips.some(
+    (c) => (c.layerIndex ?? 0) > 0 || clipHasPictureTransform(c),
+  );
   const transitionFilterComplex =
     activeTransitions.length > 0
       ? buildTransitionFilterComplex(workingClips, activeTransitions)
@@ -378,9 +383,10 @@ export async function mergeClips(
     finalFileName = "stacked_final.mp4";
   }
 
-  // When volume/pan automation is present, replace FFmpeg-filter audio with a
-  // browser OfflineAudioContext premix (curves aren't expressible as filters).
-  if (timelineHasAudioAutomation(workingClips)) {
+  // When automation, insert effects, lane buses, audio lanes or the bus limiter
+  // are present, replace FFmpeg-filter audio with a browser premix —
+  // media-engine WASM, else OfflineAudioContext (none of them are filters).
+  if (timelineNeedsAudioPremix(workingClips)) {
     onStatus("Rendering automated audio mix for FFmpeg remux...");
     emitProgress(onProgress, "Premixing automated audio", 0.97, true);
     const wavBytes = await renderTimelineAudioMixWav(

@@ -41,6 +41,8 @@ describe('editHistory', () => {
       clipGroups: [],
       transitions: [],
       textOverlays: [],
+      captions: [],
+      captionStyle: {},
       masterAudioMarkers: [],
       selectedClipId: 'a',
       masterAudio: null,

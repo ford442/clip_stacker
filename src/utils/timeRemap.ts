@@ -15,9 +15,11 @@ import { sampleKeyframes, sortKeyframes } from './keyframes';
 import { MIN_CLIP_DURATION } from './media';
 import {
   clampClipPlaybackRate,
+  getClipLoopCount,
   getClipPlaybackRate,
   getTrimmedSourceDuration,
 } from './playbackRate';
+import { clipIsReversed, REVERSE_END_BIAS_SEC, trimmedSourceEnd } from './reverseClip';
 
 const RATE_EPS = 1e-6;
 const INTEGRAL_EPS = 1e-7;
@@ -110,7 +112,7 @@ export function integrateRateToSourceOffset(
 
 /** Source media time (seconds) at an output-local position within the clip. */
 export function sourceTimeAtOutputLocal(
-  clip: Pick<Clip, 'trimStart' | 'playbackRate' | 'automation'>,
+  clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'reversed'>,
   outputLocalT: number,
 ): number {
   const offset = integrateRateToSourceOffset(
@@ -118,7 +120,16 @@ export function sourceTimeAtOutputLocal(
     getClipPlaybackRate(clip),
     outputLocalT,
   );
-  return clip.trimStart + offset;
+  if (!clipIsReversed(clip)) return clip.trimStart + offset;
+
+  // Walk the trim from its end. Bias the first instant inside the window so
+  // a decoder does not step onto the frame that starts at the exclusive end.
+  const end = trimmedSourceEnd(clip);
+  let sourceTime = end - offset;
+  if (sourceTime > end - REVERSE_END_BIAS_SEC) {
+    sourceTime = end - REVERSE_END_BIAS_SEC;
+  }
+  return Math.max(clip.trimStart, sourceTime);
 }
 
 /**
@@ -166,14 +177,80 @@ export function outputDurationForSourceLength(
 }
 
 /**
- * Effective clip duration on the output timeline — respects constant rate and
- * variable playbackRate automation curves.
+ * Duration of ONE play-through of the trimmed + speed-remapped window —
+ * respects constant rate and variable playbackRate automation curves, but
+ * ignores `loopCount`. Speed automation keyframes live in this single-cycle
+ * output-local time frame.
  */
-export function remappedClipDuration(
+export function cycleDurationForClip(
   clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'>,
 ): number {
   const sourceLen = getTrimmedSourceDuration(clip);
   return outputDurationForSourceLength(clip, sourceLen);
+}
+
+/**
+ * Total output duration for a looped clip: one cycle's duration times
+ * `loopCount` (1 when the clip doesn't loop).
+ */
+export function loopedOutputDuration(
+  clip: Pick<
+    Clip,
+    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'loopCount'
+  >,
+): number {
+  return cycleDurationForClip(clip) * getClipLoopCount(clip);
+}
+
+/**
+ * Effective clip duration on the output timeline — respects constant rate and
+ * variable playbackRate automation curves, and repeats that cycle
+ * `loopCount` times.
+ */
+export function remappedClipDuration(
+  clip: Pick<
+    Clip,
+    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'loopCount'
+  >,
+): number {
+  return loopedOutputDuration(clip);
+}
+
+/**
+ * Wrap an output-local time (which may span multiple loop cycles) back into
+ * a single cycle: `{ cycleIndex, cycleLocalT }` where `cycleLocalT` is in
+ * `[0, cycleDuration)` (or `[0, cycleDuration]` exactly at the clip's end).
+ * Feed `cycleLocalT` into `sourceTimeAtOutputLocal` / `clipSourceTimeAtLocal`
+ * — never the raw multi-cycle `outputLocalT`.
+ */
+export function wrapOutputLocalToCycle(
+  clip: Pick<
+    Clip,
+    'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'loopCount'
+  >,
+  outputLocalT: number,
+): { cycleIndex: number; cycleLocalT: number } {
+  const cycleDuration = cycleDurationForClip(clip);
+  const loopCount = getClipLoopCount(clip);
+  const t = Math.max(0, outputLocalT);
+
+  if (loopCount <= 1 || cycleDuration <= 0) {
+    return { cycleIndex: 0, cycleLocalT: Math.min(t, cycleDuration) };
+  }
+
+  const totalDuration = cycleDuration * loopCount;
+  const clamped = Math.min(t, totalDuration);
+  let cycleIndex = Math.floor(clamped / cycleDuration);
+  let cycleLocalT = clamped - cycleIndex * cycleDuration;
+
+  // Land exactly on the clip's end (last cycle, cycleLocalT === cycleDuration)
+  // rather than rolling into a nonexistent next cycle.
+  if (cycleIndex >= loopCount) {
+    cycleIndex = loopCount - 1;
+    cycleLocalT = cycleDuration;
+  }
+
+  return { cycleIndex, cycleLocalT };
 }
 
 /**
@@ -184,7 +261,7 @@ export function sampleRemapCurve(
   clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation'>,
   sampleCount = 64,
 ): Array<{ t: number; rate: number; sourceOffset: number }> {
-  const duration = remappedClipDuration(clip);
+  const duration = cycleDurationForClip(clip);
   const n = Math.max(2, sampleCount);
   const points: Array<{ t: number; rate: number; sourceOffset: number }> = [];
   for (let i = 0; i < n; i++) {

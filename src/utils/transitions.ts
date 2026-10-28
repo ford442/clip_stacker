@@ -4,13 +4,14 @@
  */
 
 import type { Clip, ClipTransition, ExportSettings } from '../types';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 import { audioVolumeFilterSegment } from './audioVolume';
 import {
   audioTempoFilterSegment,
   getClipPlaybackRate,
   videoSetptsFilter,
 } from './playbackRate';
+import { audioReversePrefix, videoReversePrefix } from './reverseClip';
 import { parseOutputResolution } from './resolution';
 import { getXfadeName } from '../webgpu/transitions/registry';
 import { MORPH_TRANSITION_TYPE } from './morphTransition';
@@ -136,12 +137,12 @@ export function buildTransitionFilterComplex(
       const rate = getClipPlaybackRate(clip);
       const setpts = videoSetptsFilter(rate);
       const atempo = audioTempoFilterSegment(rate);
-      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},${setpts},scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
+      let vf = `[${i}:v]trim=start=${clip.trimStart}:end=${end},${videoReversePrefix(clip)}${setpts},scale=${outputWidth}:${outputHeight}:force_original_aspect_ratio=decrease,pad=${outputWidth}:${outputHeight}:(ow-iw)/2:(oh-ih)/2,format=yuv420p`;
       if (clip.videoFadeIn > 0) vf += `,fade=t=in:st=0:d=${clip.videoFadeIn}`;
       if (clip.videoFadeOut > 0) vf += `,fade=t=out:st=${safeVOut}:d=${clip.videoFadeOut}`;
       parts.push(`${vf}[v${i}]`);
 
-      let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
+      let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
       if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
       af += audioVolumeFilterSegment(clip.volume ?? 1);
@@ -150,7 +151,7 @@ export function buildTransitionFilterComplex(
       // audio-only: black video
       const atempo = audioTempoFilterSegment(getClipPlaybackRate(clip));
       parts.push(`color=c=black:s=${outputWidth}x${outputHeight}:d=${dur}[v${i}]`);
-      let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
+      let af = `[${i}:a]atrim=start=${clip.trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS${atempo},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
       if (clip.audioFadeIn > 0) af += `,afade=t=in:st=0:d=${clip.audioFadeIn}`;
       if (clip.audioFadeOut > 0) af += `,afade=t=out:st=${safeAOut}:d=${clip.audioFadeOut}`;
       af += audioVolumeFilterSegment(clip.volume ?? 1);

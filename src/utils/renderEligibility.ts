@@ -1,8 +1,16 @@
-import type { Clip, ClipTransition, TextOverlay } from '../types';
+import type { Clip, ClipTransition, RenderPlan, TextOverlay } from '../types';
 import { clipHasVolumeAdjustment } from './audioVolume';
-import { clipHasPlaybackRateAdjustment } from './playbackRate';
-import { clipHasKeyframes } from './animatedLayout';
+import { clipHasLoop, clipHasPlaybackRateAdjustment } from './playbackRate';
+import { clipIsReversed } from './reverseClip';
+import { clipHasRateAutomation } from './timeRemap';
+import {
+  clipHasAnimatedPictureTransform,
+  clipHasKeyframes,
+  clipHasPictureTransform,
+} from './animatedLayout';
+import { isStabilizationActive } from './stabilization';
 import { isFinishingActive, type FinishingSettings } from './finishing';
+import { resolveLayerKey } from './overlayKey';
 
 /** Mirrors ffmpegService clipNeedsEffects — shared for encoder path selection. */
 export function clipNeedsEffects(clip: Clip): boolean {
@@ -14,7 +22,10 @@ export function clipNeedsEffects(clip: Clip): boolean {
     clip.audioFadeIn > 0 ||
     clip.audioFadeOut > 0 ||
     clipHasVolumeAdjustment(clip) ||
-    clipHasPlaybackRateAdjustment(clip)
+    clipHasPlaybackRateAdjustment(clip) ||
+    clipHasRateAutomation(clip) ||
+    clipHasLoop(clip) ||
+    clipIsReversed(clip)
   );
 }
 
@@ -45,9 +56,16 @@ export function canCaptureWebGpuCanvasWithText(
 }
 
 /**
- * Transitions, PiP, clip keyframes, and still images need multi-source frame
- * delivery (timeline compositor). Text overlay keyframes are resolved in the
- * overlay post-pass via `buildPreviewCompositionPlan`.
+ * Transitions, PiP, clip keyframes, still images, and looped clips need
+ * multi-source frame delivery (timeline compositor) — the plain sequential
+ * WebCodecs path (`encodeVideoFrames`) walks each clip's trim window once
+ * and has no loop-wrap or speed awareness, so a looped clip or any clip
+ * whose playback rate is not 1× must route through the compositor's
+ * `buildPreviewCompositionPlan` (source time is the integral of the rate,
+ * wrapped per loop). That is the same clock the timeline preview uses, so
+ * export does not keep 1× frames inside a resized clip. Text overlay
+ * keyframes are resolved in the overlay post-pass via
+ * `buildPreviewCompositionPlan`.
  */
 export function needsMultiLayerComposition(
   clips: Clip[],
@@ -57,6 +75,10 @@ export function needsMultiLayerComposition(
   if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) return true;
   if (clips.some(clipHasKeyframes)) return true;
   if (clips.some((clip) => clip.stillImage)) return true;
+  if (clips.some(clipHasLoop)) return true;
+  if (clips.some(clipHasRateAutomation)) return true;
+  if (clips.some(clipHasPlaybackRateAdjustment)) return true;
+  if (clips.some(clipIsReversed)) return true;
   return false;
 }
 
@@ -119,4 +141,61 @@ export function canUseGpuVideoEncoder(
   }
   if (clips.some((clip) => clip.rifeProcessed)) return false;
   return true;
+}
+
+/**
+ * Render-plan fields for clip picture transforms, for the encoder that ran
+ * (or is expected to). Empty when no clip is transformed.
+ *
+ * The compositors (WebGPU and Canvas2D) sample through the composed layer
+ * warp, so they match the preview. FFmpeg only gets `scale` + `rotate`, and
+ * says what that loses instead of exporting a different picture silently.
+ * The MediaRecorder canvas encoder is never chosen for a transformed clip
+ * (see `hybridMergeClips`), so it maps to nothing here.
+ */
+export function pictureTransformPlanFields(
+  clips: Clip[],
+  encoder: RenderPlan['encoderIntent'],
+): Pick<RenderPlan, 'pictureTransform' | 'pictureTransformGaps'> {
+  const transformed = clips.filter(clipHasPictureTransform);
+  if (transformed.length === 0 || encoder === 'canvas' || !encoder) return {};
+  if (encoder !== 'ffmpeg') return { pictureTransform: 'gpu' };
+
+  const gaps: string[] = [];
+  if (transformed.some((clip) => isStabilizationActive(clip))) {
+    gaps.push(
+      'Stabilization on rotated / scaled clips (FFmpeg has no libvidstab, so the optical-flow warp is dropped)',
+    );
+  }
+  if (transformed.some(clipHasAnimatedPictureTransform)) {
+    gaps.push('Animated rotation / scale (FFmpeg holds the first keyframe)');
+  }
+  return {
+    pictureTransform: 'ffmpeg',
+    ...(gaps.length > 0 ? { pictureTransformGaps: gaps } : {}),
+  };
+}
+
+/**
+ * What the remote concat (`handleGpuStitch`) would silently drop for this
+ * timeline. It has no compositor — it trims each base clip with its own audio
+ * and stitches them end to end — so any of these makes it refuse.
+ */
+export function remoteConcatDroppedFeatures(
+  timelineClips: Clip[],
+  transitions: ClipTransition[],
+  textOverlays: TextOverlay[],
+  finishing: FinishingSettings,
+  captionCount: number,
+): string[] {
+  const dropped: string[] = [];
+  if (timelineClips.some((clip) => (clip.layerIndex ?? 0) > 0)) dropped.push('PiP/overlay lanes');
+  if (hasActiveTransitions(transitions)) dropped.push('transitions');
+  if (textOverlays.length > 0) dropped.push('text overlays');
+  if (isFinishingActive(finishing)) dropped.push('finishing');
+  if (timelineClips.some((clip) => resolveLayerKey(clip) !== null)) dropped.push('chroma/luma keys');
+  if (captionCount > 0) dropped.push('captions');
+  // A muted lane's clips would still be trimmed with their audio.
+  if (timelineClips.some((clip) => clip.kind === 'video' && clip.trackMuted)) dropped.push('lane mute');
+  return dropped;
 }

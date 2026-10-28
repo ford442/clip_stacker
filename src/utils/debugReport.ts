@@ -13,9 +13,14 @@ import {
   getLastFfmpegLogs,
   getFfmpegEnvironmentDiagnostics,
 } from '../ffmpeg/ffmpegService';
-import { getGpuErrorLog } from '../webgpu/gpuDevice';
+import { getGpuErrorLog, peekGpuFeatures } from '../webgpu/gpuDevice';
 import { getPublishedWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
+import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
+import { getLastEncoderColorSpace, getLastResolvedEncoderCodec } from './webcodecs-codec';
+import { getLastDecoderAcceleration } from './webcodecs-decoder';
+import { getColorDebugSnapshot, type ColorManagementSettings } from './colorManagement';
+import { getAudioPlaybackManager } from '../audio/playbackManager';
 
 export interface DebugReportContext {
   status: string;
@@ -26,6 +31,7 @@ export interface DebugReportContext {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   exportSettings: ExportSettings;
+  colorManagement?: ColorManagementSettings;
   error?: unknown;
 }
 
@@ -210,11 +216,67 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   }
   lines.push('');
 
+  lines.push('## media-engine');
+  lines.push(`- ${formatMediaEngineDiagnostics()}`);
+  lines.push('');
+
   const gpuErrors = getGpuErrorLog();
   lines.push('## WebGPU probe');
   lines.push('```json');
   lines.push(JSON.stringify(getPublishedWebGpuProbe(), null, 2));
   lines.push('```');
+  lines.push('');
+
+  const colorDebug = getColorDebugSnapshot();
+  const selected = ctx.colorManagement;
+  lines.push('## Color');
+  lines.push(
+    `- Output: ${selected?.outputColor ?? colorDebug.outputColor}; working space: ${selected?.workingSpace ?? colorDebug.workingSpace}`,
+  );
+  lines.push(
+    `- Canvas: colorSpace ${colorDebug.canvasColorSpace}, toneMapping ${colorDebug.toneMapping}, format ${colorDebug.canvasFormat || '(not configured)'}, present ${colorDebug.present}${colorDebug.presentFallback ? ' (fallback)' : ''}`,
+  );
+  const encoderColor = getLastEncoderColorSpace();
+  lines.push(
+    encoderColor
+      ? `- Encoder colorSpace: ${JSON.stringify(encoderColor)}`
+      : '- Encoder colorSpace: (no WebCodecs configure yet this session)',
+  );
+  const gpuFeaturesForColor = peekGpuFeatures();
+  const adopted = (name: string) => (gpuFeaturesForColor?.has(name as GPUFeatureName) ? 'yes' : 'no');
+  lines.push(`- shader-f16 adopted: ${adopted('shader-f16')}`);
+  lines.push(`- rg11b10ufloat-renderable adopted: ${adopted('rg11b10ufloat-renderable')}`);
+  lines.push('');
+
+  const gpuFeatures = peekGpuFeatures();
+  lines.push('## WebGPU Optional Features');
+  lines.push(
+    gpuFeatures && gpuFeatures.size > 0
+      ? [...gpuFeatures].sort().join(', ')
+      : '(none adopted, or no device acquired yet)',
+  );
+  lines.push('');
+
+  const lastCodec = getLastResolvedEncoderCodec();
+  lines.push('## Export Encoder');
+  lines.push(
+    lastCodec
+      ? `- Codec: \`${lastCodec.codec}\` (${lastCodec.muxerCodec}), acceleration: ${lastCodec.hardwareAcceleration ?? 'prefer-hardware'}`
+      : '- (no WebCodecs export run yet this session)',
+  );
+  const decoderAcceleration = getLastDecoderAcceleration();
+  lines.push(
+    `- Decoder acceleration: ${decoderAcceleration ?? '(no WebCodecs decode yet this session)'}`,
+  );
+  lines.push('');
+
+  const audioDiagnostics = getAudioPlaybackManager().getContextDiagnostics();
+  lines.push('## Audio Context');
+  lines.push(
+    audioDiagnostics
+      ? `- Sample rate: ${audioDiagnostics.sampleRate} Hz — Base latency: ${(audioDiagnostics.baseLatency * 1000).toFixed(2)} ms — State: ${audioDiagnostics.state}`
+      : '- (no live AudioContext yet)',
+  );
   lines.push('');
 
   lines.push(`## WebGPU Errors (last ${gpuErrors.length})`);
@@ -223,7 +285,9 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   } else {
     lines.push('```');
     gpuErrors.forEach((e) => {
-      lines.push(`[${new Date(e.timestamp).toISOString()}] ${e.type}: ${e.message}`);
+      lines.push(
+        `[${new Date(e.timestamp).toISOString()}] (${e.realm ?? 'main'}) ${e.type}: ${e.message}`,
+      );
     });
     lines.push('```');
   }

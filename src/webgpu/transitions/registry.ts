@@ -1,3 +1,12 @@
+import type { ClipTransition } from '../../types';
+import {
+  CUSTOM_TRANSITION_TYPE,
+  DEFAULT_CUSTOM_EXPRESSION,
+  buildCustomTransitionDef,
+  getCustomTransitionDef,
+  isCustomTransitionId,
+  registerCustomTransition,
+} from './customShader';
 import type { TransitionDef, TransitionParamDef } from './types';
 
 const dissolveBody = `
@@ -103,9 +112,119 @@ const directionalBody = `
   result = mix(sampleTo(uv), sampleFrom(uv), edge);
 `;
 
+const filmBurnBody = `
+  let fromColor = sampleFrom(uv);
+  let toColor = sampleTo(uv);
+  // Bloom rises and falls across the overlap, peaking just past the midpoint
+  // so the join reads as a film splice rather than a symmetric flash.
+  let shaped = pow(clamp(u.progress, 0.0, 1.0), 0.7);
+  let bloom = pow(sin(shaped * 3.14159265), 1.5);
+  let vignette = 1.0 - distance(uv, vec2<f32>(0.5, 0.5)) * 0.9;
+  let burn = clamp(bloom * max(vignette, 0.0) * u.custom0, 0.0, 1.0);
+  let base = mix(fromColor, toColor, smoothstep(0.35, 0.8, u.progress));
+  // Orange/yellow oversaturation first, then a whiteout at the burn peak.
+  let ember = vec4<f32>(1.0, 0.66, 0.22, 1.0);
+  let scorched = mix(base, ember, burn);
+  result = mix(scorched, vec4<f32>(1.0, 1.0, 1.0, 1.0), burn * burn * clamp(u.custom1, 0.0, 1.0));
+`;
+
+const lumaWipeBody = `
+  // Boundary comes from the mask texture, never from clip content, so an HDR
+  // source can't push the threshold outside 0-1.
+  let luma = sampleMaskLuma(uv);
+  let softness = max(u.custom0, 0.001);
+  let lo = u.progress * (1.0 + softness) - softness;
+  let edge = smoothstep(lo, lo + softness, luma);
+  result = mix(sampleTo(uv), sampleFrom(uv), edge);
+`;
+
+const radialIrisBody = `
+  let center = vec2<f32>(u.custom0, u.custom1);
+  let aspect = max(u.resolutionX, 1.0) / max(u.resolutionY, 1.0);
+  let scaled = vec2<f32>(aspect, 1.0);
+  let d = length((uv - center) * scaled);
+  // Farthest corner from the iris centre — guarantees full coverage at 1.0.
+  let corner = max(center, vec2<f32>(1.0, 1.0) - center);
+  let maxRadius = length(corner * scaled);
+  let feather = max(u.custom2, 0.0001);
+  let radius = u.progress * (maxRadius + feather * 2.0);
+  let mask = smoothstep(radius - feather, radius + feather, d);
+  result = mix(sampleTo(uv), sampleFrom(uv), mask);
+`;
+
+const chromaShiftBody = `
+  let amount = max(u.custom0, 0.0) * sin(clamp(u.progress, 0.0, 1.0) * 3.14159265);
+  let slices = max(u.custom1, 1.0);
+  let blockY = floor(uv.y * slices);
+  // Quantized time keeps the jitter blocky rather than a smooth slide.
+  let seed = sin(blockY * 12.9898 + floor(u.progress * 24.0) * 78.233) * 43758.5453;
+  let slice = (fract(seed) - 0.5) * amount;
+  let scanline = (fract(uv.y * slices * 8.0) - 0.5) * amount * 0.2;
+  let base = vec2<f32>(uv.x + slice + scanline, uv.y);
+  let redUv = vec2<f32>(base.x + amount * 0.35, base.y);
+  let blueUv = vec2<f32>(base.x - amount * 0.35, base.y);
+  let fromSplit = vec4<f32>(
+    sampleFrom(redUv).r,
+    sampleFrom(base).g,
+    sampleFrom(blueUv).b,
+    1.0,
+  );
+  let toSplit = vec4<f32>(
+    sampleTo(redUv).r,
+    sampleTo(base).g,
+    sampleTo(blueUv).b,
+    1.0,
+  );
+  result = mix(fromSplit, toSplit, smoothstep(0.35, 0.65, u.progress));
+`;
+
+const motionBlurPullBody = `
+  let ease = sin(clamp(u.progress, 0.0, 1.0) * 3.14159265);
+  let strength = max(u.custom0, 0.0) * ease;
+  // TAP_COUNT override — clamped to the shader's accumulation budget.
+  let taps = i32(clamp(u.custom1, 1.0, 8.0));
+  let slide = u.custom2;
+  let denom = max(f32(taps - 1), 1.0);
+  var fromSum = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  var toSum = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+  for (var i: i32 = 0; i < taps; i = i + 1) {
+    let smear = (f32(i) / denom - 0.5) * strength;
+    fromSum = fromSum + sampleFrom(vec2<f32>(uv.x + smear + u.progress * slide, uv.y));
+    toSum = toSum + sampleTo(vec2<f32>(uv.x + smear - (1.0 - u.progress) * slide, uv.y));
+  }
+  let inv = 1.0 / f32(taps);
+  result = mix(fromSum * inv, toSum * inv, smoothstep(0.25, 0.75, u.progress));
+`;
+
 const directionParams: TransitionParamDef[] = [
   { key: 'dirX', label: 'Direction X', type: 'float', default: -1, min: -1, max: 1, step: 0.25 },
   { key: 'dirY', label: 'Direction Y', type: 'float', default: 0, min: -1, max: 1, step: 0.25 },
+];
+
+const filmBurnParams: TransitionParamDef[] = [
+  { key: 'intensity', label: 'Burn intensity', type: 'float', default: 0.9, min: 0, max: 2, step: 0.1 },
+  { key: 'whiteout', label: 'Whiteout', type: 'float', default: 0.8, min: 0, max: 1, step: 0.05 },
+];
+
+const lumaWipeParams: TransitionParamDef[] = [
+  { key: 'softness', label: 'Edge softness', type: 'float', default: 0.15, min: 0.01, max: 1, step: 0.01 },
+];
+
+const radialIrisParams: TransitionParamDef[] = [
+  { key: 'centerX', label: 'Center X', type: 'float', default: 0.5, min: 0, max: 1, step: 0.05 },
+  { key: 'centerY', label: 'Center Y', type: 'float', default: 0.5, min: 0, max: 1, step: 0.05 },
+  { key: 'feather', label: 'Feather', type: 'float', default: 0.06, min: 0.001, max: 0.5, step: 0.01 },
+];
+
+const chromaShiftParams: TransitionParamDef[] = [
+  { key: 'amount', label: 'Shift amount', type: 'float', default: 0.06, min: 0, max: 0.3, step: 0.01 },
+  { key: 'slices', label: 'Scanline slices', type: 'float', default: 24, min: 1, max: 120, step: 1 },
+];
+
+const motionBlurParams: TransitionParamDef[] = [
+  { key: 'blur', label: 'Blur length', type: 'float', default: 0.12, min: 0, max: 0.5, step: 0.01 },
+  { key: 'taps', label: 'Sample taps', type: 'float', default: 6, min: 1, max: 8, step: 1 },
+  { key: 'pull', label: 'Pull distance', type: 'float', default: 0.25, min: 0, max: 1, step: 0.05 },
 ];
 
 const REGISTRY_LIST: TransitionDef[] = [
@@ -215,6 +334,47 @@ const REGISTRY_LIST: TransitionDef[] = [
     wgslBody: directionalBody,
     params: directionParams,
   },
+  {
+    id: 'filmBurn',
+    label: 'Film burn',
+    description: 'Orange bleach bloom that whites out over the splice',
+    xfadeName: 'fadewhite',
+    wgslBody: filmBurnBody,
+    params: filmBurnParams,
+  },
+  {
+    id: 'lumaWipe',
+    label: 'Luma wipe',
+    description: 'Wipe boundary driven by the mask texture luminance',
+    xfadeName: 'dissolve',
+    wgslBody: lumaWipeBody,
+    params: lumaWipeParams,
+  },
+  {
+    id: 'radialIris',
+    label: 'Radial iris',
+    description: 'Circular iris grows from a chosen center point',
+    xfadeName: 'circleopen',
+    wgslBody: radialIrisBody,
+    params: radialIrisParams,
+  },
+  {
+    id: 'chromaShift',
+    label: 'Glitch chromashift',
+    description: 'RGB channel split with sliced scanline offsets',
+    xfadeName: 'hlslice',
+    wgslBody: chromaShiftBody,
+    params: chromaShiftParams,
+  },
+  {
+    id: 'motionBlurPull',
+    label: 'Motion blur pull',
+    description: 'Horizontal smear pull-off built from accumulation taps',
+    xfadeName: 'smoothleft',
+    wgslBody: motionBlurPullBody,
+    params: motionBlurParams,
+  },
+  buildCustomTransitionDef(DEFAULT_CUSTOM_EXPRESSION, CUSTOM_TRANSITION_TYPE),
 ];
 
 export const TRANSITION_REGISTRY: Readonly<Record<string, TransitionDef>> = Object.freeze(
@@ -224,16 +384,42 @@ export const TRANSITION_REGISTRY: Readonly<Record<string, TransitionDef>> = Obje
 export const TRANSITION_IDS = REGISTRY_LIST.map((def) => def.id);
 
 export function getTransitionDef(id: string): TransitionDef | undefined {
-  return TRANSITION_REGISTRY[id];
+  const builtin = TRANSITION_REGISTRY[id];
+  if (builtin) return builtin;
+  // `custom#<hash>` variants live in the runtime map, not the static registry.
+  return isCustomTransitionId(id) ? getCustomTransitionDef(id) : undefined;
 }
 
 export function isRegisteredTransitionType(type: string): boolean {
-  return type !== 'none' && type in TRANSITION_REGISTRY;
+  if (type === 'none') return false;
+  return type in TRANSITION_REGISTRY || getTransitionDef(type) !== undefined;
 }
 
 export function getXfadeName(type: string): string {
   if (type === 'morph') return 'fade';
-  return TRANSITION_REGISTRY[type]?.xfadeName ?? 'fade';
+  return getTransitionDef(type)?.xfadeName ?? 'fade';
+}
+
+/**
+ * Shader id to render `transition` with. Custom transitions carry their WGSL
+ * on the clip, so it is registered here (idempotently, keyed by content hash)
+ * and rendered under the resulting `custom#<hash>` id. Everything else renders
+ * under its own registry id.
+ */
+export function resolveTransitionShaderId(transition: {
+  type: string;
+  customShader?: string;
+}): string {
+  if (transition.type !== CUSTOM_TRANSITION_TYPE) return transition.type;
+  if (!transition.customShader) return CUSTOM_TRANSITION_TYPE;
+  return registerCustomTransition(transition.customShader);
+}
+
+/** True when this transition's shader body is user-authored WGSL. */
+export function isCustomTransition(
+  transition: Pick<ClipTransition, 'type'> | undefined,
+): boolean {
+  return transition?.type === CUSTOM_TRANSITION_TYPE;
 }
 
 /** UI options for TransitionEditor (excludes 'none'). */

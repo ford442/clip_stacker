@@ -12,19 +12,43 @@
  * The caller only needs to call `hybridMergeClips` and handle the returned Blob.
  */
 
-import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, RenderPlan } from '../types';
-import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
+import type { CaptionEntry, Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, TextOverlayStyle, RenderPlan } from '../types';
+import {
+  exportAudioBus,
+  exportBusActive,
+  getLastExportAudioReport,
+  resetExportAudioReport,
+} from './exportAudioBus';
+import { DEFAULT_FINISHING, isFinishingActive, type FinishingSettings } from '../utils/finishing';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
 import { encodeVideoWithWebCodecs, isWebCodecsAvailable } from './webcodecs';
+import { getLastResolvedEncoderCodec } from './webcodecs-codec';
 import {
   assessWebCodecsAudioMix,
   isAudioEncoderAvailable,
+  prepareStreamingAudioMix,
 } from './webcodecs-audio';
-import { canUseGpuVideoEncoder } from './renderEligibility';
+import {
+  canUseGpuVideoEncoder,
+  hasActiveTransitions,
+  pictureTransformPlanFields,
+} from './renderEligibility';
+import { clipHasPictureTransform } from './animatedLayout';
+import { clipHasLoop } from './playbackRate';
+import { clipIsReversed } from './reverseClip';
+import { clipHasRateAutomation } from './timeRemap';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
+import { resolveLayerKey } from './overlayKey';
+import {
+  DEFAULT_COLOR_MANAGEMENT,
+  isColorManagementActive,
+  isColorPipelineExportError,
+  stampWideColor,
+  type ColorManagementSettings,
+} from './colorManagement';
 
 export type EncoderPath = 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
 
@@ -32,6 +56,18 @@ export interface HybridEncodeResult {
   blob: Blob;
   path: EncoderPath;
   renderPlan?: RenderPlan;
+  /**
+   * True when the encoder drew the caption cues into the composite itself, so
+   * the caller must skip the FFmpeg burn-in post-pass (it would burn a second
+   * copy on top and cost a full re-encode).
+   */
+  captionsBurnedIn?: boolean;
+}
+
+/** Caption cues to burn into the composite, when the export mode is burn-in. */
+export interface CaptionBurnInRequest {
+  captions: CaptionEntry[];
+  captionStyle?: Partial<TextOverlayStyle>;
 }
 
 /**
@@ -52,19 +88,105 @@ export async function hybridMergeClips(
   clipGroups: ClipGroup[] = [],
   finishing: FinishingSettings = DEFAULT_FINISHING,
   masterAudio: MasterAudio | null = null,
+  captionBurnIn: CaptionBurnInRequest | null = null,
+  colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
+  // The audio premix reports what its bus graph did; start each render clean.
+  resetExportAudioReport();
+  const busActive = exportBusActive(exportAudioBus());
 
-  const effectiveRenderPlan = renderPlan || calculateRenderPlan(clips, transitions, textOverlays, settings);
+  // Probed once, up front, so both the render-plan estimate and the GPU
+  // eligibility check below agree on whether WebGPU is actually there.
+  const webGpuAvailable = await isWebGpuExportAvailable();
+
+  const effectiveRenderPlan =
+    renderPlan ||
+    calculateRenderPlan(clips, transitions, textOverlays, settings, {
+      finishing,
+      forceFFmpeg,
+      useCanvasRenderer: useCanvas,
+      webGpuAvailable,
+      captionMode: captionBurnIn && captionBurnIn.captions.length > 0 ? 'burn' : undefined,
+    });
+
+  // Chroma/luma keying now lives in the compositors (WGSL + Canvas2D), so the
+  // GPU path keys the same way the preview does and never also runs FFmpeg's
+  // `chromakey` — only the FFmpeg filter-graph path does. Recorded on the
+  // resolved plan so the toolbar can say which one ran.
+  const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
+  // `encoderIntent` is overwritten to the path actually taken (not just the
+  // pre-render estimate) so the toolbar's post-render line matches reality
+  // even when a guard below demoted the encoder the caller asked for.
+  const resolveFinalPlan = (
+    path: EncoderPath,
+    overlayKeying?: RenderPlan['overlayKeying'],
+    wideColorWhere?: 'gpu' | 'ignored',
+  ): RenderPlan => {
+    const keyed: RenderPlan = {
+      ...effectiveRenderPlan,
+      encoderIntent: path,
+      ...(hasKeyedClip && overlayKeying ? { overlayKeying } : {}),
+    };
+    delete keyed.videoEncoder;
+    const encoder = getLastResolvedEncoderCodec();
+    if ((path === 'webcodecs' || path === 'webcodecs-av') && encoder) {
+      keyed.videoEncoder = {
+        codec: encoder.codec,
+        hardwareAcceleration: encoder.hardwareAcceleration ?? 'prefer-hardware',
+      };
+    }
+    // Re-derived for the path actually taken, like `encoderIntent`.
+    delete keyed.pictureTransform;
+    delete keyed.pictureTransformGaps;
+    Object.assign(keyed, pictureTransformPlanFields(clips, path));
+    // Bus FX / ducks / loudness: what the audio premix reported, or `none`
+    // when no premix ran for this render (the settings never reached it).
+    delete keyed.audioFx;
+    delete keyed.loudness;
+    if (busActive) {
+      const report = getLastExportAudioReport();
+      Object.assign(keyed, report.audioFx ? report : { audioFx: 'none' });
+    }
+    return wideColorWhere
+      ? stampWideColor(keyed, wideColorWhere, colorManagement)
+      : keyed;
+  };
 
   // -- Canvas renderer path --------------------------------------------------
-  if (useCanvas && typeof MediaRecorder !== 'undefined') {
+  // Canvas2D has no keying, transition, PiP, or finishing-pass step — it just
+  // plays clips back onto a canvas (see `overlayKeying: 'unsupported'` above).
+  // Rather than silently dropping compositing the timeline actually needs,
+  // fall straight through to the GPU/FFmpeg compositor for those cases.
+  const hasPipClip = clips.some(
+    (clip) => (clip.layerIndex ?? 0) > 0 || clipHasPictureTransform(clip),
+  );
+  // Canvas capture is one realtime <video> play. A speed curve or a loop is
+  // not a single playbackRate, so those fall through to the compositor.
+  // A constant rate is applied as video.playbackRate inside the renderer.
+  const canvasCantComposite =
+    hasKeyedClip ||
+    hasPipClip ||
+    hasActiveTransitions(transitions) ||
+    isFinishingActive(finishing) ||
+    clips.some(
+      (clip) => clipHasRateAutomation(clip) || clipHasLoop(clip) || clipIsReversed(clip),
+    );
+  if (useCanvas && canvasCantComposite) {
+    onStatus(
+      'Canvas renderer skipped — the timeline has keys, finishing, transitions, PiP, picture transforms, speed curves, loops, or reversed clips it can\'t composite; using the GPU/FFmpeg compositor instead.',
+    );
+  } else if (useCanvas && typeof MediaRecorder !== 'undefined') {
     try {
       onStatus('Canvas renderer path selected (audio-reactive compositing)...');
       onProgress?.({ stage: 'Canvas renderer selected', progress: 0, indeterminate: false });
       const blob = await encodeClipsWithCanvas(clips, settings, onStatus, audioReactive, onProgress);
-      return { blob, path: 'canvas', renderPlan: effectiveRenderPlan };
+      return {
+        blob,
+        path: 'canvas',
+        renderPlan: resolveFinalPlan('canvas', 'unsupported', 'ignored'),
+      };
     } catch (err) {
       canvasFailure = (err as Error).message;
       onStatus(`Canvas render failed (${canvasFailure}). Trying next encoder...`);
@@ -72,7 +194,6 @@ export async function hybridMergeClips(
   }
 
   // -- GPU WebCodecs path (hardware video + WebCodecs AAC or FFmpeg audio mux) -
-  const webGpuAvailable = await isWebGpuExportAvailable();
   const gpuEligible = canUseGpuVideoEncoder(clips, transitions, textOverlays, {
     forceFFmpeg,
     useCanvas,
@@ -86,7 +207,10 @@ export async function hybridMergeClips(
     const gpuAvailable = await isWebCodecsAvailable(width, height);
     if (gpuAvailable) {
       const audioEncoderOk = await isAudioEncoderAvailable();
-      const audioMix = assessWebCodecsAudioMix(clips, clipGroups, transitions);
+      // Media-engine streaming mix has no length cap; without it (load failure
+      // or ?no_media_engine) long timelines fall back to FFmpeg audio mux.
+      const streamingMix = audioEncoderOk && (await prepareStreamingAudioMix());
+      const audioMix = assessWebCodecsAudioMix(clips, clipGroups, transitions, { streamingMix });
       const useWebCodecsAudio = audioEncoderOk && audioMix.supported;
 
       try {
@@ -99,6 +223,11 @@ export async function hybridMergeClips(
         }
         onProgress?.({ stage: 'GPU encoder selected', progress: 0, indeterminate: false });
 
+        const burnCaptions =
+          captionBurnIn && captionBurnIn.captions.length > 0
+            ? captionBurnIn
+            : null;
+
         const blob = await encodeVideoWithWebCodecs(
           clips,
           settings,
@@ -110,10 +239,18 @@ export async function hybridMergeClips(
           clipGroups,
           finishing,
           useWebCodecsAudio,
+          burnCaptions ?? {},
+          colorManagement,
         );
+        const captionsBurnedIn = Boolean(burnCaptions);
 
         if (useWebCodecsAudio) {
-          return { blob, path: 'webcodecs-av', renderPlan: effectiveRenderPlan };
+          return {
+            blob,
+            path: 'webcodecs-av',
+            renderPlan: resolveFinalPlan('webcodecs-av', 'gpu', 'gpu'),
+            captionsBurnedIn,
+          };
         }
 
         onStatus('Muxing GPU video with source audio via FFmpeg...');
@@ -126,8 +263,24 @@ export async function hybridMergeClips(
           clipGroups,
           transitions,
         );
-        return { blob: muxed, path: 'webcodecs', renderPlan: effectiveRenderPlan };
+        return {
+          blob: muxed,
+          path: 'webcodecs',
+          renderPlan: resolveFinalPlan('webcodecs', 'gpu', 'gpu'),
+          captionsBurnedIn,
+        };
       } catch (err) {
+        if (
+          isColorManagementActive(colorManagement) &&
+          colorManagement.outputColor !== 'rec709-sdr'
+        ) {
+          if (isColorPipelineExportError(err)) throw err;
+          const message = err instanceof Error ? err.message : 'GPU encode failed';
+          throw new Error(
+            `${message} Display P3 / HDR10 was not written as a Rec.709 file.`,
+            { cause: err },
+          );
+        }
         gpuFailure = (err as Error).message;
         onStatus(`GPU encode failed (${gpuFailure}). Falling back to FFmpeg...`);
       }
@@ -164,14 +317,15 @@ export async function hybridMergeClips(
       finishing,
       masterAudio,
     );
+    const keyedPlan = resolveFinalPlan('ffmpeg', 'ffmpeg', 'ignored');
     const ffmpegRenderPlan: RenderPlan =
       shaderOverlays.length > 0
         ? {
-            ...effectiveRenderPlan,
+            ...keyedPlan,
             shaderTextOverlays: shaderOverlays.map((o) => ({ id: o.id, text: o.text })),
             shaderTextFallbackApplied: true,
           }
-        : effectiveRenderPlan;
+        : keyedPlan;
     return { blob, path: 'ffmpeg', renderPlan: ffmpegRenderPlan };
   } catch (err) {
     const prev: string[] = [];

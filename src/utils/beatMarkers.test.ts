@@ -61,6 +61,22 @@ describe('beatMarkers', () => {
     expect(markers.map((m) => m.leftPx)).toEqual([0, 100, 200]);
   });
 
+  it('mirrors beat positions when the clip is reversed', () => {
+    const clip = makeClip({
+      duration: 4,
+      trimStart: 0,
+      trimEnd: 4,
+      reversed: true,
+      beatTimestamps: [0, 2, 4],
+    });
+    const layouts: VirtualClipLayout[] = [
+      { clip, index: 0, duration: 4, width: 400, start: 0 },
+    ];
+    const markers = buildBeatMarkerLayouts(layouts);
+    // The trim end plays first, so the beat at 4s sits at the left.
+    expect(markers.map((m) => m.leftPx)).toEqual([400, 200, 0]);
+  });
+
   it('maps source beats through a variable rate curve', () => {
     const clip = makeClip({
       duration: 4,

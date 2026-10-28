@@ -1,7 +1,7 @@
 export {
   DEFAULT_CANVAS_HEIGHT,
   DEFAULT_CANVAS_WIDTH,
-} from '../constants';
+} from '../canvasDefaults';
 
 /** Re-export chunk threshold so callers/tests can assert the fast-path cutoff. */
 export { CHUNK_THRESHOLD_BYTES } from '../storageUpload';

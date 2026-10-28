@@ -1,108 +1,68 @@
 import type { Clip, ClipGroup, ClipTransition, Track, TrackItem } from '../types';
 import { createClipId } from './media';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 import { buildClipTimelineSegments } from './previewComposition';
 import { getTimelineClips } from './timelineClips';
+import { buildVideoStack, withPlacement } from './trackStacking';
 import { computeTotalDuration } from './transitions';
+import {
+  audioTracks,
+  clipById,
+  cloneTrack,
+  cloneTracks,
+  computeTrackEnd,
+  createDefaultTracks,
+  DEFAULT_TRACK_HEIGHT,
+  DEFAULT_VIDEO_LABEL,
+  findClipTrack,
+  isBaseClip,
+  MAIN_AUDIO_TRACK_ID,
+  MAIN_VIDEO_TRACK_ID,
+  OVERLAY_VIDEO_TRACK_ID,
+  videoTracks,
+} from './trackBasics';
+import { acceptsClipKind, addTrack } from './trackLanes';
 
-/** Default row height for a timeline track lane (px). */
-export const DEFAULT_TRACK_HEIGHT = 48;
-
-/** Well-known track ids for the default project layout. */
-export const MAIN_VIDEO_TRACK_ID = 'v1';
-export const OVERLAY_VIDEO_TRACK_ID = 'v2';
-export const MAIN_AUDIO_TRACK_ID = 'a1';
-
-const DEFAULT_VIDEO_LABEL = 'Video';
-const DEFAULT_AUDIO_LABEL = 'Audio';
-
-function isBaseClip(clip: Clip): boolean {
-  return (clip.layerIndex ?? 0) === 0;
-}
-
-/** Default multi-track layout for new projects: main video, overlay video, audio bed. */
-export function createDefaultTracks(): Track[] {
-  return [
-    {
-      id: MAIN_VIDEO_TRACK_ID,
-      kind: 'video',
-      label: `${DEFAULT_VIDEO_LABEL} 1`,
-      items: [],
-      height: DEFAULT_TRACK_HEIGHT,
-    },
-    {
-      id: OVERLAY_VIDEO_TRACK_ID,
-      kind: 'video',
-      label: `${DEFAULT_VIDEO_LABEL} 2`,
-      items: [],
-      height: DEFAULT_TRACK_HEIGHT,
-    },
-    {
-      id: MAIN_AUDIO_TRACK_ID,
-      kind: 'audio',
-      label: `${DEFAULT_AUDIO_LABEL} 1`,
-      items: [],
-      height: DEFAULT_TRACK_HEIGHT,
-    },
-  ];
-}
-
-function cloneTrack(track: Track): Track {
-  return {
-    ...track,
-    items: track.items.map((item) => ({ ...item })),
-  };
-}
-
-export function cloneTracks(tracks: Track[]): Track[] {
-  return tracks.map(cloneTrack);
-}
-
-/** Resolve a clip by id from the media pool. */
-export function clipById(clips: Clip[], clipId: string): Clip | undefined {
-  return clips.find((c) => c.id === clipId);
-}
-
-/** Return clips placed on a track in item order (not startTime order). */
-export function getTrackClips(track: Track, clips: Clip[]): Clip[] {
-  return track.items
-    .map((item) => clipById(clips, item.clipId))
-    .filter((c): c is Clip => c != null);
-}
-
-/** Find which track holds a clip (first match). */
-export function findClipTrack(
-  tracks: Track[],
-  clipId: string,
-): { track: Track; trackIndex: number; itemIndex: number } | null {
-  for (let trackIndex = 0; trackIndex < tracks.length; trackIndex++) {
-    const track = tracks[trackIndex];
-    const itemIndex = track.items.findIndex((item) => item.clipId === clipId);
-    if (itemIndex >= 0) {
-      return { track, trackIndex, itemIndex };
-    }
-  }
-  return null;
-}
-
-/** Video tracks in timeline order. */
-export function videoTracks(tracks: Track[]): Track[] {
-  return tracks.filter((t) => t.kind === 'video');
-}
-
-/** Audio tracks in timeline order. */
-export function audioTracks(tracks: Track[]): Track[] {
-  return tracks.filter((t) => t.kind === 'audio');
-}
-
-function computeTrackEnd(track: Track, clips: Clip[]): number {
-  const clipMap = new Map(clips.map((c) => [c.id, c]));
-  return track.items.reduce((max, item) => {
-    const c = clipMap.get(item.clipId);
-    const dur = c ? getClipDuration(c) : 0;
-    return Math.max(max, item.startTime + dur);
-  }, 0);
-}
+// Lane primitives (`trackBasics`), lane chrome (`trackLanes`) and titles-lane
+// helpers (`titleTracks`) live in sibling modules; re-exported here so this
+// stays the one import for track edits.
+export {
+  audioTracks,
+  clipById,
+  cloneTracks,
+  createDefaultTracks,
+  DEFAULT_TRACK_HEIGHT,
+  findClipTrack,
+  getTrackClips,
+  MAIN_AUDIO_TRACK_ID,
+  MAIN_VIDEO_TRACK_ID,
+  MAX_TRACK_HEIGHT,
+  MIN_TRACK_HEIGHT,
+  OVERLAY_VIDEO_TRACK_ID,
+  videoTracks,
+} from './trackBasics';
+export {
+  acceptsClipKind,
+  addTrack,
+  canRemoveTrack,
+  isClipLocked,
+  nextTrackLabel,
+  removeTrack,
+  renameTrack,
+  setTrackAudioFx,
+  setTrackDuck,
+  setTrackHeight,
+  setTrackLocked,
+  setTrackMuted,
+  trackForClip,
+} from './trackLanes';
+export {
+  isTextOverlayLocked,
+  placeTextOverlayOnTrack,
+  removeTextOverlayFromTracks,
+  textTrackOverlayIds,
+  visibleTextOverlays,
+} from './titleTracks';
 
 /**
  * Migrate a legacy flat clip list (array order + layerIndex) into track placements.
@@ -179,35 +139,93 @@ export function resolveProjectTracks(
 }
 
 /**
- * Flatten track placements back into the legacy clip array + layerIndex values
- * expected by preview and FFmpeg export (video tracks only).
+ * Identity cache for {@link toLegacyTimelineView}.
+ *
+ * Stamping the derived placement fields necessarily allocates new clip objects,
+ * so recomputing the view would hand the store's `useShallow` selectors fresh
+ * element identities on every call and spin React into an update loop. Keying on
+ * the *identity* of the three inputs makes repeated calls for the same editor
+ * state — `useEditorTimelineClips`, `useEditorTotalDuration`, the timeline and
+ * the preview all ask within one render — return the very same array. Zustand
+ * replaces these arrays on every edit, so a stale entry is impossible.
+ */
+interface LegacyViewCacheEntry {
+  tracks: Track[];
+  clips: Clip[];
+  groups: ClipGroup[];
+  result: Clip[];
+}
+
+const LEGACY_VIEW_CACHE_SIZE = 4;
+const legacyViewCache: LegacyViewCacheEntry[] = [];
+
+function cachedLegacyView(
+  tracks: Track[],
+  clips: Clip[],
+  groups: ClipGroup[],
+): Clip[] | null {
+  for (const entry of legacyViewCache) {
+    if (entry.tracks !== tracks || entry.clips !== clips) continue;
+    // Callers that omit `groups` get a fresh `[]` from the default parameter, so
+    // compare "no groups" by emptiness rather than identity.
+    const groupsMatch =
+      entry.groups === groups || (entry.groups.length === 0 && groups.length === 0);
+    if (groupsMatch) return entry.result;
+  }
+  return null;
+}
+
+function rememberLegacyView(
+  tracks: Track[],
+  clips: Clip[],
+  groups: ClipGroup[],
+  result: Clip[],
+): Clip[] {
+  legacyViewCache.unshift({ tracks, clips, groups, result });
+  if (legacyViewCache.length > LEGACY_VIEW_CACHE_SIZE) legacyViewCache.length = LEGACY_VIEW_CACHE_SIZE;
+  return result;
+}
+
+/**
+ * Flatten track placements into the clip array that preview and FFmpeg export
+ * consume (video tracks only).
+ *
+ * Stacking order and placement come from {@link buildVideoStack} — the single
+ * source of truth — and are stamped onto each clip as the derived
+ * `layerIndex` / `timelineStart` / `trackMuted` / `trackLocked` fields. Nothing
+ * downstream re-derives them from clip properties, and nothing serializes them.
  */
 export function toLegacyTimelineView(
   tracks: Track[],
   clips: Clip[],
   groups: ClipGroup[] = [],
 ): Clip[] {
+  const cached = cachedLegacyView(tracks, clips, groups);
+  if (cached) return cached;
+
   const timelineClips = getTimelineClips(clips, groups);
-  const clipMap = new Map(timelineClips.map((c) => [c.id, c]));
-  const result: Clip[] = [];
+  const result = buildVideoStack(tracks, timelineClips).map((placement) =>
+    withPlacement(placement.clip, placement),
+  );
+  return rememberLegacyView(tracks, clips, groups, result);
+}
 
-  const vTracks = videoTracks(tracks);
-  for (let vi = 0; vi < vTracks.length; vi++) {
-    const track = vTracks[vi];
-    const sorted = [...track.items].sort((a, b) => a.startTime - b.startTime);
-    for (const item of sorted) {
-      const clip = clipMap.get(item.clipId);
-      if (!clip) continue;
-      const layerIndex = vi === 0 ? 0 : vi;
-      if ((clip.layerIndex ?? 0) === layerIndex) {
-        result.push(clip);
-      } else {
-        result.push({ ...clip, layerIndex });
-      }
-    }
+/**
+ * Effective timeline clip order for preview/export when track placements exist.
+ * Falls back to the flat clip list when tracks are empty.
+ *
+ * Lives here rather than in `timelineClips.ts` so that module stays a leaf
+ * (this module imports `getTimelineClips` from it).
+ */
+export function getEffectiveTimelineClips(
+  tracks: Track[],
+  clips: Clip[],
+  groups: ClipGroup[],
+): Clip[] {
+  if (tracks.length === 0) {
+    return getTimelineClips(clips, groups);
   }
-
-  return result;
+  return toLegacyTimelineView(tracks, clips, groups);
 }
 
 /** Ensure every timeline clip has a track placement. */
@@ -266,7 +284,12 @@ export function appendClipToTracks(
   return next;
 }
 
-/** Insert a clip after another clip on the same track (overwrite edit mode). */
+/**
+ * Splice a clip into the lane right after another clip's out-point.
+ *
+ * This is a plain splice — it neither covers overlapping items nor shifts later
+ * ones. The NLE overwrite / insert edits live in `editModes.ts`.
+ */
 export function insertClipOnTrackAfter(
   tracks: Track[],
   afterClipId: string,
@@ -323,18 +346,34 @@ export function replaceClipOnTrackAfterSplit(
   return next;
 }
 
-/** Move a clip item to another track at a new start time. */
+/**
+ * Move a clip item to another track at a new start time.
+ *
+ * Rejected (returns `tracks` unchanged) when the source or target lane is
+ * locked, or when the clip's kind cannot live on the target lane — an audio
+ * clip never lands on a video track and vice versa.
+ */
 export function moveClipBetweenTracks(
   tracks: Track[],
   clipId: string,
   targetTrackId: string,
   startTime: number,
+  clips: Clip[] = [],
 ): Track[] {
+  const target = tracks.find((t) => t.id === targetTrackId);
+  if (!target || target.locked) return tracks;
+
+  const source = findClipTrack(tracks, clipId);
+  if (source?.track.locked) return tracks;
+
+  const clip = clipById(clips, clipId);
+  if (clip && !acceptsClipKind(target, clip.kind)) return tracks;
+
   const next = removeClipFromTracks(tracks, clipId).map(cloneTrack);
-  const target = next.find((t) => t.id === targetTrackId);
-  if (!target) return tracks;
-  target.items.push({ clipId, startTime });
-  target.items.sort((a, b) => a.startTime - b.startTime);
+  const nextTarget = next.find((t) => t.id === targetTrackId);
+  if (!nextTarget) return tracks;
+  nextTarget.items.push({ clipId, startTime: Math.max(0, startTime) });
+  nextTarget.items.sort((a, b) => a.startTime - b.startTime);
   return next;
 }
 
@@ -448,4 +487,39 @@ export function getConcurrentAudioTrackItems(
   tracks: Track[],
 ): TrackItem[] {
   return audioTracks(tracks).flatMap((t) => t.items);
+}
+
+/**
+ * Move a clip onto the video lane whose stacking index is `layerIndex`,
+ * creating lanes as needed.
+ *
+ * Stacking order is track order (Phase B), so the Inspector's "layer" control
+ * is a shortcut for "put this clip on video lane N" rather than an independent
+ * compositing knob. Locked lanes block the move; `layerIndex` 0 targets the
+ * base sequence and keeps the clip's existing start time when it has one.
+ */
+export function moveClipToVideoLayer(
+  tracks: Track[],
+  clipId: string,
+  layerIndex: number,
+  clips: Clip[] = [],
+): Track[] {
+  const target = Math.max(0, Math.round(layerIndex));
+  const located = findClipTrack(tracks, clipId);
+  const vTracks = videoTracks(tracks);
+  const currentLayer = located ? vTracks.findIndex((t) => t.id === located.track.id) : -1;
+  if (currentLayer === target) return tracks;
+  if (located && located.track.kind !== 'video') return tracks;
+
+  let next = tracks;
+  while (videoTracks(next).length <= target) {
+    next = addTrack(next, 'video');
+  }
+
+  const targetTrack = videoTracks(next)[target];
+  const startTime = located
+    ? located.track.items[located.itemIndex].startTime
+    : computeTrackEnd(targetTrack, clips);
+
+  return moveClipBetweenTracks(next, clipId, targetTrack.id, startTime, clips);
 }

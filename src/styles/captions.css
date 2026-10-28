@@ -1,0 +1,196 @@
+/* Caption track: the timeline's CC lane and the Inspector's Captions tab. */
+
+:root {
+  /* Distinct from the gold clip/transition palette so caption cues read as a
+     separate kind of object at a glance. */
+  --caption: #4dd0e1;
+  --caption-dim: rgba(77, 208, 225, 0.18);
+  --caption-border: rgba(77, 208, 225, 0.45);
+}
+
+/* ── Timeline lane ───────────────────────────────────────────────────────── */
+
+.caption-lane {
+  position: relative;
+  height: 26px;
+  background: rgba(0, 0, 0, 0.22);
+  border-bottom: 1px solid var(--border);
+  cursor: copy;
+}
+
+.caption-lane--dragging {
+  cursor: ew-resize;
+  user-select: none;
+}
+
+.caption-lane-label {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: inline-block;
+  padding: 0 0.35rem;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 26px;
+  color: var(--caption);
+  background: linear-gradient(90deg, var(--bg) 65%, transparent);
+  pointer-events: none;
+}
+
+.caption-chip {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  display: flex;
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--caption-border);
+  border-radius: var(--radius-sm);
+  background: var(--caption-dim);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.caption-chip:hover {
+  background: rgba(77, 208, 225, 0.28);
+}
+
+.caption-chip--selected {
+  border-color: var(--caption);
+  background: rgba(77, 208, 225, 0.35);
+  box-shadow: 0 0 0 1px var(--caption);
+}
+
+.caption-chip:focus-visible {
+  outline: 2px solid var(--caption);
+  outline-offset: 1px;
+}
+
+.caption-chip-text {
+  flex: 1;
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.65rem;
+  line-height: 1;
+  pointer-events: none;
+}
+
+/* Grab targets for retiming. Kept wide enough to hit on a trackpad without
+   swallowing the chip's own click target on short cues. */
+.caption-chip-handle {
+  flex: 0 0 5px;
+  align-self: stretch;
+  cursor: ew-resize;
+  background: var(--caption);
+  opacity: 0.55;
+}
+
+.caption-chip-handle:hover,
+.caption-chip--selected .caption-chip-handle {
+  opacity: 1;
+}
+
+/* ── Inspector panel ─────────────────────────────────────────────────────── */
+
+.captions-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.captions-actions .btn-secondary {
+  font-size: 0.75rem;
+}
+
+.captions-list {
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+
+.captions-list-item + .captions-list-item {
+  border-top: 1px solid var(--border);
+}
+
+.captions-list-item.is-selected {
+  background: var(--caption-dim);
+}
+
+.captions-list-button {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  width: 100%;
+  padding: 0.35rem 0.5rem;
+  border: none;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.captions-list-button:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.captions-list-index {
+  flex: 0 0 1.5rem;
+  font-size: 0.7rem;
+  color: var(--muted);
+}
+
+.captions-list-time {
+  flex: 0 0 auto;
+  font-size: 0.65rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--caption);
+}
+
+.captions-list-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.75rem;
+}
+
+.captions-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0 0.5rem 0.5rem;
+}
+
+.captions-editor textarea {
+  width: 100%;
+  resize: vertical;
+  font-family: inherit;
+}
+
+.captions-timing-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.captions-timing-row > label {
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+
+.captions-delete {
+  align-self: flex-start;
+  font-size: 0.75rem;
+  color: var(--danger);
+}

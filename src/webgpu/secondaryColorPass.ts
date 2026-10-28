@@ -4,6 +4,7 @@
  */
 
 import secondaryColorShader from './shaders/secondaryColor.wgsl?raw';
+import { shaderForSceneLinear } from '../utils/colorManagement';
 import type { SecondaryColorPass } from '../utils/finishing';
 import {
   SECONDARY_COLOR_UNIFORM_FLOATS,
@@ -29,8 +30,10 @@ export class SecondaryColorGpuPass {
     this.uniformBuffer = uniformBuffer;
   }
 
-  static create(device: GPUDevice, format: GPUTextureFormat): SecondaryColorGpuPass {
-    const shaderModule = device.createShaderModule({ code: secondaryColorShader });
+  static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): SecondaryColorGpuPass {
+    const shaderModule = device.createShaderModule({
+      code: shaderForSceneLinear(secondaryColorShader, sceneLinear),
+    });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',

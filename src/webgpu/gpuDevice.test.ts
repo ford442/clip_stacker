@@ -7,6 +7,9 @@ import {
   peekGpuDevice,
   onGpuDeviceLost,
   onGpuDeviceRecovered,
+  onGpuDeviceRecoveryFailed,
+  onGpuError,
+  recordRemoteGpuError,
   __resetGpuContextForTests,
 } from './gpuDevice';
 
@@ -31,9 +34,14 @@ function makeFakeDevice(): { device: FakeDevice; triggerLost: (info: GPUDeviceLo
   return { device, triggerLost: resolveLost };
 }
 
-function makeFakeAdapter(device: FakeDevice, limits: Record<string, number> = {}) {
+function makeFakeAdapter(
+  device: FakeDevice,
+  limits: Record<string, number> = {},
+  features: string[] = [],
+) {
   return {
     limits,
+    features: new Set(features),
     requestDevice: vi.fn().mockResolvedValue(device),
   };
 }
@@ -101,7 +109,7 @@ describe('gpuDevice registry', () => {
   it('clamps requiredLimits to what the adapter reports', async () => {
     const { device } = makeFakeDevice();
     const adapter = makeFakeAdapter(device, {
-      maxTextureDimension2D: 2048, // below our 4096 desired value
+      maxTextureDimension2D: 2048, // below our 16384 desired value
       maxBufferSize: 1024,
     });
     stubGpu(adapter);
@@ -113,7 +121,46 @@ describe('gpuDevice registry', () => {
         maxTextureDimension2D: 2048,
         maxBufferSize: 1024,
       },
+      requiredFeatures: [],
+      label: 'clip_stacker-preview',
+      defaultQueue: { label: 'clip_stacker-preview-queue' },
     });
+  });
+
+  it('adopts only the optional features the adapter reports supporting', async () => {
+    const { device } = makeFakeDevice();
+    const adapter = makeFakeAdapter(device, {}, [
+      'timestamp-query',
+      'float32-filterable',
+      'shader-f16',
+      'texture-compression-bc', // supported, but not in the desired list
+    ]);
+    stubGpu(adapter);
+
+    const ctx = await acquireGpuContext();
+
+    expect(adapter.requestDevice).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requiredFeatures: ['timestamp-query', 'float32-filterable', 'shader-f16'],
+      }),
+    );
+    expect(ctx.features.has('timestamp-query')).toBe(true);
+    expect(ctx.features.has('float32-filterable')).toBe(true);
+    expect(ctx.features.has('shader-f16' as GPUFeatureName)).toBe(true);
+    expect(ctx.features.has('texture-compression-bc' as GPUFeatureName)).toBe(false);
+  });
+
+  it('never requires an optional feature the adapter lacks (boots with an empty feature set)', async () => {
+    const { device } = makeFakeDevice();
+    const adapter = makeFakeAdapter(device, {}, []);
+    stubGpu(adapter);
+
+    const ctx = await acquireGpuContext();
+
+    expect(adapter.requestDevice).toHaveBeenCalledWith(
+      expect.objectContaining({ requiredFeatures: [] }),
+    );
+    expect(ctx.features.size).toBe(0);
   });
 
   it('rejects when navigator.gpu is unavailable', async () => {
@@ -213,6 +260,48 @@ describe('gpuDevice registry', () => {
     const log = getGpuErrorLog();
     expect(log.map((e) => e.type)).toEqual(['validation', 'out-of-memory', 'internal']);
     expect(log[0].message).toBe('bad bind group');
+  });
+
+  it('notifies recovery-failed listeners when the automatic recreate fails', async () => {
+    const { device, triggerLost } = makeFakeDevice();
+    const adapter = makeFakeAdapter(device);
+    adapter.requestDevice
+      .mockResolvedValueOnce(device)
+      .mockRejectedValueOnce(new Error('adapter gone'));
+    stubGpu(adapter);
+    await acquireGpuContext();
+
+    const failed = vi.fn();
+    const recovered = vi.fn();
+    onGpuDeviceRecoveryFailed(failed);
+    onGpuDeviceRecovered(recovered);
+    triggerLost({ reason: 'unknown', message: 'driver reset' } as GPUDeviceLostInfo);
+    await flushMicrotasks();
+
+    expect(recovered).not.toHaveBeenCalled();
+    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ message: 'adapter gone' }));
+  });
+
+  it('onGpuError sees this realm\'s errors; remote entries are logged without echoing', async () => {
+    const { device } = makeFakeDevice();
+    stubGpu(makeFakeAdapter(device));
+    await acquireGpuContext();
+    const listener = vi.fn();
+    onGpuError(listener);
+
+    device.onuncapturederror?.({ error: new Error('local failure') });
+    recordRemoteGpuError({
+      type: 'validation',
+      message: 'worker failure',
+      timestamp: 1,
+      realm: 'preview-worker',
+    });
+
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(listener).toHaveBeenCalledWith(expect.objectContaining({ message: 'local failure' }));
+    expect(getGpuErrorLog()).toContainEqual(
+      expect.objectContaining({ message: 'worker failure', realm: 'preview-worker' }),
+    );
   });
 
   it('getGpuErrorLog caps at the most recent entries', async () => {

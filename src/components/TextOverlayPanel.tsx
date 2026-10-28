@@ -1,7 +1,14 @@
 import { memo, useEffect, useRef, useState } from "react";
 import { usePlayheadTime } from "../hooks/usePlayheadTime";
-import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes, ExportSettings } from "../types";
-import { useEditorTextOverlays } from "../store";
+import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from "../types";
+import { useStore } from "zustand";
+import {
+  settingsStore,
+  uiActions,
+  useEditorTextOverlays,
+  useEditorTotalDuration,
+  useSelectedTextOverlayId,
+} from "../store";
 import { isValidFfmpegColor } from "../utils/color";
 import {
   layoutNormToPixelValue,
@@ -25,10 +32,6 @@ import { textOverlayHasKeyframes } from "../utils/animatedLayout";
 import { KeyframeMiniEditor } from "./KeyframeMiniEditor";
 
 interface Props {
-  totalDuration?: number;
-  exportSettings: ExportSettings;
-  selectedOverlayId?: string | null;
-  onSelectOverlay?: (id: string | null) => void;
   onAdd: () => string;
   onUpdate: (overlay: TextOverlay) => void;
   onDelete: (id: string) => void;
@@ -46,14 +49,14 @@ function formatOverlayListMeta(overlay: TextOverlay): string {
 }
 
 function TextOverlayPanelImpl({
-  totalDuration = 60,
-  exportSettings,
-  selectedOverlayId,
-  onSelectOverlay,
   onAdd,
   onUpdate,
   onDelete,
 }: Props) {
+  const totalDuration = useEditorTotalDuration();
+  const exportSettings = useStore(settingsStore, (s) => s.exportSettings);
+  const selectedOverlayId = useSelectedTextOverlayId();
+  const onSelectOverlay = uiActions.setSelectedTextOverlayId;
   const overlays = useEditorTextOverlays();
   const previewGlobalTime = usePlayheadTime() ?? 0;
   const layoutCanvas = parseCanvasSize(exportSettings.outputResolution);

@@ -1,9 +1,11 @@
-import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from '../types';
-import { toLegacyTimelineView } from './trackModel';
+import type { Clip, ClipGroup } from '../types';
 
 /**
  * Return the clips that are currently on the timeline — resolving A/B groups
  * to their active variant.
+ *
+ * The track-aware `getEffectiveTimelineClips` lives in `trackModel.ts`; keep
+ * this module free of runtime imports so `trackModel` can depend on it.
  */
 export function getTimelineClips(clips: Clip[], groups: ClipGroup[]): Clip[] {
   if (groups.length === 0) return clips;
@@ -16,19 +18,4 @@ export function getTimelineClips(clips: Clip[], groups: ClipGroup[]): Clip[] {
   }
 
   return clips.filter((clip) => !inactiveGroupClipIds.has(clip.id));
-}
-
-/**
- * Effective timeline clip order for preview/export when track placements exist.
- * Falls back to the flat clip list when tracks are empty.
- */
-export function getEffectiveTimelineClips(
-  tracks: Track[],
-  clips: Clip[],
-  groups: ClipGroup[],
-): Clip[] {
-  if (tracks.length === 0) {
-    return getTimelineClips(clips, groups);
-  }
-  return toLegacyTimelineView(tracks, clips, groups);
 }

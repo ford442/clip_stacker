@@ -369,7 +369,7 @@ export class FfmpegManager {
             `[FFmpeg load] Attempt ${attempt}/${maxRetries} failed: ${message}`,
           );
           if (gen !== this.loadGeneration) {
-            throw new Error('FFmpeg load cancelled by reset');
+            throw new Error('FFmpeg load cancelled by reset', { cause: err });
           }
           if (this.loadingRuntime) {
             this.clearTrackedLoadingRuntime(this.loadingRuntime, true);

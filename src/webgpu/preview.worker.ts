@@ -4,9 +4,12 @@
  * Owns the PreviewEngine on a transferred OffscreenCanvas.  Per-frame flow:
  *   1. Main sends 'render' with clips + globalTime.
  *   2. Worker runs buildPreviewCompositionPlan (pure math, no DOM).
- *   3. Worker posts 'need-frames' with per-layer seek requests.
- *   4. Main captures VideoFrames from hidden <video> elements and posts 'frames-ready'.
- *   5. Worker renders layers to OffscreenCanvas and posts 'render-complete'.
+ *   3. Worker decodes what it can itself (PreviewDecoderSource — same
+ *      `VideoDecoder` + ring buffer + forward cursor as GPU export).
+ *   4. Only layers the decoder cannot serve (WebM/alpha, stills, RIFE morph
+ *      segments) go back to main as 'need-frames' → 'frames-ready'.
+ *   5. Worker renders layers to OffscreenCanvas and posts 'render-complete',
+ *      plus 'scopes' when waveform/vectorscope are enabled.
  *
  * Startup is two-phase: probe GPU first (no canvas), then accept the
  * transferred OffscreenCanvas only after main sees webgpuAvailable: true.
@@ -15,29 +18,59 @@
 
 import type { Clip } from '../types';
 import type { FinishingSettings } from '../utils/finishing';
+import type { ColorManagementSettings } from '../utils/colorManagement';
+import { getColorDebugSnapshot } from '../utils/colorManagement';
 import { resolveTimelineFinishing } from '../utils/finishing';
 import {
   buildPreviewCompositionPlan,
   type PreviewClipLayer,
   type PreviewCompositionPlan,
 } from '../utils/previewComposition';
-import { peekGpuDevice } from './gpuDevice';
+import {
+  onGpuDeviceLost,
+  onGpuDeviceRecovered,
+  onGpuDeviceRecoveryFailed,
+  onGpuError,
+  peekGpuDevice,
+} from './gpuDevice';
 import { probeWebGpu } from './webgpuProbe';
-import { adoptGpuDevice } from '../gpu-chores/device';
+import { adoptGpuDevice, peekChoresGpuDevice } from '../gpu-chores/device';
 import { runJob } from '../gpu-chores/runJob';
 import { closeBitmap } from '../gpu-chores/rasterize';
+import { VECTORSCOPE_SIZE } from '../gpu-chores/cpu/vectorscope';
 import type { GpuChoreResult } from '../gpu-chores/types';
-import { WorkerTimelineRenderer, type CapturedFrameEntry } from './timelinePreview';
-import type { PreviewWorkerInbound, PreviewWorkerOutbound, FrameRequest } from './previewWorkerProtocol';
+import { WorkerTimelineRenderer, type CapturedFrameEntry } from './workerTimelineRenderer';
+import { PreviewDecoderSource } from './previewDecoderSource';
+import type {
+  CapturedFrame,
+  FrameRequest,
+  FrameSourceStats,
+  PreviewWorkerInbound,
+  PreviewWorkerOutbound,
+  ScopeData,
+  ScopeSettings,
+  WorkerClip,
+} from './previewWorkerProtocol';
+import { SCOPES_OFF } from './previewWorkerProtocol';
+import type { PreviewMediaSource } from '../utils/proxyMedia';
 
 let renderer: WorkerTimelineRenderer | null = null;
+let decoderSource: PreviewDecoderSource | null = null;
+let scopeSettings: ScopeSettings = SCOPES_OFF;
 
 interface PendingRender {
   plan: PreviewCompositionPlan;
   finishing?: FinishingSettings;
+  colorManagement?: ColorManagementSettings;
+  /** Frames the worker's own decoder already produced for this render. */
+  decoded: CapturedFrame[];
+  /** How many of `decoded` were read from a preview proxy. */
+  proxyDecoded: number;
 }
 const pendingRenders = new Map<number, PendingRender>();
 const cancelledIds = new Set<number>();
+/** Clip media the worker holds but has not been able to attach yet (pre-init). */
+const stagedMedia = new Map<string, { blob: Blob; source?: PreviewMediaSource }>();
 
 function post(msg: PreviewWorkerOutbound, transfer: Transferable[] = []): void {
   (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
@@ -47,10 +80,30 @@ function choreTransferList(results: GpuChoreResult[]): Transferable[] {
   const transfer: Transferable[] = [];
   for (const result of results) {
     if (result.histogram) transfer.push(result.histogram.buffer);
+    if (result.vectorscope) transfer.push(result.vectorscope.buffer);
     if (result.pixels) transfer.push(result.pixels.buffer);
   }
   return transfer;
 }
+
+function closeFrames(frames: Array<{ frame: VideoFrame }>): void {
+  for (const f of frames) f.frame.close();
+}
+
+// This realm's device is invisible to main's registry: forward its health.
+// `PreviewEngine` rebuilds itself on recovery, so main only has to wait.
+onGpuError((entry) => {
+  if (entry.type !== 'lost') post({ type: 'gpu-error', entry });
+});
+onGpuDeviceLost((info) => {
+  post({ type: 'gpu-lost', message: info.message, timestamp: Date.now() });
+});
+onGpuDeviceRecovered(() => {
+  post({ type: 'gpu-recovered' });
+});
+onGpuDeviceRecoveryFailed((error) => {
+  post({ type: 'gpu-recovery-failed', message: error.message, timestamp: Date.now() });
+});
 
 // Phase-1 probe as soon as the worker module loads — before main transfers
 // the canvas — so a failed probe never neuters the DOM canvas.
@@ -63,6 +116,113 @@ void probeWebGpu().then((webgpuProbe) => {
   post({ type: 'ready', webgpuAvailable: webgpuProbe.ok, webgpuProbe });
 });
 
+/**
+ * Composite `pending` and report completion. Owns every frame passed in and
+ * closes them (directly or via the renderer).
+ */
+async function completeRender(
+  renderId: number,
+  pending: PendingRender,
+  elementFrames: CapturedFrame[],
+  elementProxyFrames = 0,
+): Promise<void> {
+  if (!renderer) {
+    closeFrames(pending.decoded);
+    closeFrames(elementFrames);
+    return;
+  }
+
+  const frameSources: FrameSourceStats = {
+    decoder: pending.decoded.length,
+    element: elementFrames.length,
+    proxy: pending.proxyDecoded + elementProxyFrames,
+  };
+
+  const entries: CapturedFrameEntry[] = [...pending.decoded, ...elementFrames].map((f) => ({
+    clipId: f.clipId,
+    role: f.role,
+    frame: f.frame,
+    videoWidth: f.videoWidth,
+    videoHeight: f.videoHeight,
+  }));
+
+  // Resize to match the plan's capped canvas dimensions.
+  renderer.resizeCanvas(pending.plan.canvasWidth, pending.plan.canvasHeight);
+
+  await renderer.renderFromFrames(
+    pending.plan,
+    entries,
+    pending.finishing,
+    () => cancelledIds.has(renderId),
+    undefined,
+    pending.colorManagement,
+  );
+  post({ type: 'color-state', snapshot: getColorDebugSnapshot() });
+
+  if (cancelledIds.has(renderId)) {
+    cancelledIds.delete(renderId);
+    post({ type: 'render-cancelled', renderId });
+    return;
+  }
+
+  // Grab the scope copy before yielding — the swapchain texture is only valid
+  // in the task that drew it.
+  const scopeTexture =
+    scopeSettings.waveform || scopeSettings.vectorscope
+      ? renderer.captureScopeTexture()
+      : null;
+  const scopeSize = renderer.scopeTextureSize;
+
+  post({ type: 'render-complete', renderId, plan: pending.plan, frameSources });
+
+  if (scopeTexture) {
+    await postScopes(renderId, scopeTexture, scopeSize);
+  }
+}
+
+/** Run the enabled scope kernels on the composed-frame copy and post the bins. */
+async function postScopes(
+  renderId: number,
+  texture: GPUTexture,
+  size: { width: number; height: number },
+): Promise<void> {
+  if (!peekChoresGpuDevice()) return;
+  if (size.width <= 0 || size.height <= 0) return;
+  try {
+    const scopes: ScopeData = { width: size.width, height: size.height };
+    if (scopeSettings.waveform) {
+      const result = await runJob({
+        op: 'luma_histogram_bt709',
+        prefer: 'webgpu',
+        width: size.width,
+        height: size.height,
+        texture,
+      });
+      scopes.histogram = result.histogram;
+    }
+    if (scopeSettings.vectorscope) {
+      const result = await runJob({
+        op: 'vectorscope_uv',
+        prefer: 'webgpu',
+        width: size.width,
+        height: size.height,
+        binSize: VECTORSCOPE_SIZE,
+        texture,
+      });
+      scopes.vectorscope = result.vectorscope;
+      scopes.vectorscopeSize = result.binSize;
+    }
+    const transfer: Transferable[] = [];
+    if (scopes.histogram) transfer.push(scopes.histogram.buffer);
+    if (scopes.vectorscope) transfer.push(scopes.vectorscope.buffer);
+    post({ type: 'scopes', renderId, scopes }, transfer);
+  } catch (err) {
+    // Scopes are an overlay, never the frame: a failed readback is logged and
+    // dropped rather than failing the render.
+    console.warn('[preview scopes]', err instanceof Error ? err.message : String(err));
+  }
+}
+
 self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
   const msg = event.data;
   switch (msg.type) {
@@ -71,6 +231,14 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         renderer?.destroy();
         renderer = await WorkerTimelineRenderer.create(msg.canvas);
         renderer.resizeCanvas(msg.width, msg.height);
+        decoderSource?.destroy();
+        decoderSource = msg.decoderEnabled === false ? null : new PreviewDecoderSource();
+        if (decoderSource) {
+          for (const [clipId, { blob, source }] of stagedMedia) {
+            decoderSource.setClipMedia(clipId, blob, source);
+          }
+        }
+        stagedMedia.clear();
         post({ type: 'initialized' });
       } catch (err) {
         renderer = null;
@@ -78,6 +246,14 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
           type: 'error',
           message: err instanceof Error ? err.message : String(err),
         });
+      }
+      break;
+    }
+
+    case 'clip-media': {
+      for (const { clipId, blob, source } of msg.media) {
+        if (decoderSource) decoderSource.setClipMedia(clipId, blob, source);
+        else stagedMedia.set(clipId, { blob, source });
       }
       break;
     }
@@ -96,7 +272,10 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         maxWidth,
         maxHeight,
         finishing,
+        colorManagement,
         colorGrade,
+        captions,
+        captionStyle,
       } = msg;
 
       const resolvedFinishing = resolveTimelineFinishing({ finishing, colorGrade });
@@ -119,6 +298,7 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         globalTime,
         maxHeight,
         maxWidth,
+        { captions, captionStyle },
       );
 
       if (cancelledIds.has(renderId)) {
@@ -140,8 +320,41 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
         });
       }
 
-      pendingRenders.set(renderId, { plan, finishing: resolvedFinishing });
-      post({ type: 'need-frames', renderId, requests });
+      // Decoder first; only what it can't serve round-trips to the main thread.
+      let decoded: CapturedFrame[] = [];
+      let proxyDecoded = 0;
+      let fallback = requests;
+      if (decoderSource) {
+        const clipsById = new Map<string, WorkerClip>(clips.map((c) => [c.id, c]));
+        const split = await decoderSource.split(requests, clipsById);
+        decoded = split.decoded;
+        proxyDecoded = split.proxyDecoded;
+        fallback = split.fallback;
+      }
+
+      const pending: PendingRender = {
+        plan,
+        finishing: resolvedFinishing,
+        colorManagement,
+        decoded,
+        proxyDecoded,
+      };
+
+      if (cancelledIds.has(renderId)) {
+        cancelledIds.delete(renderId);
+        closeFrames(decoded);
+        post({ type: 'render-cancelled', renderId });
+        break;
+      }
+
+      if (fallback.length === 0) {
+        // Happy path: no <video> seek on the main thread at all.
+        await completeRender(renderId, pending, []);
+        break;
+      }
+
+      pendingRenders.set(renderId, pending);
+      post({ type: 'need-frames', renderId, requests: fallback });
       break;
     }
 
@@ -154,41 +367,21 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
 
       if (!pending || cancelledIds.has(renderId)) {
         cancelledIds.delete(renderId);
-        frames.forEach((f) => f.frame.close());
+        closeFrames(frames);
+        if (pending) closeFrames(pending.decoded);
         post({ type: 'render-cancelled', renderId });
         break;
       }
 
-      const entries: CapturedFrameEntry[] = frames.map((f) => ({
-        clipId: f.clipId,
-        role: f.role,
-        frame: f.frame,
-        videoWidth: f.videoWidth,
-        videoHeight: f.videoHeight,
-      }));
-
-      // Resize to match the plan's capped canvas dimensions.
-      renderer.resizeCanvas(pending.plan.canvasWidth, pending.plan.canvasHeight);
-
-      await renderer.renderFromFrames(
-        pending.plan,
-        entries,
-        pending.finishing,
-        () => cancelledIds.has(renderId),
-      );
-
-      if (cancelledIds.has(renderId)) {
-        cancelledIds.delete(renderId);
-        post({ type: 'render-cancelled', renderId });
-        break;
-      }
-
-      post({ type: 'render-complete', renderId, plan: pending.plan });
+      const proxyFrames = frames.reduce((n, f) => n + (f.proxy ? 1 : 0), 0);
+      await completeRender(renderId, pending, frames, proxyFrames);
       break;
     }
 
     case 'cancel': {
       cancelledIds.add(msg.renderId);
+      const pending = pendingRenders.get(msg.renderId);
+      if (pending) closeFrames(pending.decoded);
       pendingRenders.delete(msg.renderId);
       break;
     }
@@ -200,6 +393,11 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
 
     case 'reset-finishing': {
       renderer?.resetFinishingTemporal();
+      break;
+    }
+
+    case 'set-scopes': {
+      scopeSettings = msg.scopes;
       break;
     }
 
@@ -231,15 +429,23 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
       break;
     }
 
-    case 'sync-clips':
+    case 'sync-clips': {
+      // Ring buffers are sized per *active* layer; media for clips that left
+      // the timeline is dropped along with their cursors.
+      decoderSource?.pruneExcept(new Set(msg.clips.map((c) => c.id)));
+      break;
+    }
+
     case 'pause-decoders': {
-      // Worker has no media pool — no-op.
+      decoderSource?.releaseCursors();
       break;
     }
 
     case 'destroy': {
       renderer?.destroy();
       renderer = null;
+      decoderSource?.destroy();
+      decoderSource = null;
       self.close();
       break;
     }

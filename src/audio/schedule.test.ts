@@ -86,6 +86,16 @@ describe('buildAudioSchedule', () => {
     expect(schedule[0].playbackRate).toBe(2);
   });
 
+  it('plays a reversed trim from a buffer that already starts at 0', () => {
+    const clips = [makeClip('a', 10, { trimStart: 2, trimEnd: 7, reversed: true, playbackRate: 2 })];
+    const schedule = buildAudioSchedule(clips, [], []);
+    expect(schedule[0].reverseAudio).toBe(true);
+    expect(schedule[0].bufferOffset).toBe(0);
+    expect(schedule[0].duration).toBe(2.5);
+    expect(schedule[0].playbackRate).toBe(2);
+    expect(schedule[0].rateRemap).toBeUndefined();
+  });
+
   it('marks rateRemap and plays remapped buffers at 1×', () => {
     const clips = [
       makeClip('a', 10, {
@@ -187,5 +197,116 @@ describe('bed ducking helpers', () => {
         { ...base[0], timelineStart: 1 },
       ]),
     ).toBe(false);
+  });
+});
+
+describe('insert effects on the schedule', () => {
+  const eq = { type: 'peaking' as const, frequency: 1000, gainDb: 6, q: 1, enabled: true };
+
+  it('carries an active chain and drops a fully bypassed one', () => {
+    const [wet] = buildAudioSchedule([makeClip('a', 2, { audioEffects: { eq: [eq] } })], [], []);
+    expect(wet!.audioEffects).toEqual({ eq: [eq] });
+    const [dry] = buildAudioSchedule(
+      [makeClip('a', 2, { audioEffects: { eq: [{ ...eq, enabled: false }] } })],
+      [],
+      [],
+    );
+    expect(dry!.audioEffects).toBeUndefined();
+  });
+
+  it('treats an effect edit as a structure change (the processed buffer changes)', () => {
+    const base = buildAudioSchedule([makeClip('a', 2, { audioEffects: { eq: [eq] } })], [], []);
+    const boosted = buildAudioSchedule(
+      [makeClip('a', 2, { audioEffects: { eq: [{ ...eq, gainDb: 9 }] } })],
+      [],
+      [],
+    );
+    expect(schedulesMatchStructure(base, boosted)).toBe(false);
+    expect(schedulesMatchStructure(base, base.map((e) => ({ ...e, volume: 0.5 })))).toBe(true);
+  });
+});
+
+describe('lane mute (#168 Phase A)', () => {
+  const base = makeClip('base', 4);
+  const overlay = makeClip('overlay', 2, { layerIndex: 1, timelineStart: 5 });
+
+  it('places an overlay-lane clip at its derived timelineStart, not output 0', () => {
+    const schedule = buildAudioSchedule([base, overlay], [], []);
+    expect(schedule.find((e) => e.clipId === 'overlay')?.timelineStart).toBe(5);
+  });
+
+  it('drops clips flattened from a muted video lane', () => {
+    const schedule = buildAudioSchedule(
+      [{ ...base, trackMuted: true }, overlay],
+      [],
+      [],
+    );
+    expect(schedule.map((e) => e.clipId)).toEqual(['overlay']);
+
+    const overlayMuted = buildAudioSchedule(
+      [base, { ...overlay, trackMuted: true }],
+      [],
+      [],
+    );
+    expect(overlayMuted.map((e) => e.clipId)).toEqual(['base']);
+  });
+
+  it('drops bed entries from a muted audio lane', () => {
+    const bed = makeClip('bed', 8, { kind: 'audio' });
+    const tracks: Track[] = [
+      { id: 'v1', kind: 'video', items: [{ clipId: 'base', startTime: 0 }] },
+      { id: 'a1', kind: 'audio', items: [{ clipId: 'bed', startTime: 0 }] },
+    ];
+
+    expect(
+      buildAudioSchedule([base, bed], [], [], tracks).map((e) => e.clipId),
+    ).toEqual(['base', 'bed']);
+
+    const muted = tracks.map((t) => (t.id === 'a1' ? { ...t, muted: true } : t));
+    expect(
+      buildAudioSchedule([base, bed], [], [], muted).map((e) => e.clipId),
+    ).toEqual(['base']);
+  });
+});
+
+describe('buildAudioSchedule: lane routing', () => {
+  const lanes = (duck?: Track['duck']): Track[] => [
+    { id: 'v1', kind: 'video', items: [{ clipId: 'vox', startTime: 0 }] },
+    { id: 'v2', kind: 'video', items: [{ clipId: 'pip', startTime: 1 }] },
+    { id: 'a1', kind: 'audio', items: [{ clipId: 'music', startTime: 0 }], ...(duck ? { duck } : {}) },
+  ];
+  const clips = () => [
+    makeClip('vox', 6),
+    makeClip('pip', 2, { layerIndex: 1, timelineStart: 1 }),
+    makeClip('music', 8, { kind: 'audio' }),
+  ];
+
+  it('tags every entry with its holding lane', () => {
+    const schedule = buildAudioSchedule(clips(), [], [], lanes());
+    expect(Object.fromEntries(schedule.map((e) => [e.clipId, e.trackId]))).toEqual({
+      vox: 'v1',
+      pip: 'v2',
+      music: 'a1',
+    });
+  });
+
+  it('without tracks, entries carry no lane (they mix to the master sum)', () => {
+    const schedule = buildAudioSchedule([makeClip('vox', 6)], [], []);
+    expect(schedule[0]).not.toHaveProperty('trackId');
+  });
+
+  it('a lane with its own ducking opts out of the legacy step', () => {
+    const legacy = buildAudioSchedule(clips(), [], [], lanes());
+    const music = legacy.find((e) => e.clipId === 'music')!;
+    expect(effectiveEntryVolume(music, legacy)).toBe(music.volume * BED_DUCK_LINEAR);
+
+    for (const duck of ['off', { sourceTrackId: 'v1', depthDb: 9, thresholdDb: -40, attack: 0.05, hold: 0.2, release: 0.5 }] as const) {
+      const schedule = buildAudioSchedule(clips(), [], [], lanes(duck));
+      const entry = schedule.find((e) => e.clipId === 'music')!;
+      expect(entry.laneDuck).toBe(duck === 'off' ? 'off' : 'sidechain');
+      expect(effectiveEntryVolume(entry, schedule)).toBe(entry.volume);
+      // Changing a lane's ducking is a structure change: the preview reroutes.
+      expect(schedulesMatchStructure(legacy, schedule)).toBe(false);
+    }
   });
 });

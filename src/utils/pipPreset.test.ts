@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Clip } from '../types';
 import { clipLayoutToDisplayPixels } from './overlayCoords';
-import { buildPipRect, clipAspectRatio, nextOverlayLayerIndex, parseCanvasSize } from './pipPreset';
+import {
+  buildLogoRect,
+  buildPipRect,
+  clipAspectRatio,
+  nextOverlayLayerIndex,
+  parseCanvasSize,
+} from './pipPreset';
 
 function makeClip(id: string, layerIndex?: number): Clip {
   return { id, layerIndex } as Clip;
@@ -94,5 +100,28 @@ describe('clipAspectRatio', () => {
   it('returns undefined when dimensions are missing', () => {
     expect(clipAspectRatio({ videoWidth: 0, videoHeight: 0 })).toBeUndefined();
     expect(clipAspectRatio({})).toBeUndefined();
+  });
+});
+
+describe('buildLogoRect', () => {
+  const canvas720 = { width: 1280, height: 720 };
+
+  it('sizes a channel bug at ~10% of the canvas width', () => {
+    const display = clipLayoutToDisplayPixels(buildLogoRect(canvas720, 'top-right'), canvas720);
+    expect(display.width).toBe(128);
+  });
+
+  it('locks the destination box to the source aspect ratio', () => {
+    const display = clipLayoutToDisplayPixels(
+      buildLogoRect(canvas720, 'top-right', 2),
+      canvas720,
+    );
+    expect(display.width / display.height).toBeCloseTo(2, 5);
+  });
+
+  it('snaps to the requested corner inside the canvas margin', () => {
+    const display = clipLayoutToDisplayPixels(buildLogoRect(canvas720, 'top-right', 1), canvas720);
+    expect(display.y).toBe(32);
+    expect(display.x).toBe(1280 - 128 - 32);
   });
 });

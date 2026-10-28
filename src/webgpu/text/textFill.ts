@@ -17,7 +17,7 @@
  */
 
 import textFillShader from '../shaders/textFill.wgsl?raw';
-import { acquireGpuContext } from '../gpuDevice';
+import { acquireGpuContext, onGpuDeviceLost, onGpuDeviceRecovered } from '../gpuDevice';
 import { ffmpegColorToRgb01 } from '../../utils/color';
 import { getTextShader, resolveShaderColors, resolveShaderParams } from './registry';
 
@@ -190,7 +190,18 @@ export class TextFillRenderer {
     this.outputCanvas.height = h;
     const context = this.outputCanvas.getContext('webgpu') as GPUCanvasContext | null;
     if (!context) throw new Error('Could not acquire a WebGPU canvas context');
-    context.configure({ device: this.device, format: this.format, alphaMode: 'premultiplied' });
+    context.configure({
+      device: this.device,
+      format: this.format,
+      alphaMode: 'premultiplied',
+      // Same reasoning as previewEngine.ts's canvas: this output is only ever
+      // rendered into (RENDER_ATTACHMENT) and read back via drawImage/copy
+      // (COPY_SRC) — never sampled or copied into — so a broader usage mask
+      // risks configure() rejection on some adapters for no benefit.
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      colorSpace: 'srgb',
+      toneMapping: { mode: 'standard' },
+    });
     this.context = context;
     return context;
   }
@@ -315,15 +326,51 @@ export class TextFillRenderer {
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
-    try { this.maskTex?.destroy(); } catch {}
-    try { this.uniformBuffer?.destroy(); } catch {}
+    try { this.maskTex?.destroy(); } catch { /* device already lost */ }
+    try { this.uniformBuffer?.destroy(); } catch { /* device already lost */ }
   }
 }
 
-let cached: TextFillRenderer | null = null;
+let cached: Promise<TextFillRenderer> | null = null;
+let watchingDevice = false;
 
-export async function getTextFillRenderer(): Promise<TextFillRenderer> {
-  if (cached && !cached['destroyed']) return cached;
-  cached = await TextFillRenderer.create();
+/**
+ * A device loss strands the cached renderer's pipeline/buffers on a dead
+ * device — its render() calls would silently no-op onto whatever the output
+ * canvas last held. Drop it as soon as the device is lost, and rebuild on the
+ * recreated device as soon as there is one, so the next shader-text frame
+ * does not pay for the pipeline compile.
+ */
+function watchDevice(): void {
+  if (watchingDevice) return;
+  watchingDevice = true;
+  const drop = () => {
+    const stale = cached;
+    cached = null;
+    void stale?.then((renderer) => renderer.destroy(), () => undefined);
+  };
+  onGpuDeviceLost(drop);
+  onGpuDeviceRecovered(() => {
+    drop();
+    void getTextFillRenderer().catch(() => undefined);
+  });
+}
+
+export function getTextFillRenderer(): Promise<TextFillRenderer> {
+  watchDevice();
+  if (!cached) {
+    const created = TextFillRenderer.create();
+    cached = created;
+    // A failed create must not be cached — the next call retries.
+    created.catch(() => {
+      if (cached === created) cached = null;
+    });
+  }
   return cached;
+}
+
+/** Test-only: forget the cached renderer and device subscriptions. */
+export function __resetTextFillRendererForTests(): void {
+  cached = null;
+  watchingDevice = false;
 }

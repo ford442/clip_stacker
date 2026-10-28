@@ -4,7 +4,11 @@
 
 import type { PreviewCompositionPlan } from './previewComposition';
 import type { FrameSource } from './canvas-renderer-types';
-import { drawClipLayer, drawTextLayer } from './canvas-renderer-layers';
+import {
+  drawCaptionLayer,
+  drawClipLayer,
+  drawTextLayer,
+} from './canvas-renderer-layers';
 
 /**
  * Composite one frame of a preview plan's *video* layers onto a 2D context.
@@ -28,7 +32,7 @@ export function compositeFrame(
   ctx.fillRect(0, 0, canvasWidth, canvasHeight);
 
   for (const layer of plan.layers) {
-    if (layer.kind === "text") continue;
+    if (layer.kind === "text" || layer.kind === "caption") continue;
     const source = frameSources.get(layer.clipId);
     if (!source) continue;
     drawClipLayer(ctx, layer, source);
@@ -36,16 +40,21 @@ export function compositeFrame(
 }
 
 /**
- * Final compositing pass: draw a plan's text overlays onto a 2D context. Used
- * for both preview backends — the WebGPU path draws onto a stacked overlay
- * canvas, the Canvas2D path onto the same overlay canvas above its video
- * composite. Does not clear the context (the caller owns the surface).
+ * Final compositing pass: draw a plan's text overlays and caption cues onto a
+ * 2D context. Used for both preview backends — the WebGPU path draws onto a
+ * stacked overlay canvas, the Canvas2D path onto the same overlay canvas above
+ * its video composite. Does not clear the context (the caller owns the
+ * surface).
  */
 export function drawTextOverlays(
   ctx: CanvasRenderingContext2D,
   plan: PreviewCompositionPlan,
 ): void {
   for (const layer of plan.layers) {
+    if (layer.kind === "caption") {
+      drawCaptionLayer(ctx, layer, plan.scale);
+      continue;
+    }
     if (layer.kind !== "text") continue;
     drawTextLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
   }
@@ -93,7 +102,7 @@ export async function renderTextOverlaysAsync(
 
   // Quick path: no shader fills -> existing behavior
   const hasShader = plan.layers.some(
-    (l: any) => l.kind === 'text' && (l.overlay as any)?.fill === 'shader',
+    (l) => l.kind === 'text' && l.overlay?.fill === 'shader',
   );
   if (!hasShader) {
     drawTextOverlays(ctx, plan);
@@ -108,8 +117,13 @@ export async function renderTextOverlaysAsync(
   const DEFAULT_BOX_COLOR = "black@0.5";
 
   for (const layer of plan.layers) {
+    // Captions are never shader-filled — solid draw in the same z-order pass.
+    if (layer.kind === 'caption') {
+      drawCaptionLayer(ctx, layer, plan.scale);
+      continue;
+    }
     if (layer.kind !== 'text') continue;
-    const overlay = (layer as any).overlay as import('../types').TextOverlay;
+    const overlay = layer.overlay;
     if (!overlay || !overlay.text) continue;
 
     const useShader = overlay.fill === 'shader';
@@ -119,7 +133,7 @@ export async function renderTextOverlaysAsync(
         sanitizeFfmpegColor(overlay.boxColor, DEFAULT_BOX_COLOR),
       );
       const prev = ctx.globalAlpha;
-      ctx.globalAlpha = Math.max(0, Math.min(1, (layer as any).opacity ?? 1)) * alpha;
+      ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity ?? 1)) * alpha;
       const fs = overlay.fontsize * plan.scale;
       const pad = Math.round(fs * 0.2);
       // Approximate text width using current font for box sizing (best effort)
@@ -127,11 +141,11 @@ export async function renderTextOverlaysAsync(
       ctx.font = `${fs}px "${family}"`;
       ctx.textBaseline = 'top';
       const tw = ctx.measureText(overlay.text).width;
-      const x = (overlay as any).scrolling
+      const x = overlay.scrolling
         ? resolveScrollingX(overlay.scrollSpeed, plan.globalTime, plan.canvasWidth, tw)
-        : (layer as any).x;
+        : layer.x;
       ctx.fillStyle = color;
-      ctx.fillRect(x - pad, (layer as any).y - pad, tw + pad * 2, fs + pad * 2);
+      ctx.fillRect(x - pad, layer.y - pad, tw + pad * 2, fs + pad * 2);
       ctx.globalAlpha = prev;
     }
 
@@ -157,9 +171,9 @@ export async function renderTextOverlaysAsync(
           overlay.text,
           overlay.font ?? '',
           overlay.fontsize,
-          (layer as any).x,
-          (layer as any).y,
-          (layer as any).opacity ?? 1,
+          layer.x,
+          layer.y,
+          layer.opacity ?? 1,
           plan.canvasWidth,
           plan.canvasHeight,
         ].join(':');
@@ -174,16 +188,16 @@ export async function renderTextOverlaysAsync(
         });
         // Draw the filled glyphs at full opacity for the layer (opacity baked in mask or fill)
         const prev = ctx.globalAlpha;
-        ctx.globalAlpha = Math.max(0, Math.min(1, (layer as any).opacity ?? 1));
+        ctx.globalAlpha = Math.max(0, Math.min(1, layer.opacity ?? 1));
         ctx.drawImage(filled, 0, 0);
         ctx.globalAlpha = prev;
       } catch {
         // Fallback to solid if GPU path fails
-        drawTextLayer(ctx, layer as any, plan.globalTime, plan.canvasWidth, plan.scale);
+        drawTextLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
       }
     } else {
       // Solid path reuses existing per-layer draw (color + alpha)
-      drawTextLayer(ctx, layer as any, plan.globalTime, plan.canvasWidth, plan.scale);
+      drawTextLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
     }
   }
 }

@@ -8,9 +8,17 @@
 
 import type { Clip } from "../types";
 import type { RendererOptions, RenderProgress, ProgressCallback } from "./canvas-renderer-types";
-import { getClipDuration } from "./project";
+import { constantRateOutputElapsed, getClipPlaybackRate } from "./playbackRate";
+import { getClipDuration } from "./clipTiming";
 import { bassLevelFromAnalyserBytes } from "./canvas-renderer-audio";
 import { calculateLetterboxRect, computeFadeAlpha, waitForSeeked } from "./canvas-renderer-helpers";
+import { createAudioContext } from "../audio/context";
+
+/** The error a canvas clip render fails with when its media element errors. */
+export function mediaPlaybackError(clip: Pick<Clip, "title">, media: HTMLMediaElement): Error {
+  const detail = media.error?.message || (media.error ? `code ${media.error.code}` : "unknown error");
+  return new Error(`Playback of "${clip.title}" failed during canvas render (${detail})`);
+}
 
 const TARGET_WIDTH = 1280;
 const TARGET_HEIGHT = 720;
@@ -124,7 +132,7 @@ export class CanvasRenderer {
 
     if (this.options.audioReactive) {
       try {
-        audioCtx = new AudioContext();
+        audioCtx = createAudioContext();
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
         freqData = new Uint8Array(
@@ -230,9 +238,12 @@ export class CanvasRenderer {
       video.src = clip.objectUrl;
       video.currentTime = trimStart;
       await waitForSeeked(video);
+      // Realtime capture: the media clock still runs trimStart→trimEnd, so the
+      // recording is source/rate long and the picture plays at `rate`.
+      video.playbackRate = getClipPlaybackRate(clip);
       await video.play();
 
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
         let rafHandle = 0;
         let done = false;
 
@@ -244,7 +255,10 @@ export class CanvasRenderer {
           }
 
           const mediaTime = video.currentTime;
-          const elapsed = Math.max(0, mediaTime - trimStart);
+          const elapsed = constantRateOutputElapsed(
+            Math.max(0, mediaTime - trimStart),
+            getClipPlaybackRate(clip),
+          );
 
           if (
             mediaTime >=
@@ -285,11 +299,13 @@ export class CanvasRenderer {
           },
           { once: true },
         );
+        // A media error mid-clip must fail the render: resolving here would
+        // quietly end the clip early and ship a truncated file.
         video.addEventListener(
           "error",
           () => {
             done = true;
-            resolve();
+            reject(mediaPlaybackError(clip, video));
           },
           { once: true },
         );
@@ -320,6 +336,7 @@ export class CanvasRenderer {
   ): Promise<void> {
     const audio = new Audio(clip.objectUrl);
     audio.currentTime = clip.trimStart;
+    audio.playbackRate = getClipPlaybackRate(clip);
 
     if (audioCtx && analyser) {
       try {
@@ -343,7 +360,7 @@ export class CanvasRenderer {
     try {
       await audio.play();
 
-      await new Promise<void>((resolve) => {
+      await new Promise<void>((resolve, reject) => {
         let rafHandle = 0;
         let done = false;
 
@@ -361,7 +378,10 @@ export class CanvasRenderer {
             return;
           }
 
-          const elapsed = Math.max(0, audio.currentTime - clip.trimStart);
+          const elapsed = constantRateOutputElapsed(
+            Math.max(0, audio.currentTime - clip.trimStart),
+            getClipPlaybackRate(clip),
+          );
 
           // Black background for audio-only clips.
           this.ctx.fillStyle = "#000";
@@ -391,11 +411,13 @@ export class CanvasRenderer {
           },
           { once: true },
         );
+        // A media error mid-clip must fail the render: resolving here would
+        // quietly end the clip early and ship a truncated file.
         audio.addEventListener(
           "error",
           () => {
             done = true;
-            resolve();
+            reject(mediaPlaybackError(clip, audio));
           },
           { once: true },
         );

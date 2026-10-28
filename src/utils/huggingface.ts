@@ -35,6 +35,13 @@ export interface MorphTransitionResult {
 }
 
 const MORPH_OUTPUT_FPS = 30;
+/**
+ * Output frame rate requested from the Space's interpolate_video endpoint.
+ * 24fps sources at the 4x multiplier generate 96 interpolated frames; 60
+ * keeps a true 60fps CFR result instead of the endpoint's own default (30,
+ * kept for older callers), which would drop most of those frames.
+ */
+const RIFE_OUTPUT_FPS = "60";
 
 /**
  * Send a trimmed video Blob to the HuggingFace RIFE space and return
@@ -135,7 +142,7 @@ async function uploadClipForRife(videoBlob: Blob): Promise<string> {
     return path;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`RIFE processing failed: ${message}`);
+    throw new Error(`RIFE processing failed: ${message}`, { cause: err });
   }
 }
 
@@ -157,16 +164,23 @@ async function interpolateUploadedClip(
     });
 
     // The space's interpolate_video endpoint accepts:
-    //   [video (FileData), multiplier ("2"/"4"/"8"), boomerang (bool)]
+    //   [video (VideoData), multiplier ("2"/"4"/"8"), boomerang (bool),
+    //    output fps ("30"/"60"/"native")]
+    // Its input is a gr.Video, whose data model is VideoData
+    // `{ video: FileData, subtitles }` — not a bare FileData like the gr.File
+    // inputs of /stitch and /morph. Gradio validates that shape before the
+    // function runs, so a bare FileData fails with "VideoData video Field
+    // required" on every clip.
     const data = await callSpaceEndpoint("interpolate_video", [
-      { path, meta: { _type: "gradio.FileData" } },
+      { video: { path, meta: { _type: "gradio.FileData" } }, subtitles: null },
       String(multiplier),
       isBoomerang,
+      RIFE_OUTPUT_FPS,
     ]);
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`RIFE processing failed: ${message}`);
+    throw new Error(`RIFE processing failed: ${message}`, { cause: err });
   }
 
   onProgress?.({
@@ -228,7 +242,7 @@ export async function generateMorphTransition(
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Morph transition failed: ${message}`);
+    throw new Error(`Morph transition failed: ${message}`, { cause: err });
   }
 
   onProgress?.({
@@ -328,7 +342,7 @@ export async function stitchClipsOnGpu(
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`GPU stitch failed: ${message}`);
+    throw new Error(`GPU stitch failed: ${message}`, { cause: err });
   }
 
   onProgress?.({

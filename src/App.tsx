@@ -1,16 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { computeTotalDuration } from "./utils/transitions";
+import { useEffect, useMemo, useRef } from "react";
 import { useProjectSaveLoad } from "./hooks/useProjectSaveLoad";
 import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { useClipBeatAnalysis } from "./hooks/useClipBeatAnalysis";
+import { useClipStabilization } from "./hooks/useClipStabilization";
+import { useProxyBuilder } from "./hooks/useProxyBuilder";
+import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
-import { getEffectiveTimelineClips } from "./utils/timelineClips";
-import {
-  readStorageAuthToken,
-  writeStorageAuthToken,
-} from "./utils/storageAuth";
-import { setPlayheadTime } from "./store";
+import { getEffectiveTimelineClips, visibleTextOverlays } from "./utils/trackModel";
+import { editorStore, playbackStore, setPlayheadTime, settingsActions, uiActions } from "./store";
+import { playheadForSelectedClip, resolveClipOutputWindow } from "./utils/previewComposition";
 import { useClipActions } from "./hooks/useClipActions";
 import { useIntercutActions } from "./hooks/useIntercutActions";
 import { useRenderActions } from "./hooks/useRenderActions";
@@ -21,9 +20,16 @@ import {
   useTextOverlayActions,
   useLayoutCommitHandlers,
 } from "./hooks/useTextOverlayActions";
+import { useCaptionActions } from "./hooks/useCaptionActions";
 import { useAppKeyboardShortcuts } from "./hooks/useAppKeyboardShortcuts";
 import { AppShell } from "./components/AppShell";
 
+/**
+ * Composition root. All business state lives in the Zustand stores under
+ * `src/store/` (#144); this component only wires the action hooks together and
+ * hands their callbacks to {@link AppShell}, which lays out the panels. Panels
+ * subscribe to the stores themselves rather than receiving state as props.
+ */
 export function App() {
   const {
     clips,
@@ -47,9 +53,10 @@ export function App() {
     resetHistory,
   } = useEditHistory();
   useClipBeatAnalysis(clips, setClips);
+  useClipStabilization(clips, setClips);
+  useProxyBuilder(clips, setClips);
+  useMasterAudioBeatAnalysis();
   useClipImportChores(clips, setClips);
-  const [showKeyboardShortcuts, setShowKeyboardShortcuts] = useState(false);
-  const [selectedTextOverlayId, setSelectedTextOverlayId] = useState<string | null>(null);
 
   const {
     handleSaveProject,
@@ -95,25 +102,31 @@ export function App() {
   });
 
   const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null!);
+  // Speed (and every other clip edit) replaces `clips`. Re-running the
+  // playhead jump on that would seek back to the in-point on every slider
+  // tick, so the only visible change was the clip block changing length.
+  const playheadPositionedForClipId = useRef<string | null>(null);
 
-  const [storageEndpoint, setStorageEndpoint] = useState(
-    "https://storage.noahcohn.com/webhook/clip-stacker",
-  );
-  const [storageAuthToken, setStorageAuthToken] = useState(readStorageAuthToken);
-  const handleStorageAuthTokenChange = useCallback((value: string) => {
-    setStorageAuthToken(value);
-    writeStorageAuthToken(value);
-  }, []);
-
+  // Selecting a clip parks the (output-time) playhead on it, unless the
+  // playhead is already inside the clip — then it stays put.
   useEffect(() => {
     if (!selectedClipId) {
+      playheadPositionedForClipId.current = null;
       setPlayheadTime(null);
       return;
     }
-    const clip = clips.find((c) => c.id === selectedClipId);
-    if (!clip) return;
-    setPlayheadTime(clip.trimStart);
-  }, [selectedClipId, clips]);
+    const state = editorStore.getState();
+    const placed = resolveClipOutputWindow(
+      getEffectiveTimelineClips(state.tracks, state.clips, state.clipGroups),
+      state.clipGroups,
+      state.transitions,
+      selectedClipId,
+    );
+    if (!placed) return;
+    setPlayheadTime(
+      playheadForSelectedClip(playbackStore.getState().playheadTime, placed),
+    );
+  }, [selectedClipId]);
 
   const clipActions = useClipActions({
     clips,
@@ -131,11 +144,19 @@ export function App() {
     setSelectedClipId,
   });
 
+  // Titles on a muted text lane are excluded from the render, matching what the
+  // preview draws (#168 Phase C).
+  const visibleOverlays = useMemo(
+    () => visibleTextOverlays(tracks, textOverlays),
+    [tracks, textOverlays],
+  );
+
   const renderActions = useRenderActions({
     clips,
+    tracks,
     clipGroups,
     transitions,
-    textOverlays,
+    textOverlays: visibleOverlays,
   });
 
   const inspectorActions = useInspectorActions({
@@ -144,8 +165,6 @@ export function App() {
     setClips,
     pushHistory,
     pushHistoryDebounced,
-    storageEndpoint,
-    storageAuthToken,
   });
 
   const timelineActions = useTimelineActions({
@@ -172,8 +191,48 @@ export function App() {
     setTextOverlays,
     pushHistory,
     pushHistoryDebounced,
-    setSelectedTextOverlayId,
+    setSelectedTextOverlayId: uiActions.setSelectedTextOverlayId,
   });
+
+  const captionActions = useCaptionActions({
+    pushHistory,
+    pushHistoryDebounced,
+  });
+
+  const {
+    handleAddCaption,
+    handleUpdateCaption,
+    handleDeleteCaption,
+    handleCaptionStyleChange,
+    handleImportCaptions,
+    handleExportCaptionsSrt,
+    handleClearCaptions,
+  } = captionActions;
+
+  // Bundled for the Inspector's Captions tab. Memoized on the individual
+  // callbacks (each `useCallback`-stable) rather than on the hook's return
+  // object, which is a fresh literal every render — otherwise this prop would
+  // change identity constantly and defeat `Inspector`'s `memo`.
+  const captionPanelProps = useMemo(
+    () => ({
+      onAdd: handleAddCaption,
+      onUpdate: handleUpdateCaption,
+      onDelete: handleDeleteCaption,
+      onStyleChange: handleCaptionStyleChange,
+      onImport: handleImportCaptions,
+      onExportSrt: handleExportCaptionsSrt,
+      onClear: handleClearCaptions,
+    }),
+    [
+      handleAddCaption,
+      handleUpdateCaption,
+      handleDeleteCaption,
+      handleCaptionStyleChange,
+      handleImportCaptions,
+      handleExportCaptionsSrt,
+      handleClearCaptions,
+    ],
+  );
 
   const { handleClipLayoutCommit, handleTextOverlayLayoutCommit } =
     useLayoutCommitHandlers(setClips, setTextOverlays);
@@ -181,11 +240,6 @@ export function App() {
   const timelineClips = useMemo(
     () => getEffectiveTimelineClips(tracks, clips, clipGroups),
     [tracks, clips, clipGroups],
-  );
-
-  const previewTotalDuration = useMemo(
-    () => computeTotalDuration(timelineClips, transitions),
-    [timelineClips, transitions],
   );
 
   const { handleUndo, handleRedo } = useAppKeyboardShortcuts({
@@ -200,31 +254,19 @@ export function App() {
     handleDuplicateClip: clipActions.handleDuplicateClip,
     handleDeleteClip: timelineActions.handleDeleteClip,
     handleReorder: timelineActions.handleReorder,
+    handleEditNudge: timelineActions.handleEditNudge,
+    handleRippleDelete: timelineActions.handleRippleDelete,
+    handleAddCaptionAtPlayhead: captionActions.handleAddCaption,
     undo,
     redo,
-    setShowKeyboardShortcuts,
-    setStatus: (status) => {
-      import("./store/settingsStore").then((m) => m.settingsStore.getState().setStatus(status));
-    },
+    setShowKeyboardShortcuts: uiActions.setShowKeyboardShortcuts,
+    setStatus: settingsActions.setStatus,
   });
 
   return (
     <AppShell
       toolbarRef={toolbarRef}
-      storageEndpoint={storageEndpoint}
-      storageAuthToken={storageAuthToken}
-      clips={clips}
-      tracks={tracks}
-      clipGroups={clipGroups}
-      transitions={transitions}
-      textOverlays={textOverlays}
-      selectedClipId={selectedClipId}
-      selectedTextOverlayId={selectedTextOverlayId}
-      selectedClip={inspectorActions.selectedClip}
-      timelineClips={timelineClips}
-      previewTotalDuration={previewTotalDuration}
       morphProcessingIndex={transitionActions.morphProcessingIndex}
-      showKeyboardShortcuts={showKeyboardShortcuts}
       showMemoryWarning={renderActions.showMemoryWarning}
       recoveryOffer={recoveryOffer}
       isRecovering={isRecovering}
@@ -236,8 +278,6 @@ export function App() {
       remoteUploadItems={remoteUploadItems}
       pendingRemoteUploadError={pendingRemoteUploadError}
       renderFailureMessage={renderActions.renderFailureMessage}
-      canUndo={canUndo}
-      canRedo={canRedo}
       onAddClips={clipActions.handleAddClips}
       onMerge={renderActions.handleMerge}
       onGpuStitch={renderActions.handleGpuStitch}
@@ -245,13 +285,11 @@ export function App() {
       onRedo={handleRedo}
       onSaveProject={handleSaveProject}
       onLoadProject={handleLoadProject}
-      onShowKeyboardShortcuts={() => setShowKeyboardShortcuts(true)}
       onDebugResetFFmpeg={renderActions.handleDebugResetFFmpeg}
       onRetryFfmpegLoad={renderActions.handleRetryFfmpegLoad}
       onCopyDebugInfo={renderActions.handleCopyDebugInfo}
       onPerformRender={renderActions.performRender}
       onDismissRenderFailure={() => renderActions.setRenderFailureMessage(null)}
-      onStorageAuthTokenChange={handleStorageAuthTokenChange}
       onSaveRemote={handleSaveRemote}
       onLoadRemote={handleLoadRemote}
       onResolveRemoteUploadError={resolveRemoteUploadError}
@@ -259,26 +297,28 @@ export function App() {
       onToggleVariant={clipActions.handleToggleVariant}
       onDeleteClip={timelineActions.handleDeleteClip}
       onGenerateIntercut={handleGenerateIntercut}
-      onSelectClip={setSelectedClipId}
-      onSelectTextOverlay={setSelectedTextOverlayId}
       onClipLayoutCommit={handleClipLayoutCommit}
       onTextOverlayLayoutCommit={handleTextOverlayLayoutCommit}
       onPreviewDragStart={textOverlayActions.handlePreviewDragStart}
       onInspectorChange={inspectorActions.handleInspectorChange}
       onKeyframesChange={inspectorActions.handleClipKeyframesChange}
       onAutomationChange={inspectorActions.handleClipAutomationChange}
+      onAudioEffectsChange={inspectorActions.handleClipAudioEffectsChange}
       onApplyKenBurns={inspectorActions.handleApplyKenBurns}
       onExtractAudio={inspectorActions.handleExtractAudio}
       onRife={inspectorActions.handleRife}
+      onStabilizeChange={inspectorActions.handleStabilizeChange}
+      onReverseChange={inspectorActions.handleReverseChange}
       onMoveUp={timelineActions.handleMoveUp}
       onMoveDown={timelineActions.handleMoveDown}
       onReorder={timelineActions.handleReorder}
       onMoveToTrack={timelineActions.handleMoveToTrack}
       onTransitionUpdate={transitionActions.handleTransitionUpdate}
+      captions={captionPanelProps}
+      onCaptionResize={captionActions.handleResizeCaption}
       onAddTextOverlay={textOverlayActions.handleAddTextOverlay}
       onUpdateTextOverlay={textOverlayActions.handleUpdateTextOverlay}
       onDeleteTextOverlay={textOverlayActions.handleDeleteTextOverlay}
-      onCloseKeyboardShortcuts={() => setShowKeyboardShortcuts(false)}
       onMemoryWarningConfirm={renderActions.handleMemoryWarningConfirm}
       onMemoryWarningCancel={renderActions.handleMemoryWarningCancel}
       onRecover={handleRecover}

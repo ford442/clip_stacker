@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState, forwardRef } from 'react';
+import { RenderPlanAudioNotes } from './audio/RenderPlanAudioNotes';
 import type { BrowserCapabilities } from '../utils/feature-detector';
-import type { RenderPlan } from '../types';
 import { detectCapabilities } from '../utils/feature-detector';
+import { fetchDemoClips } from '../utils/demoClips';
+import { describeEncoderBadge } from '../utils/encoderPathLabel';
 import { ProgressBar } from './ProgressBar';
+import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
+import { settingsActions, settingsStore, useCanRedo, useCanUndo } from '../store';
 
 interface Props {
-  onAddClips: (files: File[]) => void;
+  onAddClips: (files: File[]) => void | Promise<void>;
   onMerge: () => void;
   /** Offload resolution-normalization + concat to the HuggingFace GPU space. */
   onGpuStitch?: () => void;
   onUndo?: () => void;
   onRedo?: () => void;
-  canUndo?: boolean;
-  canRedo?: boolean;
   onSaveProject: () => void;
   onLoadProject: (file: File) => void;
   onTriggerLoadDialog?: () => void;
@@ -20,27 +23,6 @@ interface Props {
   onDebugResetFFmpeg?: () => void;
   /** Called when the user clicks "Retry FFmpeg load" after a failed/stuck load. */
   onRetryFfmpegLoad?: () => void;
-  /** When true, FFmpeg is currently loading (shows spinner feedback in status). */
-  ffmpegLoading?: boolean;
-  /** When true, last FFmpeg load attempt failed — show the retry button prominently. */
-  ffmpegLoadFailed?: boolean;
-  status: string;
-  forceFFmpeg: boolean;
-  onToggleForceFFmpeg: (v: boolean) => void;
-  /** Enable the canvas renderer path (audio-reactive compositing). */
-  useCanvasRenderer: boolean;
-  onToggleCanvasRenderer: (v: boolean) => void;
-  /** Enable audio-reactive visual effects in the canvas renderer. */
-  audioReactive: boolean;
-  onToggleAudioReactive: (v: boolean) => void;
-  /** Force re-encoding even when lossless concat would be available. */
-  forceReencode: boolean;
-  onToggleForceReencode: (v: boolean) => void;
-  progressStage: string;
-  progressValue: number | null;
-  progressIndeterminate: boolean;
-  isRendering: boolean;
-  renderPlan?: RenderPlan | null;
   /** Optional: copy last FFmpeg logs + context for support / bug reports. */
   onCopyDebugInfo?: () => void;
 }
@@ -52,34 +34,52 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     onGpuStitch,
     onUndo,
     onRedo,
-    canUndo = false,
-    canRedo = false,
     onSaveProject,
     onLoadProject,
     onTriggerLoadDialog,
     onShowKeyboardShortcuts,
     onDebugResetFFmpeg,
     onRetryFfmpegLoad,
+    onCopyDebugInfo,
+  },
+  ref,
+) {
+  const canUndo = useCanUndo();
+  const canRedo = useCanRedo();
+  const {
     ffmpegLoading,
     ffmpegLoadFailed,
     status,
     forceFFmpeg,
-    onToggleForceFFmpeg,
     useCanvasRenderer,
-    onToggleCanvasRenderer,
     audioReactive,
-    onToggleAudioReactive,
     forceReencode,
-    onToggleForceReencode,
     progressStage,
     progressValue,
     progressIndeterminate,
     isRendering,
     renderPlan,
-    onCopyDebugInfo,
-  },
-  ref,
-) {
+  } = useStore(
+    settingsStore,
+    useShallow((s) => ({
+      ffmpegLoading: s.ffmpegLoading,
+      ffmpegLoadFailed: s.ffmpegFailed,
+      status: s.status,
+      forceFFmpeg: s.forceFFmpeg,
+      useCanvasRenderer: s.useCanvasRenderer,
+      audioReactive: s.audioReactive,
+      forceReencode: s.forceReencode,
+      progressStage: s.progressStage,
+      progressValue: s.progressValue,
+      progressIndeterminate: s.progressIndeterminate,
+      isRendering: s.isRendering,
+      renderPlan: s.renderPlan,
+    })),
+  );
+  const onToggleForceFFmpeg = settingsActions.setForceFFmpeg;
+  const onToggleCanvasRenderer = settingsActions.setUseCanvasRenderer;
+  const onToggleAudioReactive = settingsActions.setAudioReactive;
+  const onToggleForceReencode = settingsActions.setForceReencode;
   const clipInputRef = useRef<HTMLInputElement>(null);
   const projectFileInputRef = useRef<HTMLInputElement>(null);
   const [caps, setCaps] = useState<BrowserCapabilities | null>(null);
@@ -105,6 +105,16 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     e.target.value = '';
   };
 
+  const handleLoadDemo = async () => {
+    const { setStatus } = settingsStore.getState();
+    setStatus('Loading demo clips...');
+    try {
+      await onAddClips(await fetchDemoClips());
+    } catch (err) {
+      setStatus(`Could not load the demo clips: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const handleProjectFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) onLoadProject(file);
@@ -113,11 +123,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
 
   const mediaRecorderAvailable = caps?.mediaRecorderMp4 ?? typeof MediaRecorder !== 'undefined';
 
-  const gpuLabel = useCanvasRenderer
-    ? '🎨 Canvas'
-    : caps?.webcodecs
-    ? '⚡ GPU'
-    : '🖥 CPU';
+  const encoderBadge = describeEncoderBadge(caps, { useCanvasRenderer, forceFFmpeg });
 
   const gpuTitle = caps
     ? `Rescaling exports auto-use hardware H.264 when available (WebCodecs/WebGPU), with FFmpeg audio mux and CPU fallback. WebCodecs: ${caps.webcodecs ? 'yes' : 'no'} · Hardware H.264: ${caps.hardwareH264 ? 'yes' : 'no'} · WebGPU: ${caps.webgpu ? 'yes' : 'no'} · MediaRecorder: ${caps.mediaRecorderMp4 ? 'yes' : 'no'}`
@@ -127,7 +133,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     <>
       <div className="toolbar">
         <label className="button-like">
-          Add clips (MP4 / WAV / MP3)
+          Add clips (MP4 / WAV / MP3 / JPG / PNG / WEBP)
           <input
             ref={clipInputRef}
             type="file"
@@ -136,6 +142,14 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             onChange={handleClipChange}
           />
         </label>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={handleLoadDemo}
+          title="Add two short built-in clips to try trimming, splitting, transitions and export without your own media"
+        >
+          Load demo clips
+        </button>
         <button
           type="button"
           className="btn-primary"
@@ -150,9 +164,9 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             type="button"
             onClick={onGpuStitch}
             disabled={isRendering}
-            title="Stitch clips at one resolution on the HuggingFace GPU space (native FFmpeg, higher quality). Ignores fades/transitions/PiP/overlays — use Render for those."
+            title="Remote concat (ignores timeline compositing): sequences base-lane clips at one resolution on the HuggingFace GPU space via native FFmpeg. Refuses to run when the timeline has transitions, PiP/overlay lanes, finishing, keys, captions, or text overlays — use Render for those."
           >
-            ☁ GPU Stitch
+            ☁ Remote Concat
           </button>
         )}
         {onUndo && (
@@ -248,7 +262,15 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
 
         {/* Encoder / renderer controls */}
         <div className="encoder-badge" title={gpuTitle}>
-          <span className="encoder-indicator">{gpuLabel}</span>
+          <span className="encoder-indicator">{encoderBadge.label}</span>
+          {encoderBadge.webgpuUnavailable && (
+            <span
+              className="encoder-indicator encoder-indicator--warn"
+              title="WebGPU could not be initialised, so the GPU preview and compositor export are unavailable."
+            >
+              WebGPU unavailable
+            </span>
+          )}
 
           {/* Canvas renderer toggle (requires MediaRecorder) */}
           {mediaRecorderAvailable && (
@@ -297,6 +319,46 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
           <p className="render-plan-info">
             Render plan: {renderPlan.description} ({renderPlan.reason})
           </p>
+          {renderPlan.overlayKeying === 'gpu' && (
+            <p className="render-plan-info">
+              Chroma / luma key applied on the GPU compositor — matches the preview.
+            </p>
+          )}
+          {renderPlan.overlayKeying === 'ffmpeg' && (
+            <p className="render-plan-info">
+              Chroma / luma key applied via the FFmpeg <code>chromakey</code> fallback.
+            </p>
+          )}
+          {renderPlan.overlayKeying === 'unsupported' && (
+            <p className="render-plan-warning" role="alert">
+              ⚠ Chroma / luma key skipped — the Canvas (MediaRecorder) renderer plays
+              clips back rather than compositing, so it has no keying step. Turn off the
+              Canvas renderer to key on the GPU, or use Force FFmpeg.
+            </p>
+          )}
+          {renderPlan.pictureTransform === 'gpu' && (
+            <p className="render-plan-info">
+              Rotation / scale applied on the GPU compositor — matches the preview, transitions
+              included.
+            </p>
+          )}
+          {renderPlan.pictureTransform === 'ffmpeg' && (
+            <p
+              className={renderPlan.pictureTransformGaps ? 'render-plan-warning' : 'render-plan-info'}
+              role={renderPlan.pictureTransformGaps ? 'alert' : undefined}
+            >
+              {renderPlan.pictureTransformGaps ? '⚠ ' : ''}Rotation / scale applied via the FFmpeg{' '}
+              <code>scale</code> + <code>rotate</code> fallback.
+              {renderPlan.pictureTransformGaps &&
+                ` Not reproduced: ${renderPlan.pictureTransformGaps.join('; ')}. Turn off Force FFmpeg to render it as previewed.`}
+            </p>
+          )}
+          {renderPlan.wideColor === 'ignored' && (
+            <p className="render-plan-warning" role="alert">
+              ⚠ Display P3 and HDR10 are GPU-only. This encode is Rec.709 SDR — turn off
+              Force FFmpeg and the Canvas renderer to keep the chosen output.
+            </p>
+          )}
           {renderPlan.shaderTextFallbackApplied && renderPlan.shaderTextOverlays && (
             <p className="render-plan-warning" role="alert">
               ⚠ Shader-filled text overlay{renderPlan.shaderTextOverlays.length > 1 ? 's' : ''}{' '}
@@ -305,6 +367,25 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
               {renderPlan.shaderTextOverlays.length > 1 ? 'these overlays' : 'this overlay'}, or
               use the GPU render path (avoid Force FFmpeg / Canvas renderer) to preserve the
               shader look.
+            </p>
+          )}
+          {!renderPlan.shaderTextFallbackApplied &&
+            renderPlan.shaderTextFallbackRisk &&
+            renderPlan.shaderTextOverlays && (
+              <p className="render-plan-warning" role="alert">
+                ⚠ This render is expected to fall back to solid color for shader-filled text
+                overlay{renderPlan.shaderTextOverlays.length > 1 ? 's' : ''}{' '}
+                {renderPlan.shaderTextOverlays.map((o) => `"${o.text}"`).join(', ')} — avoid
+                Force FFmpeg / Canvas renderer to preserve the shader look.
+              </p>
+            )}
+          <RenderPlanAudioNotes plan={renderPlan} />
+          {renderPlan.ffmpegFinishingGaps && renderPlan.ffmpegFinishingGaps.length > 0 && (
+            <p className="render-plan-warning" role="alert">
+              ⚠ {renderPlan.ffmpegFinishingGaps.join(' and ')}{' '}
+              {renderPlan.ffmpegFinishingGaps.length > 1 ? 'are' : 'is'} WebGPU-only — the FFmpeg
+              render path skips {renderPlan.ffmpegFinishingGaps.length > 1 ? 'them' : 'it'}. Avoid
+              Force FFmpeg to keep this finishing.
             </p>
           )}
         </>

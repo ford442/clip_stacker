@@ -50,7 +50,6 @@ export function seekToFrame(
   return new Promise<boolean>((resolve) => {
     let settled = false;
     let rvfcHandle = 0;
-    let timeoutId: ReturnType<typeof setTimeout>;
     const hasRvfc = typeof video.requestVideoFrameCallback === "function";
 
     const finish = (ok: boolean) => {
@@ -69,7 +68,7 @@ export function seekToFrame(
     // Fallback path (no rVFC): a frame is normally drawable right after `seeked`.
     const onSeeked = () => finish(video.readyState >= HAVE_CURRENT_DATA);
 
-    timeoutId = setTimeout(
+    const timeoutId = setTimeout(
       () => finish(video.readyState >= HAVE_CURRENT_DATA),
       timeoutMs,
     );

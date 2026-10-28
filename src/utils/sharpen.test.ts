@@ -202,3 +202,34 @@ describe('sharpen FFmpeg filters', () => {
     expect(SHARPEN_AMOUNT_RECOMMENDED).toBeLessThanOrEqual(SHARPEN_AMOUNT_SOFT_CAP);
   });
 });
+
+describe('sharpen modes', () => {
+  const base = { ...DEFAULT_SHARPEN, enabled: true, amount: 0.3 };
+
+  it('packs mode into slot 6; omitted = classic (0)', () => {
+    expect(packSharpenUniforms(base, 64, 64)[6]).toBe(0);
+    expect(packSharpenUniforms({ ...base, mode: 'edge' }, 64, 64)[6]).toBe(1);
+    expect(packSharpenUniforms({ ...base, mode: 'multiscale' }, 64, 64)[6]).toBe(2);
+    expect(packSharpenUniforms({ ...base, mode: 'bogus' as never }, 64, 64)[6]).toBe(0);
+    expect(SHARPEN_UNIFORM_FLOATS).toBe(8);
+  });
+
+  it('old projects normalize without gaining a mode key', () => {
+    expect(normalizeSharpenPass({ enabled: true }, DEFAULT_SHARPEN)).not.toHaveProperty('mode');
+  });
+
+  it('round-trips a valid mode and drops an invalid one', () => {
+    expect(normalizeSharpenPass({ enabled: true, mode: 'edge' }, DEFAULT_SHARPEN).mode).toBe(
+      'edge',
+    );
+    expect(
+      normalizeSharpenPass({ enabled: true, mode: 'ultra' as never }, DEFAULT_SHARPEN),
+    ).not.toHaveProperty('mode');
+  });
+
+  it('FFmpeg fallback is unchanged by the mode', () => {
+    expect(buildSharpenFfmpegFilters({ ...base, mode: 'multiscale' })).toBe(
+      buildSharpenFfmpegFilters(base),
+    );
+  });
+});

@@ -3,6 +3,11 @@
  *
  * Implementation is split across `project/` submodules; this file re-exports
  * the public API so existing import paths remain stable.
+ *
+ * `getClipDuration` and `DEFAULT_CANVAS_*` are re-exported for compatibility
+ * only: import them from `./clipTiming` / `./canvasDefaults`. This barrel
+ * pulls in project load, which imports the timeline modules, so using it for
+ * those helpers creates import cycles (`npm run check:cycles`).
  */
 
 export {
@@ -14,8 +19,9 @@ export {
   MAX_MEDIA_DOWNLOAD_ATTEMPTS,
 } from './project/constants';
 
+export { getClipDuration } from './clipTiming';
+
 export {
-  getClipDuration,
   clampOverlayPosition,
   isOverlayOffCanvas,
   sanitizeClipAdjustments,

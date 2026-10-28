@@ -90,6 +90,7 @@ function toSpec(job: GpuChoreJob): GpuChoreJobSpec {
     outWidth: job.outWidth,
     outHeight: job.outHeight,
     radius: job.radius,
+    binSize: job.binSize,
   };
 }
 

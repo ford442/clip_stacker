@@ -21,6 +21,9 @@ import sys
 import numpy as np
 import gradio as gr
 import uuid
+import traceback
+import threading
+from collections import OrderedDict
 
 # --- Constants ---
 BASE_DIR = os.getcwd()
@@ -45,6 +48,22 @@ IMAGE_EXTENSIONS = frozenset({
 })
 # Recursion depth cap for morph interpolation; see morph_transition.
 MAX_MORPH_MULTI = 8
+# Max clips interpolated inside a single @spaces.GPU lease for the "3. Batch
+# RIFE" tab. HuggingFace's ZeroGPU quota is tied to how many GPU functions run
+# (not just how long each one takes), so batch_interpolate_videos re-acquires
+# a fresh lease per chunk of this size rather than either holding one lease
+# for the whole upload or acquiring one per clip.
+BATCH_GPU_CHUNK_SIZE = 3
+
+def batch_chunk_size(output_fps):
+    """Clips per ZeroGPU lease.
+
+    60fps encodes roughly twice the frames of the old 30fps path, so a chunk
+    of 3 regularly hits the token/duration ceiling. Run those one clip at a
+    time; keep the larger chunk for 30 and native.
+    """
+    fps = str(output_fps).strip().lower()
+    return 1 if fps == "60" else BATCH_GPU_CHUNK_SIZE
 
 # Ensure our safe workspace directory exists
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
@@ -61,7 +80,7 @@ def is_still_image(path):
     return ext in IMAGE_EXTENSIONS
 
 
-def nle_friendly_h264_video_args(gop=None):
+def nle_friendly_h264_video_args(gop=None, fps=None):
     """libx264 flags aligned with clip_stacker buildStillImageFfmpegArgs.
 
     Editors are stricter than players. Beyond codec/profile they want a
@@ -70,9 +89,20 @@ def nle_friendly_h264_video_args(gop=None):
     variable-rate, colour-shifted, oddly-timed asset even though it plays fine
     in VLC. Everything here is emitted for every clip so the whole concat set
     is byte-level uniform.
+
+    `fps` defaults to STITCH_FPS (the "2. Stitch Videos" tab always concats
+    at that rate). Callers that produce a standalone clip — RIFE interpolation
+    in particular — pass their own target. The literal string "native" skips
+    forcing a constant output rate altogether, so an interpolated clip keeps
+    every frame RIFE generated instead of being resampled/dropped to a fixed
+    rate.
     """
-    gop = gop or STITCH_FPS
-    return [
+    is_native = fps == 'native'
+    fps = STITCH_FPS if fps is None or is_native else fps
+    fps_val = float(fps)
+    fps_str = str(int(fps_val)) if fps_val.is_integer() else str(fps_val)
+    gop = gop or int(fps_val)
+    args = [
         '-c:v', 'libx264', '-preset', 'fast', '-crf', '18',
         '-tune', 'stillimage',
         '-profile:v', 'high', '-level', '4.1',
@@ -83,8 +113,11 @@ def nle_friendly_h264_video_args(gop=None):
         # edit lists then show the clip off by a frame or two, and stills gain
         # nothing from B-frames anyway.
         '-bf', '0',
+    ]
+    if not is_native:
         # Constant frame rate, declared in both the stream and the container.
-        '-vsync', 'cfr', '-r', str(STITCH_FPS),
+        args += ['-vsync', 'cfr', '-r', fps_str]
+    args += [
         # Untagged H.264 makes editors guess bt601 vs bt709; a still rendered
         # through the shader path then reads as colour-shifted next to clips
         # that are tagged. Say it explicitly.
@@ -94,6 +127,7 @@ def nle_friendly_h264_video_args(gop=None):
         # what makes a concat-copied file report VFR / wrong duration.
         '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
     ]
+    return args
 
 
 def nle_friendly_aac_audio_args():
@@ -620,15 +654,23 @@ def create_boomerang_loop(input_path, output_path, fps):
             except OSError:
                 pass
 
-@spaces.GPU(required=True)
-def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
+def _interpolate_single(input_video_path, multi_factor, create_boomerang=False,
+                         output_fps=30):
+    """Core single-clip RIFE pass. Must run inside an active @spaces.GPU lease.
+
+    Shared by `interpolate_video` (one lease per call) and
+    `_interpolate_batch_chunk` (one lease covers up to BATCH_GPU_CHUNK_SIZE
+    calls), so the GPU lease is never acquired twice for one clip.
+    """
     if input_video_path is None:
         return None
-    
+
     safe_input = os.path.join(WORKSPACE_DIR, f"input_{uuid.uuid4().hex}.mp4")
     shutil.copy(input_video_path, safe_input)
 
     factor = str(multi_factor).strip().replace("x", "")
+    fps_arg = str(output_fps).strip().lower()
+    fps_arg = 'native' if fps_arg == 'native' else float(fps_arg)
     session_id = uuid.uuid4().hex
     output_path   = os.path.join(WORKSPACE_DIR, f"output_rife_{session_id}.mp4")
     final_path    = os.path.join(WORKSPACE_DIR, f"final_interp_{session_id}.mp4")
@@ -639,14 +681,14 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
 
     if r.returncode != 0:
         raise Exception(f"RIFE failed: {r.stderr}")
-    
+
     src = output_path if os.path.exists(output_path) else no_audio
     has_audio = probe_audio_codec(safe_input) != ''
     if has_audio:
         subprocess.run([
             'ffmpeg', '-i', src, '-i', safe_input,
             '-map', '0:v:0', '-map', '1:a:0?',
-            *nle_friendly_h264_video_args(),
+            *nle_friendly_h264_video_args(fps=fps_arg),
             *nle_friendly_aac_audio_args(),
             '-movflags', '+faststart',
             '-shortest', '-y', final_path,
@@ -654,16 +696,261 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False):
     else:
         subprocess.run([
             'ffmpeg', '-i', src,
-            *nle_friendly_h264_video_args(),
+            *nle_friendly_h264_video_args(fps=fps_arg),
             '-an', '-movflags', '+faststart',
             '-y', final_path,
         ], check=True, capture_output=True, text=True)
-    
+
+    # RIFE's raw output and the safe upload copy are no longer needed once
+    # final_path exists — leaving them behind fills WORKSPACE_DIR over a
+    # multi-clip batch, since each clip runs in its own GPU lease with no
+    # shared cleanup step.
+    for stale in (safe_input, output_path, no_audio):
+        try:
+            if stale != final_path and os.path.exists(stale):
+                os.remove(stale)
+        except OSError:
+            pass
+
     if create_boomerang:
         fps = get_fps(final_path)
         if create_boomerang_loop(final_path, boomerang_path, fps):
+            try:
+                os.remove(final_path)
+            except OSError:
+                pass
             return boomerang_path
     return final_path
+
+@spaces.GPU(required=True)
+def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
+                       output_fps=30):
+    """RIFE-interpolate a clip and encode it at `output_fps`.
+
+    `output_fps` defaults to 30 (STITCH_FPS) so older clients that call this
+    with only 3 positional args keep today's behaviour. RIFE always generates
+    `source_fps * multi_factor` frames regardless of this value — it only
+    controls how those frames are resampled/tagged on the way out: "60" for
+    a true 60fps CFR result (the point of a 4x multiplier on a 24fps
+    source), "30" to match the old behaviour, or "native" to keep every
+    generated frame without resampling.
+    """
+    return _interpolate_single(input_video_path, multi_factor, create_boomerang,
+                                output_fps)
+
+# ZeroGPU's documented default budget for an undecorated-duration @spaces.GPU
+# call is 60 seconds — calibrated for one clip. Running BATCH_GPU_CHUNK_SIZE
+# clips back-to-back inside one lease can comfortably exceed that, at which
+# point the platform reclaims the GPU mid-chunk and any further CUDA work
+# raises an "expired GPU token" error. `duration=` tells ZeroGPU how long to
+# actually reserve the lease for, so this needs to scale with the chunk
+# instead of relying on the single-clip default. Capped well under the
+# platform's own duration ceiling (undocumented exactly, but requesting too
+# much fails loudly with "requested GPU duration is larger than the maximum
+# allowed" rather than silently, so this errs generous).
+BATCH_CHUNK_DURATION_CAP_SECONDS = 290
+
+def _batch_chunk_duration(chunk_paths, multi_factor, output_fps):
+    """`duration=` estimator for `_interpolate_batch_chunk` (spaces.GPU calls
+    this with the same arguments as the decorated function itself)."""
+    try:
+        multi_val = max(1, int(str(multi_factor).strip().replace("x", "") or "2"))
+    except ValueError:
+        multi_val = 2
+    total = 0.0
+    for path in chunk_paths:
+        clip_duration = get_duration(path) or 10.0
+        # Deliberately overshoots real per-clip GPU time (model load + RIFE +
+        # re-encode) rather than matching it exactly — under-reserving is
+        # exactly what reproduces the "expired GPU token" failure this exists
+        # to avoid, whereas over-reserving only costs queue priority.
+        # 60fps re-encodes about twice the frames; native keeps every
+        # generated frame (source_fps * multi) so it can also be heavy.
+        fps_str = str(output_fps).strip().lower()
+        fps_scale = 2.0 if fps_str == "60" else (1.5 if fps_str == "native" else 1.0)
+        total += clip_duration * multi_val * 2 * fps_scale + 30
+    return min(total, BATCH_CHUNK_DURATION_CAP_SECONDS)
+
+@spaces.GPU(required=True, duration=_batch_chunk_duration)
+def _interpolate_batch_chunk(chunk_paths, multi_factor, output_fps):
+    """Interpolate up to BATCH_GPU_CHUNK_SIZE clips inside one GPU lease.
+
+    No boomerang — this backs the "3. Batch RIFE" tab only.
+    """
+    return [
+        _interpolate_single(path, multi_factor, create_boomerang=False,
+                             output_fps=output_fps)
+        for path in chunk_paths
+    ]
+
+def _resolve_batch_upload_entry(f):
+    """Extract (server path, original filename) from one uploaded-file entry.
+
+    The "Process All" button is wired with `preprocess=False` so this
+    function receives the raw Gradio FileData (as a dict, one per upload)
+    instead of a bare path string. That matters because HuggingFace's own
+    `/upload` route sanitizes the *on-disk* filename before app.py ever runs
+    (stripping characters like parentheses), but it leaves `orig_name` — the
+    filename exactly as the browser sent it — untouched. Using `orig_name`
+    for the output filename (rather than the upload path's basename) is what
+    keeps parentheses and other stripped characters in the downloaded result.
+    """
+    if isinstance(f, dict):
+        path = f.get("path")
+        orig_name = f.get("orig_name") or os.path.basename(path)
+        return path, orig_name
+    path = f.name if hasattr(f, "name") else str(f)
+    return path, os.path.basename(path)
+
+def name_like_source(result_path, orig_name, used_names):
+    """Move `result_path` to WORKSPACE_DIR under the source clip's own name.
+
+    Gradio's File output shows the returned path's basename as the download
+    name, and interpolate_video() always produces a randomly-named file, so
+    batch outputs would otherwise download as e.g. final_interp_<uuid>.mp4
+    instead of the name the clip was uploaded with. `orig_name` should be the
+    filename (or a path ending in it) exactly as the browser sent it, not the
+    sanitized on-disk upload path — see `_resolve_batch_upload_entry`.
+    `used_names` de-dupes across a single batch call in case two uploads
+    share a stem.
+    """
+    if not result_path:
+        return result_path
+    stem = os.path.splitext(os.path.basename(orig_name))[0] or "clip"
+    name = f"{stem}.mp4"
+    n = 2
+    while name in used_names:
+        name = f"{stem}_{n}.mp4"
+        n += 1
+    used_names.add(name)
+    dest = os.path.join(WORKSPACE_DIR, name)
+    shutil.move(result_path, dest)
+    return dest
+
+def as_file_outputs(paths):
+    """Wrap result paths as FileData so the download name keeps parentheses.
+
+    Gradio's File component and the download headers strip characters such as
+    `()` from a plain path's basename. Returning an explicit FileData with
+    `orig_name` set to that basename (which `name_like_source` already wrote
+    with the original characters) is what survives to the browser.
+    """
+    out = []
+    for path in paths or []:
+        if not path:
+            out.append(path)
+            continue
+        out.append(gr.FileData(path=path, orig_name=os.path.basename(path)))
+    return out
+
+def start_batch_job(video_files, multi_factor, output_fps):
+    """Build the job state for a batch run (no GPU work happens here).
+
+    The job is a plain dict so it can live in a `gr.State` between events:
+    `pending` holds the (server path, original filename) pairs still to be
+    interpolated, `results` the finished outputs in input order.
+    """
+    entries = [list(_resolve_batch_upload_entry(f)) for f in (video_files or [])]
+    return {
+        "run": uuid.uuid4().hex,
+        "pending": entries,
+        "results": [],
+        "used_names": [],
+        "multi": multi_factor,
+        "fps": output_fps,
+        "total": len(entries),
+    }
+
+# run id -> number of clips already handed to a GPU chunk. Gradio can deliver
+# the same gr.State `.change` more than once (and a duplicate queued behind a
+# running chunk then sees the job that chunk produced), so without this two
+# events would interpolate the same clips twice and burn ZeroGPU quota. Only
+# the event that claims a chunk's start index first runs it. Bounded: entries
+# are a few bytes and old runs are evicted.
+_BATCH_CLAIMS = OrderedDict()
+_BATCH_CLAIMS_LOCK = threading.Lock()
+_BATCH_CLAIMS_MAX_RUNS = 512
+
+def claim_batch_chunk(job):
+    """Atomically claim `job`'s next chunk; False if another event has it."""
+    start = len(job["results"])
+    with _BATCH_CLAIMS_LOCK:
+        if _BATCH_CLAIMS.get(job["run"], 0) > start:
+            return False
+        size = batch_chunk_size(job.get("fps"))
+        _BATCH_CLAIMS[job["run"]] = start + min(len(job["pending"]), size)
+        _BATCH_CLAIMS.move_to_end(job["run"])
+        while len(_BATCH_CLAIMS) > _BATCH_CLAIMS_MAX_RUNS:
+            _BATCH_CLAIMS.popitem(last=False)
+    return True
+
+def advance_batch_job(job):
+    """Interpolate the next chunk of `job` and return the updated job.
+
+    Returns None when nothing is pending, or when another event already
+    claimed this chunk (see `claim_batch_chunk`). Each call acquires at most
+    one @spaces.GPU lease (via `_interpolate_batch_chunk`), which is the
+    point: the "Process All" UI runs one call per Gradio event, see
+    `batch_interpolate_videos`.
+    """
+    if not job or not job["pending"] or not claim_batch_chunk(job):
+        return None
+    size = batch_chunk_size(job.get("fps"))
+    chunk = job["pending"][:size]
+    chunk_paths = [path for path, _ in chunk]
+    chunk_results = _interpolate_batch_chunk(chunk_paths, job["multi"], job["fps"])
+    used_names = set(job["used_names"])
+    results = list(job["results"])
+    for (_, orig_name), result in zip(chunk, chunk_results):
+        results.append(name_like_source(result, orig_name, used_names))
+    return {
+        **job,
+        "pending": job["pending"][len(chunk):],
+        "results": results,
+        "used_names": sorted(used_names),
+    }
+
+def batch_job_status(job):
+    done = len(job["results"])
+    total = job["total"]
+    if not job["pending"]:
+        return f"✅ Done: {done}/{total} clips interpolated."
+    size = batch_chunk_size(job.get("fps"))
+    nxt = min(done + size, total)
+    return f"⏳ {done}/{total} clips done — interpolating clips {done + 1}-{nxt}…"
+
+def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
+                              progress=gr.Progress()):
+    """Run RIFE on each uploaded clip, chunked to respect ZeroGPU limits.
+
+    Returns one output path per input clip, in input order. Each clip is
+    interpolated on its own — no boomerang, and outputs are never
+    concatenated/stitched together, unlike the "2. Stitch Videos" tab.
+    Each output keeps the original filename of the clip it came from
+    (including characters HuggingFace's own upload route would otherwise
+    strip from the on-disk path, like parentheses — see
+    `_resolve_batch_upload_entry`).
+
+    This runs every chunk inside ONE request, so it only backs the
+    `batch_interpolate` API route. ZeroGPU authorizes each @spaces.GPU call
+    with the proxy token the browser sent with the *request*, and that token
+    expires a few minutes in — so on a long batch every chunk after the
+    first fails with "expired proxy token". The "Process All" button instead
+    runs one chunk per Gradio event (`advance_batch_job` driven by a
+    `gr.State` change loop in the UI), and each event arrives with a fresh
+    token.
+    """
+    job = start_batch_job(video_files, multi_factor, output_fps)
+    count = job["total"]
+    while job["pending"]:
+        done = len(job["results"])
+        size = batch_chunk_size(job.get("fps"))
+        end = min(done + size, count)
+        progress(done / count, desc=f"Interpolating clips {done + 1}-{end}/{count}")
+        job = advance_batch_job(job)
+    if count:
+        progress(1.0, desc="Done")
+    return as_file_outputs(job["results"])
 
 @spaces.GPU(required=True)
 def morph_transition(frame_pair_video, frame_count, output_fps=30):
@@ -973,6 +1260,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                     video_input     = gr.Video(label="Input Video")
                     multi_select    = gr.Dropdown(["2","4","8"], value="2",
                                                   label="RIFE Multiplier")
+                    fps_select      = gr.Dropdown(["30", "60", "native"], value="60",
+                                                  label="Output FPS")
                     boomerang_check = gr.Checkbox(label="Create Boomerang Loop",
                                                   value=False)
                     interp_btn      = gr.Button("▶ Process Video", variant="primary")
@@ -980,7 +1269,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                     video_output    = gr.Video(label="Output Video")
 
             interp_btn.click(interpolate_video,
-                             inputs=[video_input, multi_select, boomerang_check],
+                             inputs=[video_input, multi_select, boomerang_check,
+                                     fps_select],
                              outputs=video_output,
                              api_name="interpolate_video")
 
@@ -1072,7 +1362,94 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                 inputs=audio_mode,
                 outputs=audio_volume
             )
-            
+
+        # ── Tab 3 ─────────────────────────────────────────────────────────────
+        with gr.TabItem("3. Batch RIFE"):
+            gr.Markdown(
+                "Upload multiple clips → RIFE each independently → download all. "
+                "No stitching (clips stay separate) and no boomerang."
+            )
+            batch_inputs = gr.File(
+                label="Input Videos (multiple)",
+                file_count="multiple",
+                file_types=["video"],
+            )
+            batch_multi = gr.Dropdown(["2", "4", "8"], value="4",
+                                      label="RIFE Multiplier")
+            batch_fps = gr.Dropdown(["30", "60", "native"], value="60",
+                                    label="Output FPS")
+            batch_btn = gr.Button("▶ Process All", variant="primary")
+            batch_status = gr.Markdown()
+            batch_outputs = gr.File(label="Processed Videos", file_count="multiple")
+            batch_job = gr.State(None)
+            batch_api_btn = gr.Button(visible=False)
+
+            # One @spaces.GPU chunk per Gradio event. ZeroGPU authorizes each
+            # GPU call with the proxy token the browser sent with the current
+            # request, and that token expires a few minutes in, so running
+            # every chunk inside the click handler failed every chunk after
+            # the first with "expired proxy token". Instead the click only
+            # builds the job; each chunk then runs in batch_job.change, and
+            # because that handler writes a new job back into the State, the
+            # browser fires .change again — a new request with a fresh token —
+            # until nothing is pending (gr.skip() leaves the State unchanged,
+            # which ends the loop). Finished clips appear as each chunk lands.
+            #
+            # preprocess=False: start_batch_job needs the raw FileData (with
+            # `orig_name`) for each upload, not the bare sanitized path
+            # Gradio's default File preprocessing would collapse it to — see
+            # _resolve_batch_upload_entry.
+            def start_batch_ui(video_files, multi_factor, output_fps):
+                if not video_files:
+                    raise gr.Error("Upload at least one video first.")
+                job = start_batch_job(video_files, multi_factor, output_fps)
+                return job, [], batch_job_status(job)
+
+            def step_batch_ui(job):
+                if not job or not job["pending"]:
+                    return gr.skip(), gr.skip(), gr.skip()
+                try:
+                    advanced = advance_batch_job(job)
+                except Exception as e:
+                    # Leave the State untouched (ends the loop) and keep the
+                    # clips that already finished; raising instead would
+                    # leave the status stuck on "interpolating…".
+                    traceback.print_exc()
+                    msg = (f"Batch stopped after {len(job['results'])}/"
+                           f"{job['total']} clips: {e}")
+                    gr.Warning(msg)
+                    return gr.skip(), gr.skip(), f"❌ {msg}"
+                if advanced is None:
+                    # Duplicate/stale trigger: the event that claimed this
+                    # chunk will write the job and fire the next step.
+                    return (gr.skip(), gr.skip(),
+                            "⏳ Chunk already claimed by a concurrent event — waiting for it to finish…")
+                return advanced, as_file_outputs(advanced["results"]), batch_job_status(advanced)
+
+            batch_btn.click(start_batch_ui,
+                            inputs=[batch_inputs, batch_multi, batch_fps],
+                            outputs=[batch_job, batch_outputs, batch_status],
+                            api_name=False,
+                            preprocess=False)
+            # trigger_mode="multiple": with the default "always_last", the
+            # frontend sees this listener as still pending when its own
+            # completion re-triggers it, parks the new trigger in
+            # `final_event` and only sends it on a later data message — so
+            # the loop either stalls after a chunk or re-sends a stale job.
+            # "multiple" sends exactly one request per State change;
+            # claim_batch_chunk still drops any duplicate that gets through.
+            batch_job.change(step_batch_ui,
+                             inputs=batch_job,
+                             outputs=[batch_job, batch_outputs, batch_status],
+                             api_name=False,
+                             trigger_mode="multiple")
+            # API callers keep the single-request route (all chunks in one
+            # call); see batch_interpolate_videos for its token caveat.
+            batch_api_btn.click(batch_interpolate_videos,
+                                inputs=[batch_inputs, batch_multi, batch_fps],
+                                outputs=batch_outputs,
+                                api_name="batch_interpolate",
+                                preprocess=False)
 
     _reorder_outs = [
         paths_state, thumbs_state, clip_gallery, sel_state, sel_label, move_to,

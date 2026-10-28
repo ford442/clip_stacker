@@ -9,12 +9,18 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm install` (or `npm ci` for a clean/CI install): install dependencies for local development.
 - `npm run dev`: start the Vite dev server with the headers needed for FFmpeg WASM.
 - `npm run typecheck`: run `tsc --noEmit`, matching CI behavior. Run this after any TypeScript change.
+- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint + react-hooks). Must report 0 errors; warnings are tolerated debt. Non-test `src/` files over 700 lines are an error (`max-lines`): split the module rather than raising the limit.
+- `npm run check:cycles`: madge import-cycle check over `src/` (type-only imports count). Must report 0 cycles — import `getClipDuration` from `utils/clipTiming` and `DEFAULT_CANVAS_*` from `utils/canvasDefaults`, not the `utils/project` barrel.
 - `npm test -- --run`: run the Vitest suite once, matching CI behavior.
 - `npm run test:coverage`: run tests with coverage reporting.
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
-- `npm run build:audio-analysis`: rebuild the audio FFT WASM module (`public/wasm/`) via Emscripten.
+- `npm run sync:ffmpeg-core`: copy `@ffmpeg/core` / `@ffmpeg/core-mt` ESM dist into `public/ffmpeg-core{,-mt}/` (the self-hosted cores; CDNs are fallbacks). `-- --check` exits non-zero if `public/` or `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts` drifts from `node_modules`.
+- `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, video stabilize, media engine incl. time stretch, and its glue-free bus-FX build `media_engine_fx.wasm`) via the shared CMake toolchain into `public/wasm/`. Requires Emscripten (`emcmake` / `emcc`); use the SDK pinned in `native/emsdk-version` to reproduce the committed bytes.
+- `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF), written to `native/build-debug/wasm/` (never over `public/wasm`). The dev/preview servers serve it at `/wasm-debug/`; open the app with `?wasm_debug`.
+- `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan). No Emscripten needed.
+- `npm run build:audio-analysis` / `build:video-stabilize` / `build:media-engine`: rebuild one module. `npm run build:whisper`: the opt-in auto-caption module (not committed).
 
 ## Coding Style & Naming Conventions
 
@@ -22,7 +28,7 @@ Use TypeScript with strict checking. Follow the existing style: two-space indent
 
 ## Testing Guidelines
 
-Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `project.test.ts` or `ffmpegService.load.test.ts`. Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Before submitting, run `npm run typecheck`, `npm test -- --run`, and `npm run build`.
+Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `project.test.ts` or `ffmpegService.load.test.ts`. Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Before submitting, run `npm run typecheck`, `npm run lint`, `npm run check:cycles`, `npm test -- --run`, and `npm run build`.
 
 ## Commit & Pull Request Guidelines
 
@@ -39,8 +45,252 @@ Single-service product: a React + TypeScript Vite frontend (no backend to run; `
 Non-obvious caveats:
 
 - `npm ci` works against the committed `package-lock.json`. If you add/remove/upgrade a dependency, run `npm install` and commit the updated `package-lock.json` in the same change so `npm ci` stays in sync — it previously drifted (missing optional `@esbuild/*` platform packages) and broke CI.
-- `npm run dev` does not render in a CSP-enforcing browser as-is. `index.html` ships a static `Content-Security-Policy` meta tag with `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-inline'`), which blocks Vite's injected inline React-refresh/HMR preamble script and leaves a blank page with `@vitejs/plugin-react can't detect preamble` console errors. To run/verify the app in the browser, use the production build instead: `npm run build` then `npm run preview` (serves on `http://localhost:4173/`, no inline scripts, CSP-clean). Do not relax the CSP just to make dev mode load unless that is the actual task.
+- `npm run dev` does not render in a CSP-enforcing browser as-is. Vite writes a `Content-Security-Policy` meta tag into `index.html` (generated from `src/utils/csp.ts` by `cspMetaPlugin` — the one place to edit the policy; `public/.htaccess` repeats it and `csp.test.ts` checks the copy) with `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-inline'`), which blocks Vite's injected inline React-refresh/HMR preamble script and leaves a blank page with `@vitejs/plugin-react can't detect preamble` console errors. To run/verify the app in the browser, use the production build instead: `npm run build` then `npm run preview` (serves on `http://localhost:4173/`, no inline scripts, CSP-clean). Do not relax the CSP just to make dev mode load unless that is the actual task.
 - FFmpeg WASM needs cross-origin isolation; both the dev and preview servers already set the required COOP/COEP headers, so use those servers rather than a generic static server.
+
+## Workspace layout (resizable zones)
+
+Library | Preview | Inspector and the timeline are Cubase-style zones the user
+resizes; the layout is per-browser view state (localStorage
+`clip_stacker.workspaceLayout.v1`), never part of a project or undo history.
+
+- `src/utils/workspaceLayout.ts` — the pure model: limits, `clampSideWidth`,
+  `resizeSideByDrag`, `resizeVerticalSplit` (the upper zone and timeline trade
+  height so the divider follows the pointer), splitter keys, sanitize / load /
+  save, `workspaceShellAttributes`.
+- `src/store/layoutStore.ts` — Zustand store; writes are debounced (and
+  flushed on `pagehide`).
+- `src/hooks/useWorkspaceLayoutVars.ts` — mirrors the store onto `.app-shell`
+  as `--ws-*` CSS variables and `data-*` attributes **from a subscription,
+  not React state**, so a drag never re-renders the panels or the preview.
+  Keep it that way.
+- `src/components/Splitter.tsx` (generic ARIA separator: drag, arrows,
+  Home/End, Enter = collapse, double-click = reset) and
+  `WorkspaceChrome.tsx` (column splitters, timeline divider, collapsed rails,
+  header controls: panel toggles, S/M/L density, full width, reset).
+- `src/styles/layout.css` — the five-track grid. Side columns are also capped
+  at 38% of the grid in CSS so a stored width cannot squeeze the preview when
+  the window shrinks. On desktop the upper zone always has a bounded height
+  (window-fitted default, or the divider's value) and side panels scroll
+  inside it; below 1101px the panels stack as before and collapse / fixed
+  heights do not apply.
+- Density is a set of `--ws-*` tokens under `.app-shell[data-density]`; size
+  new toolbar controls with them rather than hard-coded rem values.
+- The preview canvas is capped by width
+  (`min(100%, --ws-preview-max-h × --preview-aspect)`) so it keeps its aspect
+  ratio and never widens the page (#305).
+
+## Demo clips, Export-tab sections, encoder badge
+
+- **Demo clips** — `public/demo/demo-clip-{a,b}.mp4` (generated 640x360 H.264/AAC test media, ~300 KB total) and `src/utils/demoClips.ts`. The toolbar's **Load demo clips** fetches them (resolved against `document.baseURI`, so a sub-path deploy works) and feeds them through `handleAddClips`, so they behave like uploads.
+- **Collapsible Inspector sections** — `InspectorSection` (`components/inspector/`) is a `<details>` whose open state is remembered per browser by `utils/sectionState.ts` (`clip_stacker.inspectorSections.v1`, view state — never in a project or undo history). New Export-tab groups should use it with a stable `export.*` id; sections that are long or advanced default closed.
+- **Encoder badge** — `describeEncoderBadge` (`utils/encoderPathLabel.ts`) derives the toolbar badge from probed `BrowserCapabilities` (`⚡ HW H.264` only with a hardware encoder, else `WebCodecs (SW)` / `🖥 CPU`) and flags WebGPU separately.
+
+## Effects Stack (finishing audition)
+
+`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → curves → secondary → LUT → sharpen → CA → bloom → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
+
+- Chip / checkbox / amount edits are real `settingsStore.finishing` edits — the same `FinishingSettings` the detailed Export-tab panels edit (the LUT's amount is its `intensity`). Detailed panels and export are unchanged.
+- **Bypass all** and **Before** are preview-only view state (`uiStore.finishingView`, never serialized or exported). `Preview.tsx` feeds the compositor `applyFinishingPreviewView(finishing, view)` (`undefined` for a full bypass, the same object when nothing is hidden); export reads the store's `finishing` directly. The stack says so while a view is active.
+- **Edit** opens the Inspector's Export tab and reveals the *Finishing* section (`uiStore.requestInspectorTab` + `revealSection` in `utils/sectionState.ts`, which also covers the lazily mounted tab). The stack's details-open state is remembered in `clip_stacker.inspectorSections.v1`.
+- Not built: a draggable before/after split, and whole-chain presets.
+
+## Finishing presets (named stacks, AI-agent JSON)
+
+Format, built-ins and the agent API are documented in
+`docs/finishing-presets.md`; the JSON Schema is
+`docs/finishing-preset.schema.json`.
+
+- `src/utils/finishingPresets.ts` — pure: the preset document
+  (`schema`/`version`/`name`/`apply`/`finishing`), strict, all-or-nothing
+  validation (path-specific errors, unknown keys rejected) and the generated
+  JSON Schema, both driven by one declarative field spec per pass
+  (`FINISHING_PASS_SPECS` in `finishingPresetSpecs.ts`, re-exported),
+  `apply: "replace"` (omitted passes off) vs `"merge"` (deep-merge onto the
+  current stack), built-ins (`BUILT_IN_FINISHING_PRESETS`).
+  **Adding a finishing pass or field means adding it to the spec** — the
+  coverage test fails otherwise — and regenerating the schema file.
+- `src/store/finishingPresetStore.ts` — user presets in localStorage
+  (`clip_stacker.finishingPresets.v1`; quota errors are returned, never
+  thrown), list / save / rename / delete, built-in shadowing by name, and the
+  one apply path (`applyFinishingPresetDocument` / `applyFinishingPresetInput`).
+- Undo: `editorStore.applyFinishing` pushes one history entry that also
+  carries the pre-apply `FinishingSettings` (`EditSnapshot.finishing`). Undo /
+  redo restore finishing **only** for entries that carry it, so every other
+  undo step still leaves finishing alone (finishing slider edits are not
+  undoable, as before).
+- `src/utils/finishingPresetApi.ts` — `window.clipStacker.finishing.*` and the
+  `clip-stacker:apply-finishing-preset` event (installed in `main.tsx`);
+  same-page only, no cross-origin `postMessage`.
+- UI: `FinishingPresetsPanel` (top of Export → Finishing) and the Effects
+  Stack's *Preset…* picker.
+
+## Curves & levels (finishing, after primary, before secondary)
+
+`CurvesGpuPass` (`src/webgpu/curvesPass.ts` + `shaders/curves.wgsl`) is the
+`curves` slot of `FinishingSettings`. Order: noise → primary → **curves** →
+secondary → LUT → sharpen → CA → grain. Primary color is untouched.
+
+- Model (`src/utils/curves.ts`): per channel, levels (input black / white,
+  gamma, output black / white) → master curve → that channel's curve, then
+  mixed with the source by `amount`. Curves are ≤ 16 knots, monotone cubic
+  (Fritsch–Carlson): through every knot, flat outside the end knots, and no
+  overshoot or ringing between knots. Slopes are computed on the CPU; the
+  shader evaluates the Hermite segments from a uniform array of knots, so
+  there is no LUT texture and no quantization. `curvesPixel` is the CPU
+  reference the WGSL mirrors; identity channels pack as count 0.
+- Managed colour runs the scene-linear variant, which grades in an extended
+  sRGB encoding and decodes back: a knot at 0.5 means mid-grey in both modes,
+  and values above 1 continue with slope 1 instead of clipping.
+- Serialized as plain knots + levels; `normalizeCurvesPass` sorts, clamps,
+  merges near-duplicate knots and keeps ≥ 2 of them. Projects saved before
+  it existed load it disabled.
+- UI: `CurvesPanel` (Export tab → Finishing; channel tabs, an SVG editor —
+  click adds, drag moves between neighbours, double-click / Delete removes,
+  arrows nudge — presets, levels sliders) and the Effects Stack's *Curves*
+  chip. The pure edit helpers (`insertCurvePoint`, `moveCurvePoint`,
+  `removeCurvePoint`) are unit tested; the tab's "edited" dot always reserves
+  its space so the first edit never re-flows the editor mid-drag.
+- **WebGPU only.** FFmpeg skips it and `RenderPlan.ffmpegFinishingGaps` lists
+  "Curves & levels" (FFmpeg's `curves` / `colorlevels` could give
+  best-effort parity later); Canvas2D does not apply finishing.
+
+## Noise reduction quality tiers (first finishing pass)
+
+`NoiseReductionGpuPass` (`src/webgpu/noiseReductionPass.ts` +
+`shaders/denoise.wgsl`) runs first in the finishing chain. The spatial stage
+has three tiers, picked by `NoiseReductionSettings.quality` (uniform slot 10;
+the layout stays 16 floats). Temporal blending and its motion gate are the
+same in every tier, and still reset on seek (`resetTemporal`).
+
+- **`standard`** (omitted = standard) — the original 5×5 luma bilateral. Its
+  output is byte-identical to before the tiers existed (including its lossy
+  YUV round trip); keep it that way so old projects look the same.
+- **`high`** — a guided bilateral: range weights compare taps with a 3×3
+  sigma-filtered guide through a Tukey edge stop (exactly zero weight across
+  strong edges), over 1.5× the radius capped at 4.5 px, sampled densely (a
+  strided kernel leaves a 2-px checkerboard). ≤ 69 + 9 fetches.
+- **`nlm`** — non-local means: 3×3 luma patches over a (2S+1)² window
+  (S = round(radius), 1…3) read from one cached block, ≤ 81 + 48 fetches.
+  Strongest; recommend Draft NR (radius ≤ 2) while scrubbing.
+- Both new tiers filter RGB with luma-guided weights (so chroma is cleaned
+  without bleeding across edges) and read exact texels with `textureLoad`;
+  with **Luma only** they add just the luma change, keeping source chroma
+  exactly.
+- `src/utils/denoiseReference.ts` is the CPU reference driven by the packed
+  uniforms; `denoiseReference.test.ts` measures noise / edge / thin-line /
+  chroma error per tier on a seeded plate and pins the shader constants.
+  FFmpeg (`hqdn3d`) and Canvas2D are unaffected.
+
+## Sharpen modes (after LUT, before grain)
+
+`SharpenGpuPass` (`src/webgpu/sharpenPass.ts` + `shaders/sharpen.wgsl`) has
+three modes, picked by `SharpenSettings.mode` (uniform slot 6; the layout
+stays 8 floats). Amount, radius, threshold and midtone detail mean the same
+in all of them.
+
+- **`classic`** (omitted = classic) — the original unsharp mask. Its output
+  is byte-identical to before the modes existed (hard threshold, lossy YUV
+  round trip included); keep it that way so old projects look the same.
+- **`edge`** — detail is split in two. *Texture* detail comes from a
+  range-weighted blur (σ_r `SHARPEN_EDGE_SIGMA` = 0.08 luma), so strong
+  edges stay in its base. *Edge* detail (the rest of the classic detail)
+  steepens transitions but is clamped to the source [min, max] inside the
+  kernel window, so edges get as crisp as classic without halos or
+  ringing. Texture detail is not clamped (a texture peak is its own local
+  max — clamping it caps texture gain). Soft threshold
+  `smoothstep(thr, 2·thr)`; the luma change is added to RGB, so chroma is
+  exact.
+- **`multiscale`** — `edge` plus a medium band (fine blur − a 2.5× wider
+  blur, 7×7 window) for micro-contrast; midtone detail drives the medium
+  band instead of the fine one, so it lifts local contrast without boosting
+  noise.
+- `src/utils/sharpenReference.ts` is the CPU reference driven by the packed
+  uniforms; `sharpenReference.test.ts` measures halo energy, edge rise
+  width, texture gain and noise gain per mode and pins the shader constants.
+  FFmpeg (`unsharp`) and Canvas2D are unaffected.
+
+## Chromatic aberration (finishing, after sharpen, before grain)
+
+`ChromaticAberrationGpuPass` (`src/webgpu/chromaticAberrationPass.ts` +
+`shaders/chromaticAberration.wgsl`) is the `chromaticAberration` slot of
+`FinishingSettings`. Order: noise → primary → secondary → LUT → sharpen →
+**CA** → grain (grain stays last); in managed colour it runs in the working
+space before the output transform (`COLOR_MANAGED_PASS_ORDER`).
+
+- Model (`src/utils/chromaticAberration.ts`): red is sampled at uv − o and
+  blue at uv + o, o(uv) = radialK · (uv − 0.5) + a directional offset.
+  `radial` blends lateral lens CA (zero at the centre) with a uniform shift
+  along `angle`; `amount` is the fringe width (≤ 0.8 % of frame height).
+  Offsets are fractions of the frame height, so the preview canvas and a
+  larger export show the same fringe.
+- `spectral` (default on) spreads each channel over 7 taps with per-channel
+  weights that sum to 1 — a soft fringe, and flat areas stay untouched.
+- The sampler is `mirror-repeat`: edge taps land outside the frame, and
+  clamp-to-edge would smear the border pixel into a coloured stripe.
+- `chromaticAberrationPixel` is the CPU reference the WGSL mirrors.
+- **WebGPU only.** FFmpeg has no radial per-channel scale, so the FFmpeg path
+  skips it and `RenderPlan.ffmpegFinishingGaps` lists "Chromatic
+  aberration"; Canvas2D does not apply finishing. It is part of
+  `isFinishingActive`, so every finishing-aware gate (remote concat, canvas
+  demotion) already accounts for it. Projects saved before it existed load it
+  disabled.
+
+## Bloom & glow (finishing, after CA, before grain)
+
+`BloomGpuPass` (`src/webgpu/bloomPass.ts` + `shaders/bloom.wgsl`) is the
+`bloom` slot of `FinishingSettings`: noise → primary → curves → secondary →
+LUT → sharpen → CA → **bloom** → grain. It is independent of the grain pass's
+own halation / bloom, which are unchanged (a chain test compares grain output
+byte-for-byte against `main`).
+
+- Pipeline (`src/utils/bloom.ts`): prefilter (13-tap downsample to half res
+  with Karis-weighted groups so a hot pixel cannot flicker the glow, then a
+  soft-knee threshold) → 13-tap downsample pyramid in `rgba16float` → 9-tap
+  tent upsample added back up (the up pipeline blends one + one; the deepest
+  level gets a fractional weight so the radius is continuous) → composite.
+- Radius is a fraction of frame height; `planBloom` picks the level count
+  per resolution (half res = one level fewer), so preview and export glow
+  alike. The glow is normalized by the level count, so a flat field blooms
+  to itself. The level chain is allocated once per frame size
+  (`bloomLevelChain`) and a plan uses a prefix — a radius drag never
+  reallocates.
+- Composite: tinted glow × gain (amount × `BLOOM_GAIN`) — `screen` on the
+  8-bit chain, plain add in the managed working space (before the output
+  transform). `lightWrap` mode blurs the whole frame (no threshold) and pulls
+  that light over pixels darker than their surround — soft edges where a
+  subject meets a bright background.
+- `bloomImage` is the CPU reference the WGSL mirrors (`bloom.test.ts`).
+- **WebGPU only.** FFmpeg skips it and `RenderPlan.ffmpegFinishingGaps` lists
+  "Bloom & glow"; Canvas2D does not apply finishing.
+
+## Film grain (final finishing pass)
+
+`GrainGpuPass` (`src/webgpu/grainPass.ts` + `shaders/grain.wgsl`) is always the
+last finishing pass (after sharpen, and after the output transform in managed
+colour), so nothing later softens it. `GrainSettings.quality` picks the model:
+
+- **`classic`** (omitted = classic) — the original float-hash grain on square
+  cells. Its output is byte-identical to before the film mode existed; keep it
+  that way so old projects render unchanged.
+- **`film`** — `src/utils/filmGrain.ts` is the reference implementation and
+  `filmGrainRgb` in the WGSL mirrors it: PCG4D integer hash on
+  (cell, frame, octave), a blue-noise lattice (white minus its 4-neighbour
+  mean, so no low-frequency mottling) with quintic interpolation, two octaves,
+  `monochromeBias` (0 colour … 1 mono), a three-point `response` curve, and
+  `temporalCoherence`. Constants shared with the shader are checked by
+  `filmGrain.test.ts`; change both sides together.
+- **Temporal coherence is stateless** — a variance-preserving cross-fade
+  between frame-keyed fields, not a previous-frame texture, so any frame index
+  reproduces exactly (preview = export, seeks included) and moving edges never
+  smear. Coherence 0 is a fresh field per frame.
+- **Film stocks** (`GRAIN_FILM_STOCKS`) are data applied onto the settings by
+  `applyGrainFilmStock` (size, softness, amount, monochrome bias, response);
+  the shader only reads uniforms. Optical settings and coherence are kept.
+- Grain size is relative to frame height and grains stay round on any aspect,
+  so a smaller preview canvas shows the same grain as the export.
+- Uniform layout (24 floats) is pinned by `grainUniformLayout.test.ts`.
+  FFmpeg remains best-effort `noise` (no blue noise, coherence or response).
 
 ## Text overlay fonts
 
@@ -69,6 +319,225 @@ Current small set (license notes):
 
 Never embed user-supplied custom fonts (out of scope).
 
+## Timeline tracks
+
+`editorStore.tracks` is the timeline's source of truth. A `Track` is a lane
+(`kind: 'video' | 'audio' | 'text'`) holding `TrackItem`s — `{ clipId, startTime }`
+placements on the **output** timeline. Everything else about layout is derived
+from it.
+
+- `src/utils/trackStacking.ts` — the one place that answers "which video sits on
+  top of which, and when?". `buildVideoStack` walks the video lanes bottom-up;
+  `stackFromTracks(tracks, clips, time)` narrows that to the overlays visible at
+  a given output time.
+- `src/utils/trackModel.ts` — every pure lane mutation (`addTrack`,
+  `removeTrack`, `setTrackMuted`, `setTrackLocked`, `setTrackHeight`,
+  `renameTrack`, `moveClipBetweenTracks`, `moveClipToVideoLayer`,
+  `migrateLegacyClipsToTracks`) plus `toLegacyTimelineView`, the flattening step.
+  It is the entry point: ids / defaults / lookups live in `trackBasics.ts`, the
+  lane-chrome edits (`addTrack` … `renameTrack`) in `trackLanes.ts` and the
+  titles-lane helpers in `titleTracks.ts`, all re-exported from here.
+- `src/store/editorStore.ts` — the undoable actions the UI calls
+  (`addTrack`, `toggleTrackMuted`, …). Components never mutate a `Track`.
+- `src/components/TrackLaneHeader.tsx` — the lane's chrome: name, **M**ute,
+  **L**ock, remove, height drag. Track state belongs here, not in the Inspector.
+
+Two rules that used to be heuristics and are now settled:
+
+1. **Stacking order is lane order.** The first video lane is the base sequence;
+   each one above it composites on top. `Clip.layerIndex` is *derived* from that
+   index for the FFmpeg filter graph — it is not an independent authoring knob,
+   and the Inspector's "layer" field is a shortcut for `moveClipToVideoLayer`.
+2. **`TrackItem.startTime` is the output timestamp on every video lane**, not
+   just the base sequence. An overlay placed at 5s appears at 5s and ends at
+   5s + its trimmed duration. Base-lane items are the one exception: their start
+   times come from transition-aware segment math
+   (`buildClipTimelineSegments`), because an xfade overlaps its neighbours.
+
+`toLegacyTimelineView` stamps four **derived** fields onto the flattened clip
+list that preview and export consume: `layerIndex`, `timelineStart`,
+`trackMuted` and `trackLocked`. They travel on the clip so the deep export
+paths (`webcodecs-audio.ts`, `ffmpeg/video.ts`) see lane state without every
+call site growing a `tracks` parameter. `serializeProject` never writes them,
+and setting them on a pool clip does nothing — change the track instead. The
+function keeps a small identity cache: stamping necessarily allocates new clip
+objects, and without it the store's `useShallow` selectors would see fresh
+element identities every render and spin React into an update loop.
+
+Lane **mute** drops a lane's audio from the preview, the WebCodecs premix and
+the FFmpeg mix (as a `volume=0` segment, so the concat graph keeps one stream
+per clip), and a muted lane keys no sidechain duck. It does not hide video.
+Audio lanes are part of the export mix: the premix schedule is built with the
+tracks, as the preview's is, and FFmpeg paths premix whenever an unmuted audio
+lane holds clips (see *Lane buses* below). Lane **lock** blocks trim, drag, split and
+delete; the guards live in the action hooks (`useTimelineActions`,
+`useClipActions`, `useInspectorActions`), not in the components, so keyboard
+shortcuts and programmatic callers are blocked too.
+
+### Playhead
+
+`playbackStore.playheadTime` is **output** time and has two writers: the
+preview (playback tick, its scrub slider) and the timeline ruler
+(`TimelineRuler` — click / drag, independent of whether the preview can run,
+so Split works when WebGPU is unavailable). A ruler drag sets
+`playbackStore.scrubbing`, which pauses preview playback in place.
+`TimelinePlayhead` draws the line and subscribes on its own so the Timeline
+does not re-render per tick. The ruler, marker and caption lanes sit in
+`.timeline-axis-offset`, inset by `--timeline-gutter` (the lane-header
+column, `TIMELINE_GUTTER_PX`), so one x is one time on every row.
+
+### Edit modes (overwrite / insert / ripple / roll / slip / slide / snap)
+
+- `src/utils/editModes.ts` — the pure NLE edits (entry point; shared state and
+  base-lane maths in `editModeCore.ts`, roll / slip / slide / ripple in
+  `trimEdits.ts`, overwrite / insert / duplicate in `dropEdits.ts`). Each takes
+  `{ tracks, clips, transitions }` and returns a new state or a refusal reason;
+  `editorStore.commitEdit` applies it behind one `pushHistory`, so one undo
+  restores placements, trims and transitions together. Deltas are output
+  seconds; speed-ramped or looped clips are refused rather than trimmed
+  approximately. Splitting an item duplicates the *placement* (new clip id,
+  same file / object URL); covering one drops it. **Duplicate** is
+  `duplicateItem`: the copy lands right after the source on the same lane
+  (overlay/audio lanes follow the drop mode; the base lane always inserts, and
+  the xfade that left the source now leaves the copy).
+- Ripple is **lane-local** by default; `linkedRipple` also shifts every other
+  non-base lane, and a locked lane that would have to move blocks the edit.
+- After any edit, base-lane start times are rewritten from
+  `buildClipTimelineSegments` and base xfades are re-keyed to the clip pairs
+  they joined (`remapBaseTransitions`), so `TrackItem.startTime` never drifts
+  from segment math.
+- `src/utils/timelineSnap.ts` — the magnet: `snapTimelineTime` /
+  `snapClipStart` over playhead, clip edges, markers, caption edges and beats,
+  using the beat-snap tolerance (widened to ~8px at low zoom).
+- Tool / drop-mode / snap / link state is view state in `uiStore`;
+  `TimelineTools.tsx` is the chrome, `useTimelineActions`
+  (`handleMoveToTrack`, `handleEditNudge`, `handleRippleDelete`) the entry
+  points, and the keys are in `useAppKeyboardShortcuts` /
+  `KeyboardShortcutsModal`.
+
+### Text tracks vs the caption track
+
+Two decisions worth stating, because the type system allows other readings:
+
+- **Captions stay their own track.** `CaptionEntry[]` is time-coded subtitle
+  data with its own import/export formats and its own timeline lane
+  (`CaptionLane`). It is *not* modelled as `kind: 'text'` track items.
+- **`kind: 'text'` lanes are titles lanes.** Their `TrackItem.clipId` holds a
+  `TextOverlay` id — the holding lane's `kind` selects which pool the id
+  resolves against, which is why adding titles lanes needed no schema bump. A
+  new text overlay is placed on the first unlocked titles lane at the playhead,
+  so titles participate in lane mute (`visibleTextOverlays`), lock
+  (`isTextOverlayLocked`) and ordering. Overlays with no placement are always
+  visible, so projects that never made a titles lane are unaffected.
+
+### Auto-cut to music
+
+`src/utils/autoEdit.ts` rebuilds the main video lane so every cut lands on a
+beat. `autoCutFromReference` takes an `AutoCutReference` — a clip's
+`beatTimestamps` or the master audio lane, both reduced to
+`{ beats, sourceOrigin, outputStart }` — and returns a new arrangement without
+touching the source clips. `AutoCutPanel` (in the Library) applies it under a
+single `pushHistory`, so one undo restores the prior tracks, clips and
+transitions. Fewer than two beats, no B-roll, or a locked main lane all return
+the input unchanged.
+
+### Known gap
+
+The **remote concat** ("GPU stitch", `handleGpuStitch`) sends trimmed clips to
+the HuggingFace space for a resolution-normalize + concat; there is no
+compositor on the other end. It refuses to run (with a status message) when
+the timeline needs one — transitions, overlay lanes, finishing, keys,
+captions, text overlays or lane mute (`remoteConcatDroppedFeatures`) — so it
+only ever handles a plain base-lane concat; use Render for everything else.
+
+## Captions / subtitles
+
+The caption track (`CaptionEntry[]`) is separate from `TextOverlay`s: time-coded
+cues that import/export as `.srt` / `.ass`. Both share `TextOverlayStyle`
+(font, size, colours, box, position) — note captions anchor `x`/`y` at their
+**bottom centre**, overlays at their **top left**.
+
+Where the pieces live:
+
+- `src/utils/subtitles.ts` — `parseSrt` / `parseAss` / `parseSubtitles`,
+  `serializeSrt`, `buildAssDocument` (burn-in), `normalizeCaptions`,
+  `DEFAULT_CAPTION_STYLE`. Pure string ↔ `CaptionEntry`, no FFmpeg or DOM.
+- `src/ffmpeg/captions.ts` — the export passes. `buildBurnCaptionsArgs` /
+  `buildSoftSubtitleArgs` are pure argv builders (that's what the tests cover);
+  `applyCaptionsToRenderedVideo` runs them.
+- `src/components/CaptionLane.tsx` — the timeline's **CC** lane.
+- `src/components/CaptionsPanel.tsx` — the Inspector's *Captions* tab.
+- `src/hooks/useCaptionActions.ts` — CRUD, import, `.srt` export.
+- `src/utils/captionProvider.ts` — the auto-caption provider registry.
+- `src/utils/captionSegments.ts` — `TranscriptSegment[]` → `CaptionEntry[]`
+  (offsets, clamps, blank/non-speech filtering) and `mergeCaptions`. Pure; this
+  is what the auto-caption unit tests cover.
+- `src/utils/autoCaptionAudio.ts` — renders the audio to transcribe through the
+  same `buildAudioSchedule` + `renderTimelineAudioMix` path as the export
+  premix, so transcription hears trims, mute and automation.
+- `src/wasm/whisperCaptionProvider.ts` + `whisperWorker.ts` + `whisperModule.ts`
+  — the in-browser Whisper provider. The WASM build is optional and not
+  committed (`npm run build:whisper`, `native/whisper/README.md`); missing =
+  feature hidden, never a boot failure.
+- `src/utils/whisperHttpCaptionProvider.ts` — the self-hosted endpoint provider.
+- `src/hooks/useAutoCaption.ts` — picks a provider, runs it, writes the cues in
+  one undo step. Providers are registered in `src/main.tsx` via
+  `initCaptionProviders()`, so tests can `__resetCaptionProvidersForTests()`.
+
+Two things to keep in mind when changing this:
+
+1. **Caption export is a post-pass, not a filter-graph hook** — except on the
+   compositor. Cues reach the preview and the GPU export through the
+   composition plan (`buildPreviewCompositionPlan`'s `captionOptions` →
+   `PreviewCaptionLayer` → `drawCaptionLayer`), so a burn-in on the WebCodecs
+   path costs no extra encode. Everything else still runs on the blob
+   `hybridMergeClips` returns (in `useRenderActions`): the soft `mov_text` mux
+   (a stream copy, and never a burn), Force FFmpeg, and any machine without
+   WebGPU. `hybridMergeClips` reports `captionsBurnedIn` so the caller skips
+   the post-pass rather than burning a second copy. Do not "optimize" the rest
+   away by folding `subtitles=` into the FFmpeg path only — that silently
+   drops captions on the GPU and canvas paths.
+2. **Burn-in depends on libass being in the core build.** `@ffmpeg/core` is
+   built `--enable-libass` but *without* fontconfig, so libass can only resolve
+   a family name by scanning a fonts directory — hence `fontsdir=.` plus
+   `ensureFont` writing the bundled TTFs to the VFS root. The bold Roboto is
+   selected with the ASS bold flag rather than by name, because its internal
+   family is still "Roboto".
+
+`Project.captions` / `Project.captionStyle` are optional, so projects saved
+before captions existed still load (as an empty track). `applyProjectData`
+coerces and drops malformed cues rather than throwing.
+
+## Color pipeline
+
+Default pixels stay Rec.709 SDR. Managed mode (Display P3, HDR10, or scene-linear Rec.2020) is `src/utils/colorManagement.ts` plus the finishing-chain path in `src/webgpu/finishingPassChain.ts` (the managed passes are `ManagedFinishingChain` in `managedFinishing.ts`). Matrices, pass order (output transform, then display-referred grain), and the PQ-file vs SDR-preview split are in `docs/color-pipeline.md`. Force FFmpeg / canvas export sets `RenderPlan.wideColor: 'ignored'` and does not relabel the file. `shader-f16` is optional and never required.
+
+## Overlay keying (chroma / luma)
+
+`src/utils/overlayKey.ts` owns the key maths for **every** compositor. Add a
+blend mode there, not in one backend.
+
+- `keyPixel(r, g, b, key)` — the reference implementation, unit tested in
+  `overlayKey.test.ts`. Chroma follows `vf_chromakey.c` (normalized BT.601
+  limited-range UV distance, ramped from `similarity` over `blend`); luma
+  follows `vf_lumakey.c` as `buildOverlayAlphaFilters` configures it.
+- `preview.wgsl`'s `keyAlpha()` is the same function in WGSL, driven by six
+  uniforms at `KEY_UNIFORM_OFFSET` (packed by `packKeyUniforms`). It runs on
+  the sampled colour *before* opacity and the fades, so a soft edge is not
+  squashed by them.
+- `applyKeyToImageData` is the Canvas2D export path (`drawClipLayer` pre-keys
+  into a scratch canvas, since Canvas2D has no per-pixel hook).
+- `buildOverlayAlphaFilters` in `overlayBlend.ts` is the FFmpeg fallback.
+
+Because GPU export reuses the preview compositor, the shader covers the
+preview *and* the default WebCodecs export. The FFmpeg filter is only reached
+on the Force-FFmpeg / no-WebGPU path, so the two must agree numerically — the
+limited-range chroma scale in `overlayKey.ts` is there for exactly that. The
+GPU path never also runs `chromakey`; `RenderPlan.overlayKeying` records which
+one ran. Transitions do not key (they composite base-layer cuts, which are not
+overlays), and the MediaRecorder canvas path has no keying step at all — it
+reports `overlayKeying: 'unsupported'` rather than keying silently wrong.
+
 ## Audio analysis WASM (FFT / beats)
 
 Real-time and offline audio features use a small Emscripten module (kissfft, BSD-3-Clause) that produces frequency-band energy and beat onset envelopes for WebGPU uniforms and timeline markers.
@@ -81,7 +550,7 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 - `src/wasm/offlineAnalysis.ts` — full-buffer / clip-load analysis → `beatTimestamps` / `bpmEstimate` on `Clip`
 - `src/wasm/audioAnalysisWorker.ts` + `audioAnalysisClient.ts` — Worker offload (keep main-thread long tasks < 16 ms)
 - `src/wasm/audioReactiveUniforms.ts` — shared `AudioReactive` uniform shape + WGSL snippet docs
-- `src/webgpu/previewEngine.ts` — `setAudioReactive({ bass, mid, treble, beat })` writes uniform slots 13–16
+- `src/webgpu/previewEngine.ts` — `setAudioReactive({ bass, mid, treble, beat })`; `packLayerUniforms` (`previewLayerUniforms.ts`) writes them to uniform slots 13–16
 - `src/webgpu/shaders/preview.wgsl` — `Uniforms.bass|mid|treble|beat` + optional warm lift
 - `src/utils/beatMarkers.ts` + Timeline ruler — read-only beat overlay when metadata is present
 - `src/utils/canvas-renderer.ts` — `setWasmBassLevel()` for export parity with the same analysis source
@@ -95,6 +564,253 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 
 Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approved FFT) inside `native/audio_analysis/`.
 
+## Native WASM toolchain
+
+Three shipped Emscripten modules (plus the glue-free `media_engine_fx` build and the opt-in whisper target) share one flag file. Do not copy-paste `emcc` invocations.
+
+- `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / `-Wall -Wextra` / strict C++17 / `EXPORTED_RUNTIME_METHODS` / `INCOMING_MODULE_JS_API=locateFile,instantiateWasm`; per-module `GZIP_BUDGET`, `THREADS` (pthreads — whisper only) and `EXCEPTIONS` (throw support — whisper only)
+- `native/CMakeLists.txt` — builds `audio_analysis`, `video_stabilize`, `media_engine` (and `media_engine_fx`) into `public/wasm/`; `-DCLIP_STACKER_WHISPER=ON` adds `native/whisper/` (whisper.cpp via its own CMake, `EXCLUDE_FROM_ALL`)
+- `clip_stacker_standalone_wasm` (toolchain.cmake) — `-sSTANDALONE_WASM --no-entry`: plain `extern "C"` exports, no JS runtime, for realms that cannot load MODULARIZE glue (the AudioWorkletGlobalScope). Its only import is `env.emscripten_notify_memory_growth`; call `_initialize` after instantiating. Keep such modules free of static initializers
+- `native/emsdk-version` — the pinned SDK (CI installs it; the committed artifacts come from it). `scripts/emscripten-flags.sh` is the cmake driver: it rejects SDKs < 3.1.64, warns above the tested major, and sends `WASM_DEBUG=1` builds to `native/build-debug/`
+- `native/common/include/` — `cs_status.h` (every `int` entry point returns a `cs_status`; `cs_span_ok` bounds check), `cs_alloc.h` (`cs::Buffer` / `try_reserve` / `can_allocate`: OOM returns `CS_ENOMEM` instead of aborting under `-fno-exceptions`), `cs_math.h` (`cs::kPi`; no `M_PI`)
+- `src/wasm/emscriptenLoader.ts` — the JS side of the boundary: `loadEmscriptenModule(name, factory)` (one instance per realm, transient fetch failures retry with backoff, then a cooldown instead of "disabled until reload"; a trap retires the instance) and `withHeap(mod, (heap) => …)` — **every `_malloc` goes through it**: null-checked, views rebuilt from the current buffer after each call, everything freed when the scope ends; null on OOM so callers fall back. `CS_STATUS` mirrors `cs_status.h`
+- `scripts/wasm-size-check.sh` — **fails** if gzip(`.wasm`) exceeds 200 KB
+- `native/host.cmake` + `-DCLIP_STACKER_HOST_TESTS=ON` — host (non-Emscripten) test build with `-Werror`; `scripts/test-native.sh` drives it
+- Configure exports `compile_commands.json` (linked to `native/compile_commands.json`, gitignored); `native/.clangd` points clangd at it — run clangd with `--query-driver=**/em++`
+- CI `wasm` job installs `native/emsdk-version`, runs `npm run build:wasm` and fails on any `public/wasm` diff or stray file; the `native-host` job runs `scripts/test-native.sh`, which ctests every module (`video_stabilize`'s pure matrix / smoothing helpers live in `stab_math.h`)
+
+Keep WebGPU as the pixel owner. Do not fold video frames into this engine.
+
+## Media engine (timeline PCM mix)
+
+C++ owns the export premix DSP: polyphase resample, volume/pan automation curves, fades, streaming mix. Live preview still uses the Web Audio graph; FFmpeg remains AAC/exotic-demux fallback.
+
+### Layout
+
+- `native/media_engine/` — `audio_mix.cpp` (`mix_timeline_audio_range`: schedule chunk → stereo f32, curves, pan law; JS passes the PCM blob length as `pcm_floats` and every slice is bounds-checked against it), `resampler.cpp` (64-tap polyphase sinc, SIMD128; linear kept behind `MIX_FLAG_LINEAR_RESAMPLE`), `time_stretch.cpp` (WSOLA, see *Variable speed remapping*). No bindings file: `EXPORTED_FUNCTIONS` is the binding layer
+- `native/media_engine/tests/` — host ctest suite (THD+N goldens, chunk bit-equality, curve/pan parity, time stretch)
+- `public/wasm/media_engine.{js,wasm}` — committed artifacts (gzip budget 200 KB)
+- `src/wasm/mediaEngine.ts` — `openTimelineMixStream` (chunked; uploads only the source frames each chunk reads, each chunk in one `withHeap` scope, acquires/releases clip PCM lazily), `mixTimelineAudio` (whole buffer); lazy load, graceful disable
+- `src/utils/webcodecs-audio.ts` — `encodeScheduleAudioStreaming` feeds chunks straight to `AudioEncoder` (no length cap); `renderTimelineAudioMix` prefers WASM; OfflineAudioContext fallback (≤ `MAX_OFFLINE_AUDIO_SECONDS`)
+- Kill switch: `?no_media_engine` (curves and everything else go back to OfflineAudioContext). Debug: `?media_engine_resampler=linear`.
+- Keyframe semantics must match `sampleKeyframes` / `applyGainEnvelope` (`src/audio/gainEnvelope.ts`, the TS twin of `fade_gain` / `Curve` / `Panner`) / `StereoPannerNode`; change both sides together. Packed strides in `audio_mix.h` are mirrored in `mediaEngine.ts`.
+- **Insert effects** (`Clip.audioEffects`, `src/utils/audioEffects.ts`): ≤ 4 RBJ biquads then one compressor per clip (`native/media_engine/src/eq.cpp`, `dynamics.cpp`), after resample and before the volume curve; a look-ahead true-peak **bus limiter** from `ExportSettings.masterLimiter` (off by default). They are effect-block rows (`MIX_FX_STRIDE`) plus four fields on an fx entry (`MIX_ENTRY_FX_STRIDE`, `MIX_FLAG_EFFECTS`; the fourth routes it to a lane bus), run through a stateful `mix_fx_session_*` (contiguous calls from frame 0; the bus reads `mix_fx_session_latency` frames ahead). No enabled block, no bus processing and no limiter → the stream stays on `mix_timeline_audio_range`, byte-identical to before (host test pins it).
+- Preview gets inserts from the same C++: `src/audio/processedAudioCache.ts` runs `insert_chain_*` over a copy of the decoded buffer. Never add `BiquadFilterNode` / `DynamicsCompressorNode`; with the media engine off, inserts are bypassed everywhere. The limiter is export-only. FFmpeg paths premix whenever `timelineNeedsAudioPremix` (automation, inserts, limiter, lane buses, loudness, audio lanes).
+- No pthreads until the mix is multi-threaded by design; COOP/COEP is already paid for FFmpeg.
+
+Do not add more DSP inside `canvas-renderer` or FFmpeg `filter_complex` for mix/fade/resample this engine should own.
+
+## Lane buses, master bus and loudness (media engine)
+
+Every lane that can carry audio is a bus. The bus stage is C++
+(`native/media_engine/src/fx/bus.cpp`, `BusGraph`), run by the export premix
+(`mix_bus_session_create`) and, live, by the preview's AudioWorklet
+(`bus_graph_*` in the glue-free `media_engine_fx.wasm`): one implementation,
+so preview and export process identical samples (a 10 s all-FX chain nulls
+bit for bit in `audioFx.parity.test.ts`).
+
+```
+lane input -> lane chain -> delay compensation -> sidechain duck --+
+direct (unrouted) input -> delay compensation --------------------+-> sum
+sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
+```
+
+- **Model** (`src/utils/audioBus.ts`, pure): `Track.audioFx` (ordered
+  `BusEffect[]`: EQ ≤ 8 bands incl. low-pass, compressor, gate, de-esser,
+  true-peak limiter; ≤ 8 effects), `Track.duck` (absent = the legacy
+  `BED_DUCK_LINEAR` step on audio lanes, `'off'`, or a sidechain duck under
+  another lane), `Project.masterBus` (`fx`, `loudness` target). All optional:
+  no schema bump; coerced on load (malformed effects dropped, fields
+  clamped). Undo: `editorStore.setTrackAudioFx` / `setTrackDuck` /
+  `setMasterBus` push one step (drags coalesce with a key); locked and titles
+  lanes refuse.
+- **Plan** (`src/audio/fxGraph.ts`): packs the lanes in timeline order except
+  that a duck's key lane must come first (the engine runs lanes in packed
+  order, frame by frame); a missing / self / cyclic key drops that duck. Text
+  lanes are not buses. Entries route by `AudioScheduleEntry.trackId`.
+- **Engine rows** (`audio_mix.h`, mirrored in `mediaEngineLayout.ts`):
+  `MIX_FX_STRIDE` 13 (adds HOLD, RANGE_DB, KEY), kinds 7–10 (low-pass, gate,
+  de-esser, ducker), `MIX_BUS_STRIDE` 2, `MIX_ENTRY_FX_BUS`. A ducker row in a
+  lane's range runs after the chain and delay compensation.
+- **Limiter** is true peak: detection on 4× oversampled audio using the
+  mixer's own polyphase sinc (`TruePeakDetector`, 32 frames of delay), a
+  0.05 dB detection margin (ten times the worst overshoot the host battery
+  measures without it), then a sample clamp. Latency = 32 + look-ahead (≥ 32).
+- **Meter** (`src/fx/loudness.cpp`): BS.1770-4 K-weighting at any rate,
+  100 ms grid, momentary / short-term, gated integrated, EBU Tech 3342 LRA,
+  true / sample peak. Readings are chunk-invariant. The graph meters its
+  delivered output (skipping its own priming frames).
+- **Export** (`src/utils/exportAudioBus.ts`, `webcodecs-audio.ts`): with lane
+  FX, ducks, master FX or a loudness target the premix runs the bus graph; a
+  target makes it two passes — meter, then `target − measured` as a static
+  gain plus a true-peak limiter at the target's ceiling (it replaces
+  `ExportSettings.masterLimiter`). `RenderPlan.audioFx` (`engine` /
+  `offline-fallback` / `none`) and `RenderPlan.loudness` report what ran.
+  OfflineAudioContext fallback mixes dry. Auto-caption audio stays pre-bus.
+- **Preview** (`src/audio/busRouting.ts`, `src/wasm/audioFx.ts`,
+  `public/worklets/audio-fx-processor.js`): each lane sums into one input of
+  a bus-graph `AudioWorkletNode` (inputs = lanes + direct, ≤ 32); the main
+  thread compiles `media_engine_fx.wasm` and posts the `WebAssembly.Module`.
+  Parameter edits retune in place (`bus_graph_update`); a lane-set or order
+  change builds a new node and reschedules sources. Without FX (and no LUFS
+  meter open) the graph is not inserted at all. The playhead subtracts the
+  graph's look-ahead. `?no_audio_fx` / a failed load → dry preview with an
+  "FX not previewed" badge; never a `DynamicsCompressorNode` stand-in.
+- **UI** (`src/components/audio/`): lane header **FX** → lane bus dialog
+  (chain editor, "Duck under", gain-reduction meter); Master row FX + **LUFS**
+  meter; Export → **Loudness** target.
+- Every recursive DSP path flushes values below 1e-30 (WASM has no FTZ/DAZ);
+  `silence_after_a_tone_stays_out_of_subnormals` guards it.
+- Not built yet: keyframe automation of bus FX parameters, gate / de-esser on
+  clip inserts, sends / aux buses.
+
+## WebGPU transitions
+
+Transitions are WGSL fragment-shader bodies spliced into one shared template,
+so adding one is a `TransitionDef` object and ~5-20 lines of WGSL.
+
+- `src/webgpu/transitions/shaderTemplate.ts` — the preamble/postamble, the
+  `TransitionUniforms` struct, and the `sampleFrom` / `sampleTo` /
+  `sampleMask` / `sampleMaskLuma` helpers a body may call.
+- `src/webgpu/transitions/registry.ts` — the `TransitionDef` list. Drives the
+  picker (`listTransitionOptions`), the preview pipeline, and the FFmpeg
+  fallback (`getXfadeName`).
+- `src/webgpu/transitions/transitionPass.ts` — pipeline cache (one pipeline
+  per transition id, LRU-capped), uniform packing, and the wipe-mask texture.
+- `src/webgpu/transitions/customShader.ts` — the parametric "Custom (WGSL)"
+  transition: validation, content-addressed registration, sandboxed compile.
+- `src/components/TransitionEditor.tsx` — type picker, per-transition params,
+  and the custom-WGSL textarea.
+
+Adding a transition:
+
+1. Write the WGSL body. It must assign `result` (a `vec4<f32>`) and may read
+   `uv`, `u.progress`, `u.resolutionX/Y`, and `u.custom0`-`u.custom3`.
+2. Add a `TransitionDef` to `REGISTRY_LIST` with a stable `id`, a `label`, a
+   `description` (the picker tooltip), and an `xfadeName`.
+3. Expose tunables as `params` — they map **positionally** to `custom0`-`custom3`
+   (`resolveCustomUniforms`), so slot order is the array order. The editor
+   renders a number input per entry automatically.
+4. Add a smoke-render case to `registry.test.ts`.
+
+Two things to keep in mind:
+
+1. **`xfadeName` is not decoration.** Export only uses the WGSL when the
+   WebGPU path runs; `buildTransitionFilterComplex` falls back to FFmpeg's
+   `xfade` for the CPU path, so every transition needs the closest real xfade
+   name. There is no "unsupported transition" error — a missing entry silently
+   exports as a plain `fade`.
+2. **Custom shaders are user input.** The WGSL a user types is only ever
+   spliced into the single `result = (...)` slot, and `validateCustomExpression`
+   rejects the syntax that would let it escape (statements, comments,
+   attributes, declarations, control flow). Keep that check in front of any new
+   path that compiles a user expression. Invalid WGSL falls back to the base
+   `custom` dissolve rather than throwing, so live typing never breaks playback.
+
+The `lumaWipe` boundary comes from a mask texture bound at
+`@group(0) @binding(4)`, never from clip content, so an HDR (>1.0) source
+can't push the wipe threshold out of range. The cache ships a procedural
+diagonal ramp; `previewEngine.setTransitionMask(bitmap)` replaces it (upload
+once per project load, as `lutPass` does with LUTs).
+
+## Video stabilization (WASM optical flow)
+
+Camera-shake removal: a native module measures the camera path with sparse
+optical flow, and the correction rides through every render path as a 2x3
+affine. Enabled per clip with the Inspector's **Stabilize** toggle.
+
+### Layout
+
+- `native/video_stabilize/` — C++ source (no vendored deps); rebuild with
+  `npm run build:video-stabilize` (requires `emcc`). See its README for the
+  algorithm and the matrix convention.
+- `public/wasm/video_stabilize.{js,wasm}` — committed build artifacts (~16 KB gzipped)
+- `src/wasm/videoStabilize.ts` — lazy loader + typed bindings (graceful disable on load failure)
+- `src/utils/stabilizePipeline.ts` — decode → downscale → analyse; `computeAnalysisPlan` picks the resolution and sampling rate
+- `src/utils/stabilization.ts` — pure helpers: sampling, pixel-affine conversion, `.trf` serialization
+- `src/hooks/useClipStabilization.ts` — runs analysis once per toggled-on clip in the background
+- `src/webgpu/shaders/preview.wgsl` — `applyLayerWarp()` on the source UV (the matrix is composed with the picture transform first — see *Clip picture transform* below)
+- `src/webgpu/transitions/shaderTemplate.ts` — the same warp inside `sampleFrom`/`sampleTo`
+- `src/utils/canvas-renderer-layers.ts` — the Canvas2D equivalent via `ctx.transform`
+
+### The matrix is an inverse warp in normalized UV
+
+`[a, b, tx, c, d, ty]` maps an **output** UV to the **source** UV it should
+sample, about the frame centre, with aspect and auto-crop already folded in.
+That is what lets one array serve the preview, GPU export, and canvas export at
+different resolutions. The CPU paths invert it (`stabMatrixToCanvasTransform`)
+because `drawImage` pushes pixels the other way. Identity is `[1,0,0,0,1,0]`,
+and every unstabilized path passes exactly that.
+
+### Four things to keep in mind
+
+1. **Analysis covers the whole source, never the trim window.** Matrix index
+   maps directly to source time, so dragging a trim handle costs nothing.
+   Scoping analysis to the trim would mean re-running optical flow on every
+   trim edit — the most frequent edit there is.
+2. **The matrices are not serialized.** Only `SerializedClip.stabilize` (the
+   toggle) round-trips; a 60 s clip's matrices are tens of KB and are fully
+   derived from the source. `useClipStabilization` refills them on load, which
+   is why a freshly loaded project shows "Analysing camera motion…" again.
+3. **Stabilization must be applied in the transition shader too.** It lives in
+   `sampleFrom`/`sampleTo`, not in a transition body, because otherwise a
+   stabilized clip snaps back to shaky for the length of every crossfade. Any
+   new render path that samples clip pixels needs the same treatment.
+4. **Analysis is two-phase and the smoother is centred.** Nothing is knowable
+   until `finalize()`; `getMatrix` before that returns identity by design, not
+   as an error. Do not try to make it streaming.
+
+### FFmpeg export
+
+`serializeTrf` / `buildVidstabTransformFilter` produce a `vidstabtransform`
+input file, but **`@ffmpeg/core` is not built with libvidstab**, so that path
+only works against a custom core. The shipped export paths warp on the GPU
+(WebGPU export reuses the preview renderer) or through the Canvas2D transform,
+which is why stabilization survives whichever encoder `hybridMergeClips` picks.
+
+## Clip picture transform (rotation / scale / anchor)
+
+One inverse 2x3 per layer sample. `src/utils/clipTransform.ts` composes the
+stabilization matrix with the authored picture transform into a single
+`warpMatrix` in the layer rect's centred UV — the same `[a, b, tx, c, d, ty]`
+convention as stabilization. Preview, GPU export, transitions and Canvas2D all
+consume that one array; identity is still `[1, 0, 0, 0, 1, 0]`, and a plain
+layer carries no warp fields at all.
+
+- **Authoring.** `rotation` (degrees, clockwise), `scaleX` / `scaleY`,
+  `anchorX` / `anchorY` (pivot, 0–1 of the rect) are keyframe-only lanes on
+  `ClipAnimatableProp`; an omitted lane is identity, so old projects do not
+  move and no schema bump was needed. `x` / `y` / `width` / `height` remain
+  the rect letterboxing and PiP use; the transform moves the picture within
+  it. Sampled by `resolveAnimatedPictureTransform` (`animatedLayout.ts`);
+  `setPictureTransformValue` is the one edit helper (Inspector fields and the
+  preview's round rotate handle).
+- **Multiply order.** Stabilize first, then the authored move — as an inverse
+  lookup, `warp = stab ∘ picture⁻¹` (`composeLayerWarp`). The forward matrix
+  is built in pixels and normalized back, so rotation stays rigid on a
+  non-square rect.
+- **Leaving the rect.** When the authored transform is not identity the layer
+  also carries `pictureMatrix` (forward). The preview shader then rasterizes
+  `pictureBounds` instead of the dest rect and masks samples outside the
+  picture (`warpMask`, 1 px fwidth edge); the transition template masks per
+  side with a hard edge (bodies may sample from non-uniform control flow).
+  Stabilization alone keeps its clamp-to-edge.
+- **Canvas2D** applies `stabMatrixToCanvasTransform(warpMatrix)` over the
+  layer rect when a picture transform is present (the inner letterbox rect
+  otherwise, as before).
+- **Base-lane rects.** Transform lanes are not layout lanes
+  (`clipHasLayoutKeyframes`), so rotating a base clip does not shrink its rect
+  to the source size.
+- **FFmpeg fallback.** `scale` + `rotate` only (`buildFfmpegPictureFilters`,
+  `buildFfmpegFramePictureFilters`), routed through the compositing graph,
+  at the first keyframe. `RenderPlan.pictureTransform` records `gpu` vs
+  `ffmpeg`, and `pictureTransformGaps` lists what FFmpeg loses — notably the
+  stabilization warp on a rotated clip (no libvidstab). The MediaRecorder
+  canvas encoder is demoted for transformed clips rather than dropping them.
+- **Not here.** Morph (RIFE) transition segments are drawn unwarped. Nested
+  sequences, corner-pin and crop should add rows to this warp, not a new
+  layout language.
+
 ## gpu-chores (import / library pixel work)
 
 TypedArray image chores for clip import and library UX — luminance histogram, downsample-for-thumbs, optional blur. This is **not** FFmpeg encode/decode, **not** kissfft audio analysis, and **not** the WebGPU preview compositor (#114 / #118 / #187).
@@ -102,28 +818,120 @@ TypedArray image chores for clip import and library UX — luminance histogram, 
 ### Layout
 
 - `src/gpu-chores/` — local stub of the shared `runJob({ op, prefer: 'auto' })` API
-- Kernels: `luma_histogram_bt709` (256-bin Rec.709, Chromashift-compatible), `downsample_2d` (bilinear thumbs), `separable_blur` (UI soft masks)
+- Kernels: `luma_histogram_bt709` (256-bin Rec.709, Chromashift-compatible), `vectorscope_uv` (128² Rec.709 CbCr scatter, CPU golden in `cpu/vectorscope.ts`), `downsample_2d` (bilinear thumbs), `separable_blur` (UI soft masks)
 - Backend order: adopt the **existing** preview `GPUDevice` (never `requestDevice()` from chores). If that device lives in the OffscreenCanvas preview worker, main thread posts an `ImageBitmap` (`chore-jobs`) and reads back aggregates only. Then chores Worker (TS golden) → main-thread TS. WebGL2 is not used (one GPU API per working set).
-- Break-even: GPU only at ≥ 1 megapixel (`prefer: 'auto'`). Small stills stay CPU. Kill switch: `?no_gpu_compute`.
+- Break-even: GPU only at ≥ 1 megapixel (`prefer: 'auto'`); `vectorscope_uv` shares the histogram threshold (one atomic add per pixel, ≤ 64 KiB readback). Small stills stay CPU. Kill switch: `?no_gpu_compute`.
+- `GpuChoreJob.texture` passes an **already-resident** `GPUTexture` (the preview scopes' copy of the composed frame) instead of uploading pixels. WebGPU-only, borrowed — `runWebGpuJob` never destroys a caller-supplied texture.
 - Diagnostics: `gpuComputeAvailable()` / `formatGpuChoreDiagnostics()` (inspector + Copy Debug). **WebGPU is required for GPU preview**; a failed adapter/device probe hard-fails the preview pane (Canvas2D is not the GPU fallback). Chores never `requestDevice()` after a failed probe.
 
 Do not keep a second WebGL context for histograms. Keep COOP/COEP and the production CSP unchanged (workers already allowed via `worker-src 'self' blob:`).
 
+## Live preview frame sourcing and scopes
+
+The preview worker decodes its own frames. Main never seeks a hidden `<video>` on the happy path.
+
+**One preview stack.** Any timeline with a video clip — a single clip
+included — previews through `TimelineCompositorPreview`, the same composition
+plan export draws (titles, captions, stabilization, finishing). There is no
+separate single-clip preview; only an audio-only selection gets a plain
+`<audio>` player. The playhead is always **output** time — convert with
+`resolveClipOutputWindow` / `sourceTimeAtOutputLocal` before treating it as a
+source timestamp (Split does).
+
+**GPU devices are per realm.** `gpuDevice.ts` shares one device per JS realm:
+main (export, text fill, main-thread preview fallback) and the preview worker
+each own one. The worker forwards `gpu-error` / `gpu-lost` / `gpu-recovered` /
+`gpu-recovery-failed`; main logs them via `recordRemoteGpuError` (Copy Debug
+tags the realm) and the preview follows its compositor's `onDeviceState`,
+never main's `onGpuDeviceLost`.
+
+### Decoder-backed preview (`src/webgpu/`)
+
+- `previewDecoderSource.ts` — worker-side `PreviewDecoderSource`. Main transfers each clip's `File` once (`clip-media`, structured-cloneable by reference — no byte copy); the worker opens one forward-only `DecoderFrameCursor` per **active** layer (`clipId::role::mediaObjectUrl`), exactly like GPU export.
+- `src/utils/decoderCursorPool.ts` — the shared cursor lifecycle: backward jump (> 1/60 s) closes and reopens from the previous sync sample, an exhausted cursor is freed immediately, and live cursors are hard-capped at `DEFAULT_MAX_DECODER_CURSORS` (8), matching `ClipMediaPool`. **Both** `TimelineDecoderFrameProvider` (export) and `PreviewDecoderSource` (preview) use it, so the two paths cannot drift apart again.
+- Per-layer fallback is per-layer, not global: stills, non-video clips, RIFE morph segments (their own blob URL) and anything mp4box cannot demux (WebM/alpha) come back in `need-frames` and are captured from the `<video>` pool as before. A render whose `fallback` list is empty never round-trips to main at all.
+- `render-complete` carries `frameSources: { decoder, element }`, mirrored into `previewMetrics`. `element > 0` during scrub means some layer still needs `HTMLVideoElement.currentTime`.
+- Feature detection + escape hatch: `previewDecodeFlags.ts`. `?legacy_preview_video` forces the old path (resolved on **main** and passed in `init` — a worker's `location.search` is the worker script's URL, not the page's).
+
+**Measuring scrub long tasks.** No headless harness runs WebGPU in CI, so this is a manual protocol: open a 1080p multi-layer project, record a Performance profile while dragging the timeline scrubber for ~10 s, and compare `?legacy_preview_video` against the default. On the decoder path the main thread should show no `video.currentTime` / `seeked` work and no task > 50 ms; `previewMetrics.snapshot()` reports `elementSourcedLayers: 0` and the rolling frame/seek times.
+
+### Scopes (waveform + vectorscope)
+
+- Off by default (each enabled scope is a compute dispatch plus a readback per composed frame). Toggles live in the preview controls; `set-scopes` tells the worker, which posts a `scopes` message with the bins.
+- `PreviewEngine.captureScopeTexture()` copies the composed canvas texture into a private offscreen texture (`COPY_DST | TEXTURE_BINDING`) and hands it to gpu-chores. The canvas configuration stays swapchain-only (`RENDER_ATTACHMENT | COPY_SRC`) — scopes never bind or copy *into* it. The copy must happen in the same task as the render that drew the frame.
+- Kernels are ordinary gpu-chores ops, so `?no_gpu_compute` disables them and the CPU goldens (`lumaHistogramBt709`, `vectorscopeUv`) are the reference in tests.
+- `src/components/PreviewScopes.tsx` draws both from the bins; a failed scope readback is logged and dropped, never failing the frame.
+
+## Preview proxies
+
+A proxy is a 960p H.264 mezzanine that preview reads instead of a big camera
+file. Export never reads it.
+
+- `src/utils/proxyMedia.ts` — `PROXY_PROFILE` (a constant, not a codec panel),
+  `planProxy`, `proxyDimensions`, `ProxyFrameSelector` (caps at 30 fps without
+  inventing frames), `proxyStoreKey(sourceHash, profile)`,
+  `resolvePreviewMedia` (proxy vs original for one clip). Pure.
+- `src/utils/proxyEncoder.ts` — `encodeProxy`: `ClipFrameDecoder` → canvas
+  blit → `VideoEncoder` → `Mp4Writer` (Mediabunny, `src/utils/container/`).
+  Source timestamps are kept, so a proxy cursor opened on a trim window lands
+  on the same source times. No FFmpeg.
+- `src/utils/mediaStore.ts` — the async `MediaStore` interface and
+  `fingerprintMedia`. **In-memory only until #279** swaps in OPFS/IndexedDB
+  (`setMediaStore`); nothing here survives a reload yet.
+- `src/store/proxyStore.ts` — runtime state: the toggle, the build queue,
+  per-clip progress/errors, and ready blobs keyed by store key (a split shares
+  one proxy).
+- `src/hooks/useProxyBuilder.ts` — the queue (one at a time, cancelled when the
+  clip leaves) and `ProxyReconciler` (evict + delete when no clip references a
+  key; an undo writes a recently evicted blob back).
+- Preview: `PreviewWorkerAdapter.sendClipMedia` resolves each clip and re-sends
+  when the resolved blob changes; the worker's `PreviewDecoderSource` tags it
+  `proxy`/`original`, and `render-complete.frameSources.proxy` lands in
+  `previewMetrics` as `proxySourcedLayers` / `originalSourcedLayers`.
+- Stabilization: `useClipStabilization` passes the proxy as
+  `StabilizeOptions.source`. The plan is still sized from the original's
+  dimensions and matrices are normalized UV, so export never re-analyses.
+
+Never route a proxy into `TimelineDecoderFrameProvider`, the FFmpeg paths or
+the canvas export. `Clip.proxy` is the only serialized part; replacing a
+clip's `file` (RIFE) must clear it.
+
+## WebCodecs codec ladder
+
+Never hard-code `hardwareAcceleration: 'prefer-hardware'` — Chrome treats it as
+*require hardware*. Encode probes `ENCODER_ACCELERATION_LADDER`
+(`prefer-hardware` → `no-preference`), decode `DECODER_ACCELERATION_LADDER`
+(adds `prefer-software`); `resolveEncoderCodec` only returns a config
+`isConfigSupported` accepted and otherwise throws `NoSupportedEncoderError`, so
+`hybridMergeClips` falls back to FFmpeg. The winning rung is in
+`RenderPlan.videoEncoder` and Copy Debug. HEVC / AV1 codec strings are sized by
+resolution (`hevcCodecString` / `av1CodecString`). Every encode loop closes
+its frames in a `finally` (`encodeAndClose`) and waits on the codec queue with
+`waitForQueueBelow` (`src/utils/codecQueue.ts`), which rejects when the codec
+closes or stalls instead of hanging.
+
+MP4 muxing goes through `Mp4Writer` (`src/utils/container/`), the only module
+that imports Mediabunny (it replaced the deprecated `mp4-muxer`). Its `add*`
+calls are synchronous so codec output callbacks can feed it; they queue onto
+Mediabunny's async API in call order, a failed add is held and rethrown by
+`await finalize()` (call `throwIfFailed()` in long encode loops), and each
+track is offset so its first packet is at 0. Export, the silent AAC unit and
+preview proxies all use it.
+
 ## Variable speed remapping (time stretch)
 
-`automation.playbackRate` keyframes (existing `Keyframe` type — output-local seconds) remap timeline time to source time via ∫ rate(τ) dτ (`src/utils/timeRemap.ts`). Preview video samples frames at the remapped `sourceTime`; audio is pitch-preserved with a small WSOLA WASM module (not SoundTouch / LGPL).
+`automation.playbackRate` keyframes (existing `Keyframe` type — output-local seconds) remap timeline time to source time via ∫ rate(τ) dτ (`src/utils/timeRemap.ts`). Preview video samples frames at the remapped `sourceTime`; audio is pitch-preserved with WSOLA in the media engine (not SoundTouch / LGPL).
 
 ### Layout
 
-- `native/time_stretch/` — C++ WSOLA remap; rebuild with `npm run build:time-stretch` (requires `em++`)
-- `public/wasm/time_stretch.{js,wasm}` — committed build artifacts
-- `public/worklets/time-stretch-processor.js` — AudioWorklet for live constant-tempo stretch
-- `src/wasm/timeStretch.ts` + `timeStretchWorklet.ts` — lazy WASM / worklet bindings (JS OLA fallback)
+- `native/media_engine/src/time_stretch.cpp` — `time_stretch_remap`: one f64 source offset per synthesis hop (`TIME_STRETCH_HOP` = 512, `2 * hop` periodic-Hann segments at 50% overlap). Each segment's start may move ±`tolerance` (default `hop / 2`) to where its first half best matches (normalized cross-correlation, coarse-to-fine) the natural continuation of the previous segment, so overlaps add in phase. Fractional starts read through the mixer's polyphase sinc (`sinc_prepare` / `sinc_read`); whole-frame starts copy, so rate 1 is bit-exact. One module, one heap with the mixer
+- `src/wasm/timeStretch.ts` — `wasmRemapPlanar` (via `withHeap`; null when the media engine is unavailable, `?no_media_engine` is set, or the heap is full)
+- `src/utils/remapAudio.ts` + `remappedAudioCache.ts` — curve → remapped `AudioBuffer` for schedule / export premix; f64 offsets (`buildSourceOffsetMap`); a null or a trap from the WASM path falls back to the JS overlap-add in `remapAudio.ts`. There is no live (AudioWorklet) stretch: preview and export both play the remapped buffer
 - `src/utils/remapAudio.ts` + `remappedAudioCache.ts` — curve → remapped `AudioBuffer` for schedule / export premix
 - `src/components/SpeedAutomationLane.tsx` — Cubase-style lane under the selected timeline clip
 - Inspector **Speed (time remap)** `KeyframeMiniEditor` — same lane as volume/pan
 
-When `playbackRate` automation is present, FFmpeg export uses the OfflineAudioContext premix path (same as volume/pan). Constant `clip.playbackRate` without a curve still uses `setpts` + chained `atempo`.
+When `playbackRate` automation is present, FFmpeg export uses the premix path (same as volume/pan: media-engine WASM when loaded, else OfflineAudioContext). Constant `clip.playbackRate` without a curve still uses `setpts` + chained `atempo` on the FFmpeg video path; export audio premix may use media-engine WASM (polyphase resample) when the module loads.
 
 ## Intercut generator (local FFmpeg)
 
@@ -137,5 +945,15 @@ Library macro that alternates two or three clips at a configurable (accelerating
 - `targetDuration` (default) — fill `automation.totalDurationSec` (plus optional `tailDurationSec` on the landing clip).
 - `entireSources` — drain the material budget: freezeHidden → sum of source lengths; parallel → max of source lengths.
 
-`forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. `src/ffmpeg/intercutGenerator.ts` writes VFS files, optionally normalizes mismatched resolution/fps/codec, concatenates, then applies audio policy (`both` / `aOnly` / `silent`). Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz. Stream copy only when every slice is ≥ `INTERCUT_MIN_STREAM_COPY_SLICE_SEC` (0.5s). UI: `IntercutModal` from Clip Library **Create Intercut Clip** (optional Clip C cycles A → B → C).
+`automation.sliceIntervalsSec` (optional):
+- Explicit hold durations (seconds) per slice, e.g. `2, 1, 1, 2, 3, 2`.
+- When set, slice lengths follow this list (cycled as needed) and override Hz ramp / beat-sync timing.
 
+`forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz.
+
+Rendering (`src/ffmpeg/intercutGenerator.ts` + `src/utils/intercutRender.ts`; the pure argv builders are in `src/ffmpeg/intercutArgs.ts`) does **not** use the concat demuxer. Its `inpoint`/`outpoint` is packet-granular: each cut pulled in the GOP before the inpoint and the AAC frames around it, so the picture ran long and `+genpts` stacked dozens of audio packets on one timestamp at every cut (audibly out of sync, worse as the strobe sped up). Instead:
+
+1. `quantizeIntercutSlices` snaps slices (relative to each trim start) to a 30 fps output grid from cumulative time, so rounding never drifts; one source's slices never share a frame.
+2. Picture: one `filter_complex` — per source `fps=30` → `select` (source frame ranges) → `setpts` (output frame numbers) → scale/pad — merged with `interleave`. Mixed resolution / fps / stills are handled in-graph; there is no separate normalize pass.
+3. Sound: each audible source is decoded once to 16-bit PCM from its trim start (`aresample=async=1:first_pts=0`), then `assembleIntercutAudio` splices it in JS at `frame × 1470` samples (44100 / 30) with a 5 ms equal-power crossfade per cut. `aOnly` is A's continuous track; `silent` is zeros. `steadyStreams` does not splice: each source plays from its trim start for the whole output (silence-padded), muxed as its own AAC track (`A — title`, …) plus an equal-power mix (`1/sqrt(n)`) as the default track so the library player hears every bed. Length is always exactly `totalFrames` of audio.
+4. One encode muxes both with `-frames:v totalFrames`; always a re-encode. UI: `IntercutModal` from Clip Library **Create Intercut Clip** (optional Clip C cycles A → B → C).

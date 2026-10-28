@@ -121,6 +121,38 @@ describe('editorStore', () => {
     }
   });
 
+  it('resetHistory revokes master-audio URLs nothing can reach any more', () => {
+    const master = (url: string) => ({
+      file: new File(['a'], `${url}.wav`, { type: 'audio/wav' }),
+      objectUrl: url,
+      fileName: `${url}.wav`,
+      duration: 4,
+      startTime: 0,
+    });
+    const { setMasterAudio, pushHistory, resetHistory } = editorStore.getState();
+    setMasterAudio(master('blob:old-master'));
+    pushHistory();
+    // Removed but still undoable — must not be revoked yet.
+    setMasterAudio(null);
+    expect(URL.revokeObjectURL).not.toHaveBeenCalled();
+
+    resetHistory({
+      clips: [],
+      tracks: createDefaultTracks(),
+      clipGroups: [],
+      transitions: [],
+      textOverlays: [],
+      captions: [],
+      captionStyle: {},
+      masterAudioMarkers: [],
+      selectedClipId: null,
+      masterAudio: master('blob:loaded-master'),
+    });
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:old-master');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:loaded-master');
+  });
+
   it('resetHistory replaces state and clears the undo/redo stacks', () => {
     const { setClips, pushHistory, resetHistory } = editorStore.getState();
     setClips([makeClip('a')]);
@@ -134,6 +166,8 @@ describe('editorStore', () => {
       clipGroups: [],
       transitions: [],
       textOverlays: [],
+      captions: [],
+      captionStyle: {},
       masterAudioMarkers: [],
       selectedClipId: 'z',
       masterAudio: null,
@@ -225,5 +259,83 @@ describe('editorStore', () => {
       editorActions.setClips([makeClip('a')]);
       expect(editorStore.getState().clips.map((c) => c.id)).toEqual(['a']);
     });
+  });
+});
+
+describe('lane chrome actions (#168 Phase A)', () => {
+  beforeEach(() => {
+    __resetEditorStoreForTests();
+  });
+
+  it('adds a video lane and undoes it in one step', () => {
+    const before = editorStore.getState().tracks.filter((t) => t.kind === 'video').length;
+    editorActions.addTrack('video');
+
+    const tracks = editorStore.getState().tracks;
+    expect(tracks.filter((t) => t.kind === 'video').length).toBe(before + 1);
+    expect(editorStore.getState().undoDepth).toBe(1);
+
+    editorActions.undo();
+    expect(
+      editorStore.getState().tracks.filter((t) => t.kind === 'video').length,
+    ).toBe(before);
+  });
+
+  it('adds audio and titles lanes', () => {
+    editorActions.addTrack('audio');
+    editorActions.addTrack('text');
+    const tracks = editorStore.getState().tracks;
+    expect(tracks.filter((t) => t.kind === 'audio').length).toBe(2);
+    expect(tracks.filter((t) => t.kind === 'text').length).toBe(1);
+  });
+
+  it('toggles mute and lock, each as its own undo step', () => {
+    const [main] = editorStore.getState().tracks;
+
+    editorActions.toggleTrackMuted(main.id);
+    expect(editorStore.getState().tracks[0].muted).toBe(true);
+    editorActions.toggleTrackLocked(main.id);
+    expect(editorStore.getState().tracks[0].locked).toBe(true);
+
+    editorActions.undo();
+    expect(editorStore.getState().tracks[0].locked).toBeUndefined();
+    expect(editorStore.getState().tracks[0].muted).toBe(true);
+
+    editorActions.toggleTrackMuted(main.id);
+    expect(editorStore.getState().tracks[0].muted).toBeUndefined();
+  });
+
+  it('refuses to remove the main video lane and records no history for it', () => {
+    const main = editorStore.getState().tracks[0];
+    editorActions.removeTrack(main.id);
+    expect(editorStore.getState().tracks[0].id).toBe(main.id);
+    expect(editorStore.getState().undoDepth).toBe(0);
+  });
+
+  it('removes an overlay lane and restores it on undo', () => {
+    const overlay = editorStore.getState().tracks[1];
+    editorActions.removeTrack(overlay.id);
+    expect(editorStore.getState().tracks.some((t) => t.id === overlay.id)).toBe(false);
+
+    editorActions.undo();
+    expect(editorStore.getState().tracks.some((t) => t.id === overlay.id)).toBe(true);
+  });
+
+  it('clamps lane height and renames a lane', () => {
+    const [main] = editorStore.getState().tracks;
+    editorActions.setTrackHeight(main.id, 1000);
+    expect(editorStore.getState().tracks[0].height).toBe(160);
+
+    editorActions.renameTrack(main.id, 'Cam A');
+    expect(editorStore.getState().tracks[0].label).toBe('Cam A');
+  });
+
+  it('ignores actions for an unknown lane id', () => {
+    const before = editorStore.getState().tracks;
+    editorActions.toggleTrackMuted('nope');
+    editorActions.toggleTrackLocked('nope');
+    editorActions.removeTrack('nope');
+    expect(editorStore.getState().tracks).toBe(before);
+    expect(editorStore.getState().undoDepth).toBe(0);
   });
 });

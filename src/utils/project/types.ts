@@ -1,6 +1,17 @@
-import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track, SyncMarker } from '../../types';
+import type {
+  CaptionEntry,
+  Clip,
+  ClipGroup,
+  ClipTransition,
+  MasterAudio,
+  TextOverlay,
+  TextOverlayStyle,
+  Track,
+  SyncMarker,
+} from '../../types';
 import type { ColorGradeSettings } from '../lut';
 import type { FinishingSettings } from '../finishing';
+import type { ColorManagementSettings } from '../colorManagement';
 
 export interface RemoteUploadProgressEvent {
   clipId: string;
@@ -27,10 +38,17 @@ export interface AppliedProjectData {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
+  /** Caption cues restored from the project (empty when it predates captions). */
+  captions: CaptionEntry[];
+  /** Project-wide caption style overrides (empty when unset). */
+  captionStyle: Partial<TextOverlayStyle>;
   masterAudio: MasterAudio | null;
   masterAudioMarkers: SyncMarker[];
+  /** Master bus FX / loudness target; undefined when the project has none. */
+  masterBus: import('../audioBus').MasterBusSettings | undefined;
   colorGrade: ColorGradeSettings;
   finishing: FinishingSettings;
+  colorManagement: ColorManagementSettings;
   skippedClipCount: number;
   skippedClipFileNames: string[];
   /** Human-readable descriptions of invalid color values that were reset to defaults. */

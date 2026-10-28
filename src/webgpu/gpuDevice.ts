@@ -1,11 +1,18 @@
 /**
- * Shared WebGPU device registry.
+ * Shared WebGPU device registry — one per JS realm.
  *
  * Every subsystem that needs a `GPUDevice` (live preview, GPU export, text
  * fill, LUT) previously called `navigator.gpu.requestAdapter()` /
  * `requestDevice()` independently, creating one physical GPU device per
  * subsystem. This module is the single place that owns adapter/device
- * acquisition so the whole app shares one device under typical use:
+ * acquisition, so every subsystem *in one realm* shares one device:
+ *
+ * - **main** — GPU export, text fill, the main-thread preview fallback, and
+ *   the startup probe.
+ * - **preview worker** — its own module instance, so its own device. Its
+ *   losses and errors never reach main's listeners; the worker forwards them
+ *   (`gpu-lost` / `gpu-error` messages) and main records them with
+ *   {@link recordRemoteGpuError} so Copy Debug shows both realms.
  *
  *   const ctx = await acquireGpuContext();
  *   const pipeline = ctx.device.createRenderPipeline(...);
@@ -24,32 +31,66 @@
 
 export type GpuErrorType = 'validation' | 'out-of-memory' | 'internal' | 'lost';
 
+/** Which JS realm's device an error came from. */
+export type GpuRealm = 'main' | 'preview-worker';
+
 export interface GpuErrorLogEntry {
   type: GpuErrorType;
   message: string;
   timestamp: number;
+  /** Omitted for this realm's own entries (read as `main` on the main thread). */
+  realm?: GpuRealm;
 }
 
 export interface GpuContext {
   readonly adapter: GPUAdapter;
   readonly device: GPUDevice;
   readonly format: GPUTextureFormat;
+  /**
+   * Optional GPU features actually adopted on this device (subset of
+   * {@link DESIRED_OPTIONAL_FEATURES} that this adapter supports). Always
+   * check `features.has(...)` before using a feature-gated code path —
+   * these are best-effort and commonly absent on Safari/Firefox.
+   */
+  readonly features: Set<GPUFeatureName>;
   /** Returns this context if still live, otherwise acquires a fresh one. */
   ensure(): Promise<GpuContext>;
   /** Destroys the underlying device. Only call this if you truly own the app's GPU lifecycle (e.g. tests). */
   destroy(): void;
 }
 
+/** Device/queue labels so `about:gpu` and PIX-style captures read clearly. */
+const GPU_DEVICE_LABEL = 'clip_stacker-preview';
+const GPU_QUEUE_LABEL = 'clip_stacker-preview-queue';
+
 /**
- * Limits we'd like beyond the WebGPU defaults, sized for up to 4K export
- * (3840×2160). Each is clamped to what the adapter actually reports —
- * requesting more than `adapter.limits.<key>` throws, so we never ask for
- * more than the hardware advertises.
+ * Limits we'd like beyond the WebGPU defaults, sized for up to 8K export
+ * (7680×4320) and large 3D LUT textures. Each is clamped to what the
+ * adapter actually reports — requesting more than `adapter.limits.<key>`
+ * throws, so we never ask for more than the hardware advertises.
  */
 const DESIRED_LIMITS: Record<string, number> = {
-  maxTextureDimension2D: 4096,
-  maxBufferSize: 256 * 1024 * 1024,
+  maxTextureDimension2D: 16384,
+  maxBufferSize: 512 * 1024 * 1024,
+  maxStorageBufferBindingSize: 512 * 1024 * 1024,
+  maxColorAttachmentBytesPerSample: 64,
 };
+
+/**
+ * Optional features adopted when the adapter supports them, and otherwise
+ * silently skipped — never passed as a hard requirement, so an adapter
+ * missing one (Safari, Firefox, older Chrome) still boots. Callers check
+ * `GpuContext.features` before relying on any of these.
+ */
+const DESIRED_OPTIONAL_FEATURES: GPUFeatureName[] = [
+  'timestamp-query',
+  'float32-filterable',
+  'bgra8unorm-storage',
+  'rg11b10ufloat-renderable',
+  'dual-source-blending',
+  // Optional half-precision math for the color-transform pass. Never required.
+  'shader-f16' as GPUFeatureName,
+];
 
 function resolveRequiredLimits(adapter: GPUAdapter): Record<string, number> {
   const limits = adapter.limits as unknown as Record<string, number>;
@@ -63,15 +104,41 @@ function resolveRequiredLimits(adapter: GPUAdapter): Record<string, number> {
   return required;
 }
 
+function resolveOptionalFeatures(adapter: GPUAdapter): GPUFeatureName[] {
+  return DESIRED_OPTIONAL_FEATURES.filter((feature) => adapter.features.has(feature));
+}
+
 const MAX_ERROR_LOG = 20;
 const errorLog: GpuErrorLogEntry[] = [];
 
-function recordGpuError(entry: GpuErrorLogEntry): void {
+type GpuErrorListener = (entry: GpuErrorLogEntry) => void;
+const errorListeners = new Set<GpuErrorListener>();
+
+function pushErrorLog(entry: GpuErrorLogEntry): void {
   errorLog.push(entry);
   if (errorLog.length > MAX_ERROR_LOG) errorLog.shift();
 }
 
-/** Recent GPU errors (uncaptured device errors + lost events), newest last. */
+function recordGpuError(entry: GpuErrorLogEntry): void {
+  pushErrorLog(entry);
+  for (const listener of errorListeners) listener(entry);
+}
+
+/**
+ * Log an error another realm's device reported (the preview worker forwards
+ * its own). Listeners are not notified — they observe this realm's device.
+ */
+export function recordRemoteGpuError(entry: GpuErrorLogEntry & { realm: GpuRealm }): void {
+  pushErrorLog(entry);
+}
+
+/** Notified for every error this realm's device records, device loss included. */
+export function onGpuError(listener: GpuErrorListener): () => void {
+  errorListeners.add(listener);
+  return () => errorListeners.delete(listener);
+}
+
+/** Recent GPU errors (uncaptured device errors + lost events, every realm), newest last. */
 export function getGpuErrorLog(): GpuErrorLogEntry[] {
   return [...errorLog];
 }
@@ -82,9 +149,11 @@ export function clearGpuErrorLog(): void {
 
 type DeviceLostListener = (info: GPUDeviceLostInfo) => void;
 type DeviceRecoveredListener = (ctx: GpuContext) => void;
+type DeviceRecoveryFailedListener = (error: Error) => void;
 
 const lostListeners = new Set<DeviceLostListener>();
 const recoveredListeners = new Set<DeviceRecoveredListener>();
+const recoveryFailedListeners = new Set<DeviceRecoveryFailedListener>();
 
 /** Notified when the shared device is lost (e.g. GPU process crash, browser reclaim). */
 export function onGpuDeviceLost(listener: DeviceLostListener): () => void {
@@ -98,6 +167,12 @@ export function onGpuDeviceRecovered(listener: DeviceRecoveredListener): () => v
   return () => recoveredListeners.delete(listener);
 }
 
+/** Notified when the automatic recreate after a device loss fails — GPU work is over for now. */
+export function onGpuDeviceRecoveryFailed(listener: DeviceRecoveryFailedListener): () => void {
+  recoveryFailedListeners.add(listener);
+  return () => recoveryFailedListeners.delete(listener);
+}
+
 class GpuContextImpl implements GpuContext {
   private destroyed = false;
 
@@ -105,6 +180,7 @@ class GpuContextImpl implements GpuContext {
     readonly adapter: GPUAdapter,
     readonly device: GPUDevice,
     readonly format: GPUTextureFormat,
+    readonly features: Set<GPUFeatureName>,
   ) {
     void this.device.lost.then((info) => this.handleLost(info));
     this.device.onuncapturederror = (event) => {
@@ -135,8 +211,10 @@ class GpuContextImpl implements GpuContext {
       .then((ctx) => {
         for (const listener of recoveredListeners) listener(ctx);
       })
-      .catch(() => {
-        // Nothing we can do automatically beyond this; surfaced to the next caller.
+      .catch((err: unknown) => {
+        // Nothing more is tried automatically; the next acquire retries.
+        const error = err instanceof Error ? err : new Error(String(err));
+        for (const listener of recoveryFailedListeners) listener(error);
       });
   }
 
@@ -175,12 +253,16 @@ export async function acquireGpuContext(): Promise<GpuContext> {
     });
     if (!adapter) throw new Error('No WebGPU adapter available');
 
+    const optionalFeatures = resolveOptionalFeatures(adapter);
     const device = await adapter.requestDevice({
       requiredLimits: resolveRequiredLimits(adapter),
+      requiredFeatures: optionalFeatures,
+      label: GPU_DEVICE_LABEL,
+      defaultQueue: { label: GPU_QUEUE_LABEL },
     });
     const format = navigator.gpu.getPreferredCanvasFormat();
 
-    const ctx = new GpuContextImpl(adapter, device, format);
+    const ctx = new GpuContextImpl(adapter, device, format, new Set(optionalFeatures));
     current = ctx;
     return ctx;
   })();
@@ -205,11 +287,18 @@ export function peekGpuDevice(): GPUDevice | null {
   return current?.device ?? null;
 }
 
+/** Optional GPU features adopted on the shared device, for diagnostics (Copy Debug). */
+export function peekGpuFeatures(): Set<GPUFeatureName> | null {
+  return current?.features ?? null;
+}
+
 /** Test/dev-only: force the singleton to forget its current device. */
 export function __resetGpuContextForTests(): void {
   current = null;
   pendingAcquire = null;
   errorLog.length = 0;
+  errorListeners.clear();
   lostListeners.clear();
   recoveredListeners.clear();
+  recoveryFailedListeners.clear();
 }

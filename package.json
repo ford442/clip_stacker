@@ -3,19 +3,30 @@
   "version": "1.0.0",
   "description": "Upload, trim, reorder, fade, and merge video clips into one MP4 using FFmpeg WebAssembly",
   "type": "module",
+  "engines": {
+    "node": "^20.19.0 || >=22.12.0"
+  },
   "scripts": {
     "dev": "vite",
-    "build": "vite build && node scripts/utf16-dual-encode.mjs",
+    "build": "vite build && node scripts/check-bundle-size.mjs && node scripts/utf16-dual-encode.mjs",
     "build:utf16": "node scripts/utf16-dual-encode.mjs",
+    "sync:ffmpeg-core": "node scripts/sync-ffmpeg-core.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && python3 deploy.py",
     "deploy:rife-space": "bash scripts/deploy-rife-space.sh",
     "build:audio-analysis": "bash scripts/build-audio-analysis.sh",
-    "build:time-stretch": "bash scripts/build-time-stretch.sh",
+    "build:video-stabilize": "bash scripts/build-video-stabilize.sh",
+    "build:media-engine": "bash scripts/build-media-engine.sh",
+    "build:whisper": "bash scripts/build-whisper.sh",
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "build:wasm:debug": "WASM_DEBUG=1 bash scripts/build-wasm.sh",
+    "test:native": "bash scripts/test-native.sh",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "check:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src"
   },
   "keywords": [
     "video",
@@ -29,22 +40,30 @@
     "@ffmpeg/ffmpeg": "^0.12.10",
     "@ffmpeg/util": "^0.12.1",
     "@tanstack/react-virtual": "^3.14.8",
-    "mp4-muxer": "^5.2.2",
+    "mediabunny": "1.61.4",
     "mp4box": "^2.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
-    "@ffmpeg/core": "^0.12.6",
+    "@eslint/js": "^10.0.1",
+    "@ffmpeg/core": "0.12.10",
+    "@ffmpeg/core-mt": "0.12.10",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
-    "@vitejs/plugin-react": "^4.3.4",
-    "@vitest/ui": "^4.1.7",
+    "@vitejs/plugin-react": "^6.1.2",
+    "@vitest/coverage-v8": "^4.1.11",
+    "@vitest/ui": "^4.1.11",
     "@webgpu/types": "^0.1.70",
+    "eslint": "^10.12.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.13.0",
     "happy-dom": "^20.9.0",
+    "madge": "^8.0.0",
     "typescript": "^5.7.2",
-    "vite": "^5.4.0",
-    "vitest": "^4.1.7"
+    "typescript-eslint": "^8.71.2",
+    "vite": "^8.3.4",
+    "vitest": "^4.1.11"
   }
 }

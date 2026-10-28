@@ -8,6 +8,13 @@ import {
   type PreviewTextLayer,
 } from './previewComposition';
 import { getTimelineClips } from './timelineClips';
+import { customTransitionId } from '../webgpu/transitions/customShader';
+import { getTransitionDef } from '../webgpu/transitions/registry';
+import {
+  buildPictureTransform,
+  composeLayerWarp,
+  IDENTITY_PICTURE_TRANSFORM,
+} from './clipTransform';
 
 function makeClip(
   id: string,
@@ -92,6 +99,27 @@ describe('previewComposition', () => {
       expect(plan.totalDuration).toBeCloseTo(5);
       expect(layers[0].localElapsed).toBeCloseTo(1);
       expect(layers[0].sourceTime).toBeCloseTo(2);
+      // Speed changes which source frame is shown. It does not scale the picture.
+      const at1x = buildPreviewCompositionPlan(
+        [makeClip('a', 10)],
+        [],
+        [],
+        [],
+        undefined,
+        1,
+      );
+      expect(layers[0].rect).toEqual(clipLayers(at1x)[0].rect);
+    });
+
+    it('samples a reversed clip from the end of the trim', () => {
+      const clips = [makeClip('a', 10, { trimStart: 1, trimEnd: 7, reversed: true })];
+      const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0);
+      expect(plan.totalDuration).toBeCloseTo(6);
+      const layers = clipLayers(plan);
+      expect(layers[0].sourceTime).toBeGreaterThan(6.99);
+      expect(layers[0].sourceTime).toBeLessThan(7);
+      const later = buildPreviewCompositionPlan(clips, [], [], [], undefined, 2);
+      expect(clipLayers(later)[0].sourceTime).toBeCloseTo(5);
     });
 
     it('maps sourceTime through a variable rate ramp', () => {
@@ -109,6 +137,40 @@ describe('previewComposition', () => {
       const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 1);
       const layers = clipLayers(plan);
       expect(layers[0].sourceTime).toBeCloseTo(1.5);
+    });
+
+    it('wraps sourceTime back to the trim start at each loop cycle boundary', () => {
+      // 6s trim at 2x → 3s cycle; loopCount 4 → 12s total output.
+      const clips = [
+        makeClip('a', 10, { trimStart: 0, trimEnd: 6, playbackRate: 2, loopCount: 4 }),
+      ];
+
+      const atStart = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0);
+      expect(atStart.totalDuration).toBeCloseTo(12);
+      expect(clipLayers(atStart)[0].sourceTime).toBeCloseTo(0);
+
+      // Start of cycle 2 (global t=3) should read the same source position as t=0.
+      const atCycle2Start = buildPreviewCompositionPlan(clips, [], [], [], undefined, 3);
+      expect(clipLayers(atCycle2Start)[0].sourceTime).toBeCloseTo(0);
+
+      // Mid-way through cycle 2 (global t=3.5, 0.5s into the cycle) mirrors
+      // 0.5s into cycle 1 (global t=0.5): same sourceTime, different localElapsed.
+      const midCycle1 = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0.5);
+      const midCycle2 = buildPreviewCompositionPlan(clips, [], [], [], undefined, 3.5);
+      expect(clipLayers(midCycle2)[0].sourceTime).toBeCloseTo(
+        clipLayers(midCycle1)[0].sourceTime,
+      );
+      expect(clipLayers(midCycle2)[0].localElapsed).toBeCloseTo(3.5);
+    });
+
+    it('loopCount 1 leaves sourceTime mapping unchanged from current behavior', () => {
+      const looped = [makeClip('a', 10, { playbackRate: 2, loopCount: 1 })];
+      const notLooped = [makeClip('a', 10, { playbackRate: 2 })];
+      const planLooped = buildPreviewCompositionPlan(looped, [], [], [], undefined, 1);
+      const planNotLooped = buildPreviewCompositionPlan(notLooped, [], [], [], undefined, 1);
+      expect(clipLayers(planLooped)[0].sourceTime).toBeCloseTo(
+        clipLayers(planNotLooped)[0].sourceTime,
+      );
     });
 
     it('matches sequential FFmpeg order for non-transition stacks', () => {
@@ -146,6 +208,187 @@ describe('previewComposition', () => {
       expect(layers[1].crossfade?.progress).toBeCloseTo(0.5);
       expect(layers[0].opacity).toBeCloseTo(0.5);
       expect(layers[1].opacity).toBeCloseTo(0.5);
+    });
+
+    it('resolves a custom transition to its compiled shader id', () => {
+      const clips = [makeClip('a', 5), makeClip('b', 3)];
+      const expression = 'mix(sampleFrom(uv), sampleTo(uv), u.progress)';
+      const transitions: ClipTransition[] = [
+        {
+          afterClipIndex: 1,
+          type: 'custom',
+          duration: 0.5,
+          customShader: expression,
+        },
+      ];
+      const plan = buildPreviewCompositionPlan(
+        clips,
+        [],
+        transitions,
+        [],
+        undefined,
+        4.75,
+      );
+
+      const layers = clipLayers(plan);
+      // The renderer keys pipelines off this id, not the stored 'custom' type.
+      expect(layers[1].crossfade?.type).toBe(customTransitionId(expression));
+      expect(getTransitionDef(layers[1].crossfade!.type)?.wgslBody).toContain(
+        expression,
+      );
+    });
+
+    it('keeps a half-typed custom shader playable as the base custom id', () => {
+      const clips = [makeClip('a', 5), makeClip('b', 3)];
+      const transitions: ClipTransition[] = [
+        {
+          afterClipIndex: 1,
+          type: 'custom',
+          duration: 0.5,
+          customShader: 'mix(sampleFrom(uv), sampleTo(uv)',
+        },
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
+      expect(clipLayers(plan)[1].crossfade?.type).toBe('custom');
+    });
+
+    it('carries a stabilization matrix onto stabilized clip layers', () => {
+      const stabilization = {
+        fps: 10,
+        matrices: new Float32Array([1, 0, 0, 0, 1, 0, 1, 0, 0.25, 0, 1, 0.5]),
+        frameCount: 2,
+        zoom: 1.1,
+        maxCorrection: 0.5,
+        smoothRadius: 5,
+      };
+      const clips = [makeClip('a', 5, { stabilize: true, stabilization })];
+      // 0.1 s in at 10 fps lands exactly on analysis frame 1.
+      const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0.1);
+      const layer = clipLayers(plan)[0]!;
+      expect(layer.warpMatrix).toBeDefined();
+      expect(layer.warpMatrix![2]).toBeCloseTo(0.25, 5);
+      expect(layer.warpMatrix![5]).toBeCloseTo(0.5, 5);
+    });
+
+    it('omits the matrix entirely when the toggle is off', () => {
+      const stabilization = {
+        fps: 10,
+        matrices: new Float32Array([1, 0, 0.25, 0, 1, 0.5]),
+        frameCount: 1,
+        zoom: 1.1,
+        maxCorrection: 0.5,
+        smoothRadius: 5,
+      };
+      const off = buildPreviewCompositionPlan(
+        [makeClip('a', 5, { stabilize: false, stabilization })],
+        [], [], [], undefined, 0.1,
+      );
+      expect(clipLayers(off)[0]!.warpMatrix).toBeUndefined();
+
+      // Toggled on but not yet analysed: still nothing to apply.
+      const pending = buildPreviewCompositionPlan(
+        [makeClip('a', 5, { stabilize: true })],
+        [], [], [], undefined, 0.1,
+      );
+      expect(clipLayers(pending)[0]!.warpMatrix).toBeUndefined();
+    });
+
+    it('stabilizes both sides through a transition overlap', () => {
+      const stabilization = {
+        fps: 10,
+        matrices: new Float32Array([1, 0, 0.25, 0, 1, 0.5]),
+        frameCount: 1,
+        zoom: 1.1,
+        maxCorrection: 0.5,
+        smoothRadius: 5,
+      };
+      const clips = [
+        makeClip('a', 5, { stabilize: true, stabilization }),
+        makeClip('b', 3, { stabilize: true, stabilization }),
+      ];
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type: 'dissolve', duration: 0.5 },
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
+      const layers = clipLayers(plan);
+      expect(layers).toHaveLength(2);
+      // Both the outgoing and incoming layer must stay corrected, or the
+      // picture snaps back to shaky for the length of the crossfade.
+      expect(layers[0]!.warpMatrix).toBeDefined();
+      expect(layers[1]!.warpMatrix).toBeDefined();
+    });
+
+    it('keeps a rotated base clip full-frame and gives it a composed warp', () => {
+      const clips = [
+        makeClip('a', 5, {
+          videoWidth: 640,
+          videoHeight: 360,
+          keyframes: { rotation: [{ t: 0, value: 90 }] },
+        }),
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 1);
+      const layer = clipLayers(plan)[0]!;
+      // Rotation lanes are not layout lanes: the rect stays the whole canvas
+      // instead of shrinking to the 640x360 source size.
+      expect(layer.rect).toEqual({ x: 0, y: 0, width: plan.canvasWidth, height: plan.canvasHeight });
+      expect(layer.pictureMatrix).toEqual(
+        buildPictureTransform(
+          { ...IDENTITY_PICTURE_TRANSFORM, rotation: Math.PI / 2 },
+          layer.rect,
+          { width: plan.canvasWidth, height: plan.canvasHeight },
+        ),
+      );
+      expect(layer.warpMatrix).toEqual(composeLayerWarp(undefined, layer.pictureMatrix));
+    });
+
+    it('keeps stabilization composed with rotation on both sides of a crossfade', () => {
+      const stabilization = {
+        fps: 10,
+        matrices: new Float32Array([1, 0, 0.25, 0, 1, 0.5]),
+        frameCount: 1,
+        zoom: 1.1,
+        maxCorrection: 0.5,
+        smoothRadius: 5,
+      };
+      const rotated = { rotation: [{ t: 0, value: 30 }] };
+      const clips = [
+        makeClip('a', 5, { stabilize: true, stabilization, keyframes: rotated }),
+        makeClip('b', 3, { stabilize: true, stabilization, keyframes: rotated }),
+      ];
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type: 'dissolve', duration: 0.5 },
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
+      const [outgoing, incoming] = clipLayers(plan);
+      for (const layer of [outgoing!, incoming!]) {
+        expect(layer.crossfade).not.toBeNull();
+        expect(layer.pictureMatrix).toBeDefined();
+        // Not the bare stabilization matrix, and not the bare rotation: the
+        // one composed warp, so nothing snaps back during the overlap.
+        expect(layer.warpMatrix).toEqual(
+          composeLayerWarp([1, 0, 0.25, 0, 1, 0.5], layer.pictureMatrix),
+        );
+      }
+    });
+
+    it('leaves plain layers with no warp fields at all', () => {
+      const plan = buildPreviewCompositionPlan(
+        [makeClip('a', 5), makeClip('b', 5, { layerIndex: 1, width: 0.25, height: 0.25 })],
+        [], [], [], undefined, 1,
+      );
+      for (const layer of clipLayers(plan)) {
+        expect('warpMatrix' in layer).toBe(false);
+        expect('pictureMatrix' in layer).toBe(false);
+      }
+    });
+
+    it('leaves built-in transition types unresolved', () => {
+      const clips = [makeClip('a', 5), makeClip('b', 3)];
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type: 'filmBurn', duration: 0.5 },
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
+      expect(clipLayers(plan)[1].crossfade?.type).toBe('filmBurn');
     });
 
     it('draws PiP overlays above the base layer with a PiP rect', () => {

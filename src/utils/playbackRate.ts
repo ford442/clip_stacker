@@ -84,6 +84,20 @@ export function outputDurationForRate(
   return Math.max(MIN_CLIP_DURATION, trimmedSourceSec / r);
 }
 
+/**
+ * Constant-rate map from a source-relative offset onto output seconds.
+ * `rate` 2 (faster) halves the offset; `rate` 1 is identity. No minimum
+ * duration floor — frame timestamps need the true ratio, including 0.
+ */
+export function constantRateOutputElapsed(
+  sourceElapsedSec: number,
+  rate: number | undefined,
+): number {
+  const r = getClipPlaybackRate(rate);
+  if (!(sourceElapsedSec > 0) || !Number.isFinite(sourceElapsedSec)) return 0;
+  return sourceElapsedSec / r;
+}
+
 export function nudgePlaybackRate(rate: number, delta: number): number {
   return roundPlaybackRate(clampClipPlaybackRate(rate) + delta);
 }
@@ -154,10 +168,40 @@ export function videoSetptsFilter(rate: number): string {
 }
 
 /** Map output-local elapsed → source time for **constant** rate only.
- * Variable curves: use `sourceTimeAtOutputLocal` from `timeRemap.ts`. */
+ * Variable curves: use `sourceTimeAtOutputLocal` from `timeRemap.ts`.
+ * `localElapsed` must already be wrapped into a single cycle — see
+ * `wrapOutputLocalToCycle` in `timeRemap.ts` for looped clips. */
 export function clipSourceTimeAtLocal(
   clip: Pick<Clip, 'trimStart' | 'playbackRate'>,
   localElapsed: number,
 ): number {
   return clip.trimStart + Math.max(0, localElapsed) * getClipPlaybackRate(clip);
+}
+
+// ---------------------------------------------------------------------------
+// Loop count (repeat the remapped cycle N times as one timeline item)
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_CLIP_LOOP_COUNT = 1;
+export const MIN_CLIP_LOOP_COUNT = 1;
+export const MAX_CLIP_LOOP_COUNT = 99;
+
+/** Clamp to a whole number of loops in [MIN_CLIP_LOOP_COUNT, MAX_CLIP_LOOP_COUNT]. */
+export function clampClipLoopCount(count: number | undefined): number {
+  const value = count ?? DEFAULT_CLIP_LOOP_COUNT;
+  if (!Number.isFinite(value) || value < MIN_CLIP_LOOP_COUNT) {
+    return DEFAULT_CLIP_LOOP_COUNT;
+  }
+  return Math.min(MAX_CLIP_LOOP_COUNT, Math.max(MIN_CLIP_LOOP_COUNT, Math.round(value)));
+}
+
+/** Loop count for a clip; 1 when omitted/invalid (old projects behave unchanged). */
+export function getClipLoopCount(clip: Pick<Clip, 'loopCount'> | undefined): number {
+  if (!clip) return DEFAULT_CLIP_LOOP_COUNT;
+  return clampClipLoopCount(clip.loopCount);
+}
+
+/** True when the clip repeats its remapped window more than once. */
+export function clipHasLoop(clip: Pick<Clip, 'loopCount'>): boolean {
+  return getClipLoopCount(clip) > 1;
 }

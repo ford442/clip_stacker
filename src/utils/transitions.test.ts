@@ -289,6 +289,44 @@ describe("utils/transitions", () => {
       expect(filterComplex).toContain("transition=hlslice");
     });
 
+    it.each([
+      ["filmBurn", "fadewhite"],
+      ["lumaWipe", "dissolve"],
+      ["radialIris", "circleopen"],
+      ["chromaShift", "hlslice"],
+      ["motionBlurPull", "smoothleft"],
+    ])("falls back from %s to the %s xfade on the CPU path", (type, xfade) => {
+      const clips = [
+        createTestClip("a", 5, 0, NaN),
+        createTestClip("b", 3, 0, NaN),
+      ];
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type, duration: 0.5 },
+      ];
+      expect(buildTransitionFilterComplex(clips, transitions)).toContain(
+        `transition=${xfade}`,
+      );
+    });
+
+    it("falls back to a plain fade for a custom WGSL transition", () => {
+      const clips = [
+        createTestClip("a", 5, 0, NaN),
+        createTestClip("b", 3, 0, NaN),
+      ];
+      const transitions: ClipTransition[] = [
+        {
+          afterClipIndex: 1,
+          type: "custom",
+          duration: 0.5,
+          customShader: "sampleTo(uv)",
+        },
+      ];
+      // FFmpeg can't run WGSL — the export path degrades to a crossfade.
+      expect(buildTransitionFilterComplex(clips, transitions)).toContain(
+        "transition=fade",
+      );
+    });
+
     it("should handle video and audio clips correctly", () => {
       const clips = [
         { ...createTestClip("a", 5), kind: "video" as const },
