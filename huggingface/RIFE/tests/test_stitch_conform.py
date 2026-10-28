@@ -495,6 +495,27 @@ def test_batch_interpolate_videos_chunks_by_gpu_limit(app, monkeypatch):
     assert len(results) == 7
 
 
+def test_batch_interpolate_videos_uses_size_1_at_60fps(app, monkeypatch):
+    calls = []
+
+    def fake_chunk(chunk_paths, multi_factor, output_fps):
+        calls.append(list(chunk_paths))
+        return [f"{p}.out.mp4" for p in chunk_paths]
+
+    monkeypatch.setattr(app, "_interpolate_batch_chunk", fake_chunk)
+    monkeypatch.setattr(app, "name_like_source", lambda result, orig_name, used: result)
+    # as_file_outputs wraps paths; keep the test focused on chunking.
+    monkeypatch.setattr(app, "as_file_outputs", lambda paths: paths)
+
+    files = [
+        {"path": f"/tmp/in{i}.mp4", "orig_name": f"clip{i}.mp4"} for i in range(4)
+    ]
+    results = app.batch_interpolate_videos(files, "4", output_fps="60")
+
+    assert [len(c) for c in calls] == [1, 1, 1, 1]
+    assert len(results) == 4
+
+
 def test_batch_chunk_duration_scales_with_clips_and_multiplier(app, monkeypatch):
     # @spaces.GPU's default 60s budget is calibrated for one clip; a chunk
     # running several RIFE passes back-to-back needs a bigger reservation or
@@ -573,7 +594,8 @@ def test_advance_batch_job_does_not_mutate_its_input(app, monkeypatch):
 def test_batch_job_status_reports_progress_and_completion(app, monkeypatch):
     _fake_chunk_recorder(app, monkeypatch)
     files = [{"path": f"/tmp/in{i}.mp4", "orig_name": f"c{i}.mp4"} for i in range(4)]
-    job = app.start_batch_job(files, "4", "60")
+    # 30fps keeps the size-3 chunk; 60fps is size 1 (see batch_chunk_size).
+    job = app.start_batch_job(files, "4", "30")
     assert "0/4" in app.batch_job_status(job)
     job = app.advance_batch_job(job)
     assert "3/4" in app.batch_job_status(job)
@@ -586,7 +608,7 @@ def test_duplicate_trigger_does_not_rerun_a_chunk(app, monkeypatch):
     # must not interpolate (and bill ZeroGPU for) the same clips again.
     calls = _fake_chunk_recorder(app, monkeypatch)
     files = [{"path": f"/tmp/in{i}.mp4", "orig_name": f"c{i}.mp4"} for i in range(5)]
-    job0 = app.start_batch_job(files, "4", "60")
+    job0 = app.start_batch_job(files, "4", "30")
 
     job1 = app.advance_batch_job(job0)
     assert app.advance_batch_job(job0) is None  # stale duplicate of step 1

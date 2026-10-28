@@ -84,8 +84,9 @@ design) failed each chunk after the first with "expired proxy token".
 
 Now the click handler only builds a job (`start_batch_job`) into a
 `gr.State`. That State's `.change` listener runs `advance_batch_job`, which
-interpolates the next `BATCH_GPU_CHUNK_SIZE` (3) clips inside one
-`_interpolate_batch_chunk` lease and writes the updated job back. The State
+interpolates the next chunk (`batch_chunk_size`: 1 clip at 60fps, otherwise
+`BATCH_GPU_CHUNK_SIZE` = 3) inside one `_interpolate_batch_chunk` lease and
+writes the updated job back. The State
 changing makes the browser fire `.change` again — a new request with a fresh
 token — until nothing is pending. Finished clips appear as each chunk lands,
 and a failed chunk stops the loop with the error in the status line while
@@ -115,8 +116,10 @@ the browser sent it) instead of the bare, already-sanitized on-disk path
 Gradio's default File preprocessing would hand it — HuggingFace's own
 `/upload` route strips characters like parentheses from that on-disk
 filename before app.py ever runs. Batch outputs are named from `orig_name`
-(see `_resolve_batch_upload_entry` / `name_like_source`) so parentheses and
-other stripped characters survive in the downloaded result.
+(see `_resolve_batch_upload_entry` / `name_like_source`). The File output is
+returned as `gr.FileData` with that name in `orig_name` (see
+`as_file_outputs`) so parentheses and other characters Gradio's download
+headers would otherwise strip survive in the downloaded result.
 
 ## Deploying
 

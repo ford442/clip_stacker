@@ -55,6 +55,16 @@ MAX_MORPH_MULTI = 8
 # for the whole upload or acquiring one per clip.
 BATCH_GPU_CHUNK_SIZE = 3
 
+def batch_chunk_size(output_fps):
+    """Clips per ZeroGPU lease.
+
+    60fps encodes roughly twice the frames of the old 30fps path, so a chunk
+    of 3 regularly hits the token/duration ceiling. Run those one clip at a
+    time; keep the larger chunk for 30 and native.
+    """
+    fps = str(output_fps).strip().lower()
+    return 1 if fps == "60" else BATCH_GPU_CHUNK_SIZE
+
 # Ensure our safe workspace directory exists
 os.makedirs(WORKSPACE_DIR, exist_ok=True)
 
@@ -754,7 +764,11 @@ def _batch_chunk_duration(chunk_paths, multi_factor, output_fps):
         # re-encode) rather than matching it exactly — under-reserving is
         # exactly what reproduces the "expired GPU token" failure this exists
         # to avoid, whereas over-reserving only costs queue priority.
-        total += clip_duration * multi_val * 2 + 30
+        # 60fps re-encodes about twice the frames; native keeps every
+        # generated frame (source_fps * multi) so it can also be heavy.
+        fps_str = str(output_fps).strip().lower()
+        fps_scale = 2.0 if fps_str == "60" else (1.5 if fps_str == "native" else 1.0)
+        total += clip_duration * multi_val * 2 * fps_scale + 30
     return min(total, BATCH_CHUNK_DURATION_CAP_SECONDS)
 
 @spaces.GPU(required=True, duration=_batch_chunk_duration)
@@ -813,6 +827,22 @@ def name_like_source(result_path, orig_name, used_names):
     shutil.move(result_path, dest)
     return dest
 
+def as_file_outputs(paths):
+    """Wrap result paths as FileData so the download name keeps parentheses.
+
+    Gradio's File component and the download headers strip characters such as
+    `()` from a plain path's basename. Returning an explicit FileData with
+    `orig_name` set to that basename (which `name_like_source` already wrote
+    with the original characters) is what survives to the browser.
+    """
+    out = []
+    for path in paths or []:
+        if not path:
+            out.append(path)
+            continue
+        out.append(gr.FileData(path=path, orig_name=os.path.basename(path)))
+    return out
+
 def start_batch_job(video_files, multi_factor, output_fps):
     """Build the job state for a batch run (no GPU work happens here).
 
@@ -847,8 +877,8 @@ def claim_batch_chunk(job):
     with _BATCH_CLAIMS_LOCK:
         if _BATCH_CLAIMS.get(job["run"], 0) > start:
             return False
-        _BATCH_CLAIMS[job["run"]] = start + min(len(job["pending"]),
-                                                BATCH_GPU_CHUNK_SIZE)
+        size = batch_chunk_size(job.get("fps"))
+        _BATCH_CLAIMS[job["run"]] = start + min(len(job["pending"]), size)
         _BATCH_CLAIMS.move_to_end(job["run"])
         while len(_BATCH_CLAIMS) > _BATCH_CLAIMS_MAX_RUNS:
             _BATCH_CLAIMS.popitem(last=False)
@@ -865,7 +895,8 @@ def advance_batch_job(job):
     """
     if not job or not job["pending"] or not claim_batch_chunk(job):
         return None
-    chunk = job["pending"][:BATCH_GPU_CHUNK_SIZE]
+    size = batch_chunk_size(job.get("fps"))
+    chunk = job["pending"][:size]
     chunk_paths = [path for path, _ in chunk]
     chunk_results = _interpolate_batch_chunk(chunk_paths, job["multi"], job["fps"])
     used_names = set(job["used_names"])
@@ -884,7 +915,8 @@ def batch_job_status(job):
     total = job["total"]
     if not job["pending"]:
         return f"✅ Done: {done}/{total} clips interpolated."
-    nxt = min(done + BATCH_GPU_CHUNK_SIZE, total)
+    size = batch_chunk_size(job.get("fps"))
+    nxt = min(done + size, total)
     return f"⏳ {done}/{total} clips done — interpolating clips {done + 1}-{nxt}…"
 
 def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
@@ -912,12 +944,13 @@ def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
     count = job["total"]
     while job["pending"]:
         done = len(job["results"])
-        end = min(done + BATCH_GPU_CHUNK_SIZE, count)
+        size = batch_chunk_size(job.get("fps"))
+        end = min(done + size, count)
         progress(done / count, desc=f"Interpolating clips {done + 1}-{end}/{count}")
         job = advance_batch_job(job)
     if count:
         progress(1.0, desc="Done")
-    return job["results"]
+    return as_file_outputs(job["results"])
 
 @spaces.GPU(required=True)
 def morph_transition(frame_pair_video, frame_count, output_fps=30):
@@ -1389,8 +1422,9 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                 if advanced is None:
                     # Duplicate/stale trigger: the event that claimed this
                     # chunk will write the job and fire the next step.
-                    return gr.skip(), gr.skip(), gr.skip()
-                return advanced, advanced["results"], batch_job_status(advanced)
+                    return (gr.skip(), gr.skip(),
+                            "⏳ Chunk already claimed by a concurrent event — waiting for it to finish…")
+                return advanced, as_file_outputs(advanced["results"]), batch_job_status(advanced)
 
             batch_btn.click(start_batch_ui,
                             inputs=[batch_inputs, batch_multi, batch_fps],
