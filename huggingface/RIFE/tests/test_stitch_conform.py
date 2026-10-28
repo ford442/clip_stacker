@@ -434,6 +434,16 @@ def test_name_like_source_passes_through_a_missing_result(app):
     assert app.name_like_source(None, "/uploads/clip.mp4", set()) is None
 
 
+def test_name_like_source_keeps_parentheses_from_the_upload_name(app, tmp_path):
+    result = tmp_path / "output_rife_def456.mp4"
+    result.write_text("stub")
+    source = tmp_path / "uploads" / "my clip (1).mov"
+    source.parent.mkdir()
+    source.write_text("stub")
+
+    dest = app.name_like_source(str(result), str(source), set())
+
+    assert os.path.basename(dest) == "my clip (1).mp4"
 def test_name_like_source_preserves_parentheses(app, tmp_path):
     # HuggingFace's own /upload route strips parentheses from the on-disk
     # upload path before app.py runs, so this must be driven off orig_name
