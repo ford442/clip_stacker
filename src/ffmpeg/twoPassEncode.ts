@@ -1,5 +1,5 @@
 import type { Clip, ExportSettings } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { resolveTargetResolution } from "../utils/resolution";
 import { getClipLoopCount } from "../utils/playbackRate";
 import { cycleDurationForClip } from "../utils/timeRemap";

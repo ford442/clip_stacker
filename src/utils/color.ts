@@ -10,6 +10,8 @@
  *     float in [0, 1] or a two-digit hex value (e.g. "black@0.5", "#ff0000@0x80")
  */
 
+import { clamp01 } from './math';
+
 // FFmpeg's built-in named colors (ffmpeg/libavutil/color_table.c), lowercased.
 export const FFMPEG_NAMED_COLORS = new Set([
   "aliceblue", "antiquewhite", "aqua", "aquamarine", "azure", "beige",
@@ -78,10 +80,6 @@ export function isValidFfmpegColor(value: string): boolean {
 export function sanitizeFfmpegColor(value: unknown, fallback: string): string {
   if (typeof value === "string" && isValidFfmpegColor(value)) return value;
   return fallback;
-}
-
-function clamp01(n: number): number {
-  return Math.max(0, Math.min(1, n));
 }
 
 /** Parse an `@alpha` suffix (float in [0,1], a hex byte, or `0x` hex byte). */

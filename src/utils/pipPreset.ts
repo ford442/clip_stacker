@@ -1,5 +1,5 @@
 import type { Clip } from '../types';
-import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './project';
+import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './canvasDefaults';
 import {
   clipLayoutPixelsToNormalized,
   type CanvasSize,

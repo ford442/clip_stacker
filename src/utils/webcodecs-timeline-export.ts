@@ -4,11 +4,16 @@
  */
 
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
-import { ArrayBufferTarget } from 'mp4-muxer';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { computeTotalDuration } from './transitions';
 import { canCaptureWebGpuCanvasWithText } from './renderEligibility';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
+import {
+  ColorPipelineExportError,
+  DEFAULT_COLOR_MANAGEMENT,
+  HDR10_COLOR_SPACE,
+  type ColorManagementSettings,
+} from './colorManagement';
 import {
   buildPreviewCompositionPlan,
   type CaptionPlanOptions,
@@ -22,17 +27,17 @@ import {
   flushCaptureThenScheduleNext,
   globalTimeForTimelineFrame,
   shouldEmitTimelineStatusUpdate,
-  shouldWaitForEncoderBackpressure,
+  MAX_ENCODE_QUEUE_DEPTH,
   timelineFrameTimestampUs,
   timelineStatusThrottleFrames,
   TIMELINE_EXPORT_FPS,
 } from './webcodecs-timeline';
+import { encodeAndClose, waitForQueueBelow } from './codecQueue';
 import {
   buildVideoEncoderConfig,
   mapWebCodecsProgress,
   resolveEncoderBitrate,
   resolveEncoderCodec,
-  waitForEncoderDequeue,
   WEBCODECS_PROGRESS_STAGES,
 } from './webcodecs-codec';
 import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecs-mux';
@@ -50,6 +55,7 @@ export async function encodeTimelineComposite(
   finishing: FinishingSettings = DEFAULT_FINISHING,
   includeWebCodecsAudio = false,
   captionBurnIn: CaptionPlanOptions = {},
+  colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
 ): Promise<Blob> {
   onStatus(`WebGPU timeline export (${width}x${height})...`);
   onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode, progress: 0, indeterminate: false });
@@ -92,7 +98,14 @@ export async function encodeTimelineComposite(
   const frameProvider = new TimelineDecoderFrameProvider();
 
   const bitrate = resolveEncoderBitrate(settings, width, height);
-  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height, bitrate);
+  const outputColor = colorManagement.outputColor;
+  const encoderCodec = await resolveEncoderCodec(
+    settings.videoCodec,
+    width,
+    height,
+    bitrate,
+    outputColor,
+  );
   const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
@@ -102,7 +115,7 @@ export async function encodeTimelineComposite(
   });
 
   videoEncoder.configure(
-    buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TIMELINE_EXPORT_FPS),
+    buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TIMELINE_EXPORT_FPS, outputColor),
   );
 
   const renderTimelineFrame = async (frameIndex: number) => {
@@ -118,7 +131,7 @@ export async function encodeTimelineComposite(
       width,
       captionBurnIn,
     );
-    await engine.renderPlan(plan, { finishing, frameProvider, frameIndex });
+    await engine.renderPlan(plan, { finishing, frameProvider, frameIndex, colorManagement });
     return plan;
   };
 
@@ -168,12 +181,39 @@ export async function encodeTimelineComposite(
             frameSource = videoCanvas;
           }
 
-          const frame = new VideoFrame(frameSource, {
-            timestamp: timelineFrameTimestampUs(frameIndex, TIMELINE_EXPORT_FPS),
-            duration: frameDurationUs,
-          });
-          videoEncoder.encode(frame, { keyFrame: frameIndex % 60 === 0 });
-          frame.close();
+          const timestamp = timelineFrameTimestampUs(frameIndex, TIMELINE_EXPORT_FPS);
+          let frame: VideoFrame;
+          if (outputColor === 'hdr10') {
+            const rgba = await engine.readPqExportRgba();
+            if (!rgba) {
+              throw new ColorPipelineExportError(
+                'HDR10 frame readback produced no image. This file was not tagged Rec.709.',
+              );
+            }
+            try {
+              frame = new VideoFrame(rgba, {
+                format: 'RGBA',
+                codedWidth: width,
+                codedHeight: height,
+                timestamp,
+                duration: frameDurationUs,
+                colorSpace: HDR10_COLOR_SPACE as VideoColorSpaceInit,
+              });
+            } catch (err) {
+              const message = err instanceof Error ? err.message : 'VideoFrame rejected the PQ buffer';
+              throw new ColorPipelineExportError(`${message} This file was not tagged Rec.709.`);
+            }
+          } else if (outputColor === 'display-p3' && engine.canvasPresentation.presentFallback) {
+            throw new ColorPipelineExportError(
+              'Display P3 canvas is not available in this browser. Export was not tagged as Display P3.',
+            );
+          } else {
+            frame = new VideoFrame(frameSource, {
+              timestamp,
+              duration: frameDurationUs,
+            });
+          }
+          encodeAndClose(videoEncoder, frame, { keyFrame: frameIndex % 60 === 0 });
         },
         frameIndex + 1 < totalFrames
           ? () => {
@@ -182,10 +222,11 @@ export async function encodeTimelineComposite(
           : null,
       );
 
-      if (shouldWaitForEncoderBackpressure(videoEncoder.encodeQueueSize)) {
-        await waitForEncoderDequeue(videoEncoder);
-      }
       if (videoError) throw videoError;
+      muxer.throwIfFailed();
+      await waitForQueueBelow(videoEncoder, MAX_ENCODE_QUEUE_DEPTH + 1).catch((err: unknown) => {
+        throw videoError ?? err;
+      });
     }
 
     onStatus('Flushing GPU encoder...');
@@ -203,8 +244,7 @@ export async function encodeTimelineComposite(
       onProgress,
     );
 
-    muxer.finalize();
-    const { buffer } = muxer.target as ArrayBufferTarget;
+    const buffer = await muxer.finalize();
     return new Blob([buffer], { type: 'video/mp4' });
   } finally {
     frameProvider.destroy();

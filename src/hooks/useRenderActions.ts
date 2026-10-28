@@ -2,37 +2,46 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, Track } from "../types";
 import { editorStore } from "../store/editorStore";
 import type { RenderPlan } from "../types";
-import { getEffectiveTimelineClips } from "../utils/timelineClips";
+import { getEffectiveTimelineClips } from "../utils/trackModel";
 import { resolveTargetResolution } from "../utils/resolution";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
-import { hybridMergeClips } from "../utils/hybrid-encoder";
-import { applyCaptionsToRenderedVideo } from "../ffmpeg/captions";
 import { computeTotalDuration } from "../utils/transitions";
-import {
-  extractTrimmedVideoClip,
-  calculateRenderPlan,
-  aggressiveCleanupFFmpegVFS,
-  resetFFmpegInstance,
-  getLastFfmpegLogs,
-  isFfmpegLoadFailed,
-  isFfmpegLoading,
-  ensureFfmpeg,
-  normalizeError,
-  remuxStitchedMp4ForNle,
-} from "../ffmpeg/ffmpegService";
+import { normalizeError } from "../ffmpeg/ffmpegCommon";
 import type { RenderProgressUpdate } from "../ffmpeg/ffmpegService";
 import {
   isHighMemoryUsage,
   getMemoryStatus,
 } from "../utils/memory";
-import { generateDebugReport } from "../utils/debugReport";
-import { isFinishingActive } from "../utils/finishing";
 import type { FinishingSettings } from "../utils/finishing";
-import { hasActiveTransitions } from "../utils/renderEligibility";
-import { resolveLayerKey } from "../utils/overlayKey";
-import { isWebGpuExportAvailable } from "../webgpu/exportCompositor";
+import { remoteConcatDroppedFeatures } from "../utils/renderEligibility";
 
 import { settingsStore } from "../store/settingsStore";
+
+// The export pipeline (encoders, FFmpeg, mp4box demux, the GPU export
+// compositor) is most of the app's code and none of it is needed to edit, so
+// it loads on the first render / FFmpeg action instead of with the editor.
+// Repeat calls resolve from the module cache.
+type FfmpegServiceModule = typeof import("../ffmpeg/ffmpegService");
+const loadFfmpegService = (): Promise<FfmpegServiceModule> =>
+  import("../ffmpeg/ffmpegService");
+const loadRenderPipeline = () =>
+  Promise.all([
+    loadFfmpegService(),
+    import("../utils/hybrid-encoder"),
+    import("../ffmpeg/captions"),
+    import("../webgpu/exportCompositor"),
+  ]);
+
+/**
+ * Copy Debug writes to the clipboard, which some browsers only allow while
+ * the click's user activation is still live — so the report module is kept
+ * once loaded (and warmed after a failed render) to generate synchronously.
+ */
+let debugReportModule: typeof import("../utils/debugReport") | null = null;
+async function loadDebugReport() {
+  debugReportModule ??= await import("../utils/debugReport");
+  return debugReportModule;
+}
 
 type RenderActionsDeps = {
   clips: Clip[];
@@ -77,10 +86,12 @@ export function useRenderActions(deps: RenderActionsDeps) {
       return;
     }
 
+    let ffmpeg: FfmpegServiceModule | null = null;
     try {
-      const { 
-        exportSettings, 
-        finishing, 
+      const {
+        exportSettings,
+        finishing,
+        colorManagement,
         forceFFmpeg, 
         useCanvasRenderer, 
         audioReactive, 
@@ -116,6 +127,15 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setProgressStage("Preparing render");
       setProgressValue(0);
       setProgressIndeterminate(false);
+
+      const [
+        ffmpegService,
+        { hybridMergeClips },
+        { applyCaptionsToRenderedVideo },
+        { isWebGpuExportAvailable },
+      ] = await loadRenderPipeline();
+      ffmpeg = ffmpegService;
+      const { calculateRenderPlan, isFfmpegLoading } = ffmpegService;
 
       // Caption cues are drawn into the composite by the GPU (WebCodecs)
       // compositor when the export mode is burn-in — one pass instead of the
@@ -185,6 +205,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         finishing,
         editorStore.getState().masterAudio,
         captionBurnIn,
+        colorManagement,
       );
       // Captions the compositor could not burn are attached after the encode,
       // so every remaining encoder path gets the same result — see
@@ -227,7 +248,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       const actions = settingsStore.getState();
       const errMsg = normalizeError(error);
       console.error("Render failed (full details):", error);
-      const recentLogs = getLastFfmpegLogs(30).join("\n");
+      const recentLogs = ffmpeg?.getLastFfmpegLogs(30).join("\n");
       if (recentLogs) {
         console.error("Last captured FFmpeg logs:\n" + recentLogs);
       }
@@ -238,17 +259,18 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setRenderFailureMessage(message);
       setLastRenderError(error);
       // Surface FFmpeg load failures separately so the retry button appears.
-      if (isFfmpegLoadFailed()) {
+      if (ffmpeg?.isFfmpegLoadFailed()) {
         actions.setFfmpegFailed(true);
       }
       // Leave logs in buffer so user can click "Copy Debug Info" to grab them.
+      void loadDebugReport().catch(() => undefined);
     } finally {
       const actions = settingsStore.getState();
       actions.setFfmpegLoading(false);
       actions.setIsRendering(false);
       // Always clean up FFmpeg VFS after each render attempt (success or failure)
       // to prevent memory pressure from accumulated temporary files.
-      aggressiveCleanupFFmpegVFS().catch((err) => {
+      ffmpeg?.aggressiveCleanupFFmpegVFS().catch((err) => {
         console.warn("Error during FFmpeg cleanup:", err);
       });
     }
@@ -280,7 +302,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
   // resolution on native FFmpeg. There is no compositor on the other end —
   // it only sequences base-lane clips — so it refuses to run whenever the
   // timeline needs one: transitions, PiP/overlay lanes, finishing, chroma/
-  // luma keys, captions, and text overlays would all be silently dropped.
+  // luma keys, captions, text overlays and lane mute would all be silently
+  // dropped (see `remoteConcatDroppedFeatures`).
   // Use the normal Render for those; this path is for a plain concat only.
   const handleGpuStitch = useCallback(async () => {
     const timelineClips = effectiveClips.filter((clip) => clip.kind === "video");
@@ -291,15 +314,13 @@ export function useRenderActions(deps: RenderActionsDeps) {
 
     const { finishing } = settingsStore.getState();
     const { captions } = editorStore.getState();
-    const hasNonBaseLane = effectiveClips.some((clip) => (clip.layerIndex ?? 0) > 0);
-    const hasKeyedClip = effectiveClips.some((clip) => resolveLayerKey(clip) !== null);
-    const skippedFeatures: string[] = [];
-    if (hasNonBaseLane) skippedFeatures.push("PiP/overlay lanes");
-    if (hasActiveTransitions(transitions)) skippedFeatures.push("transitions");
-    if (textOverlays.length > 0) skippedFeatures.push("text overlays");
-    if (isFinishingActive(finishing)) skippedFeatures.push("finishing");
-    if (hasKeyedClip) skippedFeatures.push("chroma/luma keys");
-    if (captions.length > 0) skippedFeatures.push("captions");
+    const skippedFeatures = remoteConcatDroppedFeatures(
+      effectiveClips,
+      transitions,
+      textOverlays,
+      finishing,
+      captions.length,
+    );
     if (skippedFeatures.length > 0) {
       settingsStore.getState().setStatus(
         `Remote concat ignores the timeline compositor and would drop ${skippedFeatures.join(", ")} — use Render instead.`,
@@ -307,6 +328,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       return;
     }
 
+    let ffmpeg: FfmpegServiceModule | null = null;
     try {
       const {
         exportSettings,
@@ -331,6 +353,9 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setProgressIndeterminate(true);
       setProgressValue(null);
       setProgressStage("Remote concat");
+
+      ffmpeg = await loadFfmpegService();
+      const { extractTrimmedVideoClip, remuxStitchedMp4ForNle } = ffmpeg;
 
       // Step 1: trim each clip in timeline order (FFmpeg lossless copy).
       const clipBlobs: Blob[] = [];
@@ -370,7 +395,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       const { setStatus } = settingsStore.getState();
       const errMsg = normalizeError(error);
       console.error("Remote concat error:", error);
-      const recentLogs = getLastFfmpegLogs(30).join("\n");
+      const recentLogs = ffmpeg?.getLastFfmpegLogs(30).join("\n");
       if (recentLogs) {
         console.error("Last captured FFmpeg logs:\n" + recentLogs);
       }
@@ -388,7 +413,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       const { setIsRendering, setProgressIndeterminate } = settingsStore.getState();
       setIsRendering(false);
       setProgressIndeterminate(false);
-      aggressiveCleanupFFmpegVFS().catch(() => {});
+      ffmpeg?.aggressiveCleanupFFmpegVFS().catch(() => {});
     }
   }, [
     effectiveClips,
@@ -413,8 +438,16 @@ export function useRenderActions(deps: RenderActionsDeps) {
 
   /** Copy rich diagnostics (status + render plan + last FFmpeg logs + browser info) to clipboard. */
   const handleCopyDebugInfo = useCallback(async () => {
-    const { status, renderPlan, encoderPath, exportSettings, setStatus } = settingsStore.getState();
-    const text = generateDebugReport({
+    const { status, renderPlan, encoderPath, exportSettings, colorManagement, setStatus } =
+      settingsStore.getState();
+    let report: typeof import("../utils/debugReport");
+    try {
+      report = debugReportModule ?? (await loadDebugReport());
+    } catch (err) {
+      setStatus(`Could not build the debug report: ${normalizeError(err)}`);
+      return;
+    }
+    const text = report.generateDebugReport({
       status,
       renderPlan,
       encoderPath,
@@ -423,6 +456,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       transitions,
       textOverlays,
       exportSettings,
+      colorManagement,
       error: lastRenderError ?? undefined,
     });
     try {
@@ -448,6 +482,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
     const { setStatus } = settingsStore.getState();
     setStatus("Resetting FFmpeg instance (debug action)...");
     try {
+      const { resetFFmpegInstance } = await loadFfmpegService();
       await resetFFmpegInstance();
       const memoryStatus = getMemoryStatus();
       const message = memoryStatus
@@ -465,6 +500,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
     setFfmpegFailed(false);
     setFfmpegLoading(true);
     try {
+      const { resetFFmpegInstance, ensureFfmpeg } = await loadFfmpegService();
       await resetFFmpegInstance();
       await ensureFfmpeg(
         (msg) => settingsStore.getState().setStatus(msg),

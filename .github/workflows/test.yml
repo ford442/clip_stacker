@@ -1,10 +1,14 @@
 name: Tests
 
 on:
+  # main is covered by deploy.yml, which runs this whole workflow (via
+  # workflow_call) before it deploys — one run per push, and nothing ships
+  # that fails a job here.
   push:
-    branches: [main, develop]
+    branches: [develop]
   pull_request:
     branches: [main, develop]
+  workflow_call:
 
 permissions:
   contents: read
@@ -15,8 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Vitest 4 / rolldown import `styleText` from node:util (Node 20.12+).
-        node-version: [20.x, 22.x]
+        # Vite 8 / Rolldown / ESLint 10 need Node ^20.19 || >= 22.12; Node 20
+        # is end-of-life, so test the two current LTS lines.
+        node-version: [22.x, 24.x]
 
     steps:
       - uses: actions/checkout@v4
@@ -30,8 +35,17 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Self-hosted FFmpeg cores match node_modules
+        run: npm run sync:ffmpeg-core -- --check
+
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check import cycles
+        run: npm run check:cycles
 
       - name: Run tests
         run: npm test -- --run
@@ -45,10 +59,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # native/emsdk-version is the SDK the committed public/wasm artifacts
+      # come from; scripts/emscripten-flags.sh reads the same file.
+      - name: Read pinned Emscripten version
+        id: emsdk
+        run: echo "version=$(tr -d '[:space:]' < native/emsdk-version)" >> "$GITHUB_OUTPUT"
+
       - name: Set up Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.64
+          version: ${{ steps.emsdk.outputs.version }}
           actions-cache-folder: emsdk-cache
 
       - name: Verify emcc
@@ -64,6 +84,8 @@ jobs:
         run: |
           git --no-pager diff --stat -- public/wasm
           git --no-pager diff --exit-code -- public/wasm
+          # A module that is no longer built must not linger in public/wasm.
+          test -z "$(git ls-files --others --exclude-standard -- public/wasm)"
 
   native-host:
     name: Native DSP host tests
@@ -71,7 +93,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # media_engine resampler / mix built with the host compiler (no Emscripten),
-      # ASan + UBSan, run through ctest. Includes the THD+N goldens.
+      # Every shipped DSP module (audio_analysis, video_stabilize, media_engine
+      # incl. the WSOLA time stretch) built with the host compiler (no
+      # Emscripten) under -Werror, ASan + UBSan, run through ctest. Includes
+      # the THD+N goldens.
       - name: Build and run ctest
         run: bash scripts/test-native.sh

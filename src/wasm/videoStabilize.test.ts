@@ -23,7 +23,9 @@ const WASM_BASE = pathToFileURL(
 const W = 240;
 const H = 160;
 
-describe('videoStabilize WASM', () => {
+// Real WASM over synthetic footage / long mixes: seconds of CPU, far past
+// the 5 s default when the suite runs in parallel on a loaded machine.
+describe('videoStabilize WASM', { timeout: 30_000 }, () => {
   beforeEach(() => {
     _resetVideoStabilizeLoadStateForTests();
   });

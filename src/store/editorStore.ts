@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
@@ -13,13 +14,15 @@ import type {
   TrackKind,
   SyncMarker,
 } from '../types';
-import { getEffectiveTimelineClips } from '../utils/timelineClips';
 import { computeTotalDuration } from '../utils/transitions';
 import {
   addTrack as addTrackToList,
   createDefaultTracks,
+  getEffectiveTimelineClips,
   removeTrack as removeTrackFromList,
   renameTrack as renameTrackInList,
+  setTrackAudioFx as setTrackAudioFxInList,
+  setTrackDuck as setTrackDuckInList,
   setTrackHeight as setTrackHeightInList,
   setTrackLocked as setTrackLockedInList,
   setTrackMuted as setTrackMutedInList,
@@ -34,7 +37,17 @@ import {
   type EditSnapshot,
 } from '../utils/editHistory';
 import { cloneTracks } from '../utils/trackModel';
+import type { EditState } from '../utils/editModes';
 import { normalizeCaptions } from '../utils/subtitles';
+import { planAddClip } from '../utils/planAddClip';
+import type { FinishingSettings } from '../utils/finishing';
+import {
+  normalizeMasterBus,
+  type BusEffect,
+  type LaneDuck,
+  type MasterBusSettings,
+} from '../utils/audioBus';
+import { settingsStore } from './settingsStore';
 
 /**
  * Durable editing state (#144).
@@ -74,6 +87,8 @@ export interface EditorState {
   masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
   masterAudio: MasterAudio | null;
+  /** Master bus FX and export loudness target (`utils/audioBus.ts`); undefined = none. */
+  masterBus: MasterBusSettings | undefined;
   /** Undo/redo depths, published so `canUndo`/`canRedo` re-render on change. */
   undoDepth: number;
   redoDepth: number;
@@ -96,6 +111,29 @@ export interface EditorState {
   setTrackHeight: (trackId: string, height: number) => void;
   /** Rename a lane. */
   renameTrack: (trackId: string, label: string) => void;
+  /**
+   * Replace a lane's bus FX chain as one undo step. `coalesce` (a stable key
+   * per drag, e.g. `busfx:${trackId}`) folds rapid slider moves into one step.
+   * Locked and titles lanes refuse the edit.
+   */
+  setTrackAudioFx: (trackId: string, fx: BusEffect[] | undefined, coalesce?: string) => void;
+  /** Set a lane's ducking (sidechain / `'off'` / legacy); same rules as `setTrackAudioFx`. */
+  setTrackDuck: (trackId: string, duck: LaneDuck | undefined, coalesce?: string) => void;
+  /** Replace the master bus (FX + loudness target) as one undo step. */
+  setMasterBus: (next: MasterBusSettings | undefined, coalesce?: string) => void;
+  /**
+   * Commit a pure edit-mode result (`utils/editModes.ts`) as one undo step:
+   * lane placements, clip trims and base-lane transitions change together, so a
+   * single undo restores all three. Clips the edit dropped leave their A/B
+   * groups and the selection.
+   */
+  commitEdit: (next: EditState) => void;
+  /**
+   * Add an imported clip to the pool and place it (`planAddClip`: next free
+   * slot on the right lane, A/B grouping by file name). Does not push history —
+   * an import of several files is one undo step, so the caller pushes once.
+   */
+  addClip: (clip: Clip) => void;
   setClipGroups: (action: StateUpdater<ClipGroup[]>) => void;
   setTransitions: (action: StateUpdater<ClipTransition[]>) => void;
   setTextOverlays: (action: StateUpdater<TextOverlay[]>) => void;
@@ -116,6 +154,11 @@ export interface EditorState {
   redo: () => void;
   /** Replace editing state and clear undo/redo stacks (e.g. after project load). */
   resetHistory: (snapshot: EditSnapshot) => void;
+  /**
+   * Replace the whole finishing stack as one undo step (finishing presets).
+   * Ordinary finishing edits do not touch the edit history.
+   */
+  applyFinishing: (next: FinishingSettings) => void;
 }
 
 /**
@@ -130,9 +173,10 @@ const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let isRestoring = false;
 
 export const editorStore = createStore<EditorState>()((set, get) => {
-  const snapshotOf = (): EditSnapshot => {
+  const snapshotOf = (includeFinishing = false): EditSnapshot => {
     const state = get();
     return {
+      ...(includeFinishing ? { finishing: settingsStore.getState().finishing } : {}),
       clips: state.clips,
       tracks: state.tracks,
       clipGroups: state.clipGroups,
@@ -143,6 +187,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       masterAudioMarkers: state.masterAudioMarkers,
       selectedClipId: state.selectedClipId,
       masterAudio: state.masterAudio,
+      ...(state.masterBus ? { masterBus: state.masterBus } : {}),
     };
   };
 
@@ -169,7 +214,11 @@ export const editorStore = createStore<EditorState>()((set, get) => {
         masterAudio: snapshot.masterAudio
           ? { ...snapshot.masterAudio, objectUrl: snapshot.masterAudio.objectUrl }
           : null,
+        masterBus: snapshot.masterBus ? structuredClone(snapshot.masterBus) : undefined,
       });
+      if (snapshot.finishing) {
+        settingsStore.getState().setFinishing(structuredClone(snapshot.finishing));
+      }
     } finally {
       isRestoring = false;
     }
@@ -194,6 +243,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     masterAudioMarkers: [],
     selectedClipId: null,
     masterAudio: null,
+    masterBus: undefined,
     undoDepth: 0,
     redoDepth: 0,
 
@@ -228,6 +278,59 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     renameTrack: (trackId, label) => {
       pushHistory();
       set((s) => ({ tracks: renameTrackInList(s.tracks, trackId, label) }));
+    },
+    setTrackAudioFx: (trackId, fx, coalesce) => {
+      const next = setTrackAudioFxInList(get().tracks, trackId, fx);
+      if (next === get().tracks) return;
+      if (coalesce) get().pushHistoryDebounced(coalesce);
+      else pushHistory();
+      set({ tracks: next });
+    },
+    setTrackDuck: (trackId, duck, coalesce) => {
+      const next = setTrackDuckInList(get().tracks, trackId, duck);
+      if (next === get().tracks) return;
+      if (coalesce) get().pushHistoryDebounced(coalesce);
+      else pushHistory();
+      set({ tracks: next });
+    },
+    setMasterBus: (raw, coalesce) => {
+      const next = normalizeMasterBus(raw);
+      if (JSON.stringify(next ?? null) === JSON.stringify(get().masterBus ?? null)) return;
+      if (coalesce) get().pushHistoryDebounced(coalesce);
+      else pushHistory();
+      set({ masterBus: next });
+    },
+    commitEdit: (next) => {
+      pushHistory();
+      set((s) => {
+        const ids = new Set(next.clips.map((c) => c.id));
+        return {
+          tracks: next.tracks,
+          clips: next.clips,
+          transitions: next.transitions,
+          clipGroups: syncClipGroups(s.clipGroups, next.clips)
+            .map((group) => ({
+              ...group,
+              variants: {
+                A: group.variants.A && ids.has(group.variants.A.id) ? group.variants.A : null,
+                B: group.variants.B && ids.has(group.variants.B.id) ? group.variants.B : null,
+              },
+            }))
+            .filter((group) => group.variants.A !== null || group.variants.B !== null),
+          selectedClipId:
+            s.selectedClipId && !ids.has(s.selectedClipId) ? null : s.selectedClipId,
+        };
+      });
+    },
+    addClip: (clip) => {
+      set((s) => {
+        const plan = planAddClip(s.clips, s.tracks, s.clipGroups, clip);
+        return {
+          clips: plan.clips,
+          ...(plan.tracks ? { tracks: plan.tracks } : {}),
+          ...(plan.clipGroups ? { clipGroups: plan.clipGroups } : {}),
+        };
+      });
     },
     setClipGroups: (action) =>
       set((s) => ({ clipGroups: resolveUpdater(action, s.clipGroups) })),
@@ -270,21 +373,45 @@ export const editorStore = createStore<EditorState>()((set, get) => {
 
     undo: () => {
       if (undoStack.length === 0) return;
-      redoStack.push(cloneSnapshot(snapshotOf()));
+      const target = undoStack.pop()!;
+      // The redo entry carries finishing only when the undone step did.
+      redoStack.push(cloneSnapshot(snapshotOf(target.finishing !== undefined)));
       trimHistoryStack(redoStack);
-      applySnapshot(undoStack.pop()!);
+      applySnapshot(target);
       publishDepths();
     },
 
     redo: () => {
       if (redoStack.length === 0) return;
-      undoStack.push(cloneSnapshot(snapshotOf()));
+      const target = redoStack.pop()!;
+      undoStack.push(cloneSnapshot(snapshotOf(target.finishing !== undefined)));
       trimHistoryStack(undoStack);
-      applySnapshot(redoStack.pop()!);
+      applySnapshot(target);
       publishDepths();
     },
 
+    applyFinishing: (next) => {
+      if (!isRestoring) {
+        undoStack.push(cloneSnapshot(snapshotOf(true)));
+        trimHistoryStack(undoStack);
+        redoStack.length = 0;
+        publishDepths();
+      }
+      settingsStore.getState().setFinishing(next);
+    },
+
     resetHistory: (snapshot) => {
+      // Master-audio blob URLs are owned by the editing session, not by any
+      // clip, so `revokeOrphanedUrls` never sees them. Once the stacks are
+      // cleared nothing can bring the outgoing ones back — revoke them.
+      const outgoingMasterUrls = new Set(
+        [get().masterAudio, ...undoStack.map((s) => s.masterAudio), ...redoStack.map((s) => s.masterAudio)]
+          .map((audio) => audio?.objectUrl)
+          .filter((url): url is string => Boolean(url)),
+      );
+      outgoingMasterUrls.delete(snapshot.masterAudio?.objectUrl ?? '');
+      for (const url of outgoingMasterUrls) URL.revokeObjectURL(url);
+
       undoStack.length = 0;
       redoStack.length = 0;
       debounceSessions.clear();
@@ -326,6 +453,17 @@ export const useEditorCaptionStyle = () =>
 export const useEditorMasterAudioMarkers = () =>
   useStore(editorStore, useShallow((s) => s.masterAudioMarkers));
 export const useSelectedClipId = () => useStore(editorStore, (s) => s.selectedClipId);
+
+const EMPTY_SELECTION: readonly string[] = [];
+
+/** Ids in the current selection. Today that is the primary clip, or none. */
+export function useSelectedClipIds(): readonly string[] {
+  const selectedClipId = useSelectedClipId();
+  return useMemo(
+    () => (selectedClipId ? [selectedClipId] : EMPTY_SELECTION),
+    [selectedClipId],
+  );
+}
 export const useEditorMasterAudio = () => useStore(editorStore, (s) => s.masterAudio);
 
 /** Clips on the timeline (active A/B variant per group, track-aware order). */
@@ -347,6 +485,9 @@ export const useEditorTotalDuration = () =>
       s.transitions,
     ),
   );
+
+/** The master bus settings (FX chain + loudness target). */
+export const useEditorMasterBus = () => useStore(editorStore, (s) => s.masterBus);
 
 /** Per-row selection subscription — only re-renders when this clip's selected state toggles. */
 export const useIsClipSelected = (clipId: string) =>
@@ -376,6 +517,11 @@ export const editorActions: Pick<
   | 'toggleTrackLocked'
   | 'setTrackHeight'
   | 'renameTrack'
+  | 'setTrackAudioFx'
+  | 'setTrackDuck'
+  | 'setMasterBus'
+  | 'commitEdit'
+  | 'addClip'
   | 'setClipGroups'
   | 'setTransitions'
   | 'setTextOverlays'
@@ -389,6 +535,7 @@ export const editorActions: Pick<
   | 'undo'
   | 'redo'
   | 'resetHistory'
+  | 'applyFinishing'
 > = editorStore.getState();
 
 /** Test-only reset so specs start from a clean store and empty history. */
@@ -410,6 +557,7 @@ export function __resetEditorStoreForTests(): void {
     masterAudioMarkers: [],
     selectedClipId: null,
     masterAudio: null,
+    masterBus: undefined,
     undoDepth: 0,
     redoDepth: 0,
   });

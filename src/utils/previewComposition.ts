@@ -17,7 +17,7 @@
  */
 
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
-import { getClipDuration } from './project';
+import { getClipDuration } from './clipTiming';
 import { computeTotalDuration } from './transitions';
 import { getTimelineClips } from './timelineClips';
 import { placementWindow } from './trackStacking';
@@ -45,6 +45,7 @@ export type {
   TimelineRenderOptions,
   CaptionPlanOptions,
   PreviewCompositionPlan,
+  PreviewDeviceState,
   TimelineCompositor,
 } from './previewCompositionTypes';
 export { captionPlanOptions } from './previewCompositionTypes';
@@ -152,14 +153,17 @@ export function buildPreviewCompositionPlan(
   };
 }
 
-/** Local clip time (seconds) at a global output-timeline position. */
-export function resolveClipLocalTimeAtGlobal(
+/**
+ * Where `clipId` plays on the output timeline: overlay lanes at their track
+ * item's start, base clips at their transition-aware segment. Null when the
+ * clip is not on the timeline.
+ */
+export function resolveClipOutputWindow(
   clips: Clip[],
   groups: ClipGroup[],
   transitions: ClipTransition[],
   clipId: string,
-  globalTime: number,
-): { localTime: number; duration: number } | null {
+): { start: number; end: number; duration: number; overlay: boolean } | null {
   const timelineClips = getTimelineClips(clips, groups);
   const clip = timelineClips.find((item) => item.id === clipId);
   if (!clip) return null;
@@ -168,11 +172,7 @@ export function resolveClipLocalTimeAtGlobal(
   if ((clip.layerIndex ?? 0) > 0) {
     // Overlay lanes are placed at their track item's output time (Phase B).
     const { start } = placementWindow(clip, duration);
-    const localTime = Math.min(
-      Math.max(0, globalTime - start),
-      Math.max(0, duration - 1e-6),
-    );
-    return { localTime, duration };
+    return { start, end: start + duration, duration, overlay: true };
   }
 
   const baseClips = timelineClips.filter(isBaseClip);
@@ -197,8 +197,41 @@ export function resolveClipLocalTimeAtGlobal(
   );
   const segment = segments.find((item) => item.clip.id === clipId);
   if (!segment) return null;
-  if (globalTime < segment.startTime || globalTime >= segment.endTime) {
+  return { start: segment.startTime, end: segment.endTime, duration, overlay: false };
+}
+
+/**
+ * Where the playhead goes when a clip is selected: it stays when it is already
+ * inside the clip's output window, otherwise it jumps to the clip's start.
+ */
+export function playheadForSelectedClip(
+  playhead: number | null,
+  placed: { start: number; end: number },
+): number {
+  if (playhead !== null && playhead >= placed.start && playhead < placed.end) return playhead;
+  return placed.start;
+}
+
+/** Local clip time (seconds) at a global output-timeline position. */
+export function resolveClipLocalTimeAtGlobal(
+  clips: Clip[],
+  groups: ClipGroup[],
+  transitions: ClipTransition[],
+  clipId: string,
+  globalTime: number,
+): { localTime: number; duration: number } | null {
+  const placed = resolveClipOutputWindow(clips, groups, transitions, clipId);
+  if (!placed) return null;
+  const { start, end, duration } = placed;
+  if (placed.overlay) {
+    const localTime = Math.min(
+      Math.max(0, globalTime - start),
+      Math.max(0, duration - 1e-6),
+    );
+    return { localTime, duration };
+  }
+  if (globalTime < start || globalTime >= end) {
     return { localTime: 0, duration };
   }
-  return { localTime: globalTime - segment.startTime, duration };
+  return { localTime: globalTime - start, duration };
 }

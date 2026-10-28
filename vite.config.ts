@@ -1,7 +1,15 @@
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import type { Connect, Plugin } from 'vite';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import { CONTENT_SECURITY_POLICY, DEV_CONTENT_SECURITY_POLICY } from './src/utils/csp';
+// `.js` resolves to csp.ts for both TypeScript and Vite's config bundler, and
+// keeps the import extension-explicit for Vite's planned native config loader.
+import {
+  CONTENT_SECURITY_POLICY,
+  DEV_CONTENT_SECURITY_POLICY,
+  cspMetaPlugin,
+} from './src/utils/csp.js';
 
 /**
  * Serve .1ijs (UTF-16LE dual-encoded JS) with an explicit charset so browsers
@@ -27,9 +35,76 @@ function utf16JsMimePlugin(): Plugin {
   };
 }
 
+/**
+ * `npm run build:wasm:debug` writes -O0 / DWARF modules to
+ * native/build-debug/wasm instead of over the committed public/wasm. Serve
+ * them at /wasm-debug/ (dev and preview only); `?wasm_debug` points the
+ * loaders there (src/wasm/emscriptenLoader.ts).
+ */
+function wasmDebugPlugin(): Plugin {
+  const dir = fileURLToPath(new URL('./native/build-debug/wasm/', import.meta.url));
+  const serve: Connect.NextHandleFunction = (req, res, next) => {
+    const path = (req.url ?? '').split('?')[0] ?? '';
+    // One plain file name: no subdirectories, no traversal.
+    const match = /\/wasm-debug\/([\w.-]+\.(js|wasm))$/.exec(path);
+    if (!match) {
+      next();
+      return;
+    }
+    readFile(`${dir}${match[1]}`).then(
+      (body) => {
+        res.setHeader('Content-Type', match[2] === 'wasm' ? 'application/wasm' : 'text/javascript');
+        res.end(body);
+      },
+      () => {
+        res.statusCode = 404;
+        res.end(`not built: run npm run build:wasm:debug (${match[1]})`);
+      },
+    );
+  };
+  return {
+    name: 'clip-stacker-wasm-debug',
+    configureServer(server) {
+      server.middlewares.use(serve);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(serve);
+    },
+  };
+}
+
+/**
+ * Pin every emitted stylesheet to UTF-8. Without an HTTP charset, a BOM or an
+ * @charset rule a browser decodes a linked stylesheet with the encoding of the
+ * document that links it, and the minifier drops any @charset we write in the
+ * source. A host that serves index.html as UTF-16 (the .1ijs experiment's
+ * iconv workflow) would otherwise turn the whole stylesheet into mojibake and
+ * leave the page unstyled.
+ */
+function cssCharsetPlugin(): Plugin {
+  return {
+    name: 'clip-stacker-css-charset',
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      for (const [fileName, asset] of Object.entries(bundle)) {
+        if (asset.type !== 'asset' || !fileName.endsWith('.css')) continue;
+        const css = typeof asset.source === 'string' ? asset.source : Buffer.from(asset.source).toString('utf8');
+        if (!css.startsWith('@charset')) asset.source = `@charset "UTF-8";${css}`;
+      }
+    },
+  };
+}
+
+// COOP/COEP make the page cross-origin isolated: SharedArrayBuffer and the
+// multi-threaded FFmpeg core depend on them.
+const CROSS_ORIGIN_ISOLATION_HEADERS = {
+  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
+};
+
 export default defineConfig({
   base: './',
-  plugins: [react(), utf16JsMimePlugin()],
+  plugins: [react(), utf16JsMimePlugin(), wasmDebugPlugin(), cspMetaPlugin(), cssCharsetPlugin()],
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -38,15 +113,13 @@ export default defineConfig({
     host: 'localhost',
     port: 5173,
     headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      ...CROSS_ORIGIN_ISOLATION_HEADERS,
       'Content-Security-Policy': DEV_CONTENT_SECURITY_POLICY,
     },
   },
   preview: {
     headers: {
-      'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
+      ...CROSS_ORIGIN_ISOLATION_HEADERS,
       'Content-Security-Policy': CONTENT_SECURITY_POLICY,
     },
   },

@@ -193,3 +193,40 @@
   font-size: 0.7rem;
   margin: 0;
 }
+
+/* Preview proxy state (see ProxyBadge.tsx) */
+.proxy-badge {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: var(--panel-alt);
+  font-size: 0.65rem;
+  font-weight: 600;
+  line-height: 1.5;
+  vertical-align: middle;
+}
+
+.proxy-badge-ready {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.proxy-badge-building {
+  border-color: var(--warning);
+  color: var(--warning);
+}
+
+.proxy-build-btn {
+  margin-left: 4px;
+  padding: 0 6px;
+  font-size: 0.65rem;
+  line-height: 1.5;
+}
+
+.proxy-toggle {
+  display: block;
+  margin: 6px 0;
+  font-size: 0.8rem;
+}

@@ -4,6 +4,7 @@ import {
   clipPixelWidth,
   formatTimelineTime,
   rulerTickInterval,
+  timelineTimeAtOffset,
   timelineContentWidth,
 } from './timelineLayout';
 
@@ -23,5 +24,18 @@ describe('timelineLayout', () => {
     expect(rulerTickInterval(30)).toBe(5);
     expect(buildRulerTicks(12, 5)).toEqual([0, 5, 10, 12]);
     expect(timelineContentWidth(10, 40)).toBe(400);
+  });
+});
+
+describe('timelineTimeAtOffset', () => {
+  it('converts pixels to seconds and clamps to the timeline', () => {
+    expect(timelineTimeAtOffset(96, 48, 10)).toBe(2);
+    expect(timelineTimeAtOffset(-20, 48, 10)).toBe(0);
+    expect(timelineTimeAtOffset(9999, 48, 10)).toBe(10);
+  });
+
+  it('is 0 for a degenerate scale or empty timeline', () => {
+    expect(timelineTimeAtOffset(50, 0, 10)).toBe(0);
+    expect(timelineTimeAtOffset(50, 48, 0)).toBe(0);
   });
 });

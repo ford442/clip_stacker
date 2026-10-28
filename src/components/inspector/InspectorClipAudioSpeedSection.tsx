@@ -1,5 +1,5 @@
 import type { Clip, ClipAutomation } from '../../types';
-import { getClipDuration } from '../../utils/project';
+import { getClipDuration } from '../../utils/clipTiming';
 import {
   DEFAULT_CLIP_PAN,
   MAX_CLIP_PAN,
@@ -42,6 +42,7 @@ interface InspectorClipAudioSpeedSectionProps {
   updateVolume: (value: string) => void;
   onAutomationChange?: (automation: ClipAutomation | undefined) => void;
   onExtractAudio?: () => void;
+  onReverseChange?: (enabled: boolean) => void;
 }
 
 export function InspectorClipAudioSpeedSection({
@@ -62,6 +63,7 @@ export function InspectorClipAudioSpeedSection({
   updateVolume,
   onAutomationChange,
   onExtractAudio,
+  onReverseChange,
 }: InspectorClipAudioSpeedSectionProps) {
   return (
     <>
@@ -102,6 +104,19 @@ export function InspectorClipAudioSpeedSection({
         </p>
       </div>
       <div className="inspector-group-label">Speed / time-stretch</div>
+      {!clip.stillImage && onReverseChange && (
+        <label
+          className="inspector-checkbox-label"
+          title="Play the trimmed range backward. The clip stays the same length on the timeline. Preview and export both follow it."
+        >
+          <input
+            type="checkbox"
+            checked={Boolean(clip.reversed)}
+            onChange={(e) => onReverseChange(e.target.checked)}
+          />
+          Reverse clip
+        </label>
+      )}
       <div className="inspector-speed-panel">
         <div className="inspector-speed-primary">
           <label

@@ -8,6 +8,8 @@ import {
   SHARPEN_AMOUNT_SOFT_CAP,
   SHARPEN_RADIUS_MAX,
   SHARPEN_RADIUS_MIN,
+  SHARPEN_MODE_OPTIONS,
+  type SharpenMode,
 } from '../utils/sharpen';
 
 interface Props {
@@ -68,6 +70,8 @@ export function SharpenPanel({ settings, onChange }: Props) {
       <div className="inspector-group-label">Sharpening</div>
       <p className="inspector-hint">
         Gentle unsharp + midtone detail after the creative LUT, before grain.
+        Edge-aware mode sharpens edges without halos; Multi-scale adds
+        micro-contrast.
         Restores edge definition after denoise. WebGPU preview/export are
         WYSIWYG; FFmpeg uses unsharp (luma only). Canvas2D is skipped.
         Recommended amount ≤ {SHARPEN_AMOUNT_RECOMMENDED}.
@@ -128,6 +132,24 @@ export function SharpenPanel({ settings, onChange }: Props) {
 
       {settings.enabled && !showingBefore && (
         <>
+          <label
+            title={
+              SHARPEN_MODE_OPTIONS.find((o) => o.id === (settings.mode ?? 'classic'))
+                ?.description
+            }
+          >
+            Mode
+            <select
+              value={settings.mode ?? 'classic'}
+              onChange={(e) => patch({ mode: e.target.value as SharpenMode })}
+            >
+              {SHARPEN_MODE_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id} title={option.description}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <SliderRow
             label="Amount"
             title={`Unsharp strength (0–1). Soft cap ${SHARPEN_AMOUNT_SOFT_CAP} — higher looks digital.`}

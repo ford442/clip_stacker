@@ -51,3 +51,21 @@ describe('playbackStore', () => {
     unsub();
   });
 });
+
+describe('playbackStore scrubbing', () => {
+  beforeEach(() => {
+    __resetPlaybackStoreForTests();
+  });
+
+  it('toggles scrubbing and only notifies on change', () => {
+    const listener = vi.fn();
+    const unsub = playbackStore.subscribe(listener);
+    playbackStore.getState().setScrubbing(true);
+    playbackStore.getState().setScrubbing(true);
+    expect(playbackStore.getState().scrubbing).toBe(true);
+    expect(listener).toHaveBeenCalledTimes(1);
+    playbackStore.getState().setScrubbing(false);
+    expect(playbackStore.getState().scrubbing).toBe(false);
+    unsub();
+  });
+});

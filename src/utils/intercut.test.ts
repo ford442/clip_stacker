@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { EASING_PRESETS } from './keyframes';
 import {
-  buildConcatPlaylist,
   buildIntercutSlices,
   canUseStreamCopyForIntercut,
   formatSliceIntervalList,
@@ -145,17 +144,6 @@ describe('intercut', () => {
     expect(sanitizeSliceIntervals([2, 1, 0, Number.NaN, -1])).toEqual([2, 1]);
     expect(sliceIntervalListSum([2, 1, 1, 2, 3, 2])).toBe(11);
     expect(formatSliceIntervalList([2, 1, Number.NaN, 3])).toBe('2, 1, 3');
-  });
-
-  it('buildConcatPlaylist emits concat demuxer inpoint/outpoint lines', () => {
-    const playlist = buildConcatPlaylist(
-      [{ slot: 'A', inpoint: 0, outpoint: 0.25 }],
-      'clip_a.mp4',
-      'clip_b.mp4',
-    );
-    expect(playlist).toContain("file 'clip_a.mp4'");
-    expect(playlist).toContain('inpoint 0.000000');
-    expect(playlist).toContain('outpoint 0.250000');
   });
 
   it('canUseStreamCopyForIntercut rejects short strobe slices', () => {
@@ -575,17 +563,6 @@ describe('intercut', () => {
     // 4 slices of 0.2s; without force the last would be A.
     expect(slices).toHaveLength(4);
     expect(slices.map((s) => s.slot)).toEqual(['A', 'B', 'C', 'C']);
-  });
-
-  it('buildConcatPlaylist emits clip C files', () => {
-    const playlist = buildConcatPlaylist(
-      [{ slot: 'C', inpoint: 1, outpoint: 1.25 }],
-      'clip_a.mp4',
-      'clip_b.mp4',
-      'clip_c.mp4',
-    );
-    expect(playlist).toContain("file 'clip_c.mp4'");
-    expect(playlist).toContain('inpoint 1.000000');
   });
 
   it('remapIntercutSlicesToTrimOrigin shifts C independently', () => {

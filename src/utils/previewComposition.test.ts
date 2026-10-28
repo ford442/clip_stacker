@@ -10,6 +10,11 @@ import {
 import { getTimelineClips } from './timelineClips';
 import { customTransitionId } from '../webgpu/transitions/customShader';
 import { getTransitionDef } from '../webgpu/transitions/registry';
+import {
+  buildPictureTransform,
+  composeLayerWarp,
+  IDENTITY_PICTURE_TRANSFORM,
+} from './clipTransform';
 
 function makeClip(
   id: string,
@@ -94,6 +99,27 @@ describe('previewComposition', () => {
       expect(plan.totalDuration).toBeCloseTo(5);
       expect(layers[0].localElapsed).toBeCloseTo(1);
       expect(layers[0].sourceTime).toBeCloseTo(2);
+      // Speed changes which source frame is shown. It does not scale the picture.
+      const at1x = buildPreviewCompositionPlan(
+        [makeClip('a', 10)],
+        [],
+        [],
+        [],
+        undefined,
+        1,
+      );
+      expect(layers[0].rect).toEqual(clipLayers(at1x)[0].rect);
+    });
+
+    it('samples a reversed clip from the end of the trim', () => {
+      const clips = [makeClip('a', 10, { trimStart: 1, trimEnd: 7, reversed: true })];
+      const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0);
+      expect(plan.totalDuration).toBeCloseTo(6);
+      const layers = clipLayers(plan);
+      expect(layers[0].sourceTime).toBeGreaterThan(6.99);
+      expect(layers[0].sourceTime).toBeLessThan(7);
+      const later = buildPreviewCompositionPlan(clips, [], [], [], undefined, 2);
+      expect(clipLayers(later)[0].sourceTime).toBeCloseTo(5);
     });
 
     it('maps sourceTime through a variable rate ramp', () => {
@@ -239,9 +265,9 @@ describe('previewComposition', () => {
       // 0.1 s in at 10 fps lands exactly on analysis frame 1.
       const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0.1);
       const layer = clipLayers(plan)[0]!;
-      expect(layer.stabMatrix).toBeDefined();
-      expect(layer.stabMatrix![2]).toBeCloseTo(0.25, 5);
-      expect(layer.stabMatrix![5]).toBeCloseTo(0.5, 5);
+      expect(layer.warpMatrix).toBeDefined();
+      expect(layer.warpMatrix![2]).toBeCloseTo(0.25, 5);
+      expect(layer.warpMatrix![5]).toBeCloseTo(0.5, 5);
     });
 
     it('omits the matrix entirely when the toggle is off', () => {
@@ -257,14 +283,14 @@ describe('previewComposition', () => {
         [makeClip('a', 5, { stabilize: false, stabilization })],
         [], [], [], undefined, 0.1,
       );
-      expect(clipLayers(off)[0]!.stabMatrix).toBeUndefined();
+      expect(clipLayers(off)[0]!.warpMatrix).toBeUndefined();
 
       // Toggled on but not yet analysed: still nothing to apply.
       const pending = buildPreviewCompositionPlan(
         [makeClip('a', 5, { stabilize: true })],
         [], [], [], undefined, 0.1,
       );
-      expect(clipLayers(pending)[0]!.stabMatrix).toBeUndefined();
+      expect(clipLayers(pending)[0]!.warpMatrix).toBeUndefined();
     });
 
     it('stabilizes both sides through a transition overlap', () => {
@@ -288,8 +314,72 @@ describe('previewComposition', () => {
       expect(layers).toHaveLength(2);
       // Both the outgoing and incoming layer must stay corrected, or the
       // picture snaps back to shaky for the length of the crossfade.
-      expect(layers[0]!.stabMatrix).toBeDefined();
-      expect(layers[1]!.stabMatrix).toBeDefined();
+      expect(layers[0]!.warpMatrix).toBeDefined();
+      expect(layers[1]!.warpMatrix).toBeDefined();
+    });
+
+    it('keeps a rotated base clip full-frame and gives it a composed warp', () => {
+      const clips = [
+        makeClip('a', 5, {
+          videoWidth: 640,
+          videoHeight: 360,
+          keyframes: { rotation: [{ t: 0, value: 90 }] },
+        }),
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 1);
+      const layer = clipLayers(plan)[0]!;
+      // Rotation lanes are not layout lanes: the rect stays the whole canvas
+      // instead of shrinking to the 640x360 source size.
+      expect(layer.rect).toEqual({ x: 0, y: 0, width: plan.canvasWidth, height: plan.canvasHeight });
+      expect(layer.pictureMatrix).toEqual(
+        buildPictureTransform(
+          { ...IDENTITY_PICTURE_TRANSFORM, rotation: Math.PI / 2 },
+          layer.rect,
+          { width: plan.canvasWidth, height: plan.canvasHeight },
+        ),
+      );
+      expect(layer.warpMatrix).toEqual(composeLayerWarp(undefined, layer.pictureMatrix));
+    });
+
+    it('keeps stabilization composed with rotation on both sides of a crossfade', () => {
+      const stabilization = {
+        fps: 10,
+        matrices: new Float32Array([1, 0, 0.25, 0, 1, 0.5]),
+        frameCount: 1,
+        zoom: 1.1,
+        maxCorrection: 0.5,
+        smoothRadius: 5,
+      };
+      const rotated = { rotation: [{ t: 0, value: 30 }] };
+      const clips = [
+        makeClip('a', 5, { stabilize: true, stabilization, keyframes: rotated }),
+        makeClip('b', 3, { stabilize: true, stabilization, keyframes: rotated }),
+      ];
+      const transitions: ClipTransition[] = [
+        { afterClipIndex: 1, type: 'dissolve', duration: 0.5 },
+      ];
+      const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
+      const [outgoing, incoming] = clipLayers(plan);
+      for (const layer of [outgoing!, incoming!]) {
+        expect(layer.crossfade).not.toBeNull();
+        expect(layer.pictureMatrix).toBeDefined();
+        // Not the bare stabilization matrix, and not the bare rotation: the
+        // one composed warp, so nothing snaps back during the overlap.
+        expect(layer.warpMatrix).toEqual(
+          composeLayerWarp([1, 0, 0.25, 0, 1, 0.5], layer.pictureMatrix),
+        );
+      }
+    });
+
+    it('leaves plain layers with no warp fields at all', () => {
+      const plan = buildPreviewCompositionPlan(
+        [makeClip('a', 5), makeClip('b', 5, { layerIndex: 1, width: 0.25, height: 0.25 })],
+        [], [], [], undefined, 1,
+      );
+      for (const layer of clipLayers(plan)) {
+        expect('warpMatrix' in layer).toBe(false);
+        expect('pictureMatrix' in layer).toBe(false);
+      }
     });
 
     it('leaves built-in transition types unresolved', () => {

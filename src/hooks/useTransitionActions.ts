@@ -70,6 +70,7 @@ export function useTransitionActions({
       pushHistoryDebounced,
       morphProcessingIndex,
       clips,
+      clipGroups,
       setTransitions,
     ],
   );

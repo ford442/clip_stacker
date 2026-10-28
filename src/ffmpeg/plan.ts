@@ -8,8 +8,9 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { clipHasLoop, getClipLoopCount } from "../utils/playbackRate";
+import { clipIsReversed } from "../utils/reverseClip";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   allVideoClipsMatchOutputResolution,
@@ -20,13 +21,21 @@ import {
 } from "../utils/resolution";
 import {
   isFinishingActive,
+  isBloomActive,
+  isChromaticAberrationActive,
+  isCurvesActive,
   isLutFinishingPassActive,
   type FinishingSettings,
 } from "../utils/finishing";
 import { secondaryHasWindowGrades } from "../utils/secondaryColor";
 import { isStabilizationActive } from "../utils/stabilization";
 import { resolveLayerKey } from "../utils/overlayKey";
-import { canUseGpuVideoEncoder, hasActiveTransitions } from "../utils/renderEligibility";
+import {
+  canUseGpuVideoEncoder,
+  hasActiveTransitions,
+  pictureTransformPlanFields,
+} from "../utils/renderEligibility";
+import { clipHasPictureTransform } from "../utils/animatedLayout";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -116,7 +125,7 @@ function estimateEncoderIntent(
     // keying, transition, PiP, or finishing pass, so those demote it to the
     // GPU/FFmpeg estimate below instead of silently dropping them.
     const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
-    const hasPipClip = clips.some((clip) => (clip.layerIndex ?? 0) > 0);
+    const hasPipClip = clips.some((clip) => (clip.layerIndex ?? 0) > 0 || clipHasPictureTransform(clip));
     if (!hasKeyedClip && !hasPipClip && !hasActiveTransitions(transitions) && !isFinishingActive(finishing)) {
       return 'canvas';
     }
@@ -160,11 +169,20 @@ export function calculateRenderPlan(
 
   const ffmpegFinishingGaps: string[] = [];
   if (encoderIntent === 'ffmpeg') {
+    if (isCurvesActive(context.finishing?.curves)) {
+      ffmpegFinishingGaps.push('Curves & levels');
+    }
     if (isLutFinishingPassActive(context.finishing?.lut)) {
       ffmpegFinishingGaps.push('Creative LUT');
     }
     if (secondaryHasWindowGrades(context.finishing?.secondaryColor)) {
       ffmpegFinishingGaps.push('Secondary color window grades');
+    }
+    if (isChromaticAberrationActive(context.finishing?.chromaticAberration)) {
+      ffmpegFinishingGaps.push('Chromatic aberration');
+    }
+    if (isBloomActive(context.finishing?.bloom)) {
+      ffmpegFinishingGaps.push('Bloom & glow');
     }
   }
 
@@ -177,6 +195,7 @@ export function calculateRenderPlan(
     finishingActive,
     stabilizeActive,
     ...(overlayKeying ? { overlayKeying } : {}),
+    ...pictureTransformPlanFields(clips, encoderIntent),
     ...(context.captionMode !== undefined ? { captionMode: context.captionMode } : {}),
     ...(shaderTextFallbackRisk ? { shaderTextFallbackRisk: true } : {}),
     ...(ffmpegFinishingGaps.length > 0 ? { ffmpegFinishingGaps } : {}),
@@ -197,6 +216,16 @@ function computeRenderPlanPath(
       reason: "Picture-in-Picture compositing detected",
       willReencode: true,
       description: "Re-encoding with PiP compositing (re-encode)",
+    };
+  }
+
+  // A rotated / scaled clip goes through the same compositing graph.
+  if (clips.some(clipHasPictureTransform)) {
+    return {
+      path: "pip",
+      reason: "Clip picture transform (rotation / scale) detected",
+      willReencode: true,
+      description: "Re-encoding with picture transforms (re-encode)",
     };
   }
 
@@ -234,6 +263,7 @@ function computeRenderPlanPath(
     let rifeClipCount = 0;
     let loopClipCount = 0;
     let soleLoopCount: number | null = null;
+    let reverseClipCount = 0;
     for (const clip of effectClips) {
       if (clip.kind === "audio") {
         audioClipCount++;
@@ -259,6 +289,7 @@ function computeRenderPlanPath(
         loopClipCount++;
         soleLoopCount = getClipLoopCount(clip);
       }
+      if (clipIsReversed(clip)) reverseClipCount++;
     }
 
     const reasonParts: string[] = [];
@@ -267,6 +298,7 @@ function computeRenderPlanPath(
     if (volumeClipCount > 0) reasonParts.push("have volume adjustments");
     if (speedClipCount > 0) reasonParts.push("have speed adjustments");
     if (rifeClipCount > 0) reasonParts.push("are RIFE-processed");
+    if (reverseClipCount > 0) reasonParts.push("are reversed");
     if (loopClipCount > 0) {
       reasonParts.push(
         loopClipCount === 1 && soleLoopCount != null

@@ -10,8 +10,14 @@
  * has been seen.
  */
 
-import { getWasmPublicBaseUrl } from './audioAnalysis';
-import { readWasmBinaryIfFileUrl, type EmscriptenFactory } from './emscriptenLoader';
+import {
+  CS_STATUS,
+  describeStatus,
+  getEmscriptenLoadFailure,
+  loadEmscriptenModule,
+  withHeap,
+  _resetEmscriptenModuleForTests,
+} from './emscriptenLoader';
 
 /** Floats per correction matrix: [a, b, tx, c, d, ty]. */
 export const STAB_MATRIX_FLOATS = 6;
@@ -26,7 +32,10 @@ export interface StabilizerHandle {
   readonly width: number;
   readonly height: number;
   readonly smoothRadius: number;
-  /** Push one 8-bit grayscale frame (`width * height` bytes). Returns its index. */
+  /**
+   * Push one 8-bit grayscale frame (`width * height` bytes). Returns its
+   * index; throws when the module refuses it (out of memory, after finalize).
+   */
   pushFrame(gray: Uint8Array): number;
   /** Frames pushed so far. */
   readonly frameCount: number;
@@ -65,72 +74,25 @@ interface WasmModule {
   _malloc(size: number): number;
   _free(ptr: number): void;
   HEAPU8: Uint8Array;
-  HEAPF32: Float32Array;
 }
 
-type ModuleFactory = EmscriptenFactory<WasmModule>;
-
-let loadPromise: Promise<WasmModule | null> | null = null;
-let loadFailedReason: string | null = null;
-
-function resolveAssetUrl(fileName: string, baseUrl?: string): string {
-  const root = baseUrl
-    ? baseUrl.endsWith('/')
-      ? baseUrl
-      : `${baseUrl}/`
-    : getWasmPublicBaseUrl();
-  return new URL(fileName, root).href;
-}
+const MODULE_NAME = 'video_stabilize';
 
 /** Load the Emscripten module once. Returns null on failure (feature disabled). */
 export async function loadVideoStabilizeModule(options?: {
   /** Directory URL containing video_stabilize.js / .wasm (trailing slash optional). */
   baseUrl?: string;
 }): Promise<WasmModule | null> {
-  if (loadFailedReason) return null;
-  if (loadPromise) return loadPromise;
-
-  loadPromise = (async () => {
-    try {
-      const jsUrl = resolveAssetUrl('video_stabilize.js', options?.baseUrl);
-      const wasmUrl = resolveAssetUrl('video_stabilize.wasm', options?.baseUrl);
-
-      const mod = (await import(/* @vite-ignore */ jsUrl)) as { default: ModuleFactory };
-      const factory = mod.default;
-      if (typeof factory !== 'function') {
-        throw new Error('video_stabilize module factory missing');
-      }
-
-      return await factory({
-        ...(await readWasmBinaryIfFileUrl(wasmUrl).then((wasmBinary) =>
-          wasmBinary ? { wasmBinary } : {},
-        )),
-        locateFile: (path: string) => {
-          if (path.endsWith('.wasm')) return wasmUrl;
-          return resolveAssetUrl(path, options?.baseUrl);
-        },
-      });
-    } catch (err) {
-      loadFailedReason = (err as Error)?.message || String(err);
-      console.warn(
-        '[videoStabilize] WASM load failed — stabilization disabled:',
-        loadFailedReason,
-      );
-      return null;
-    }
-  })();
-
-  return loadPromise;
+  return loadEmscriptenModule<WasmModule>(MODULE_NAME, 'createVideoStabilizeModule', options);
 }
 
 /** Reset cached load state (tests only). */
 export function _resetVideoStabilizeLoadStateForTests(): void {
-  loadPromise = null;
-  loadFailedReason = null;
+  _resetEmscriptenModuleForTests(MODULE_NAME);
 }
 
 export function getVideoStabilizeLoadFailure(): string | null {
-  return loadFailedReason;
+  return getEmscriptenLoadFailure(MODULE_NAME);
 }
 
 /**
@@ -145,7 +107,7 @@ export async function createStabilizer(
 ): Promise<Stabilizer> {
   const mod = await loadVideoStabilizeModule(options);
   if (!mod) {
-    return { available: false, reason: loadFailedReason || 'WASM module unavailable' };
+    return { available: false, reason: getVideoStabilizeLoadFailure() || 'WASM module unavailable' };
   }
 
   const w = width | 0;
@@ -160,34 +122,20 @@ export async function createStabilizer(
   }
 
   const grayBytes = w * h;
-  const grayPtr = mod._malloc(grayBytes);
-  const matrixPtr = mod._malloc(STAB_MATRIX_FLOATS * 4);
-  if (!grayPtr || !matrixPtr) {
-    mod._stab_destroy(handle);
-    if (grayPtr) mod._free(grayPtr);
-    if (matrixPtr) mod._free(matrixPtr);
-    return { available: false, reason: 'WASM heap allocation failed' };
-  }
-
   let destroyed = false;
   let finalized = false;
-  /** Lazily allocated: only the CPU warp path needs two full RGBA buffers. */
-  let warpInPtr = 0;
-  let warpOutPtr = 0;
 
-  const readMatrix = (frameIdx: number): StabMatrix => {
-    mod._stab_get_matrix(handle, frameIdx | 0, matrixPtr);
-    const base = matrixPtr >> 2;
-    const heap = mod.HEAPF32;
-    return [
-      heap[base]!,
-      heap[base + 1]!,
-      heap[base + 2]!,
-      heap[base + 3]!,
-      heap[base + 4]!,
-      heap[base + 5]!,
-    ];
-  };
+  /** `count` matrices from `first`, one heap round-trip. */
+  const readMatrices = (first: number, count: number): Float32Array | null =>
+    withHeap(mod, (heap) => {
+      const out = new Float32Array(count * STAB_MATRIX_FLOATS);
+      const ptr = heap.alloc(STAB_MATRIX_FLOATS * 4);
+      for (let i = 0; i < count; i++) {
+        mod._stab_get_matrix(handle, first + i, ptr);
+        out.set(heap.f32View(ptr, STAB_MATRIX_FLOATS), i * STAB_MATRIX_FLOATS);
+      }
+      return out;
+    });
 
   const stabilizer: StabilizerHandle = {
     available: true,
@@ -216,33 +164,36 @@ export async function createStabilizer(
       }
       // subarray keeps an oversized source (e.g. a pooled buffer) from
       // overrunning the heap allocation.
-      mod.HEAPU8.set(grayFrame.subarray(0, grayBytes), grayPtr);
-      return mod._stab_push_frame(handle, grayPtr);
+      const index = withHeap(mod, (heap) =>
+        mod._stab_push_frame(handle, heap.u8(grayFrame.subarray(0, grayBytes))),
+      );
+      if (index === null) throw new Error('WASM heap allocation failed for a stabilizer frame');
+      if (index < 0) throw new Error(`stab_push_frame failed (${describeStatus(index)})`);
+      return index;
     },
 
     finalize(): void {
       if (destroyed || finalized) return;
-      mod._stab_finalize(handle);
+      const rc = mod._stab_finalize(handle);
+      if (rc !== CS_STATUS.OK && rc !== CS_STATUS.ESTATE) {
+        throw new Error(`stab_finalize failed (${describeStatus(rc)})`);
+      }
+      // ESTATE (no frames) leaves every matrix at identity, as documented.
       finalized = true;
     },
 
     getMatrix(frameIdx: number): StabMatrix {
       if (destroyed) return IDENTITY_STAB_MATRIX;
-      return readMatrix(frameIdx);
+      const m = readMatrices(frameIdx | 0, 1);
+      return m ? [m[0]!, m[1]!, m[2]!, m[3]!, m[4]!, m[5]!] : IDENTITY_STAB_MATRIX;
     },
 
     getAllMatrices(): Float32Array {
       if (destroyed) return new Float32Array(0);
       const count = mod._stab_frame_count(handle);
-      const out = new Float32Array(count * STAB_MATRIX_FLOATS);
-      for (let i = 0; i < count; i++) {
-        mod._stab_get_matrix(handle, i, matrixPtr);
-        out.set(
-          mod.HEAPF32.subarray(matrixPtr >> 2, (matrixPtr >> 2) + STAB_MATRIX_FLOATS),
-          i * STAB_MATRIX_FLOATS,
-        );
-      }
-      return out;
+      const all = readMatrices(0, count);
+      if (!all) throw new Error('WASM heap allocation failed reading stabilization matrices');
+      return all;
     },
 
     applyWarp(rgbaIn: Uint8Array, frameIdx: number): Uint8Array {
@@ -251,24 +202,20 @@ export async function createStabilizer(
       if (rgbaIn.length < bytes) {
         throw new Error(`warp expects ${bytes} RGBA bytes, got ${rgbaIn.length}`);
       }
-      if (!warpInPtr) warpInPtr = mod._malloc(bytes);
-      if (!warpOutPtr) warpOutPtr = mod._malloc(bytes);
-      if (!warpInPtr || !warpOutPtr) {
-        throw new Error('WASM heap allocation failed for warp buffers');
-      }
-      mod.HEAPU8.set(rgbaIn.subarray(0, bytes), warpInPtr);
-      mod._stab_apply_warp(handle, warpInPtr, warpOutPtr, frameIdx | 0);
-      return mod.HEAPU8.slice(warpOutPtr, warpOutPtr + bytes);
+      const warped = withHeap(mod, (heap) => {
+        const inPtr = heap.u8(rgbaIn.subarray(0, bytes));
+        const outPtr = heap.alloc(bytes);
+        mod._stab_apply_warp(handle, inPtr, outPtr, frameIdx | 0);
+        return heap.u8View(outPtr, bytes).slice();
+      });
+      if (!warped) throw new Error('WASM heap allocation failed for warp buffers');
+      return warped;
     },
 
     destroy(): void {
       if (destroyed) return;
       destroyed = true;
       mod._stab_destroy(handle);
-      mod._free(grayPtr);
-      mod._free(matrixPtr);
-      if (warpInPtr) mod._free(warpInPtr);
-      if (warpOutPtr) mod._free(warpOutPtr);
     },
   };
 

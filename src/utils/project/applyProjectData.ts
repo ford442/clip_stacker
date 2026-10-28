@@ -3,6 +3,7 @@ import type {
   Clip,
   ClipGroup,
   ClipKind,
+  ClipProxy,
   ClipTransition,
   MasterAudio,
   Project,
@@ -21,6 +22,7 @@ import {
   getColorGradeFromFinishing,
   resolveFinishingFromProject,
 } from '../finishing';
+import { normalizeColorManagement } from '../colorManagement';
 import { resolveProjectTracks, syncTracksWithClips } from '../trackModel';
 import { sanitizeClipAdjustments } from './clipHelpers';
 import { downloadRemoteMedia } from './remoteMedia';
@@ -35,6 +37,8 @@ import {
 import { deserializeTextOverlays, usesPixelLayoutForProject } from './applyTextOverlays';
 import type { AppliedProjectData, ApplyProjectDataOptions } from './types';
 import { normalizeClipAutomation } from '../clipAutomation';
+import { normalizeClipAudioEffects } from '../audioEffects';
+import { normalizeBusEffects, normalizeLaneDuck, normalizeMasterBus } from '../audioBus';
 import { createCaptionId, normalizeCaptions } from '../subtitles';
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
@@ -300,9 +304,15 @@ export async function applyProjectData(
     if (savedClip.loopCount != null) {
       liveClip.loopCount = Number(savedClip.loopCount);
     }
+    if (savedClip.reversed === true) liveClip.reversed = true;
+    else delete liveClip.reversed;
     const automation = normalizeClipAutomation(savedClip.automation);
     if (automation) liveClip.automation = automation;
     else delete liveClip.automation;
+    // Malformed bands are dropped rather than failing the load.
+    const audioEffects = normalizeClipAudioEffects(savedClip.audioEffects);
+    if (audioEffects) liveClip.audioEffects = audioEffects;
+    else delete liveClip.audioEffects;
     if (usesPixelLayout && (savedClip.layerIndex ?? 0) > 0) {
       const migrated = migratePixelClipLayout(liveClip, layoutReference);
       liveClip.x = migrated.x;
@@ -347,6 +357,12 @@ export async function applyProjectData(
       // Only the toggle round-trips; useClipStabilization recomputes the
       // matrices from the source on load.
       liveClip.stabilize = true;
+    }
+    const proxy = sanitizeClipProxy(savedClip.proxy);
+    if (proxy) {
+      // useProxyBuilder looks the bytes up in the media store; a miss leaves
+      // the clip on its original, never broken.
+      liveClip.proxy = proxy;
     }
     sanitizeClipAdjustments(liveClip);
     mapped.push(liveClip);
@@ -412,12 +428,17 @@ export async function applyProjectData(
 
   const finishing = resolveFinishingFromProject(project);
   const colorGrade = getColorGradeFromFinishing(finishing);
+  const colorManagement = normalizeColorManagement(project.colorManagement);
 
   const savedTracks = Array.isArray(project.tracks)
-    ? project.tracks.map(
-        (t): Track => ({
+    ? project.tracks.map((t): Track => {
+        const kind = t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video';
+        // Malformed effects are dropped, not thrown on; titles lanes carry no audio.
+        const audioFx = kind === 'text' ? undefined : normalizeBusEffects(t.audioFx);
+        const duck = kind === 'text' ? undefined : normalizeLaneDuck(t.duck);
+        return {
           id: String(t.id),
-          kind: t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video',
+          kind,
           ...(t.label ? { label: String(t.label) } : {}),
           items: Array.isArray(t.items)
             ? t.items.map((item) => ({
@@ -428,8 +449,10 @@ export async function applyProjectData(
           ...(t.muted ? { muted: true } : {}),
           ...(t.locked ? { locked: true } : {}),
           ...(t.height != null ? { height: Number(t.height) } : {}),
-        }),
-      )
+          ...(audioFx ? { audioFx } : {}),
+          ...(duck ? { duck } : {}),
+        };
+      })
     : undefined;
 
   let tracks = resolveProjectTracks(savedTracks, mapped, transitions, clipGroups);
@@ -447,11 +470,25 @@ export async function applyProjectData(
     captionStyle,
     masterAudio,
     masterAudioMarkers: project.masterAudioMarkers ?? [],
+    masterBus: normalizeMasterBus(project.masterBus),
     colorGrade,
     finishing,
+    colorManagement,
     skippedClipCount: skippedCount,
     skippedClipFileNames,
     invalidColorWarnings,
     mediaDownloadWarnings,
   };
+}
+
+/** Coerce a saved proxy record; anything malformed is dropped rather than thrown on. */
+export function sanitizeClipProxy(value: unknown): ClipProxy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const width = Number(v.width);
+  const height = Number(v.height);
+  if (typeof v.profile !== 'string' || !v.profile) return undefined;
+  if (typeof v.hash !== 'string' || !/^[0-9a-f]{16,128}$/i.test(v.hash)) return undefined;
+  if (!(width > 0 && height > 0)) return undefined;
+  return { profile: v.profile, hash: v.hash, width: Math.round(width), height: Math.round(height) };
 }

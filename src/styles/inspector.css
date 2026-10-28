@@ -129,6 +129,46 @@
   background: rgba(6, 9, 15, 0.85);
 }
 
+.inspector-fx-panel {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(6, 9, 15, 0.85);
+}
+
+.inspector-fx-band {
+  display: grid;
+  gap: 0.4rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.inspector-fx-band-header {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.inspector-fx-band-header select {
+  flex: 1;
+  min-width: 0;
+}
+
+.inspector-fx-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(5.5rem, 1fr));
+  gap: 0.45rem;
+}
+
+.inspector-fx-field {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  min-width: 0;
+}
+
 .inspector-speed-primary {
   display: grid;
   gap: 0.45rem;
@@ -470,4 +510,37 @@
 .inspector-gpu-chore-crumb {
   font-size: 0.68rem;
   word-break: break-word;
+}
+
+/* ── Collapsible Inspector sections (Export tab) ───────────── */
+.inspector-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.35rem;
+}
+
+.inspector-section > summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.inspector-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.inspector-section > summary::before {
+  content: "▸";
+  display: inline-block;
+  width: 1em;
+  transition: transform 0.15s ease;
+}
+
+.inspector-section[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.inspector-section-body {
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.3rem;
 }

@@ -8,7 +8,7 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { buildTransitionFilterComplex } from "../utils/transitions";
 import {
   isFfmpegLoadFailed,

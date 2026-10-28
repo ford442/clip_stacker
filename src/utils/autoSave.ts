@@ -1,3 +1,5 @@
+import type { MasterBusSettings } from './audioBus';
+import type { ColorManagementSettings } from './colorManagement';
 import type {
   CaptionEntry,
   Clip,
@@ -93,6 +95,8 @@ export async function buildAutoSaveProject(
     embedBudgetBytes?: number;
     maxClipBytes?: number;
     forceMetadataOnly?: boolean;
+    colorManagement?: ColorManagementSettings;
+    masterBus?: MasterBusSettings;
   } = {},
   captions: CaptionEntry[] = [],
   captionStyle: Partial<TextOverlayStyle> = {},
@@ -103,7 +107,7 @@ export async function buildAutoSaveProject(
 
   const project = serializeProject(
     clips, transitions, textOverlays, clipGroups, undefined, tracks,
-    undefined, null, captions, captionStyle,
+    undefined, null, captions, captionStyle, options.colorManagement, options.masterBus,
   );
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));
   let embedBudgetRemaining = embedBudgetBytes;
@@ -251,10 +255,12 @@ export function hashAutoSaveState(
   tracks: Track[] = [],
   captions: CaptionEntry[] = [],
   captionStyle: Partial<TextOverlayStyle> = {},
+  colorManagement?: ColorManagementSettings,
+  masterBus?: MasterBusSettings,
 ): string {
   const project = serializeProject(
     clips, transitions, textOverlays, clipGroups, undefined, tracks,
-    undefined, null, captions, captionStyle,
+    undefined, null, captions, captionStyle, colorManagement, masterBus,
   );
   return JSON.stringify({
     project,

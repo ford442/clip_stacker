@@ -76,29 +76,41 @@ export function getCdnLabel(baseURL: string): string {
   }
 }
 
-export function getLocalFfmpegCoreBaseURL(): string {
+/**
+ * Self-hosted copies of both cores live in `public/ffmpeg-core{,-mt}/`
+ * (`npm run sync:ffmpeg-core`); the CDNs are fallbacks only. The version must
+ * match the `@ffmpeg/core` / `@ffmpeg/core-mt` devDependencies so a fallback
+ * serves the same build — `npm run sync:ffmpeg-core -- --check` enforces it.
+ */
+export const FFMPEG_CORE_VERSION = '0.12.10';
+
+export function getLocalFfmpegCoreBaseURL(variant: 'mt' | 'st' = 'st'): string {
   const base =
     typeof document !== 'undefined'
       ? document.baseURI
       : typeof window !== 'undefined'
         ? window.location.href
         : 'http://localhost/';
-  return new URL('ffmpeg-core', base).href.replace(/\/$/, '');
+  const dir = variant === 'mt' ? 'ffmpeg-core-mt' : 'ffmpeg-core';
+  return new URL(dir, base).href.replace(/\/$/, '');
 }
 
 export const FFMPEG_CORE_CDNS = [
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/esm',
-  'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm',
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`,
+  `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`,
 ];
 
-/** CDN sources for the multi-threaded FFmpeg core (requires SharedArrayBuffer). */
+/** CDN fallbacks for the multi-threaded FFmpeg core (requires SharedArrayBuffer). */
 export const FFMPEG_CORE_MT_CDNS = [
-  'https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.6/dist/esm',
-  'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm',
+  `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
+  `https://unpkg.com/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
 ];
 
+/** Base URLs to try for a core variant, in order: the local copy, then CDNs. */
 export function getFfmpegCoreSources(variant: 'mt' | 'st' = 'st'): string[] {
-  if (variant === 'mt') return FFMPEG_CORE_MT_CDNS;
+  if (variant === 'mt') {
+    return [getLocalFfmpegCoreBaseURL('mt'), ...FFMPEG_CORE_MT_CDNS];
+  }
   return [getLocalFfmpegCoreBaseURL(), ...FFMPEG_CORE_CDNS];
 }
 
@@ -232,6 +244,7 @@ export async function toBlobURLWithRetry(
       if (attempt === maxRetries) {
         throw new Error(
           `Failed to load ${url} after ${maxRetries} retries: ${(error as Error).message}`,
+          { cause: error },
         );
       }
       const delayMs = Math.pow(2, attempt) * 1000;
@@ -247,9 +260,9 @@ export async function toBlobURLWithRetry(
 }
 
 /**
- * Download all three mt core assets (js + wasm + worker.js) from a single CDN
- * source so they are version-consistent. Tries each CDN in order; the first
- * that delivers all three files wins.
+ * Download all three mt core assets (js + wasm + worker.js) from a single
+ * source so they are version-consistent. Tries the self-hosted copy, then each
+ * CDN; the first that delivers all three files wins.
  */
 export async function loadMtCoreSources(
   onStatus: StatusCallback,
@@ -257,7 +270,8 @@ export async function loadMtCoreSources(
   recordLog: (message: string) => void,
 ): Promise<{ coreURL: string; wasmURL: string; workerURL: string }> {
   let lastError: Error | null = null;
-  for (const [index, baseURL] of FFMPEG_CORE_MT_CDNS.entries()) {
+  const sources = getFfmpegCoreSources('mt');
+  for (const [index, baseURL] of sources.entries()) {
     const cdnLabel = getCdnLabel(baseURL);
     try {
       const coreURL = await toBlobURLWithRetry(
@@ -288,19 +302,19 @@ export async function loadMtCoreSources(
     } catch (err) {
       lastError = err as Error;
       recordLog(
-        `[FFmpeg load] mt CDN ${baseURL} failed: ${lastError.message}`,
+        `[FFmpeg load] mt source ${baseURL} failed: ${lastError.message}`,
       );
-      if (index < FFMPEG_CORE_MT_CDNS.length - 1) {
+      if (index < sources.length - 1) {
         emitLoadStatus(
           onStatus,
           onProgress,
-          `${cdnLabel} unavailable for mt core. Trying the next CDN...`,
+          `${cdnLabel} unavailable for mt core. Trying the next FFmpeg source...`,
         );
       }
     }
   }
   throw new Error(
-    `Failed to download multi-threaded FFmpeg core from all CDNs. Last error: ${lastError?.message ?? 'unknown'}`,
+    `Failed to download multi-threaded FFmpeg core from local assets and all fallback CDNs. Last error: ${lastError?.message ?? 'unknown'}`,
   );
 }
 

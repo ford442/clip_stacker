@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Clip, ClipTransition, TextOverlay } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { hybridMergeClips } from './hybrid-encoder';
+import { DEFAULT_COLOR_MANAGEMENT } from './colorManagement';
 
 // Mock dependencies
 vi.mock('./webcodecs', () => ({
@@ -267,6 +268,7 @@ describe('utils/hybrid-encoder', () => {
         expect.anything(),
         false,
         {},
+        DEFAULT_COLOR_MANAGEMENT,
       );
       expect(muxVideoWithAudio).toHaveBeenCalledWith(
         videoBlob,
@@ -312,6 +314,7 @@ describe('utils/hybrid-encoder', () => {
         expect.anything(),
         true,
         {},
+        DEFAULT_COLOR_MANAGEMENT,
       );
       expect(muxVideoWithAudio).not.toHaveBeenCalled();
       expect(result.blob).toBe(avBlob);
@@ -424,8 +427,8 @@ describe('utils/hybrid-encoder', () => {
       (mergeClips as any).mockResolvedValue(mockBlob);
       (calculateRenderPlan as any).mockReturnValue({ willReencode: false, path: 'lossless-concat' });
       const matchedClips = [
-        createTestClip('a', 5, { videoWidth: 1280, videoHeight: 720 }),
-        createTestClip('b', 3, { videoWidth: 1280, videoHeight: 720 }),
+        createTestClip('a', 5, { videoWidth: 1920, videoHeight: 1080 }),
+        createTestClip('b', 3, { videoWidth: 1920, videoHeight: 1080 }),
       ];
 
       const result = await hybridMergeClips(
@@ -541,6 +544,7 @@ describe('utils/hybrid-encoder', () => {
         expect.anything(),
         false,
         {},
+        DEFAULT_COLOR_MANAGEMENT,
       );
       expect(mergeClips).not.toHaveBeenCalled();
     });

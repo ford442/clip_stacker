@@ -6,9 +6,10 @@
  */
 
 import type { Clip, ClipTransition, ExportSettings } from '../types';
-import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH, getClipDuration } from './project';
+import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './canvasDefaults';
+import { getClipDuration } from './clipTiming';
 import { parseOutputResolution } from './resolution';
-import { clipHasKeyframes, resolveAnimatedClipLayout } from './animatedLayout';
+import { clipHasLayoutKeyframes, resolveAnimatedClipLayout } from './animatedLayout';
 import { capPreviewResolution, DEFAULT_PREVIEW_MAX_HEIGHT } from './previewBudget';
 import type { CanvasGeometry, ClipTimelineSegment, PreviewPipRect } from './previewCompositionTypes';
 
@@ -113,17 +114,12 @@ export function resolveCanvasSize(
   const outputWidth = width || DEFAULT_CANVAS_WIDTH;
   const outputHeight = height || DEFAULT_CANVAS_HEIGHT;
 
-  let canvasWidth = outputWidth;
-  let canvasHeight = outputHeight;
-  let scale = 1;
-  let capped = false;
-
   const maxHeight = options.maxHeight ?? DEFAULT_PREVIEW_MAX_HEIGHT;
-  const heightCap = capPreviewResolution(canvasWidth, canvasHeight, maxHeight);
-  canvasWidth = heightCap.width;
-  canvasHeight = heightCap.height;
-  scale = heightCap.scale;
-  capped = heightCap.capped;
+  const heightCap = capPreviewResolution(outputWidth, outputHeight, maxHeight);
+  let canvasWidth = heightCap.width;
+  let canvasHeight = heightCap.height;
+  let scale = heightCap.scale;
+  let capped = heightCap.capped;
 
   if (options.maxWidth && canvasWidth > options.maxWidth) {
     const widthScale = options.maxWidth / canvasWidth;
@@ -152,7 +148,7 @@ export function resolveClipRectAtTime(
   localTime: number,
 ): { rect: PreviewPipRect; uvScale: [number, number]; uvOffset: [number, number] } {
   const isBase = (clip.layerIndex ?? 0) === 0;
-  const hasAnimation = clip.stillImage || clipHasKeyframes(clip) || !isBase;
+  const hasAnimation = clip.stillImage || clipHasLayoutKeyframes(clip) || !isBase;
 
   if (isBase && !hasAnimation) {
     return {
@@ -170,7 +166,7 @@ export function resolveClipRectAtTime(
     geom.scale,
   );
 
-  if (isBase && !clip.stillImage && !clipHasKeyframes(clip)) {
+  if (isBase && !clip.stillImage && !clipHasLayoutKeyframes(clip)) {
     return {
       rect: { x: 0, y: 0, width: geom.canvasWidth, height: geom.canvasHeight },
       uvScale: layout.uvScale,

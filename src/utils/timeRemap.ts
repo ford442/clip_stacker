@@ -19,6 +19,7 @@ import {
   getClipPlaybackRate,
   getTrimmedSourceDuration,
 } from './playbackRate';
+import { clipIsReversed, REVERSE_END_BIAS_SEC, trimmedSourceEnd } from './reverseClip';
 
 const RATE_EPS = 1e-6;
 const INTEGRAL_EPS = 1e-7;
@@ -111,7 +112,7 @@ export function integrateRateToSourceOffset(
 
 /** Source media time (seconds) at an output-local position within the clip. */
 export function sourceTimeAtOutputLocal(
-  clip: Pick<Clip, 'trimStart' | 'playbackRate' | 'automation'>,
+  clip: Pick<Clip, 'trimStart' | 'trimEnd' | 'duration' | 'playbackRate' | 'automation' | 'reversed'>,
   outputLocalT: number,
 ): number {
   const offset = integrateRateToSourceOffset(
@@ -119,7 +120,16 @@ export function sourceTimeAtOutputLocal(
     getClipPlaybackRate(clip),
     outputLocalT,
   );
-  return clip.trimStart + offset;
+  if (!clipIsReversed(clip)) return clip.trimStart + offset;
+
+  // Walk the trim from its end. Bias the first instant inside the window so
+  // a decoder does not step onto the frame that starts at the exclusive end.
+  const end = trimmedSourceEnd(clip);
+  let sourceTime = end - offset;
+  if (sourceTime > end - REVERSE_END_BIAS_SEC) {
+    sourceTime = end - REVERSE_END_BIAS_SEC;
+  }
+  return Math.max(clip.trimStart, sourceTime);
 }
 
 /**

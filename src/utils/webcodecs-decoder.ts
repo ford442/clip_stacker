@@ -14,6 +14,8 @@
 
 import { createFile, DataStream, Endianness, MP4BoxBuffer } from 'mp4box';
 import type { ISOFile, Sample, Track } from 'mp4box';
+import { waitForQueueBelow } from './codecQueue';
+import { DECODER_ACCELERATION_LADDER } from './webcodecs-codec';
 
 /** Max decoded frames buffered ahead of the consumer (ring buffer depth). */
 export const FRAME_RING_BUFFER_CAPACITY = 8;
@@ -182,17 +184,44 @@ async function demuxClip(source: Blob): Promise<DemuxedClip> {
   const samples = isoFile.getTrackSamplesInfo(track.id);
   if (!samples || samples.length === 0) throw new Error('No video samples found in clip');
 
+  // `hardwareAcceleration` is chosen per machine by `resolveDecoderConfig`.
   const config: VideoDecoderConfig = {
     codec: track.codec,
     codedWidth: track.video?.width || track.track_width,
     codedHeight: track.video?.height || track.track_height,
-    // Prefer hardware decode so export stays GPU-bound end-to-end when available.
-    hardwareAcceleration: 'prefer-hardware',
   };
   const description = extractDecoderDescription(isoFile, track.id);
   if (description) config.description = description;
 
   return { isoFile, buffer, track, samples, config };
+}
+
+let lastDecoderAcceleration: HardwareAcceleration | null = null;
+
+/** The acceleration rung the last opened clip decoder configured with — Copy Debug. */
+export function getLastDecoderAcceleration(): HardwareAcceleration | null {
+  return lastDecoderAcceleration;
+}
+
+/**
+ * `config` with the first acceleration hint of {@link DECODER_ACCELERATION_LADDER}
+ * that `isConfigSupported` accepts, or null when none does. Hardware decode
+ * keeps export GPU-bound end to end; the software rungs keep a machine with no
+ * (or a picky) hardware decoder on the decoder path rather than `<video>` seeks.
+ */
+export async function resolveDecoderConfig(
+  config: VideoDecoderConfig,
+): Promise<VideoDecoderConfig | null> {
+  for (const hardwareAcceleration of DECODER_ACCELERATION_LADDER) {
+    const candidate: VideoDecoderConfig = { ...config, hardwareAcceleration };
+    try {
+      const support = await VideoDecoder.isConfigSupported(candidate);
+      if (support.supported === true) return candidate;
+    } catch {
+      // Try the next rung.
+    }
+  }
+  return null;
 }
 
 export interface ClipFrameDecoderOptions {
@@ -245,10 +274,12 @@ export class ClipFrameDecoder {
     }
 
     const demuxed = await demuxClip(source);
-    const support = await VideoDecoder.isConfigSupported(demuxed.config);
-    if (!support.supported) {
+    const config = await resolveDecoderConfig(demuxed.config);
+    if (!config) {
       throw new Error(`VideoDecoder does not support ${demuxed.config.codec}`);
     }
+    demuxed.config = config;
+    lastDecoderAcceleration = config.hardwareAcceleration ?? null;
 
     const baseCts = computeBaseCts(demuxed.samples);
     const window = selectDecodeWindow(demuxed.samples, opts.trimStart, opts.trimEnd, baseCts);
@@ -301,8 +332,13 @@ export class ClipFrameDecoder {
         if (this.queue.size === 0) break;
       }
 
-      if (this.decoder.decodeQueueSize > MAX_DECODE_QUEUE_DEPTH) {
-        await waitForDequeue(this.decoder);
+      // Rejects if the decoder errors (it closes) or stalls, rather than hanging.
+      // A close() of our own mid-iteration just ends the stream.
+      try {
+        await waitForQueueBelow(this.decoder, MAX_DECODE_QUEUE_DEPTH + 1);
+      } catch (err) {
+        if (this.disposed) return;
+        throw err;
       }
     }
 
@@ -334,17 +370,6 @@ export class ClipFrameDecoder {
   }
 }
 
-function waitForDequeue(decoder: VideoDecoder): Promise<void> {
-  return new Promise((resolve) => {
-    const target = decoder as unknown as EventTarget;
-    if (typeof target.addEventListener === 'function') {
-      target.addEventListener('dequeue', () => resolve(), { once: true });
-    } else {
-      setTimeout(resolve, 0);
-    }
-  });
-}
-
 /**
  * Cheap probe: can this clip be served by the VideoDecoder path?
  * Returns false (never throws) when demux or decode support is missing.
@@ -355,8 +380,7 @@ export async function canDecodeClipWithWebCodecs(source: Blob): Promise<boolean>
   }
   try {
     const demuxed = await demuxClip(source);
-    const support = await VideoDecoder.isConfigSupported(demuxed.config);
-    return support.supported === true;
+    return (await resolveDecoderConfig(demuxed.config)) !== null;
   } catch {
     return false;
   }

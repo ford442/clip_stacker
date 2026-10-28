@@ -232,3 +232,43 @@ describe('draftNoiseReductionRadius', () => {
     expect(draftNoiseReductionRadius(1, 720)).toBe(1);
   });
 });
+
+describe('noise reduction quality tiers', () => {
+  const base = { ...DEFAULT_NOISE_REDUCTION, enabled: true, spatialStrength: 0.5 };
+
+  it('packs quality into slot 10; omitted = standard (0)', () => {
+    expect(packNoiseReductionUniforms(base, 64, 64, false)[10]).toBe(0);
+    expect(packNoiseReductionUniforms({ ...base, quality: 'standard' }, 64, 64, false)[10]).toBe(0);
+    expect(packNoiseReductionUniforms({ ...base, quality: 'high' }, 64, 64, false)[10]).toBe(1);
+    expect(packNoiseReductionUniforms({ ...base, quality: 'nlm' }, 64, 64, false)[10]).toBe(2);
+    expect(
+      packNoiseReductionUniforms({ ...base, quality: 'bogus' as never }, 64, 64, false)[10],
+    ).toBe(0);
+    expect(NOISE_REDUCTION_UNIFORM_FLOATS).toBe(16);
+  });
+
+  it('old projects normalize without gaining a quality key', () => {
+    const normalized = normalizeNoiseReductionPass({ enabled: true }, DEFAULT_NOISE_REDUCTION);
+    expect(normalized).not.toHaveProperty('quality');
+    expect(normalizeFinishingSettings({}).noiseReduction).not.toHaveProperty('quality');
+  });
+
+  it('round-trips a valid quality and drops an invalid one', () => {
+    expect(
+      normalizeNoiseReductionPass({ enabled: true, quality: 'nlm' }, DEFAULT_NOISE_REDUCTION)
+        .quality,
+    ).toBe('nlm');
+    expect(
+      normalizeNoiseReductionPass(
+        { enabled: true, quality: 'ultra' as never },
+        DEFAULT_NOISE_REDUCTION,
+      ),
+    ).not.toHaveProperty('quality');
+  });
+
+  it('FFmpeg fallback is unchanged by the quality tier', () => {
+    expect(buildNoiseReductionFfmpegFilters({ ...base, quality: 'nlm' })).toBe(
+      buildNoiseReductionFfmpegFilters(base),
+    );
+  });
+});

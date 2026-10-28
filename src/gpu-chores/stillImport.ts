@@ -133,9 +133,15 @@ async function analyzeViaPreviewWorker(
   const specs = stillJobSpecs(width, height);
   const copy =
     typeof createImageBitmap === 'function' ? await createImageBitmap(bitmap) : bitmap;
-  const [histJob, thumb] = await runPreviewWorkerJobs([specs.hist, specs.thumb], copy);
-  if (!histJob || !thumb) throw new Error('preview worker returned incomplete chore results');
-  return packStillResults(histJob, thumb);
+  try {
+    const [histJob, thumb] = await runPreviewWorkerJobs([specs.hist, specs.thumb], copy);
+    if (!histJob || !thumb) throw new Error('preview worker returned incomplete chore results');
+    return packStillResults(histJob, thumb);
+  } finally {
+    // The copy is transferred on success (close() is then a no-op); on a
+    // failure before the transfer it would otherwise hold its pixels.
+    if (copy !== bitmap) copy.close();
+  }
 }
 
 export async function analyzeImportedStillFile(file: Blob): Promise<StillImportChoreResult> {

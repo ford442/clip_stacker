@@ -47,3 +47,19 @@ export function timelineContentWidth(totalDuration: number, pixelsPerSecond: num
 export function clampPixelsPerSecond(value: number): number {
   return Math.min(MAX_PIXELS_PER_SECOND, Math.max(MIN_PIXELS_PER_SECOND, value));
 }
+
+/** Width of the lane-header column that precedes every track's time axis. */
+export const TIMELINE_GUTTER_PX = 132;
+
+/**
+ * Output time at a horizontal offset from the time-0 edge of the axis (the
+ * ruler's left edge), clamped to the timeline.
+ */
+export function timelineTimeAtOffset(
+  offsetPx: number,
+  pixelsPerSecond: number,
+  totalDuration: number,
+): number {
+  if (!(pixelsPerSecond > 0) || !(totalDuration > 0)) return 0;
+  return Math.min(totalDuration, Math.max(0, offsetPx / pixelsPerSecond));
+}

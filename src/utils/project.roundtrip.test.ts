@@ -33,6 +33,39 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     expect(result.transitions[0].type).toBe("dissolve");
   });
 
+  it("should roundtrip clip audio effects and drop malformed bands", async () => {
+    const audioEffects = {
+      eq: [
+        { type: "lowShelf" as const, frequency: 120, gainDb: 3, q: 0.7, enabled: true },
+        { type: "peaking" as const, frequency: 2500, gainDb: -4, q: 2, enabled: false },
+      ],
+      compressor: {
+        enabled: true,
+        thresholdDb: -18,
+        ratio: 3,
+        attack: 0.005,
+        release: 0.12,
+        kneeDb: 4,
+        makeupDb: 2,
+      },
+    };
+    const clips = [{ ...createTestClip("a", 5, "Clip A"), audioEffects }, createTestClip("b", 3, "Clip B")];
+    const serialized = serializeProject(clips, [], [], []);
+    expect(serialized.clips[0].audioEffects).toEqual(audioEffects);
+    expect(serialized.clips[1].audioEffects).toBeUndefined();
+
+    const result = await applyProjectData(serialized, clips);
+    expect(result.clips[0].audioEffects).toEqual(audioEffects);
+    expect(result.clips[1].audioEffects).toBeUndefined();
+
+    const tampered = structuredClone(serialized);
+    (tampered.clips[0] as { audioEffects: unknown }).audioEffects = {
+      eq: [{ type: "notch", frequency: 1 }, "junk"],
+    };
+    const loaded = await applyProjectData(tampered, clips);
+    expect(loaded.clips[0].audioEffects).toBeUndefined();
+  });
+
   it("should roundtrip a custom WGSL transition and its params", async () => {
     const clips = [createTestClip("a", 5, "Clip A"), createTestClip("b", 3, "Clip B")];
     const expression = "mix(sampleTo(uv), sampleFrom(uv), u.progress * u.custom0)";
@@ -55,6 +88,32 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     expect(result.transitions[0].params).toEqual({ amount: 0.5 });
   });
 
+  it("should roundtrip picture-transform keyframes and add none when absent", async () => {
+    const keyframes = {
+      rotation: [
+        { t: 0, value: 0 },
+        { t: 2, value: 90 },
+      ],
+      scaleX: [{ t: 0, value: 1.5 }],
+      scaleY: [{ t: 0, value: 0.75 }],
+      anchorX: [{ t: 0, value: 0 }],
+      anchorY: [{ t: 0, value: 1 }],
+    };
+    const clips = [
+      { ...createTestClip("a", 5, "Clip A"), keyframes },
+      createTestClip("b", 3, "Clip B"),
+    ];
+
+    const serialized = serializeProject(clips, [], [], []);
+    expect(serialized.clips[0].keyframes).toEqual(keyframes);
+    // An untransformed clip stays exactly as it was: no keyframes key at all.
+    expect(serialized.clips[1]).not.toHaveProperty("keyframes");
+
+    const result = await applyProjectData(serialized, clips);
+    expect(result.clips[0].keyframes).toEqual(keyframes);
+    expect(result.clips[1].keyframes).toBeUndefined();
+  });
+
   it("should roundtrip the stabilize toggle without its matrices", async () => {
     const clips = [
       { ...createTestClip("a", 5, "Clip A"), stabilize: true },
@@ -71,6 +130,30 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     expect(result.clips[0].stabilize).toBe(true);
     expect(result.clips[0].stabilization).toBeUndefined();
     expect(result.clips[1].stabilize).toBeUndefined();
+  });
+
+  it("should roundtrip the proxy record but never proxy bytes", async () => {
+    const proxy = { profile: "h264-960-v1", hash: "ab".repeat(32), width: 1706, height: 960 };
+    const clips = [
+      { ...createTestClip("a", 5, "Clip A"), proxy },
+      createTestClip("b", 3, "Clip B"),
+    ];
+    const serialized = serializeProject(clips, [], [], []);
+    expect(serialized.clips[0].proxy).toEqual(proxy);
+    expect(serialized.clips[1]).not.toHaveProperty("proxy");
+    expect(JSON.stringify(serialized)).not.toContain("data:");
+
+    const result = await applyProjectData(serialized, clips);
+    expect(result.clips[0].proxy).toEqual(proxy);
+    expect(result.clips[1].proxy).toBeUndefined();
+  });
+
+  it("should drop a malformed proxy record on load", async () => {
+    const clips = [createTestClip("a", 5, "Clip A")];
+    const serialized = serializeProject(clips, [], [], []);
+    serialized.clips[0].proxy = { profile: "h264-960-v1", hash: "not hex!", width: 0, height: 960 };
+    const result = await applyProjectData(serialized, clips);
+    expect(result.clips[0].proxy).toBeUndefined();
   });
 
   it("should load pre-custom-shader projects without a shader field", async () => {

@@ -20,7 +20,18 @@ import {
   isFinishingActive,
 } from '../finishing';
 import type { FinishingSettings } from '../finishing';
+import {
+  isColorManagementActive,
+  type ColorManagementSettings,
+} from '../colorManagement';
 import { normalizeClipAutomation } from '../clipAutomation';
+import { normalizeClipAudioEffects } from '../audioEffects';
+import {
+  normalizeBusEffects,
+  normalizeLaneDuck,
+  normalizeMasterBus,
+  type MasterBusSettings,
+} from '../audioBus';
 import { normalizeCaptions } from '../subtitles';
 export function serializeProject(
   clips: Clip[],
@@ -33,19 +44,29 @@ export function serializeProject(
   masterAudio: MasterAudio | null = null,
   captions: CaptionEntry[] = [],
   captionStyle: Partial<TextOverlayStyle> = {},
+  colorManagement?: ColorManagementSettings,
+  masterBus?: MasterBusSettings,
 ): Project {
-  const serializedTracks: SerializedTrack[] = tracks.map((track) => ({
-    id: track.id,
-    kind: track.kind,
-    ...(track.label ? { label: track.label } : {}),
-    items: track.items.map((item) => ({
-      clipId: item.clipId,
-      startTime: item.startTime,
-    })),
-    ...(track.muted ? { muted: true } : {}),
-    ...(track.locked ? { locked: true } : {}),
-    ...(track.height != null ? { height: track.height } : {}),
-  }));
+  const serializedTracks: SerializedTrack[] = tracks.map((track) => {
+    // Bypassed effects round-trip too, like clip inserts.
+    const audioFx = normalizeBusEffects(track.audioFx);
+    const duck = normalizeLaneDuck(track.duck);
+    return {
+      id: track.id,
+      kind: track.kind,
+      ...(track.label ? { label: track.label } : {}),
+      items: track.items.map((item) => ({
+        clipId: item.clipId,
+        startTime: item.startTime,
+      })),
+      ...(track.muted ? { muted: true } : {}),
+      ...(track.locked ? { locked: true } : {}),
+      ...(track.height != null ? { height: track.height } : {}),
+      ...(audioFx ? { audioFx } : {}),
+      ...(duck ? { duck } : {}),
+    };
+  });
+  const savedMasterBus = normalizeMasterBus(masterBus);
 
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
@@ -55,6 +76,8 @@ export function serializeProject(
     ...(serializedTracks.length > 0 ? { tracks: serializedTracks } : {}),
     clips: clips.map((clip): SerializedClip => {
       const automation = normalizeClipAutomation(clip.automation);
+      // Bypassed blocks round-trip too: the settings survive a toggle.
+      const audioEffects = normalizeClipAudioEffects(clip.audioEffects);
       return {
       id: clip.id,
       title: clip.title,
@@ -78,7 +101,9 @@ export function serializeProject(
       ...(clip.loopCount != null && clip.loopCount !== 1
         ? { loopCount: clip.loopCount }
         : {}),
+      ...(clip.reversed ? { reversed: true } : {}),
       ...(automation ? { automation } : {}),
+      ...(audioEffects ? { audioEffects } : {}),
       fileName: clip.file.name,
       fileType: clip.file.type || undefined,
       ...(clip.groupId ? { groupId: clip.groupId } : {}),
@@ -123,6 +148,8 @@ export function serializeProject(
         : {}),
       ...(clip.lumaLevels ? { lumaLevels: { ...clip.lumaLevels } } : {}),
       ...(clip.stabilize ? { stabilize: true } : {}),
+      // The record only — proxy bytes live in the media store, never in JSON.
+      ...(clip.proxy ? { proxy: { ...clip.proxy } } : {}),
     };
     }),
     transitions: transitions.map((t): SerializedTransition => ({
@@ -166,6 +193,8 @@ export function serializeProject(
       : {}),
     ...(Object.keys(captionStyle).length > 0 ? { captionStyle: { ...captionStyle } } : {}),
     ...(isFinishingActive(finishing) ? { finishing } : {}),
+    ...(isColorManagementActive(colorManagement) ? { colorManagement } : {}),
+    ...(savedMasterBus ? { masterBus: savedMasterBus } : {}),
     ...(masterAudio
       ? {
           masterAudio: {

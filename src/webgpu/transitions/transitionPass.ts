@@ -1,10 +1,11 @@
 import {
   buildTransitionShader,
-  FROM_STAB_UNIFORM_OFFSET,
-  TO_STAB_UNIFORM_OFFSET,
+  FROM_WARP_UNIFORM_OFFSET,
+  TO_WARP_UNIFORM_OFFSET,
   TRANSITION_UNIFORM_FLOATS,
+  WARP_MASK_UNIFORM_OFFSET,
 } from './shaderTemplate';
-import { IDENTITY_STAB_MATRIX } from '../../wasm/videoStabilize';
+import { packWarpUniforms } from '../../utils/clipTransform';
 import {
   getTransitionDef,
   resolveCustomUniforms,
@@ -202,12 +203,12 @@ export function writeTransitionUniforms(
   buffer[18] = c3;
   buffer[19] = 0;
 
-  const fromStab = params.fromStabMatrix ?? IDENTITY_STAB_MATRIX;
-  const toStab = params.toStabMatrix ?? IDENTITY_STAB_MATRIX;
-  for (let i = 0; i < 6; i++) {
-    buffer[FROM_STAB_UNIFORM_OFFSET + i] = fromStab[i]!;
-    buffer[TO_STAB_UNIFORM_OFFSET + i] = toStab[i]!;
-  }
+  packWarpUniforms(buffer, FROM_WARP_UNIFORM_OFFSET, params.fromWarpMatrix);
+  packWarpUniforms(buffer, TO_WARP_UNIFORM_OFFSET, params.toWarpMatrix);
+  buffer[WARP_MASK_UNIFORM_OFFSET] = params.fromWarpMasked ? 1 : 0;
+  buffer[WARP_MASK_UNIFORM_OFFSET + 1] = params.toWarpMasked ? 1 : 0;
+  buffer[WARP_MASK_UNIFORM_OFFSET + 2] = 0;
+  buffer[WARP_MASK_UNIFORM_OFFSET + 3] = 0;
 }
 
 export function renderTransitionPass(

@@ -1,3 +1,4 @@
+import type { MasterBusSettings } from '../audioBus';
 import type {
   CaptionEntry,
   Clip,
@@ -12,6 +13,7 @@ import type {
 } from '../../types';
 import type { ColorGradeSettings } from '../lut';
 import type { FinishingSettings } from '../finishing';
+import type { ColorManagementSettings } from '../colorManagement';
 import {
   DEFAULT_FINISHING,
   colorGradeToLutPass,
@@ -46,6 +48,10 @@ export interface SerializeProjectOptions {
   captions?: CaptionEntry[];
   /** Project-wide caption style overrides. */
   captionStyle?: Partial<TextOverlayStyle>;
+  /** Output color / working space. Omitted from the file when left at the default. */
+  colorManagement?: ColorManagementSettings;
+  /** Master bus FX and loudness target. Omitted from the file when empty. */
+  masterBus?: MasterBusSettings;
 }
 
 function sanitizeUploadFileName(fileName: string): string {
@@ -171,6 +177,7 @@ async function uploadClipMediaWithRetry(
         if (attempt < MAX_UPLOAD_RETRY_ATTEMPTS) continue;
         throw new Error(
           `Upload failed for clip ${index}/${total} after ${attempt} attempts: ${uploadError.message}`,
+          { cause: error },
         );
       }
       if (action === 'skip') {
@@ -185,7 +192,9 @@ async function uploadClipMediaWithRetry(
         });
         return undefined;
       }
-      throw new Error(`Upload aborted at clip ${index}/${total}: ${uploadError.message}`);
+      throw new Error(`Upload aborted at clip ${index}/${total}: ${uploadError.message}`, {
+        cause: error,
+      });
     }
   }
 }
@@ -216,6 +225,8 @@ export async function serializeProjectWithMedia(
     masterAudio,
     options.captions ?? [],
     options.captionStyle ?? {},
+    options.colorManagement,
+    options.masterBus,
   );
   if (mediaMode === 'metadata') return project;
 

@@ -1,29 +1,50 @@
-import previewShader from "./shaders/preview.wgsl?raw";
-import overlayShader from "./shaders/overlay.wgsl?raw";
 import { acquireGpuContext, onGpuDeviceRecovered, type GpuContext } from "./gpuDevice";
 import {
-  createTransitionPipelineCache,
   renderTransitionPass,
   TRANSITION_UNIFORM_FLOATS,
   type TransitionPipelineCache,
 } from "./transitions/transitionPass";
 import type { TransitionRenderParams } from "./transitions/types";
-import { FinishingPassChain } from "./finishingPassChain";
+import type { FinishingPassChain } from "./finishingPassChain";
+import {
+  DEFAULT_COLOR_MANAGEMENT,
+  isColorManagementActive,
+  normalizeColorManagement,
+  publishColorDebugSnapshot,
+  requestedCanvasColor,
+  resolveCanvasPresentation,
+  rgbaRowStride,
+  unpadRgbaRows,
+  type CanvasPresentation,
+  type ColorManagementSettings,
+} from "../utils/colorManagement";
 import { adoptGpuDevice } from "../gpu-chores/device";
 import type { ColorGradeSettings } from "../utils/lut";
 import { isColorGradeActive } from "../utils/lut";
-import type { FinishingSettings } from "../utils/finishing";
-import { isFinishingActive } from "../utils/finishing";
+import { isFinishingActive, type FinishingSettings } from "../utils/finishing";
 import {
-  AUDIO_UNIFORM_OFFSET,
   ZERO_AUDIO_REACTIVE,
   type AudioReactiveState,
 } from "../wasm/audioReactiveUniforms";
 import {
-  IDENTITY_STAB_MATRIX,
-  type StabMatrix,
-} from "../wasm/videoStabilize";
-import { packKeyUniforms, type LayerKeyUniforms } from "../utils/overlayKey";
+  packLayerUniforms,
+  UNIFORM_FLOATS,
+  type LayerDraw,
+  type LayerRenderParams,
+} from "./previewLayerUniforms";
+import {
+  buildPreviewDeviceResources,
+  CANVAS_TEXTURE_USAGE,
+  canvasConfiguration,
+  GPU_TEX_COPY_DST,
+  GPU_TEX_TEXTURE_BINDING,
+} from "./previewDeviceResources";
+
+export type {
+  LayerDraw,
+  LayerRenderParams,
+  NormalizedDestRect,
+} from "./previewLayerUniforms";
 
 /**
  * WebGPU-based clip preview engine.
@@ -39,95 +60,6 @@ import { packKeyUniforms, type LayerKeyUniforms } from "../utils/overlayKey";
  *   // Cleanup:
  *   engine.destroy();
  */
-
-/** Must match WGSL Uniforms (32 floats = 128 bytes, 16-byte aligned). */
-const UNIFORM_FLOATS = 32;
-
-/** First slot of the stabilization affine in `Uniforms` (must match preview.wgsl). */
-const STAB_UNIFORM_OFFSET = 17;
-
-/** First slot of the chroma/luma key block in `Uniforms` (must match preview.wgsl). */
-const KEY_UNIFORM_OFFSET = 23;
-
-// Numeric GPUTextureUsage flags (spec values) so this module can load in tests
-// without a WebGPU environment.
-const GPU_TEX_COPY_SRC = 0x01;
-const GPU_TEX_COPY_DST = 0x02;
-const GPU_TEX_TEXTURE_BINDING = 0x04;
-const GPU_TEX_RENDER_ATTACHMENT = 0x10;
-
-// RENDER_ATTACHMENT (we draw into it) + COPY_SRC (VideoFrame/VideoEncoder and
-// the finishing pass chain read it back) is all a canvas swapchain texture
-// ever needs. COPY_DST / TEXTURE_BINDING are not portable across adapters —
-// some reject configure() outright — and nothing here samples or copies into
-// the canvas texture; the finishing chain copies FROM it into an offscreen
-// ping-pong texture and renders back onto it as a color attachment.
-const CANVAS_TEXTURE_USAGE = GPU_TEX_RENDER_ATTACHMENT | GPU_TEX_COPY_SRC;
-
-/** Shared `GPUCanvasContext.configure()` options (initial configure, resize, and device-recovery reconfigure). */
-function canvasConfiguration(
-  device: GPUDevice,
-  format: GPUTextureFormat,
-): GPUCanvasConfiguration {
-  return {
-    device,
-    format,
-    alphaMode: "premultiplied",
-    usage: CANVAS_TEXTURE_USAGE,
-    colorSpace: "srgb",
-    toneMapping: { mode: "standard" },
-  };
-}
-
-const PREMULTIPLIED_BLEND: GPUBlendState = {
-  color: {
-    srcFactor: "one",
-    dstFactor: "one-minus-src-alpha",
-    operation: "add",
-  },
-  alpha: {
-    srcFactor: "one",
-    dstFactor: "one-minus-src-alpha",
-    operation: "add",
-  },
-};
-
-export interface NormalizedDestRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-export interface LayerRenderParams {
-  elapsed: number;
-  duration: number;
-  fadeIn: number;
-  fadeOut: number;
-  opacity: number;
-  uvScale: [number, number];
-  uvOffset: [number, number];
-  /**
-   * Camera-shake correction as an inverse-warp 2x3 affine in normalized UV,
-   * `[a, b, tx, c, d, ty]`. Omit (or pass identity) for unstabilized clips.
-   */
-  stabMatrix?: StabMatrix;
-  /**
-   * Chroma / luma key for this layer. Omit for unkeyed layers — the shader
-   * then samples the source as-is.
-   */
-  key?: LayerKeyUniforms;
-  /** Destination rectangle on the canvas in normalized 0–1 coordinates. */
-  destRect?: NormalizedDestRect;
-  /** When true, clears the canvas before drawing this layer. */
-  clear?: boolean;
-}
-
-export interface LayerDraw {
-  videoFrame: VideoFrame;
-  params: LayerRenderParams;
-}
-
 export class PreviewEngine {
   private device: GPUDevice;
   private context: GPUCanvasContext;
@@ -153,6 +85,13 @@ export class PreviewEngine {
   private format: GPUTextureFormat;
   private canvas: HTMLCanvasElement | OffscreenCanvas;
   private unsubscribeRecovered: (() => void) | null = null;
+  private colorManagement: ColorManagementSettings = { ...DEFAULT_COLOR_MANAGEMENT };
+  private presentation: CanvasPresentation = {
+    colorSpace: "srgb",
+    toneMapping: "standard",
+    present: "identity",
+    presentFallback: false,
+  };
 
   private constructor(
     device: GPUDevice,
@@ -187,103 +126,7 @@ export class PreviewEngine {
    */
   resize(): void {
     if (this.destroyed) return;
-    this.context.configure(canvasConfiguration(this.device, this.format));
-  }
-
-  /**
-   * Build the device-scoped pipelines/samplers/buffers. Pulled out of
-   * `create()` so a device-loss recovery (see `handleDeviceRecovered`) can
-   * rebuild the same resources against the freshly-recreated device instead
-   * of leaving this engine's GPU objects bound to a destroyed one.
-   */
-  private static buildDeviceResources(device: GPUDevice, format: GPUTextureFormat) {
-    const shaderModule = device.createShaderModule({ code: previewShader });
-    const overlayModule = device.createShaderModule({ code: overlayShader });
-
-    const sampler = device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-    });
-
-    const uniformBuffer = device.createBuffer({
-      size: UNIFORM_FLOATS * 4,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    const transitionUniformBuffer = device.createBuffer({
-      size: TRANSITION_UNIFORM_FLOATS * 4,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    const transitionPipelineCache = createTransitionPipelineCache(device, format);
-    const finishingChain = FinishingPassChain.create(device, format);
-
-    const bindGroupLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.FRAGMENT,
-          externalTexture: {},
-        },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-          buffer: { type: "uniform" },
-        },
-      ],
-    });
-
-    const pipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({
-        bindGroupLayouts: [bindGroupLayout],
-      }),
-      vertex: { module: shaderModule, entryPoint: "vs_main" },
-      fragment: {
-        module: shaderModule,
-        entryPoint: "fs_main",
-        targets: [{ format, blend: PREMULTIPLIED_BLEND }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
-
-    const overlayLayout = device.createBindGroupLayout({
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-        {
-          binding: 1,
-          visibility: GPUShaderStage.FRAGMENT,
-          texture: { sampleType: "float" },
-        },
-      ],
-    });
-
-    const overlayPipeline = device.createRenderPipeline({
-      layout: device.createPipelineLayout({ bindGroupLayouts: [overlayLayout] }),
-      vertex: { module: overlayModule, entryPoint: "vs_main" },
-      fragment: {
-        module: overlayModule,
-        entryPoint: "fs_main",
-        targets: [{ format, blend: PREMULTIPLIED_BLEND }],
-      },
-      primitive: { topology: "triangle-list" },
-    });
-
-    const overlaySampler = device.createSampler({
-      magFilter: "linear",
-      minFilter: "linear",
-    });
-
-    return {
-      pipeline,
-      sampler,
-      uniformBuffer,
-      transitionUniformBuffer,
-      transitionPipelineCache,
-      finishingChain,
-      overlayPipeline,
-      overlaySampler,
-    };
+    this.configureCanvas();
   }
 
   static async create(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<PreviewEngine> {
@@ -294,7 +137,7 @@ export class PreviewEngine {
 
     context.configure(canvasConfiguration(device, format));
 
-    const built = PreviewEngine.buildDeviceResources(device, format);
+    const built = buildPreviewDeviceResources(device, format);
 
     const engine = new PreviewEngine(
       device,
@@ -340,7 +183,7 @@ export class PreviewEngine {
 
     this.device = ctx.device;
     this.format = ctx.format;
-    const built = PreviewEngine.buildDeviceResources(this.device, this.format);
+    const built = buildPreviewDeviceResources(this.device, this.format);
     this.pipeline = built.pipeline;
     this.sampler = built.sampler;
     this.uniformBuffer = built.uniformBuffer;
@@ -350,8 +193,68 @@ export class PreviewEngine {
     this.overlayPipeline = built.overlayPipeline;
     this.overlaySampler = built.overlaySampler;
 
-    this.context.configure(canvasConfiguration(this.device, this.format));
+    this.configureCanvas();
     adoptGpuDevice(this.device);
+  }
+
+  /**
+   * Apply the selected output color to the swapchain. Display P3 and extended
+   * HDR are attempted and, on failure, the canvas stays sRGB / standard.
+   */
+  private configureCanvas(): void {
+    const request = requestedCanvasColor(this.colorManagement.outputColor);
+    const isDefault = request.colorSpace === "srgb" && request.toneMapping === "standard";
+    const base = {
+      device: this.device,
+      format: this.format,
+      alphaMode: "premultiplied" as const,
+      usage: CANVAS_TEXTURE_USAGE,
+    };
+    let configured = request;
+    try {
+      this.context.configure({
+        ...base,
+        colorSpace: request.colorSpace,
+        toneMapping: { mode: request.toneMapping },
+      });
+    } catch (err) {
+      if (isDefault) throw err;
+      configured = { colorSpace: "srgb", toneMapping: "standard" };
+      this.context.configure({
+        ...base,
+        colorSpace: "srgb",
+        toneMapping: { mode: "standard" },
+      });
+    }
+    this.presentation = resolveCanvasPresentation(
+      this.colorManagement.outputColor,
+      configured,
+      this.format,
+    );
+    publishColorDebugSnapshot({
+      outputColor: this.colorManagement.outputColor,
+      workingSpace: this.colorManagement.workingSpace,
+      canvasColorSpace: this.presentation.colorSpace,
+      toneMapping: this.presentation.toneMapping,
+      canvasFormat: this.format,
+      present: this.presentation.present,
+      presentFallback: this.presentation.presentFallback,
+    });
+  }
+
+  /** Reconfigure when the user changes output color or working space. */
+  setColorManagement(settings: ColorManagementSettings | undefined): void {
+    if (this.destroyed) return;
+    const next = normalizeColorManagement(settings);
+    const changed =
+      next.outputColor !== this.colorManagement.outputColor ||
+      next.workingSpace !== this.colorManagement.workingSpace;
+    this.colorManagement = next;
+    if (changed) this.configureCanvas();
+  }
+
+  get canvasPresentation(): CanvasPresentation {
+    return this.presentation;
   }
 
   /**
@@ -571,17 +474,56 @@ export class PreviewEngine {
   /** Apply the finishing pass chain after compositing. */
   applyFinishing(
     settings: FinishingSettings,
-    opts?: { frameIndex?: number },
+    opts?: { frameIndex?: number; colorManagement?: ColorManagementSettings },
   ): void {
-    if (this.destroyed || !isFinishingActive(settings)) return;
+    if (this.destroyed) return;
+    if (opts?.colorManagement) this.setColorManagement(opts.colorManagement);
+    const managed = isColorManagementActive(this.colorManagement);
+    if (!isFinishingActive(settings) && !managed) return;
     this.finishingChain.apply(
       this.device,
       this.context,
       this.canvas.width,
       this.canvas.height,
       settings,
-      opts,
+      {
+        frameIndex: opts?.frameIndex,
+        colorManagement: this.colorManagement,
+        presentation: this.presentation,
+      },
     );
+  }
+
+  /**
+   * Tightly packed RGBA8 of the last HDR10 PQ image. Null when this engine
+   * has not rendered a managed HDR10 frame.
+   */
+  async readPqExportRgba(): Promise<Uint8Array | null> {
+    if (this.destroyed) return null;
+    const texture = this.finishingChain.getPqExportTexture();
+    if (!texture) return null;
+    const width = texture.width;
+    const height = texture.height;
+    if (width <= 0 || height <= 0) return null;
+    const stride = rgbaRowStride(width);
+    const buffer = this.device.createBuffer({
+      size: stride * height,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      { texture },
+      { buffer, bytesPerRow: stride, rowsPerImage: height },
+      { width, height, depthOrArrayLayers: 1 },
+    );
+    this.device.queue.submit([encoder.finish()]);
+    const done = this.device.queue.onSubmittedWorkDone?.();
+    if (done) await done;
+    await buffer.mapAsync(GPUMapMode.READ);
+    const copy = new Uint8Array(buffer.getMappedRange()).slice();
+    buffer.unmap();
+    buffer.destroy();
+    return unpadRgbaRows(copy, width, height, stride);
   }
 
   /** Clear temporal finishing buffers after seek or clip change. */
@@ -659,32 +601,7 @@ export class PreviewEngine {
     index: number,
   ): void {
     const params = layer.params;
-    const dest = params.destRect ?? { x: 0, y: 0, w: 1, h: 1 };
-    this.uniformData[0] = params.fadeIn;
-    this.uniformData[1] = params.fadeOut;
-    this.uniformData[2] = params.duration;
-    this.uniformData[3] = params.elapsed;
-    this.uniformData[4] = params.opacity;
-    this.uniformData[5] = params.uvScale[0];
-    this.uniformData[6] = params.uvScale[1];
-    this.uniformData[7] = params.uvOffset[0];
-    this.uniformData[8] = params.uvOffset[1];
-    this.uniformData[9] = dest.x;
-    this.uniformData[10] = dest.y;
-    this.uniformData[11] = dest.w;
-    this.uniformData[12] = dest.h;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.bass] = this.audioReactive.bass;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.mid] = this.audioReactive.mid;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.treble] = this.audioReactive.treble;
-    this.uniformData[AUDIO_UNIFORM_OFFSET.beat] = this.audioReactive.beat;
-    const stab = params.stabMatrix ?? IDENTITY_STAB_MATRIX;
-    this.uniformData[STAB_UNIFORM_OFFSET] = stab[0];
-    this.uniformData[STAB_UNIFORM_OFFSET + 1] = stab[1];
-    this.uniformData[STAB_UNIFORM_OFFSET + 2] = stab[2];
-    this.uniformData[STAB_UNIFORM_OFFSET + 3] = stab[3];
-    this.uniformData[STAB_UNIFORM_OFFSET + 4] = stab[4];
-    this.uniformData[STAB_UNIFORM_OFFSET + 5] = stab[5];
-    packKeyUniforms(this.uniformData, KEY_UNIFORM_OFFSET, params.key);
+    packLayerUniforms(this.uniformData, params, this.audioReactive);
 
     const uniformBuffer = this.uniformBufferForLayer(index);
     this.device.queue.writeBuffer(uniformBuffer, 0, this.uniformData);

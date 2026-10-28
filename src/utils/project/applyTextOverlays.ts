@@ -1,6 +1,7 @@
-import type { TextOverlay } from '../../types';
+import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from '../../types';
 import { PROJECT_SCHEMA_VERSION } from '../../types';
 import { sanitizeFfmpegColor } from '../color';
+import type { Keyframe, KeyframeEasing } from '../keyframes';
 import {
   DEFAULT_TEXT_OVERLAY_X,
   DEFAULT_TEXT_OVERLAY_Y,
@@ -16,6 +17,80 @@ import {
 } from '../textOverlay';
 import { isKnownTextShader } from '../../webgpu/text/registry';
 
+type UnknownRecord = Record<string, unknown>;
+
+const TEXT_ANIMATABLE_PROPS: readonly TextAnimatableProp[] = ['x', 'y', 'opacity'];
+const EASING_TYPES: ReadonlySet<unknown> = new Set<KeyframeEasing['type']>([
+  'linear',
+  'bezier',
+  'bellCurveSmooth',
+  'bellCurveSharp',
+]);
+const EASING_CONTROL_POINTS = ['x1', 'y1', 'x2', 'y2'] as const;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isEasingType(value: unknown): value is KeyframeEasing['type'] {
+  return EASING_TYPES.has(value);
+}
+
+function readEasing(value: unknown): KeyframeEasing | undefined {
+  if (!isRecord(value) || !isEasingType(value.type)) return undefined;
+  const easing: KeyframeEasing = { type: value.type };
+  for (const key of EASING_CONTROL_POINTS) {
+    const point = value[key];
+    if (typeof point === 'number' && Number.isFinite(point)) easing[key] = point;
+  }
+  return easing;
+}
+
+/** Keep keyframes with a finite numeric `t` and `value`; drop anything else. */
+function readKeyframeTrack(value: unknown): Keyframe[] {
+  if (!Array.isArray(value)) return [];
+  const track: Keyframe[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const { t, value: keyValue } = entry;
+    if (typeof t !== 'number' || !Number.isFinite(t)) continue;
+    if (typeof keyValue !== 'number' || !Number.isFinite(keyValue)) continue;
+    const easing = readEasing(entry.easing);
+    track.push({ t, value: keyValue, ...(easing ? { easing } : {}) });
+  }
+  return track;
+}
+
+/**
+ * Validate saved overlay keyframes. A non-object is ignored; an object keeps
+ * only the animatable lanes that are arrays, each filtered to well-formed keys.
+ */
+function readTextOverlayKeyframes(value: unknown): TextOverlayKeyframes | undefined {
+  if (!isRecord(value)) return undefined;
+  const keyframes: TextOverlayKeyframes = {};
+  for (const prop of TEXT_ANIMATABLE_PROPS) {
+    if (Array.isArray(value[prop])) keyframes[prop] = readKeyframeTrack(value[prop]);
+  }
+  return keyframes;
+}
+
+function readShaderParams(value: unknown): Record<string, number> | undefined {
+  if (!isRecord(value)) return undefined;
+  // Non-finite / non-number params were already ignored at render time
+  // (`resolveShaderParams`); dropping them here keeps the type honest.
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      (entry): entry is [string, number] =>
+        typeof entry[1] === 'number' && Number.isFinite(entry[1]),
+    ),
+  );
+}
+
+/**
+ * Turn the untrusted `textOverlays` array of a saved project into overlays.
+ * Missing or malformed fields fall back to defaults; entries that are not
+ * objects are dropped.
+ */
 export function deserializeTextOverlays(
   rawOverlays: unknown,
   usesPixelLayout: boolean,
@@ -25,7 +100,8 @@ export function deserializeTextOverlays(
   const layoutReference = parseLayoutReferenceResolution(layoutReferenceResolution);
 
   const textOverlays: TextOverlay[] = Array.isArray(rawOverlays)
-    ? rawOverlays.map((o, index) => {
+    ? rawOverlays.flatMap((o: unknown, index): TextOverlay[] => {
+        if (!isRecord(o)) return [];
         const label = o.text ? `"${String(o.text).slice(0, 20)}"` : `#${index + 1}`;
         const rawFontcolor = String(o.fontcolor ?? '#ffffff');
         const fontcolor = sanitizeFfmpegColor(rawFontcolor, '#ffffff');
@@ -46,24 +122,18 @@ export function deserializeTextOverlays(
         const rawFont = typeof o.font === 'string' && o.font.trim() ? o.font.trim() : undefined;
         const resolved = getBundledFont(rawFont);
         // Fill / shader handling
-        const rawFill = (o as any).fill;
+        const rawFill = o.fill;
         const fill: 'solid' | 'shader' | undefined =
           rawFill === 'shader' ? 'shader' : rawFill === 'solid' ? 'solid' : undefined;
-        const rawShaderId = typeof (o as any).shaderId === 'string' ? (o as any).shaderId.trim() : undefined;
+        const rawShaderId = typeof o.shaderId === 'string' ? o.shaderId.trim() : undefined;
         const shaderId = rawShaderId && isKnownTextShader(rawShaderId) ? rawShaderId : undefined;
         if (rawShaderId && !isKnownTextShader(rawShaderId)) {
           invalidColorWarnings.push(
             `Text overlay ${label}: unknown shader "${rawShaderId}" — falling back to solid color.`,
           );
         }
-        const shaderParams =
-          (o as any).shaderParams && typeof (o as any).shaderParams === 'object'
-            ? { ...(o as any).shaderParams }
-            : undefined;
-        const shaderColorsRaw =
-          (o as any).shaderColors && typeof (o as any).shaderColors === 'object'
-            ? (o as any).shaderColors as Record<string, unknown>
-            : undefined;
+        const shaderParams = readShaderParams(o.shaderParams);
+        const shaderColorsRaw = isRecord(o.shaderColors) ? o.shaderColors : undefined;
         const shaderColors = shaderColorsRaw
           ? Object.fromEntries(
               Object.entries(shaderColorsRaw)
@@ -80,7 +150,8 @@ export function deserializeTextOverlays(
                 }),
             )
           : undefined;
-        return {
+        const keyframes = readTextOverlayKeyframes(o.keyframes);
+        const overlay: TextOverlay = {
           id: String(o.id ?? ''),
           text: String(o.text ?? ''),
           fontsize: Number(o.fontsize ?? 40),
@@ -96,19 +167,16 @@ export function deserializeTextOverlays(
           ...(shaderId ? { shaderId } : {}),
           ...(shaderParams ? { shaderParams } : {}),
           ...(shaderColors && Object.keys(shaderColors).length ? { shaderColors } : {}),
-          ...(o.keyframes
+          ...(keyframes
             ? {
                 keyframes: usesPixelLayout
-                  ? migrateTextOverlayKeyframesToNormalized(o.keyframes, layoutReference)
-                  : o.keyframes,
+                  ? migrateTextOverlayKeyframesToNormalized(keyframes, layoutReference)
+                  : keyframes,
               }
             : {}),
         };
-      })
-      .map((overlay) => {
-        if (!usesPixelLayout) return overlay;
-        const migrated = migratePixelTextOverlay(overlay, layoutReference);
-        return { ...overlay, ...migrated };
+        if (!usesPixelLayout) return [overlay];
+        return [{ ...overlay, ...migratePixelTextOverlay(overlay, layoutReference) }];
       })
     : [];
 
