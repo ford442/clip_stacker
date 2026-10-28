@@ -136,10 +136,11 @@ the browser sent it) instead of the bare, already-sanitized on-disk path
 Gradio's default File preprocessing would hand it — HuggingFace's own
 `/upload` route strips characters like parentheses from that on-disk
 filename before app.py ever runs. Batch outputs are named from `orig_name`
-(see `_resolve_batch_upload_entry` / `name_like_source`). The File output is
-returned as `gr.FileData` with that name in `orig_name` (see
-`as_file_outputs`) so parentheses and other characters Gradio's download
-headers would otherwise strip survive in the downloaded result.
+(see `_resolve_batch_upload_entry` / `name_like_source`). `name_like_source`
+renames the file on disk to the original stem (parentheses included) before
+returning the path; Gradio's File component then uses that basename as the
+download name. Do not return `gr.FileData` objects — File.postprocess expects
+plain path strings and raises TypeError otherwise.
 
 ## Deploying
 

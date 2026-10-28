@@ -514,8 +514,6 @@ def test_batch_interpolate_videos_uses_size_1_at_60fps(app, monkeypatch):
 
     monkeypatch.setattr(app, "_interpolate_batch_chunk", fake_chunk)
     monkeypatch.setattr(app, "name_like_source", lambda result, orig_name, used: result)
-    # as_file_outputs wraps paths; keep the test focused on chunking.
-    monkeypatch.setattr(app, "as_file_outputs", lambda paths: paths)
 
     files = [
         {"path": f"/tmp/in{i}.mp4", "orig_name": f"clip{i}.mp4"} for i in range(4)
