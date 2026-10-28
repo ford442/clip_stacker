@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sign in to Google Drive</title>
+    <style>
+      body {
+        font: 16px/1.45 system-ui, sans-serif;
+        margin: 2rem;
+        color: #1a1a1a;
+        background: #fff;
+      }
+      p { max-width: 28rem; }
+      button { font: inherit; padding: 0.5rem 1rem; }
+    </style>
+  </head>
+  <body id="drive-auth">
+    <p id="drive-auth-status">Connecting to Google Drive…</p>
+    <button id="drive-auth-continue" type="button" hidden>Continue with Google</button>
+    <script type="module" src="/src/utils/driveAuthPopup.ts"></script>
+  </body>
+</html>
