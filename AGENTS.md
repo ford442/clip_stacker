@@ -957,3 +957,16 @@ Rendering (`src/ffmpeg/intercutGenerator.ts` + `src/utils/intercutRender.ts`; th
 2. Picture: one `filter_complex` — per source `fps=30` → `select` (source frame ranges) → `setpts` (output frame numbers) → scale/pad — merged with `interleave`. Mixed resolution / fps / stills are handled in-graph; there is no separate normalize pass.
 3. Sound: each audible source is decoded once to 16-bit PCM from its trim start (`aresample=async=1:first_pts=0`), then `assembleIntercutAudio` splices it in JS at `frame × 1470` samples (44100 / 30) with a 5 ms equal-power crossfade per cut. `aOnly` is A's continuous track; `silent` is zeros. `steadyStreams` does not splice: each source plays from its trim start for the whole output (silence-padded), muxed as its own AAC track (`A — title`, …) plus an equal-power mix (`1/sqrt(n)`) as the default track so the library player hears every bed. Length is always exactly `totalFrames` of audio.
 4. One encode muxes both with `-frames:v totalFrames`; always a re-encode. UI: `IntercutModal` from Clip Library **Create Intercut Clip** (optional Clip C cycles A → B → C).
+
+## Drive import and segment extract / replace
+
+Behaviour and setup are in the README section "Google Drive import and segment extract / replace". Where things live:
+
+- `utils/googleDrive.ts` — GIS token (memory only, `drive.file`) + Picker. `store/driveLibraryStore.ts` keeps `DriveMediaItem` references (localStorage `clip_stacker.driveLibrary.v1`, view state). `utils/segments/driveImport.ts` is the toolbar action.
+- `utils/segments/extractSegment.ts` — `extractSegment()` and the routing rule (`chooseExtractRoute`, pure): small/local → FFmpeg.wasm, large Drive/remote → Contabo job. The browser limits are constants there; Drive files are never pulled into the browser unless small or the user forces it.
+- `utils/segments/processSegment.ts` — "Send to processing" backends (`PROCESSING_BACKENDS`) and the manual Colab import.
+- `utils/segments/segmentReplace.ts` (pure planner) + `replaceSegment.ts` (I/O) — `replaceSegment()`; one `commitEdit`. Never revoke a replaced clip's object URL by hand: edit history owns it.
+- `utils/segments/segmentDeps.ts` wires the stores/FFmpeg/HF into the injectable `ProcessDeps`/`ReplaceDeps`, so the logic is tested without a browser (`segments.test.helpers.ts`).
+- `ContaboStorageManagerClient.createJob/getJob/cancelJob/waitForJob/deleteMedia` (`utils/project/contaboJobs.ts` has the types).
+
+Invariants worth keeping: a segment result must match the requested length (`SEGMENT_DURATION_TOLERANCE_SEC`); check a processed *video* before muxing audio under it (the audio would pad a short video to length and hide the mismatch); a `blob:` URL must never become a clip's `remoteSourceUrl`; the Drive token must never reach storage or `job.json`.

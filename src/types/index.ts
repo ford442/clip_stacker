@@ -6,3 +6,4 @@ export * from './render';
 export * from './text';
 export * from './track';
 export * from './project';
+export * from './segment';

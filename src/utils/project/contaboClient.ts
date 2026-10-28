@@ -5,6 +5,13 @@ import {
   type ChunkedUploadProgress,
 } from '../storageUpload';
 import type { MediaLibraryItem } from './types';
+import {
+  describeJobHttpError,
+  pollJobUntilDone,
+  type ContaboJob,
+  type ContaboJobRequest,
+  type WaitForJobOptions,
+} from './contaboJobs';
 
 export class ContaboStorageManagerClient {
   private readonly endpoint: string;
@@ -159,8 +166,9 @@ export class ContaboStorageManagerClient {
 
   /**
    * List previously uploaded files in the remote media library (the same
-   * store `uploadMedia` writes to). Expects the server to respond with
-   * `{ "files": [{ "name", "url", "size"?, "modified"? }, ...] }`.
+   * store `uploadMedia` writes to). The Contabo server answers
+   * `{ "media": [{ "name", "url", "size" }, ...] }`; `files` is accepted too for
+   * other storage backends.
    */
   async listMedia(): Promise<MediaLibraryItem[]> {
     const authHeader = this.getAuthHeader();
@@ -168,7 +176,64 @@ export class ContaboStorageManagerClient {
       headers: authHeader ? { authorization: authHeader } : undefined,
     });
     if (!response.ok) throw new Error(`Media library list failed (${response.status})`);
-    const result = (await response.json()) as { files?: MediaLibraryItem[] };
-    return result.files ?? [];
+    const result = (await response.json()) as {
+      files?: MediaLibraryItem[];
+      media?: MediaLibraryItem[];
+    };
+    return result.files ?? result.media ?? [];
+  }
+
+  /** Delete a file from the remote media library (e.g. a job output that was pulled back). */
+  async deleteMedia(name: string): Promise<void> {
+    const authHeader = this.getAuthHeader();
+    const response = await fetch(`${this.mediaEndpoint}/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+      headers: authHeader ? { authorization: authHeader } : undefined,
+    });
+    if (!response.ok) throw new Error(`Media delete failed (${response.status})`);
+  }
+
+  private get jobsEndpoint(): string {
+    return this.endpoint.replace(/\/*$/, '') + '/jobs';
+  }
+
+  private jobHeaders(json = false): Record<string, string> | undefined {
+    const authHeader = this.getAuthHeader();
+    const headers: Record<string, string> = json ? { 'content-type': 'application/json' } : {};
+    if (authHeader) headers.authorization = authHeader;
+    return Object.keys(headers).length ? headers : undefined;
+  }
+
+  /** Start a server-side extract / splice / rife job. Returns immediately with the queued job. */
+  async createJob(request: ContaboJobRequest): Promise<ContaboJob> {
+    const response = await fetch(this.jobsEndpoint, {
+      method: 'POST',
+      headers: this.jobHeaders(true),
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) throw new Error(await describeJobHttpError(response, 'Starting the processing job'));
+    return (await response.json()) as ContaboJob;
+  }
+
+  async getJob(jobId: string): Promise<ContaboJob> {
+    const response = await fetch(`${this.jobsEndpoint}/${encodeURIComponent(jobId)}`, {
+      headers: this.jobHeaders(),
+    });
+    if (!response.ok) throw new Error(await describeJobHttpError(response, 'Checking the processing job'));
+    return (await response.json()) as ContaboJob;
+  }
+
+  async cancelJob(jobId: string): Promise<ContaboJob> {
+    const response = await fetch(`${this.jobsEndpoint}/${encodeURIComponent(jobId)}/cancel`, {
+      method: 'POST',
+      headers: this.jobHeaders(),
+    });
+    if (!response.ok) throw new Error(await describeJobHttpError(response, 'Cancelling the processing job'));
+    return (await response.json()) as ContaboJob;
+  }
+
+  /** Poll until the job finishes; resolves with the final job (check `status`). */
+  waitForJob(jobId: string, options?: WaitForJobOptions): Promise<ContaboJob> {
+    return pollJobUntilDone((id) => this.getJob(id), jobId, options);
   }
 }

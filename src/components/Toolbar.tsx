@@ -3,6 +3,7 @@ import { RenderPlanAudioNotes } from './audio/RenderPlanAudioNotes';
 import type { BrowserCapabilities } from '../utils/feature-detector';
 import { detectCapabilities } from '../utils/feature-detector';
 import { fetchDemoClips } from '../utils/demoClips';
+import { importFromDrive } from '../utils/segments/driveImport';
 import { describeEncoderBadge } from '../utils/encoderPathLabel';
 import { ProgressBar } from './ProgressBar';
 import { useStore } from 'zustand';
@@ -115,6 +116,16 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     }
   };
 
+  const handleImportFromDrive = async () => {
+    const { setStatus } = settingsStore.getState();
+    setStatus('Opening Google Drive…');
+    try {
+      setStatus(await importFromDrive());
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : String(err));
+    }
+  };
+
   const handleProjectFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) onLoadProject(file);
@@ -142,6 +153,14 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             onChange={handleClipChange}
           />
         </label>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={handleImportFromDrive}
+          title="Pick video or audio from Google Drive. Only a reference is kept; nothing is downloaded into the browser."
+        >
+          Import from Drive
+        </button>
         <button
           type="button"
           className="btn-secondary"
