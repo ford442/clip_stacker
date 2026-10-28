@@ -6,8 +6,10 @@ import {
   clipNeedsEffects,
   needsMultiLayerComposition,
   needsOverlayPass,
+  remoteConcatDroppedFeatures,
   shouldUseTimelineGpuExport,
 } from './renderEligibility';
+import { DEFAULT_FINISHING } from './finishing';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
@@ -53,6 +55,10 @@ describe('renderEligibility', () => {
     it('is true when loopCount > 1', () => {
       expect(clipNeedsEffects(makeClip({ loopCount: 4 }))).toBe(true);
     });
+
+    it('is true when the clip plays backward', () => {
+      expect(clipNeedsEffects(makeClip({ reversed: true }))).toBe(true);
+    });
   });
 
   describe('needsMultiLayerComposition', () => {
@@ -95,6 +101,30 @@ describe('renderEligibility', () => {
 
     it('is true for looped clips (must not use the loop-unaware sequential WebCodecs path)', () => {
       expect(needsMultiLayerComposition([makeClip({ loopCount: 4 })], [])).toBe(true);
+    });
+
+    it('is true when playback rate is not 1× so export samples remapped source time', () => {
+      expect(needsMultiLayerComposition([makeClip({ playbackRate: 2 })], [])).toBe(true);
+      expect(needsMultiLayerComposition([makeClip({ playbackRate: 1 })], [])).toBe(false);
+      expect(
+        needsMultiLayerComposition(
+          [
+            makeClip({
+              automation: {
+                playbackRate: [
+                  { t: 0, value: 1 },
+                  { t: 2, value: 2 },
+                ],
+              },
+            }),
+          ],
+          [],
+        ),
+      ).toBe(true);
+    });
+
+    it('is true for a reversed clip so export does not walk the trim forward', () => {
+      expect(needsMultiLayerComposition([makeClip({ reversed: true })], [])).toBe(true);
     });
 
     it('is false for a clip with loopCount 1', () => {
@@ -259,5 +289,30 @@ describe('renderEligibility', () => {
     expect(
       canUseGpuVideoEncoder([makeClip()], [], [shaderOverlay], { webGpuAvailable: true }),
     ).toBe(true);
+  });
+});
+
+describe('remoteConcatDroppedFeatures', () => {
+  it('allows a plain base-lane concat', () => {
+    expect(remoteConcatDroppedFeatures([makeClip()], [], [], DEFAULT_FINISHING, 0)).toEqual([]);
+  });
+
+  it('refuses when a base clip sits on a muted lane', () => {
+    const muted = makeClip({ id: 'm', trackMuted: true });
+    expect(
+      remoteConcatDroppedFeatures([makeClip(), muted], [], [], DEFAULT_FINISHING, 0),
+    ).toEqual(['lane mute']);
+  });
+
+  it('lists overlays, transitions and captions', () => {
+    expect(
+      remoteConcatDroppedFeatures(
+        [makeClip({ layerIndex: 1 })],
+        [{ afterClipIndex: 1, type: 'fade', duration: 1 }],
+        [],
+        DEFAULT_FINISHING,
+        2,
+      ),
+    ).toEqual(['PiP/overlay lanes', 'transitions', 'captions']);
   });
 });

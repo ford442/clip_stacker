@@ -35,6 +35,13 @@ export interface StabilizeOptions {
   smoothSeconds?: number;
   /** Hard cap on analysed frames (protects very long clips). */
   maxFrames?: number;
+  /**
+   * Bytes to analyse instead of `clip.file` — the clip's preview proxy, when
+   * one is ready. The plan is still sized from the original's dimensions and
+   * matrices are in normalized UV, so a warp solved on the 960p proxy is the
+   * one the full-res export samples; export never re-analyses.
+   */
+  source?: Blob;
   /** Directory URL holding the WASM assets (tests). */
   baseUrl?: string;
   /** Cooperative cancellation, checked between frames. */
@@ -207,7 +214,7 @@ async function* decodeGrayFrames(
   const canvas = createAnalysisCanvas(plan.width, plan.height);
   if (!canvas) throw new Error('no 2D canvas available for stabilization analysis');
 
-  const decoder = await ClipFrameDecoder.open(clip.file, {
+  const decoder = await ClipFrameDecoder.open(options.source ?? clip.file, {
     trimStart: 0,
     trimEnd: Number.isFinite(clip.duration) && clip.duration > 0 ? clip.duration : Infinity,
   });

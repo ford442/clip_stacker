@@ -84,6 +84,20 @@ export function outputDurationForRate(
   return Math.max(MIN_CLIP_DURATION, trimmedSourceSec / r);
 }
 
+/**
+ * Constant-rate map from a source-relative offset onto output seconds.
+ * `rate` 2 (faster) halves the offset; `rate` 1 is identity. No minimum
+ * duration floor — frame timestamps need the true ratio, including 0.
+ */
+export function constantRateOutputElapsed(
+  sourceElapsedSec: number,
+  rate: number | undefined,
+): number {
+  const r = getClipPlaybackRate(rate);
+  if (!(sourceElapsedSec > 0) || !Number.isFinite(sourceElapsedSec)) return 0;
+  return sourceElapsedSec / r;
+}
+
 export function nudgePlaybackRate(rate: number, delta: number): number {
   return roundPlaybackRate(clampClipPlaybackRate(rate) + delta);
 }

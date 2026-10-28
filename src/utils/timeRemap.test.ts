@@ -60,6 +60,16 @@ describe('timeRemap', () => {
     expect(samplePlaybackRateAt(clip, 1)).toBeCloseTo(2);
   });
 
+  it('walks a reversed trim from the end without changing duration', () => {
+    const clip = makeClip({ trimStart: 2, trimEnd: 8, reversed: true });
+    expect(remappedClipDuration(clip)).toBeCloseTo(6);
+    // First instant sits just inside the exclusive trim end.
+    expect(sourceTimeAtOutputLocal(clip, 0)).toBeGreaterThan(7.99);
+    expect(sourceTimeAtOutputLocal(clip, 0)).toBeLessThan(8);
+    expect(sourceTimeAtOutputLocal(clip, 3)).toBeCloseTo(5);
+    expect(sourceTimeAtOutputLocal(clip, 6)).toBeCloseTo(2);
+  });
+
   it('computes output duration that consumes trimmed source', () => {
     // 10s source at constant 2× → 5s out
     expect(remappedClipDuration(makeClip({ playbackRate: 2 }))).toBeCloseTo(5);

@@ -49,7 +49,7 @@ describe('resolution helpers', () => {
 
   it('detects when clips already match the export resolution', () => {
     const settings = { ...DEFAULT_EXPORT_SETTINGS };
-    const clip = makeClip({ videoWidth: 1280, videoHeight: 720 });
+    const clip = makeClip({ videoWidth: 1920, videoHeight: 1080 });
     expect(clipMatchesOutputResolution(clip, settings)).toBe(true);
     expect(allVideoClipsMatchOutputResolution([clip], settings)).toBe(true);
     expect(clipsNeedResolutionNormalization([clip], settings)).toBe(false);

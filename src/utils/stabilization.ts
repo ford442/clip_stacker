@@ -6,6 +6,11 @@
  * The WASM module owns the analysis (`src/wasm/videoStabilize.ts`); everything
  * here is arithmetic on its output, so it stays testable without a GPU, a
  * decoder, or the module itself.
+ *
+ * Renderers never consume a stabilization matrix on its own any more: it is
+ * composed with the authored picture transform into one layer warp by
+ * `composeLayerWarp` (`clipTransform.ts`). The pixel/canvas converters below
+ * work on any matrix in that convention, composed or not.
  */
 
 import type { Clip, ClipStabilization } from '../types';

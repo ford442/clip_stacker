@@ -13,8 +13,9 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - **Channel logos / bugs**: **Use as channel logo** snaps the clip to a corner at ~10% of the canvas width, locked to the source's own aspect ratio, muted, and keyed on the source alpha — so a non-square mark composites without a black box on both the GPU export and the FFmpeg fallback. Transparency mode is editable under *Picture-in-Picture layout (advanced)*: source alpha (straight or premultiplied), chroma key, luma key, or an opaque rectangle. The mask has to exist in the file: use PNG/WebP for stills and WebM (VP8/VP9 + alpha) for motion — H.264 MP4 carries no alpha, so key those with chroma/luma instead. Chroma and luma keying run in the compositor itself (`src/utils/overlayKey.ts` — one `keyPixel()` shared by the WGSL shader, the Canvas2D path, and the unit tests), so the Inspector's sliders update the live preview and the default WebGPU + WebCodecs export matches it. FFmpeg's `chromakey` / `lumakey` stay as the Force-FFmpeg fallback and are tuned to the same maths, so the two paths look alike rather than merely similar. The render-plan line under the toolbar says which one ran
 - **News tickers / lower thirds**: use a scrolling text overlay (`scrolling` + `scrollSpeed`), which matches between preview and FFmpeg `drawtext`. Only bake a designed motion lower third to video (as WebM + alpha, placed as a full-width bottom overlay) when `drawtext` cannot express it
 - **Captions / subtitles**: a time-coded caption track with its own timeline lane. Import `.srt` / `.ass`, edit text and timings in the Inspector's *Captions* tab, drag a chip's edges to retime, press <kbd>C</kbd> to add a cue at the playhead, and export burned-in, as a toggle-able soft subtitle track, or as a sidecar `.srt` — see [Captions and subtitles](#captions-and-subtitles)
+- **Resizable workspace**: drag the splitters between Library, Preview and Inspector, and the divider above the timeline (or focus one and use the arrow keys; double-click resets it). Collapse the side panels, pick S / M / L control density, fill the window or centre it, and **Reset layout** from the header. The layout is remembered per browser
 - Merge timeline into one MP4 via FFmpeg (WebAssembly, fully in-browser)
-- **Intercut generator**: pick two or three library clips and bake an accelerating strobe or explicit interval-list cut pattern (for example `2, 1, 1, 2, 3, 2`) via local FFmpeg concat — no cloud GPU / RIFE
+- **Intercut generator**: pick two or three library clips and bake an accelerating strobe or explicit interval-list cut pattern (for example `2, 1, 1, 2, 3, 2`) via local FFmpeg (frame-accurate cuts; sound can follow picture, or every source can stay a steady audio stream for the whole output) — no cloud GPU / RIFE
 - **Intelligent render plan**: Before rendering, see whether the merge will be lossless concat (fast, no quality loss) or re-encoding, with the specific reason
 - Save/load projects locally as JSON with embedded source media
 - Save/load projects remotely via a contabo_storage_manager-compatible HTTP endpoint with uploaded source media ([ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager))
@@ -33,10 +34,19 @@ When you click "Render", the app automatically decides whether to use **lossless
 
 The app shows you the plan and reason before rendering starts, so you understand why a "simple" merge might take longer or look slightly different.
 
+## Hugging Face RIFE
+
+Frame interpolation for the app runs on the Space sourced from
+[`huggingface/RIFE/`](huggingface/RIFE/)
+([1inkusFace/RIFE](https://huggingface.co/spaces/1inkusFace/RIFE)).
+To run that same v4.26 pipeline on a Colab GPU:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ford442/clip_stacker/blob/main/huggingface/RIFE/RIFE_Colab.ipynb)
+
 ## Tech Stack
 
 - React 18 + TypeScript
-- Vite 5 (bundler and dev server)
+- Vite 8 (bundler and dev server; Node `^20.19.0 || >=22.12.0`)
 - FFmpeg WebAssembly (`@ffmpeg/ffmpeg`)
 - WebGPU preview compositor (shared device) + **gpu-chores** for import histogram / library thumbs (CPU/Worker fallback; never a second `GPUDevice`)
 
@@ -70,6 +80,8 @@ npm run preview
 
 ```bash
 npm run typecheck   # tsc --noEmit, matches the CI gate
+npm run lint        # ESLint: 0 errors required, warnings allowed
+npm run check:cycles  # madge: 0 import cycles in src/
 npm test -- --run   # Vitest suite
 ```
 
@@ -83,7 +95,7 @@ npm run deploy
 
 Runs `npm run build` then uploads `dist/` to `test.1ink.us/clip-stacker` via SFTP using `deploy.py`.
 
-For Apache deployments, `public/.htaccess` is copied into `dist/` during the build so the deployed `/clip-stacker/` directory serves the required COOP/COEP headers for FFmpeg WASM, plus a `Content-Security-Policy` header aligned with the CSP meta tag in `index.html`. nginx deployments still need the equivalent headers configured in the server's location block.
+For Apache deployments, `public/.htaccess` is copied into `dist/` during the build so the deployed `/clip-stacker/` directory serves the required COOP/COEP headers for FFmpeg WASM, plus a `Content-Security-Policy` header matching `src/utils/csp.ts` (a test fails if they drift). nginx deployments still need the equivalent headers configured in the server's location block.
 
 ### Content-Security-Policy
 
@@ -94,6 +106,12 @@ The app ships with a CSP that allows:
 - `https:` / `wss:` for user-configurable storage endpoints, CDN fallbacks, and HuggingFace RIFE
 
 `connect-src` and `media-src` intentionally allow `https:` because storage endpoints and signed media URLs are not known at build time.
+
+The policy lives only in `src/utils/csp.ts`: `cspMetaPlugin` writes the `<meta>` tag into `index.html` at build time (do not hand-write one — the build refuses it), and `vite.config.ts` sends the same policy as the dev/preview header.
+
+### Self-hosted FFmpeg cores
+
+Both FFmpeg cores are served from the app itself — `public/ffmpeg-core/` (single-threaded) and `public/ffmpeg-core-mt/` (multi-threaded, used when the page is cross-origin isolated) — with jsDelivr/unpkg only as fallbacks. They are copied verbatim from the `@ffmpeg/core` / `@ffmpeg/core-mt` devDependencies by `npm run sync:ffmpeg-core`; after bumping either package, run it, update `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts`, and commit `public/`. `npm run sync:ffmpeg-core -- --check` fails when they disagree.
 
 ### Storage backend hardening
 
@@ -113,7 +131,6 @@ clip_stacker/
 ├── public/
 │   └── .htaccess          # Apache headers for SharedArrayBuffer/FFmpeg WASM
 ├── deploy.py              # SFTP deployment script
-├── git.sh                 # Git helper script
 ├── src/
 │   ├── main.tsx           # React app bootstrap
 │   ├── App.tsx            # Root component, app-level state
@@ -133,25 +150,30 @@ clip_stacker/
 │   │   ├── Inspector.tsx  # Per-clip trim and fade editor
 │   │   ├── Preview.tsx    # Video/audio preview and download link
 │   │   └── Timeline.tsx   # Ordered timeline with reorder controls
-│   └── wasm/              # Lazy loaders for native modules (analysis, stretch, stabilize, mix)
+│   └── wasm/              # emscriptenLoader.ts (load + heap boundary) and module bindings
 ├── native/                # C++ WASM (CMake + Emscripten)
 │   ├── toolchain.cmake    # Shared compile/link flags
+│   ├── emsdk-version      # Pinned Emscripten SDK (CI + committed artifacts)
+│   ├── common/include/    # cs_status.h, cs_alloc.h, cs_math.h
 │   ├── audio_analysis/    # kissfft bands + beat envelope
-│   ├── time_stretch/      # WSOLA pitch-preserving remap
 │   ├── video_stabilize/   # Lucas–Kanade affine matrices
-│   └── media_engine/      # Timeline PCM mix: polyphase resample, curves, streaming
+│   ├── media_engine/      # Timeline PCM mix, insert FX, lane buses / loudness, WSOLA time stretch
+│   └── whisper/           # Opt-in auto-caption module (whisper.cpp, not committed)
 ├── public/wasm/           # Committed .js/.wasm artifacts
 └── dist/                  # Built output (generated by npm run build)
 ```
 
 ## Native WASM modules
 
-Rebuild with Emscripten 3.1.64 (matches CI):
+Rebuild with the Emscripten SDK pinned in `native/emsdk-version` (6.0.6, what
+CI uses; any SDK >= 3.1.64 builds, but only the pinned one reproduces the
+committed bytes):
 
 ```bash
-npm run build:wasm            # all four modules via CMake
-WASM_DEBUG=1 npm run build:wasm   # -O0 -g, ASSERTIONS, profiling
-npm run test:native           # host (non-Emscripten) DSP tests via ctest
+npm run build:wasm            # every module via CMake → public/wasm
+npm run build:wasm:debug      # -O0 -g, ASSERTIONS → native/build-debug/wasm; load with ?wasm_debug
+npm run build:whisper         # opt-in auto-caption module (clones whisper.cpp)
+npm run test:native           # host (non-Emscripten) DSP tests via ctest, -Werror + ASan/UBSan
 ```
 
 The configure also exports `compile_commands.json` for clangd — see
@@ -162,11 +184,14 @@ CI fails if `public/wasm/` drifts from a clean rebuild, or if any module's gzipp
 | Module | Role | TS binding |
 |--------|------|------------|
 | `audio_analysis` | FFT bands + beat envelope | `src/wasm/audioAnalysis.ts` |
-| `time_stretch` | WSOLA rate remap | `src/wasm/timeStretch.ts` |
 | `video_stabilize` | Optical-flow affine | `src/wasm/videoStabilize.ts` |
-| `media_engine` | Timeline mix / resample | `src/wasm/mediaEngine.ts` |
+| `media_engine` | Timeline mix / resample / insert FX / lane buses / loudness | `src/wasm/mediaEngine.ts` |
+| `media_engine` | WSOLA rate remap | `src/wasm/timeStretch.ts` |
+| `media_engine_fx` | The bus graph alone, glue-free, for the preview AudioWorklet | `src/wasm/audioFx.ts` |
 
 Export premix runs on the media engine when it loads: polyphase resampling, volume/pan automation curves and fades in C++, streamed in chunks straight into the AAC encoder, so long timelines no longer hit the 45-minute `OfflineAudioContext` cap. Disable with `?no_media_engine` to force `OfflineAudioContext` (and, past 45 minutes, FFmpeg audio mux). Do not put mix/EQ DSP in `canvas-renderer` or FFmpeg `filter_complex`.
+
+Each lane is also a bus (the lane header's **FX**): an insert chain (EQ, compressor, gate, de-esser, true-peak limiter) and an optional sidechain duck under another lane; the Master row has master-bus FX and a BS.1770 **LUFS** meter, and Export → **Loudness** normalizes the delivered mix to a target (−14 / −16 / −23 LUFS or custom) in two passes with a true-peak ceiling. Preview runs the same C++ bus graph in an AudioWorklet (`?no_audio_fx` turns it off).
 
 ## Notes on project persistence
 
@@ -182,6 +207,28 @@ Remote save/load expects an endpoint compatible with:
 **Canonical endpoint path:** `/webhook/clip-stacker`
 
 Example full URL: `https://storage.example.com/webhook/clip-stacker`
+
+### Preview proxies
+
+Big camera files (4K, multicam stacks) can get a **preview proxy**: click
+**Build proxy** on a library row. One clip builds at a time in the background
+(badge: *Original* → *Building n%* → *Proxy*). A proxy is H.264, short side
+960 px, the source frame rate capped at 30 (a 24 fps source stays 24), long
+GOP, no audio — the preview's audio graph still reads the original's sound.
+
+- Scrub, playback and stabilization analysis read the proxy. **Export, Force
+  FFmpeg and every path that writes the deliverable always read the original
+  file**, so the output resolution never comes from the proxy.
+- *Use proxies for playback* (in the Library, shown once a proxy exists) turns
+  them off for the session; preview then decodes originals and looks the same.
+- Saved projects keep a small `proxy` record per clip (`profile`, source
+  `hash`, `width`, `height`) — never the bytes. The bytes live in the
+  working-media store keyed by `(sourceHash, profile)`; deleting the last clip
+  that uses a proxy deletes it, and an undo writes it back while it is still
+  in memory.
+- **Until the persistent media store (#279) lands, that store is in memory**:
+  proxies do not survive a reload, and a reloaded project falls back to the
+  original (badge *Original*) until the proxy is rebuilt.
 
 ### Authentication
 

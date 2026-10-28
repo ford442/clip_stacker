@@ -75,4 +75,13 @@ describe('buildVariableSpeedFilter', () => {
     expect(result.segmentCount).toBeGreaterThan(1);
     expect(result.videoFilter).toContain('concat=n=');
   });
+
+  it('reverses each speed chunk inside the trim window', () => {
+    const clip = makeClip({ reversed: true, playbackRate: 1 });
+    const result = buildVariableSpeedFilter(clip, { segmentCount: 4 });
+    expect(result.videoFilter).toContain('reverse,');
+    expect(result.audioFilter).toContain('areverse,');
+    expect(result.videoFilter).toContain('trim=start=0');
+    expect(result.videoFilter).toContain('end=10');
+  });
 });

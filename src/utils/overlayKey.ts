@@ -19,6 +19,7 @@
 import type { Clip } from '../types';
 import { resolveChromaKey, resolveOverlayBlend } from './overlayBlend';
 import { ffmpegColorToRgb01 } from './color';
+import { clamp01Finite } from './math';
 
 /** Key mode as packed into the shader uniform. Must match `preview.wgsl`. */
 export const KEY_MODE = {
@@ -133,11 +134,6 @@ function chromaV(r: number, g: number, b: number): number {
   return (CHROMA_LIMITED_RANGE_SCALE * (r - lumaBt601(r, g, b))) / 1.402;
 }
 
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
-}
-
 /**
  * Alpha multiplier for one pixel under `key`. 0 = fully keyed out, 1 = kept.
  *
@@ -163,17 +159,17 @@ export function keyPixel(
     const dv = chromaV(r, g, b) - chromaV(key.keyR, key.keyG, key.keyB);
     const diff = Math.sqrt((du * du + dv * dv) / 2);
     if (key.blend > 0.0001) {
-      return clamp01((diff - key.similarity) / key.blend);
+      return clamp01Finite((diff - key.similarity) / key.blend);
     }
     return diff > key.similarity ? 1 : 0;
   }
 
   if (key.mode === KEY_MODE.luma) {
-    const white = clamp01(key.similarity);
+    const white = clamp01Finite(key.similarity);
     const luma = lumaBt601(r, g, b);
     if (luma <= white) return 0;
     if (key.blend > 0.0001) {
-      return clamp01((luma - white) / key.blend);
+      return clamp01Finite((luma - white) / key.blend);
     }
     return 1;
   }

@@ -18,24 +18,27 @@ permissions:
   contents: read
 
 jobs:
+  # The full Tests workflow (typecheck, lint, cycles, unit tests, build, WASM
+  # drift, native host tests). Deploy only runs when every job passes.
+  checks:
+    uses: ./.github/workflows/test.yml
+
   deploy:
+    needs: checks
     runs-on: ubuntu-latest
     # Skip fork PRs and runs without the deploy token configured.
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     steps:
       - uses: actions/checkout@v4
 
-      - name: Use Node.js 20
+      - name: Use Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
-        run: npm install
-
-      - name: Run tests
-        run: npm test -- --run
+        run: npm ci
 
       - name: Build
         run: npm run build

@@ -6,6 +6,7 @@
 import type { AudioScheduleEntry } from '../audio/schedule';
 import type { ClipAudioCache } from '../audio/clipAudioCache';
 import { remapClipAudioBuffer } from './remapAudio';
+import { reverseTrimmedAudioBuffer } from './reverseClip';
 
 interface RemapCacheEntry {
   key: string;
@@ -23,9 +24,10 @@ export class RemappedAudioCache {
     return [
       entry.clipId,
       entry.objectUrl,
-      clip?.trimStart ?? 0,
-      clip?.trimEnd ?? 'nan',
+      clip?.trimStart ?? entry.reverseClip?.trimStart ?? 0,
+      clip?.trimEnd ?? entry.reverseClip?.trimEnd ?? 'nan',
       clip?.playbackRate ?? 1,
+      clip?.reversed || entry.reverseAudio ? 'rev' : 'fwd',
       curve,
       entry.duration,
     ].join('|');
@@ -36,6 +38,27 @@ export class RemappedAudioCache {
     sourceCache: ClipAudioCache,
     ctx: BaseAudioContext,
   ): Promise<AudioBuffer | null> {
+    if (entry.reverseAudio && entry.reverseClip) {
+      const key = this.signature(entry);
+      const existing = this.entries.get(entry.clipId);
+      if (existing && existing.key === key) return existing.buffer;
+
+      const source = await sourceCache.get(entry.clipId, entry.objectUrl, ctx);
+      if (!source) return null;
+      const trimEnd = Number.isFinite(entry.reverseClip.trimEnd)
+        ? (entry.reverseClip.trimEnd as number)
+        : entry.reverseClip.duration;
+      const reversed = reverseTrimmedAudioBuffer(
+        source,
+        entry.reverseClip.trimStart,
+        trimEnd,
+        ctx,
+      );
+      if (!reversed) return null;
+      this.entries.set(entry.clipId, { key, buffer: reversed });
+      return reversed;
+    }
+
     if (!entry.rateRemap || !entry.rateRemapClip) {
       return sourceCache.get(entry.clipId, entry.objectUrl, ctx);
     }

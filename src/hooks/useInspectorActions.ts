@@ -6,20 +6,16 @@ import type {
   ExportSettings,
   OverlayBlendMode,
 } from "../types";
-import { sanitizeClipAdjustments, getClipDuration, ContaboStorageManagerClient } from "../utils/project";
+import { sanitizeClipAdjustments, ContaboStorageManagerClient } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { clampClipVolume } from "../utils/audioVolume";
 import { clampClipLoopCount, clampClipPlaybackRate } from "../utils/playbackRate";
 import { normalizeClipAutomation } from "../utils/clipAutomation";
+import { normalizeClipAudioEffects, type ClipAudioEffects } from "../utils/audioEffects";
 import { clipDisplayPixelsToNormalized } from "../utils/overlayCoords";
 import { parseCanvasSize } from "../utils/pipPreset";
 import { createKenBurnsKeyframes } from "../utils/animatedLayout";
 import { getMediaInfo } from "../utils/media";
-import {
-  extractAudioToWav,
-  extractTrimmedVideoClip,
-  muxProcessedVideoWithSourceAudio,
-  getLastFfmpegLogs,
-} from "../ffmpeg/ffmpegService";
 import type { ClipValues } from "../components/Inspector";
 import { DEFAULT_CHROMA_KEY } from "../utils/overlayBlend";
 import type { UseEditHistoryResult } from "./useEditHistory";
@@ -29,6 +25,10 @@ import { settingsStore } from "../store/settingsStore";
 import { editorActions, editorStore } from "../store/editorStore";
 import { isClipLocked, moveClipToVideoLayer } from "../utils/trackModel";
 import { useStorageAuthToken, useStorageEndpoint } from "../store";
+import { clamp01Finite } from "../utils/math";
+
+// FFmpeg is only needed once a clip action runs; see useRenderActions.
+const loadFfmpegService = () => import("../ffmpeg/ffmpegService");
 
 type InspectorActionsDeps = Pick<
   UseEditHistoryResult,
@@ -44,11 +44,6 @@ const OVERLAY_BLEND_MODES: OverlayBlendMode[] = [
   "chroma",
   "luma",
 ];
-
-function clamp01(value: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(1, Math.max(0, value));
-}
 
 /**
  * Overlay keying fields from the inspector form. `chromaKey` is only stored for
@@ -66,11 +61,11 @@ function resolveOverlayKeying(
     overlayBlend: mode,
     chromaKey: {
       color: values.chromaColor || DEFAULT_CHROMA_KEY.color,
-      similarity: clamp01(
+      similarity: clamp01Finite(
         Number(values.chromaSimilarity),
         DEFAULT_CHROMA_KEY.similarity,
       ),
-      blend: clamp01(Number(values.chromaBlend), DEFAULT_CHROMA_KEY.blend),
+      blend: clamp01Finite(Number(values.chromaBlend), DEFAULT_CHROMA_KEY.blend),
     },
   };
 }
@@ -94,9 +89,11 @@ export function useInspectorActions({
     const baseName = selectedClip.file.name.replace(/\.[^.]+$/, "");
     const wavFileName = `${baseName}.wav`;
 
+    let ffmpeg: Awaited<ReturnType<typeof loadFfmpegService>> | null = null;
     try {
       const { setStatus } = settingsStore.getState();
-      const wavBlob = await extractAudioToWav(selectedClip, setStatus);
+      ffmpeg = await loadFfmpegService();
+      const wavBlob = await ffmpeg.extractAudioToWav(selectedClip, setStatus);
 
       let remoteUrl: string | undefined;
       if (storageEndpoint) {
@@ -146,7 +143,7 @@ export function useInspectorActions({
     } catch (error) {
       const err = error as Error;
       console.error("Audio extraction failed (full details):", err);
-      const recentLogs = getLastFfmpegLogs(20).join("\n");
+      const recentLogs = ffmpeg?.getLastFfmpegLogs(20).join("\n");
       if (recentLogs)
         console.error("Last FFmpeg logs for extract:\n" + recentLogs);
       settingsStore.getState().setStatus(`Audio extraction failed: ${err.message}`);
@@ -249,6 +246,24 @@ export function useInspectorActions({
     [selectedClipId, pushHistoryDebounced, setClips],
   );
 
+  const handleClipAudioEffectsChange = useCallback(
+    (clipId: string, effects: ClipAudioEffects | undefined) => {
+      pushHistoryDebounced(`audioEffects:${clipId}`);
+      const next = normalizeClipAudioEffects(effects);
+      setClips((prev) =>
+        prev.map((clip) => {
+          if (clip.id !== clipId) return clip;
+          if (!next) {
+            const { audioEffects: _removed, ...rest } = clip;
+            return rest;
+          }
+          return { ...clip, audioEffects: next };
+        }),
+      );
+    },
+    [pushHistoryDebounced, setClips],
+  );
+
   const handleApplyKenBurns = useCallback(() => {
     if (!selectedClipId) return;
     pushHistory();
@@ -284,6 +299,26 @@ export function useInspectorActions({
     [selectedClipId, pushHistory, setClips],
   );
 
+  const handleReverseChange = useCallback(
+    (enabled: boolean) => {
+      if (!selectedClipId) return;
+      pushHistory();
+      setClips((prev) =>
+        prev.map((clip) => {
+          if (clip.id !== selectedClipId) return clip;
+          if (enabled) return { ...clip, reversed: true };
+          const next = { ...clip };
+          delete next.reversed;
+          return next;
+        }),
+      );
+      settingsStore
+        .getState()
+        .setStatus(enabled ? "Clip plays backward." : "Clip plays forward.");
+    },
+    [selectedClipId, pushHistory, setClips],
+  );
+
   const handleRife = useCallback(
     async (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
@@ -299,6 +334,8 @@ export function useInspectorActions({
       setStatus("Preparing trimmed clip for RIFE…");
 
       try {
+        const { extractTrimmedVideoClip, muxProcessedVideoWithSourceAudio } =
+          await loadFfmpegService();
         // Step 1: Export the trimmed segment via FFmpeg (lossless copy).
         // RIFE must operate on the trimmed portion only — running it on the
         // merged video would cause morphing artifacts across scene cuts.
@@ -353,6 +390,8 @@ export function useInspectorActions({
               rifeMode: mode,
               // Preserve originalFps if it was already set (e.g. from a previous run)
               originalFps: c.originalFps,
+              // New source bytes: the old proxy shows the wrong picture.
+              proxy: undefined,
             };
           }),
         );
@@ -381,8 +420,10 @@ export function useInspectorActions({
     handleInspectorChange,
     handleClipKeyframesChange,
     handleClipAutomationChange,
+    handleClipAudioEffectsChange,
     handleApplyKenBurns,
     handleRife,
     handleStabilizeChange,
+    handleReverseChange,
   };
 }

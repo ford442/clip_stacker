@@ -2,7 +2,7 @@ import type { Clip, Track } from '../types';
 // Imported from the submodule rather than the `./project` barrel: the barrel
 // pulls in `applyProjectData`, which imports `trackModel`, which imports this
 // file — a cycle that would leave `getClipDuration` undefined at module init.
-import { getClipDuration } from './project/clipHelpers';
+import { getClipDuration } from './clipTiming';
 
 /**
  * Track-driven video stacking (#168 follow-up, Phase B).

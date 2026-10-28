@@ -6,7 +6,8 @@
 #                         CMAKE_EXPORT_COMPILE_COMMANDS=ON and links its database
 #                         to native/compile_commands.json
 #   npm run test:native   host build in native/build-host; links its database
-#                         only when no WASM one exists yet (no emsdk needed)
+#                         unless the link already resolves to a WASM one
+#                         (no emsdk needed)
 #
 # The WASM database invokes em++. Let clangd ask it for Emscripten's sysroot and
 # wasm32 target, e.g. VS Code: "clangd.arguments": ["--query-driver=**/em++"]

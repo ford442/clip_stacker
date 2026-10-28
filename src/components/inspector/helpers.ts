@@ -1,5 +1,6 @@
 import { EXPORT_PRESETS, type Clip, type ClipAnimatableProp, type ExportSettings } from '../../types';
 import type { ClipValues } from './types';
+import type { PictureTransformProp } from '../../utils/animatedLayout';
 
 export const PIP_KEYFRAME_PROPS: Array<{
   prop: ClipAnimatableProp;
@@ -42,6 +43,26 @@ export const KEN_BURNS_PROPS: Array<{
   { prop: 'uvOffsetY', label: 'Pan Y', step: 0.01, min: -1, max: 1, defaultValue: 0 },
 ];
 
+/**
+ * Picture-transform lanes (`utils/clipTransform.ts`). Keyframe-only: an
+ * omitted lane is identity, so these default to the identity values.
+ */
+export const TRANSFORM_KEYFRAME_PROPS: Array<{
+  prop: PictureTransformProp;
+  label: string;
+  step: number;
+  min?: number;
+  max?: number;
+  defaultValue: number;
+  title: string;
+}> = [
+  { prop: 'scaleX', label: 'Scale X', step: 0.01, min: 0.01, max: 10, defaultValue: 1, title: 'Horizontal scale of the picture about its anchor. 1 = unchanged.' },
+  { prop: 'scaleY', label: 'Scale Y', step: 0.01, min: 0.01, max: 10, defaultValue: 1, title: 'Vertical scale of the picture about its anchor. 1 = unchanged.' },
+  { prop: 'rotation', label: 'Rotation (°)', step: 1, min: -360, max: 360, defaultValue: 0, title: 'Clockwise rotation about the anchor, in degrees. The picture may extend past its layout rect.' },
+  { prop: 'anchorX', label: 'Anchor X', step: 0.05, min: 0, max: 1, defaultValue: 0.5, title: 'Pivot for scale and rotation, 0 = left edge, 1 = right edge of the layout rect.' },
+  { prop: 'anchorY', label: 'Anchor Y', step: 0.05, min: 0, max: 1, defaultValue: 0.5, title: 'Pivot for scale and rotation, 0 = top edge, 1 = bottom edge of the layout rect.' },
+];
+
 export const PRESETS = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow'] as const;
 
 export const DEFAULT_LAYOUT_VALUES = {
@@ -59,10 +80,6 @@ export const MIN_INSPECTOR_THUMBNAILS = 4;
 export const MAX_INSPECTOR_THUMBNAILS = 8;
 export const SECONDS_PER_INSPECTOR_THUMBNAIL = 3;
 export const INSPECTOR_WAVEFORM_SAMPLES = 120;
-
-export function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 export function parseNumber(value: string, fallback: number): number {
   const parsed = Number(value);

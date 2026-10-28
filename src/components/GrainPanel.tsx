@@ -6,9 +6,19 @@ import {
 import {
   GRAIN_AMOUNT_RECOMMENDED,
   GRAIN_PRESETS,
+  applyGrainFilmStock,
   applyGrainPreset,
+  grainMonochromeBias,
   type GrainPresetId,
+  type GrainQuality,
 } from '../utils/grain';
+import {
+  FLAT_GRAIN_RESPONSE,
+  GRAIN_FILM_STOCKS,
+  GRAIN_RESPONSE_MAX,
+  normalizeGrainResponse,
+  type GrainResponseCurve,
+} from '../utils/filmGrain';
 
 interface Props {
   settings: GrainPass;
@@ -55,6 +65,12 @@ export function GrainPanel({ settings, onChange }: Props) {
     onChange({ ...settings, ...partial });
 
   const amount = settings.amount ?? GRAIN_AMOUNT_RECOMMENDED;
+  const film = settings.quality === 'film';
+  const monoBias = grainMonochromeBias(settings);
+  const coherence = settings.temporalCoherence ?? 0;
+  const response = normalizeGrainResponse(settings.response);
+  const patchResponse = (partial: Partial<GrainResponseCurve>) =>
+    patch({ response: { ...response, ...partial } });
   const showingBefore =
     settings.enabled &&
     amount <= 0 &&
@@ -67,7 +83,8 @@ export function GrainPanel({ settings, onChange }: Props) {
       <div className="inspector-group-label">Film grain &amp; optical</div>
       <p className="inspector-hint">
         Final finishing pass after sharpen / LUT. Procedural grain animates per
-        frame (export frame index). Vignette and halation are off by default.
+        frame (export frame index); Film quality adds blue-noise grain, stock
+        presets and optional temporal coherence. Vignette and halation are off by default.
         WebGPU preview/export are WYSIWYG; FFmpeg uses noise + vignette
         (halation best-effort). Canvas2D does not apply finishing.
       </p>
@@ -155,6 +172,36 @@ export function GrainPanel({ settings, onChange }: Props) {
           </div>
 
           <span className="grain-group-label">Grain</span>
+          <label title="Classic: original hash grain. Film: blue-noise grain with round, clumped crystals, colour bias, temporal coherence and a response curve.">
+            Quality
+            <select
+              value={film ? 'film' : 'classic'}
+              onChange={(e) =>
+                patch({ quality: e.target.value as GrainQuality })
+              }
+            >
+              <option value="classic">Classic</option>
+              <option value="film">Film (blue noise)</option>
+            </select>
+          </label>
+          {film && (
+            <div className="grain-preset-row">
+              <span className="grain-group-label">Film stock</span>
+              <div className="grain-preset-chips">
+                {GRAIN_FILM_STOCKS.map((stock) => (
+                  <button
+                    key={stock.id}
+                    type="button"
+                    className="btn-secondary grain-preset-chip"
+                    title={stock.description}
+                    onClick={() => onChange(applyGrainFilmStock(settings, stock.id))}
+                  >
+                    {stock.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           <SliderRow
             label="Amount"
             title="Grain strength (0 = bypass grain only)"
@@ -185,17 +232,71 @@ export function GrainPanel({ settings, onChange }: Props) {
             display={`${Math.round(settings.softness * 100)}%`}
             onValue={(v) => patch({ softness: v })}
           />
-          <label
-            className="finishing-pass-toggle"
-            title="Monochrome grain (default on)"
-          >
-            <input
-              type="checkbox"
-              checked={settings.monochrome}
-              onChange={(e) => patch({ monochrome: e.target.checked })}
-            />
-            Monochrome
-          </label>
+          {film ? (
+            <>
+              <SliderRow
+                label="Monochrome bias"
+                title="Per-channel colour grain (0) to monochrome grain (1)"
+                min={0}
+                max={1}
+                step={0.01}
+                value={monoBias}
+                display={`${Math.round(monoBias * 100)}%`}
+                onValue={(v) =>
+                  patch({ monochromeBias: v, monochrome: v >= 0.5 })
+                }
+              />
+              <SliderRow
+                label="Temporal coherence"
+                title="0 = new grain every frame; higher values let each grain field evolve over up to 12 frames (less flicker). Frame-exact in preview and export."
+                min={0}
+                max={1}
+                step={0.01}
+                value={coherence}
+                display={`${Math.round(coherence * 100)}%`}
+                onValue={(v) => patch({ temporalCoherence: v })}
+              />
+              <span className="grain-group-label">Response</span>
+              {(
+                [
+                  ['shadows', 'Shadows', 'Grain gain in the shadows'],
+                  ['midtones', 'Midtones', 'Grain gain in the midtones'],
+                  ['highlights', 'Highlights', 'Grain gain in the highlights'],
+                ] as const
+              ).map(([key, label, title]) => (
+                <SliderRow
+                  key={key}
+                  label={label}
+                  title={title}
+                  min={0}
+                  max={GRAIN_RESPONSE_MAX}
+                  step={0.01}
+                  value={response[key]}
+                  display={response[key].toFixed(2)}
+                  onValue={(v) => patchResponse({ [key]: v })}
+                />
+              ))}
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => patch({ response: { ...FLAT_GRAIN_RESPONSE } })}
+              >
+                Flat response
+              </button>
+            </>
+          ) : (
+            <label
+              className="finishing-pass-toggle"
+              title="Monochrome grain (default on)"
+            >
+              <input
+                type="checkbox"
+                checked={settings.monochrome}
+                onChange={(e) => patch({ monochrome: e.target.checked })}
+              />
+              Monochrome
+            </label>
+          )}
 
           <span className="grain-group-label">Optical</span>
           <label

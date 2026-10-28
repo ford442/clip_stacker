@@ -1,9 +1,16 @@
 import { createStore } from 'zustand/vanilla';
-import type { ExportSettings, RenderPlan } from '../types';
+import type {
+  AutoCaptionScope,
+  CaptionExportMode,
+  ExportSettings,
+  RenderPlan,
+} from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
-import type { CaptionExportMode } from '../ffmpeg/captions';
-import type { AutoCaptionScope } from '../utils/autoCaptionAudio';
+import {
+  DEFAULT_COLOR_MANAGEMENT,
+  type ColorManagementSettings,
+} from '../utils/colorManagement';
 
 /** localStorage key for the self-hosted transcription endpoint (#auto-caption). */
 export const AUTO_CAPTION_ENDPOINT_KEY = 'clipStacker.autoCaptionEndpoint';
@@ -20,6 +27,7 @@ function readStoredEndpoint(): string {
 export interface SettingsState {
   exportSettings: ExportSettings;
   finishing: FinishingSettings;
+  colorManagement: ColorManagementSettings;
   forceFFmpeg: boolean;
   useCanvasRenderer: boolean;
   audioReactive: boolean;
@@ -64,6 +72,7 @@ export interface SettingsState {
 
   setExportSettings: (settings: ExportSettings) => void;
   setFinishing: (settings: FinishingSettings) => void;
+  setColorManagement: (settings: ColorManagementSettings) => void;
   setForceFFmpeg: (v: boolean) => void;
   setUseCanvasRenderer: (v: boolean) => void;
   setAudioReactive: (v: boolean) => void;
@@ -94,6 +103,7 @@ export interface SettingsState {
 export const settingsStore = createStore<SettingsState>()((set) => ({
   exportSettings: DEFAULT_EXPORT_SETTINGS,
   finishing: DEFAULT_FINISHING,
+  colorManagement: DEFAULT_COLOR_MANAGEMENT,
   forceFFmpeg: false,
   useCanvasRenderer: false,
   audioReactive: true,
@@ -123,6 +133,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
 
   setExportSettings: (settings) => set({ exportSettings: settings }),
   setFinishing: (settings) => set({ finishing: settings }),
+  setColorManagement: (settings) => set({ colorManagement: settings }),
   setForceFFmpeg: (v) => set({ forceFFmpeg: v }),
   setUseCanvasRenderer: (v) => set({ useCanvasRenderer: v }),
   setAudioReactive: (v) => set({ audioReactive: v }),

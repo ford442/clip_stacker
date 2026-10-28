@@ -1,6 +1,6 @@
 import type { Clip, TextOverlay } from '../types';
 import type { Keyframe } from './keyframes';
-import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './constants';
+import { DEFAULT_CANVAS_HEIGHT, DEFAULT_CANVAS_WIDTH } from './canvasDefaults';
 
 /** Canvas size in output pixels. */
 export interface CanvasSize {
@@ -296,7 +296,8 @@ export function snapPixelRect(
   }
 
   const guides: SnapGuide[] = [];
-  let { x, y, width, height } = rect;
+  const { width, height } = rect;
+  let { x, y } = rect;
   const right = x + width;
   const bottom = y + height;
   const centerX = x + width / 2;

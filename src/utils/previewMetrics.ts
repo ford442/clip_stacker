@@ -41,6 +41,10 @@ export interface PreviewMetricsSnapshot {
   decoderSourcedLayers: number;
   /** Layers of the last frame that still needed an `<video>` seek on main. */
   elementSourcedLayers: number;
+  /** Layers of the last frame read from a preview proxy (either path). */
+  proxySourcedLayers: number;
+  /** Layers of the last frame read from the full-res original (either path). */
+  originalSourcedLayers: number;
 }
 
 /** Returns true when running under Vite's dev flag (guarded for non-Vite envs). */
@@ -61,6 +65,7 @@ export class PreviewMetrics {
   private decoderLimit = 0;
   private decoderSourcedLayers = 0;
   private elementSourcedLayers = 0;
+  private proxySourcedLayers = 0;
   private lastLogAt = 0;
 
   recordFrame(ms: number): void {
@@ -81,10 +86,13 @@ export class PreviewMetrics {
   /**
    * Record how the last rendered frame's layers were sourced. The happy path
    * is `element === 0` — no `HTMLVideoElement.currentTime` during scrub.
+   * `proxy` counts the layers (of both) read from a preview proxy, so a scrub
+   * that silently decoded the full-res file shows up as `original > 0`.
    */
-  setFrameSources(sources: { decoder: number; element: number }): void {
+  setFrameSources(sources: { decoder: number; element: number; proxy?: number }): void {
     this.decoderSourcedLayers = sources.decoder;
     this.elementSourcedLayers = sources.element;
+    this.proxySourcedLayers = Math.min(sources.proxy ?? 0, sources.decoder + sources.element);
   }
 
   snapshot(): PreviewMetricsSnapshot {
@@ -97,6 +105,9 @@ export class PreviewMetrics {
       decoderLimit: this.decoderLimit,
       decoderSourcedLayers: this.decoderSourcedLayers,
       elementSourcedLayers: this.elementSourcedLayers,
+      proxySourcedLayers: this.proxySourcedLayers,
+      originalSourcedLayers:
+        this.decoderSourcedLayers + this.elementSourcedLayers - this.proxySourcedLayers,
     };
   }
 
@@ -110,6 +121,7 @@ export class PreviewMetrics {
     this.decoderLimit = 0;
     this.decoderSourcedLayers = 0;
     this.elementSourcedLayers = 0;
+    this.proxySourcedLayers = 0;
     this.lastLogAt = 0;
   }
 
@@ -122,11 +134,10 @@ export class PreviewMetrics {
     if (now - this.lastLogAt < LOG_THROTTLE_MS) return;
     this.lastLogAt = now;
     const s = this.snapshot();
-    // eslint-disable-next-line no-console
     console.debug(
       `[preview] frame ${s.avgFrameMs.toFixed(1)}ms · seek ${s.avgSeekMs.toFixed(
         1,
-      )}ms · decoders ${s.decoderCount}/${s.decoderLimit} · layers ${s.decoderSourcedLayers} decoded / ${s.elementSourcedLayers} seeked`,
+      )}ms · decoders ${s.decoderCount}/${s.decoderLimit} · layers ${s.decoderSourcedLayers} decoded / ${s.elementSourcedLayers} seeked · ${s.proxySourcedLayers} proxy / ${s.originalSourcedLayers} original`,
     );
   }
 }

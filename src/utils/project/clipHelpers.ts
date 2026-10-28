@@ -2,7 +2,7 @@ import type { Clip } from '../../types';
 import { MIN_CLIP_DURATION } from '../media';
 import { clampClipVolume } from '../audioVolume';
 import { clampClipLoopCount, clampClipPlaybackRate } from '../playbackRate';
-import { remappedClipDuration } from '../timeRemap';
+import { getClipDuration } from '../clipTiming';
 import {
   clampPixelRectToCanvas,
   isPixelRectOffCanvas,
@@ -14,10 +14,6 @@ import {
   DEFAULT_CANVAS_WIDTH,
   FADE_SAFETY_MARGIN,
 } from './constants';
-
-export function getClipDuration(clip: Clip): number {
-  return remappedClipDuration(clip);
-}
 
 /**
  * Clamp a PiP overlay's x/y position so that at least one pixel of the
@@ -62,6 +58,9 @@ export function sanitizeClipAdjustments(clip: Clip): void {
   if (clip.loopCount != null) {
     clip.loopCount = clampClipLoopCount(clip.loopCount);
   }
+
+  if (clip.reversed) clip.reversed = true;
+  else delete clip.reversed;
 
   const maxFade = Math.max(0, getClipDuration(clip) / 2 - FADE_SAFETY_MARGIN);
   clip.videoFadeIn = Math.min(Math.max(0, clip.videoFadeIn), maxFade);

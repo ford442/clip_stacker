@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include "cs_status.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,14 +34,16 @@ typedef struct StabHandle StabHandle;
  * Allocate a stabilizer for `width` x `height` grayscale input.
  * `smooth_radius` is the half-width of the moving average, in frames
  * (clamped to [1, 120]); larger is smoother but lags real camera moves more.
- * Returns NULL on invalid arguments.
+ * Returns NULL on invalid arguments (either side <= 0 or > 8192) or OOM.
  */
 StabHandle* stab_create(int width, int height, int smooth_radius);
 
 /**
  * Push one frame of 8-bit grayscale (`width * height` bytes, row-major).
  * Frames must arrive in presentation order. Returns the index assigned to
- * this frame, or -1 if the handle is finalized or the pointer is null.
+ * this frame, or a negative `cs_status`: CS_EINVAL for a null pointer,
+ * CS_ESTATE once finalized, CS_ENOMEM when the frame's working set does not
+ * fit (the handle stays usable; nothing was recorded).
  */
 int stab_push_frame(StabHandle* handle, const uint8_t* gray);
 
@@ -48,7 +52,8 @@ int stab_frame_count(const StabHandle* handle);
 
 /**
  * Smooth the accumulated trajectory and build the per-frame corrections.
- * Idempotent. Returns 0 on success, non-zero if there is nothing to smooth.
+ * Idempotent. Returns CS_OK, CS_ESTATE if no frame was pushed, CS_EINVAL for
+ * a null handle, or CS_ENOMEM.
  */
 int stab_finalize(StabHandle* handle);
 

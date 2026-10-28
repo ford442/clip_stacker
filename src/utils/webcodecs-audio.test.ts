@@ -11,9 +11,13 @@ import {
   isAudioEncoderAvailable,
   MAX_OFFLINE_AUDIO_SECONDS,
   prepareStreamingAudioMix,
+  exportMasterLimiter,
   renderTimelineAudioMix,
   timelineHasAudioAutomation,
+  timelineNeedsAudioPremix,
 } from './webcodecs-audio';
+import { settingsStore } from '../store/settingsStore';
+import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import {
   __setMediaEngineKillSwitchForTests,
   _resetMediaEngineLoadStateForTests,
@@ -262,9 +266,76 @@ describe('webcodecs-audio', () => {
       }
     });
 
-    it('streams a >45 minute schedule straight into AAC frames', async () => {
+    it('applies a clip insert chain and the bus limiter in the WASM premix', async () => {
+      await loadMediaEngineModule({ baseUrl: WASM_BASE });
+      stubOfflineAudioContext();
+      const source = new Float32Array(48_000);
+      for (let i = 0; i < source.length; i++) source[i] = 0.9 * Math.sin((2 * Math.PI * 1000 * i) / 48_000);
+      const cache = { get: async () => fakeAudioBuffer([source, source]), delete: () => {} };
+      const entry = scheduleEntry({
+        volume: 2,
+        audioEffects: { eq: [{ type: 'peaking', frequency: 1000, gainDb: 6, q: 1, enabled: true }] },
+      });
+      const limiter = { enabled: true, ceilingDb: -1, lookahead: 0.005, release: 0.1 };
+
+      const mixed = await renderTimelineAudioMix([entry], 1, cache as never, [entry], { limiter });
+
+      const ceiling = Math.fround(10 ** (-1 / 20));
+      let peak = 0;
+      for (const ch of [0, 1]) for (const v of mixed.getChannelData(ch)) peak = Math.max(peak, Math.abs(v));
+      expect(peak).toBeLessThanOrEqual(ceiling);
+      expect(peak).toBeGreaterThan(ceiling * 0.97);
+    });
+
+    it('routes FFmpeg exports through the premix for inserts and the limiter', () => {
+      const eq = { type: 'peaking' as const, frequency: 1000, gainDb: 6, q: 1, enabled: true };
+      expect(timelineNeedsAudioPremix([makeClip('a', 2)], null)).toBe(false);
+      expect(timelineNeedsAudioPremix([makeClip('a', 2, { audioEffects: { eq: [eq] } })], null)).toBe(true);
+      expect(
+        timelineNeedsAudioPremix([makeClip('a', 2, { audioEffects: { eq: [{ ...eq, enabled: false }] } })], null),
+      ).toBe(false);
+      const limiter = { enabled: true, ceilingDb: -1, lookahead: 0.005, release: 0.1 };
+      expect(timelineNeedsAudioPremix([makeClip('a', 2)], limiter)).toBe(true);
+    });
+
+    it('routes FFmpeg exports through the premix for buses, loudness and audio lanes', () => {
+      const clips = [makeClip('a', 2)];
+      const dry = { tracks: [{ id: 'v1', kind: 'video' as const, items: [{ clipId: 'a', startTime: 0 }] }] };
+      expect(timelineNeedsAudioPremix(clips, null, dry)).toBe(false);
+      expect(
+        timelineNeedsAudioPremix(clips, null, { ...dry, masterBus: { loudness: { targetLufs: -14, truePeakDb: -1 } } }),
+      ).toBe(true);
+      const gate = { id: 'g', kind: 'gate' as const, enabled: true, thresholdDb: -50, rangeDb: 40, attack: 0, hold: 0, release: 0.1 };
+      expect(timelineNeedsAudioPremix(clips, null, { tracks: [{ ...dry.tracks[0]!, audioFx: [gate] }] })).toBe(true);
+      // A music bed on an audio lane is not in FFmpeg's filter graph: premix it in.
+      const bed = { id: 'a1', kind: 'audio' as const, items: [{ clipId: 'm', startTime: 0 }] };
+      expect(timelineNeedsAudioPremix(clips, null, { tracks: [...dry.tracks, bed] })).toBe(true);
+      expect(timelineNeedsAudioPremix(clips, null, { tracks: [...dry.tracks, { ...bed, muted: true }] })).toBe(false);
+    });
+
+    it('reads the master limiter from the export settings', () => {
+      const previous = settingsStore.getState().exportSettings;
+      try {
+        expect(exportMasterLimiter()).toBeNull();
+        settingsStore.getState().setExportSettings({
+          ...DEFAULT_EXPORT_SETTINGS,
+          masterLimiter: { enabled: true, ceilingDb: -2, lookahead: 0.004, release: 0.2 },
+        });
+        expect(exportMasterLimiter()).toEqual({ enabled: true, ceilingDb: -2, lookahead: 0.004, release: 0.2 });
+        expect(timelineNeedsAudioPremix([makeClip('a', 2)])).toBe(true);
+      } finally {
+        settingsStore.getState().setExportSettings(previous);
+      }
+    });
+
+    it('streams a >45 minute schedule straight into AAC frames', { timeout: 60_000 }, async () => {
       await loadMediaEngineModule({ baseUrl: WASM_BASE });
       const offline = stubOfflineAudioContext();
+      const durationSec = MAX_OFFLINE_AUDIO_SECONDS + 60;
+      const frameIndexAt = (sec: number) => Math.floor((sec * 48_000) / AAC_FRAME_SAMPLES);
+      // Peaks only where the assertions look: a JS loop over all ~265M
+      // samples of a 46-minute stereo mix took longer than the mix itself.
+      const probes = new Set([10.5, durationSec - 1.5, 600].map(frameIndexAt));
       const encoded: Array<{ timestamp: number; numberOfFrames: number; peak: number }> = [];
       class FakeAudioData {
         constructor(readonly init: { timestamp: number; numberOfFrames: number; data: Float32Array }) {}
@@ -276,7 +347,10 @@ describe('webcodecs-audio', () => {
         configure() {}
         encode(data: FakeAudioData) {
           let peak = 0;
-          for (const v of data.init.data) peak = Math.max(peak, Math.abs(v));
+          if (probes.has(encoded.length)) {
+            const samples = data.init.data;
+            for (let i = 0; i < samples.length; i++) peak = Math.max(peak, Math.abs(samples[i]!));
+          }
           encoded.push({ timestamp: data.init.timestamp, numberOfFrames: data.init.numberOfFrames, peak });
           this.init.output({ timestamp: data.init.timestamp });
         }
@@ -284,7 +358,6 @@ describe('webcodecs-audio', () => {
         close() {}
       });
 
-      const durationSec = MAX_OFFLINE_AUDIO_SECONDS + 60;
       const tone = new Float32Array(48_000);
       for (let i = 0; i < tone.length; i++) tone[i] = Math.sin((2 * Math.PI * 440 * i) / 48_000);
       const decoded: string[] = [];
@@ -314,7 +387,7 @@ describe('webcodecs-audio', () => {
       expect(last.timestamp).toBe(
         Math.round(((encoded.length - 1) * AAC_FRAME_SAMPLES * 1_000_000) / 48_000),
       );
-      const frameAt = (sec: number) => encoded[Math.floor((sec * 48_000) / AAC_FRAME_SAMPLES)]!;
+      const frameAt = (sec: number) => encoded[frameIndexAt(sec)]!;
       expect(frameAt(10.5).peak).toBeGreaterThan(0.5);
       expect(frameAt(durationSec - 1.5).peak).toBeGreaterThan(0.5);
       expect(frameAt(600).peak).toBe(0);

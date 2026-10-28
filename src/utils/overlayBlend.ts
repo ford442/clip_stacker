@@ -10,6 +10,7 @@
  */
 
 import type { ChromaKeySettings, Clip, OverlayBlendMode } from '../types';
+import { clamp01Finite } from './math';
 
 /** Keying mode used when a clip does not specify one. */
 export const DEFAULT_OVERLAY_BLEND: OverlayBlendMode = 'source-alpha';
@@ -35,14 +36,9 @@ export function resolveChromaKey(
   const key = clip.chromaKey;
   return {
     color: key?.color || DEFAULT_CHROMA_KEY.color,
-    similarity: clamp01(key?.similarity ?? DEFAULT_CHROMA_KEY.similarity),
-    blend: clamp01(key?.blend ?? DEFAULT_CHROMA_KEY.blend),
+    similarity: clamp01Finite(key?.similarity ?? DEFAULT_CHROMA_KEY.similarity),
+    blend: clamp01Finite(key?.blend ?? DEFAULT_CHROMA_KEY.blend),
   };
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
 }
 
 /** `#RRGGBB` / `RRGGBB` → `0xRRGGBB`; colour names pass through unchanged. */

@@ -7,15 +7,20 @@ import {
   schedulesMatchStructure,
   type AudioScheduleEntry,
 } from './schedule';
-import {
-  collectAutomationBreakpoints,
-  DEFAULT_CLIP_PAN,
-  scheduleAudioParamBreakpoints,
-} from '../utils/clipAutomation';
-import { sampleKeyframes } from '../utils/keyframes';
-import { clampClipVolume } from '../utils/audioVolume';
 import { RemappedAudioCache } from '../utils/remappedAudioCache';
+import { ProcessedAudioCache } from './processedAudioCache';
 import { createAudioContext } from './context';
+import { bandEnergy, ZERO_ANALYSER_LEVELS, type AnalyserLevels } from './analyserLevels';
+import { applyGainEnvelope, applyPanEnvelope } from './gainEnvelope';
+import { planBusGraph, type BusGraphPlan } from './fxGraph';
+import { PreviewBusRouting } from './busRouting';
+import type { MasterBusSettings } from '../utils/audioBus';
+import { audioFxStore } from '../store/audioFxStore';
+
+// Analyser meter levels and the gain / pan envelope maths live in sibling
+// modules; re-exported for existing importers.
+export { ZERO_ANALYSER_LEVELS, type AnalyserLevels } from './analyserLevels';
+export { applyGainEnvelope, applyPanEnvelope, samplePanAt } from './gainEnvelope';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
 
@@ -25,26 +30,6 @@ export interface AudioPlaybackStatus {
   available: boolean;
   currentTime: number;
 }
-
-/** Instantaneous meter reading from the playback AnalyserNode. */
-export interface AnalyserLevels {
-  /** Broadband RMS in 0–1. */
-  rms: number;
-  /** Peak sample in 0–1. */
-  peak: number;
-  /** Low / mid / high band energies in 0–1 (for reactive shaders / meters). */
-  bass: number;
-  mid: number;
-  treble: number;
-}
-
-export const ZERO_ANALYSER_LEVELS: AnalyserLevels = {
-  rms: 0,
-  peak: 0,
-  bass: 0,
-  mid: 0,
-  treble: 0,
-};
 
 type StatusListener = (status: AudioPlaybackStatus) => void;
 
@@ -73,6 +58,8 @@ interface ActiveSource {
  * Decodes clip audio into cached `AudioBuffer`s, schedules
  * `AudioBufferSourceNode`s at sample-accurate timeline offsets, and exposes
  * `AudioContext.currentTime` as the master clock for the visual playhead.
+ * Lane / master FX and sidechain ducks run in the bus-graph AudioWorklet
+ * (`busRouting.ts`) when the project has any.
  */
 export class AudioPlaybackManager {
   private ctx: AudioContext | null = null;
@@ -80,6 +67,7 @@ export class AudioPlaybackManager {
   private analyser: AnalyserNode | null = null;
   private readonly cache = new ClipAudioCache();
   private readonly remapCache = new RemappedAudioCache();
+  private readonly processedCache = new ProcessedAudioCache();
   private schedule: AudioScheduleEntry[] = [];
   private active: ActiveSource[] = [];
   private state: PlaybackState = 'stopped';
@@ -99,6 +87,9 @@ export class AudioPlaybackManager {
   private masterVolume = 1;
   private analyserTimeDomain: Float32Array | null = null;
   private analyserFrequency: Float32Array | null = null;
+  private readonly busRouting = new PreviewBusRouting();
+  private busPlan: BusGraphPlan | null = null;
+  private unsubscribeMeters: (() => void) | null = null;
 
   /** Whether Web Audio routing is usable (false → muted visual preview). */
   get isAvailable(): boolean {
@@ -204,7 +195,9 @@ export class AudioPlaybackManager {
    */
   getCurrentTime(): number {
     if (this.state === 'playing' && this.ctx) {
-      return this.timelineOrigin + (this.ctx.currentTime - this.contextOrigin);
+      // The bus graph's look-ahead delays what is heard; the picture follows.
+      const heard = this.ctx.currentTime - this.contextOrigin - this.busRouting.latencySec;
+      return this.timelineOrigin + Math.max(0, heard);
     }
     return this.pausedAt;
   }
@@ -226,6 +219,10 @@ export class AudioPlaybackManager {
       this.masterGain.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
       this.available = true;
+      // A loudness meter opening or closing can start / stop the bus graph.
+      this.unsubscribeMeters ??= audioFxStore.subscribe((next, prev) => {
+        if ((next.meterRequests > 0) !== (prev.meterRequests > 0)) void this.syncBusRouting();
+      });
       this.emit();
       return true;
     } catch {
@@ -263,13 +260,16 @@ export class AudioPlaybackManager {
     groups: ClipGroup[],
     transitions: ClipTransition[],
     tracks: Track[] = [],
+    masterBus?: MasterBusSettings,
   ): Promise<void> {
+    this.busPlan = tracks.length > 0 || masterBus ? planBusGraph(tracks, masterBus) : null;
     const nextSchedule = buildAudioSchedule(clips, groups, transitions, tracks);
     const structureUnchanged = schedulesMatchStructure(this.schedule, nextSchedule);
     this.schedule = nextSchedule;
     const keepIds = new Set(this.schedule.map((e) => e.clipId));
     this.cache.prune(keepIds);
     this.remapCache.prune(keepIds);
+    this.processedCache.prune(keepIds);
 
     if (!this.isAvailable) return;
     const ok = await this.ensureContext();
@@ -277,13 +277,14 @@ export class AudioPlaybackManager {
 
     const generation = ++this.syncGeneration;
     const ctx = this.ctx;
-    await Promise.all(
-      this.schedule.map((entry) => this.remapCache.get(entry, this.cache, ctx)),
-    );
+    const [rerouted] = await Promise.all([
+      this.syncBusRouting(false),
+      ...this.schedule.map((entry) => this.resolveBuffer(entry, ctx)),
+    ]);
     if (generation !== this.syncGeneration) return;
 
     if (this.state === 'playing') {
-      if (structureUnchanged && this.active.length > 0) {
+      if (structureUnchanged && !rerouted && this.active.length > 0) {
         this.applyLiveGains();
       } else {
         const t = this.getCurrentTime();
@@ -304,6 +305,7 @@ export class AudioPlaybackManager {
     }
 
     this.stopSources();
+    this.busRouting.reset();
     this.pausedAt = Math.max(0, timelineTime);
     this.timelineOrigin = this.pausedAt;
     this.contextOrigin = this.ctx.currentTime;
@@ -346,6 +348,7 @@ export class AudioPlaybackManager {
     if (generation !== this.seekGeneration || this.state !== 'playing') return;
 
     this.stopSources();
+    this.busRouting.reset();
     this.timelineOrigin = this.pausedAt;
     this.contextOrigin = this.ctx.currentTime;
     await this.scheduleFrom(this.pausedAt);
@@ -367,8 +370,13 @@ export class AudioPlaybackManager {
     this.syncGeneration += 1;
     this.seekGeneration += 1;
     this.stopSources();
+    this.busRouting.dispose();
+    this.busPlan = null;
+    this.unsubscribeMeters?.();
+    this.unsubscribeMeters = null;
     this.cache.clear();
     this.remapCache.clear();
+    this.processedCache.clear();
     this.schedule = [];
     this.listeners.clear();
     this.state = 'stopped';
@@ -394,9 +402,50 @@ export class AudioPlaybackManager {
     }
   }
 
+  /** Restart the preview loudness meter's integrated / range / peak readings. */
+  resetBusMeter(): void {
+    this.busRouting.resetMeter();
+  }
+
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /**
+   * Start, retune or stop the bus-graph worklet for the current plan. With
+   * `reschedule`, a playing preview reconnects its sources when the lane
+   * inputs changed; resolves whether they did.
+   */
+  private async syncBusRouting(reschedule = true): Promise<boolean> {
+    const ctx = this.ctx;
+    const master = this.masterGain;
+    if (!ctx || !master) return false;
+    const meter = audioFxStore.getState().meterRequests > 0;
+    const changed = await this.busRouting.sync(ctx, master, this.busPlan, meter, () => {
+      void this.rescheduleIfPlaying();
+    });
+    if (changed && reschedule) await this.rescheduleIfPlaying();
+    return changed;
+  }
+
+  private async rescheduleIfPlaying(): Promise<void> {
+    if (this.state !== 'playing' || !this.ctx) return;
+    const t = this.getCurrentTime();
+    this.stopSources();
+    this.timelineOrigin = t;
+    this.contextOrigin = this.ctx.currentTime;
+    await this.scheduleFrom(t);
+  }
+
+  /** Decoded → rate-remapped → insert-processed buffer for one entry. */
+  private async resolveBuffer(
+    entry: AudioScheduleEntry,
+    ctx: BaseAudioContext,
+  ): Promise<AudioBuffer | null> {
+    const buffer = await this.remapCache.get(entry, this.cache, ctx);
+    if (!buffer) return null;
+    return this.processedCache.get(entry, buffer, ctx);
+  }
 
   private emit(): void {
     const status = this.getStatus();
@@ -481,9 +530,7 @@ export class AudioPlaybackManager {
 
     // Prefetch all buffers in parallel so later clips aren't delayed by
     // earlier decodes (keeps multi-clip starts gapless).
-    await Promise.all(
-      remaining.map((entry) => this.remapCache.get(entry, this.cache, ctx)),
-    );
+    await Promise.all(remaining.map((entry) => this.resolveBuffer(entry, ctx)));
     if (
       generation !== this.scheduleGeneration ||
       this.state !== 'playing' ||
@@ -495,7 +542,7 @@ export class AudioPlaybackManager {
     for (const entry of remaining) {
       if (generation !== this.scheduleGeneration) return;
 
-      const buffer = await this.remapCache.get(entry, this.cache, ctx);
+      const buffer = await this.resolveBuffer(entry, ctx);
       if (
         !buffer ||
         this.state !== 'playing' ||
@@ -560,6 +607,8 @@ export class AudioPlaybackManager {
           ctx.currentTime,
         );
 
+        // Its lane's bus input when the bus graph runs, else the master gain.
+        const destination = this.busRouting.destination(entry.trackId, master);
         let panner: StereoPannerNode | null = null;
         if (typeof ctx.createStereoPanner === 'function') {
           panner = ctx.createStereoPanner();
@@ -574,10 +623,10 @@ export class AudioPlaybackManager {
           );
           source.connect(gain);
           gain.connect(panner);
-          panner.connect(master);
+          panner.connect(destination);
         } else {
           source.connect(gain);
-          gain.connect(master);
+          gain.connect(destination);
         }
 
         try {
@@ -609,158 +658,6 @@ export class AudioPlaybackManager {
       }
     }
   }
-}
-
-/** Map a slice of Analyser frequency bins (dB) to a 0–1 energy. */
-function bandEnergy(frequencyDb: Float32Array, start: number, end: number): number {
-  if (end <= start) return 0;
-  let sum = 0;
-  for (let i = start; i < end; i++) {
-    // getFloatFrequencyData is typically −100…0 dB.
-    const db = frequencyDb[i];
-    const linear = db <= -100 ? 0 : Math.pow(10, db / 20);
-    sum += linear;
-  }
-  return Math.min(1, sum / (end - start));
-}
-
-/**
- * Apply volume keyframes + per-clip audio fade envelopes relative to the
- * scheduled start of this source (`when`), accounting for mid-clip seeks via
- * `clipElapsed`. Automation values are absolute linear gain; fades multiply.
- */
-export function applyGainEnvelope(
-  param: AudioParam,
-  entry: Pick<
-    AudioScheduleEntry,
-    'volume' | 'audioFadeIn' | 'audioFadeOut' | 'duration' | 'volumeAutomation'
-  >,
-  when: number,
-  playDuration: number,
-  clipElapsed: number,
-  earliestTime: number,
-): void {
-  const volume = clampClipVolume(entry.volume);
-  const hasAutomation = (entry.volumeAutomation?.length ?? 0) > 0;
-  const fadeIn = entry.audioFadeIn;
-  const fadeOut = entry.audioFadeOut;
-
-  // Fast path: constant volume with optional linear fades (legacy behavior).
-  if (!hasAutomation) {
-    const startTime = Math.max(when, earliestTime);
-    param.cancelScheduledValues(startTime);
-
-    const levelAt = (localTime: number): number => {
-      let level = volume;
-      if (fadeIn > 0 && localTime < fadeIn) {
-        level *= localTime / fadeIn;
-      }
-      if (fadeOut > 0 && localTime > entry.duration - fadeOut) {
-        const outProgress = (entry.duration - localTime) / fadeOut;
-        level *= Math.max(0, Math.min(1, outProgress));
-      }
-      return level;
-    };
-
-    param.setValueAtTime(levelAt(clipElapsed), startTime);
-
-    if (fadeIn > 0 && clipElapsed < fadeIn) {
-      const fadeInEnd = when + (fadeIn - clipElapsed);
-      if (fadeInEnd > startTime) {
-        param.linearRampToValueAtTime(volume, fadeInEnd);
-      }
-    }
-
-    if (fadeOut > 0) {
-      const fadeOutStartLocal = entry.duration - fadeOut;
-      const fadeOutStart = when + (fadeOutStartLocal - clipElapsed);
-      const fadeOutEnd = when + playDuration;
-      if (fadeOutEnd > startTime && clipElapsed < entry.duration) {
-        if (fadeOutStart > startTime) {
-          param.setValueAtTime(volume, Math.max(startTime, fadeOutStart));
-        }
-        const endLevel = levelAt(clipElapsed + playDuration);
-        param.linearRampToValueAtTime(endLevel, Math.max(startTime, fadeOutEnd));
-      }
-    }
-    return;
-  }
-
-  const breakpoints = collectAutomationBreakpoints({
-    duration: entry.duration,
-    clipElapsed,
-    playDuration,
-    keyframes: entry.volumeAutomation,
-    defaultValue: volume,
-    fadeIn,
-    fadeOut,
-  }).map((point) => ({
-    ...point,
-    value: clampClipVolume(point.value),
-  }));
-
-  scheduleAudioParamBreakpoints(
-    param,
-    breakpoints,
-    when,
-    clipElapsed,
-    earliestTime,
-  );
-}
-
-/**
- * Apply stereo pan automation (−1…+1). Empty keyframes leave the pan centered.
- */
-export function applyPanEnvelope(
-  param: AudioParam,
-  panAutomation: AudioScheduleEntry['panAutomation'],
-  when: number,
-  playDuration: number,
-  clipElapsed: number,
-  earliestTime: number,
-  fullDuration?: number,
-): void {
-  const hasAutomation = (panAutomation?.length ?? 0) > 0;
-  if (!hasAutomation) {
-    const startTime = Math.max(when, earliestTime);
-    param.cancelScheduledValues(startTime);
-    param.setValueAtTime(DEFAULT_CLIP_PAN, startTime);
-    return;
-  }
-
-  const duration = Math.max(
-    fullDuration ?? 0,
-    clipElapsed + playDuration,
-  );
-  const breakpoints = collectAutomationBreakpoints({
-    duration,
-    clipElapsed,
-    playDuration,
-    keyframes: panAutomation,
-    defaultValue: DEFAULT_CLIP_PAN,
-  }).map((point) => ({
-    ...point,
-    value: Math.max(-1, Math.min(1, point.value)),
-  }));
-
-  scheduleAudioParamBreakpoints(
-    param,
-    breakpoints,
-    when,
-    clipElapsed,
-    earliestTime,
-  );
-}
-
-/** Instantaneous pan at local clip time (for tests / meters). */
-export function samplePanAt(
-  panAutomation: AudioScheduleEntry['panAutomation'],
-  localTime: number,
-): number {
-  return Math.max(
-    -1,
-    Math.min(1, sampleKeyframes(panAutomation, localTime, DEFAULT_CLIP_PAN)),
-  );
 }
 
 /** Singleton used by the timeline preview session. */

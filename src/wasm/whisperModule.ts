@@ -27,8 +27,13 @@
  * WASM call.
  */
 
-import { readWasmBinaryIfFileUrl, type EmscriptenFactory } from './emscriptenLoader';
-import { getWasmPublicBaseUrl } from './audioAnalysis';
+import {
+  getEmscriptenLoadFailure,
+  loadEmscriptenModule,
+  resolveWasmAssetUrl,
+  type HeapScope,
+  _resetEmscriptenModuleForTests,
+} from './emscriptenLoader';
 
 export interface WhisperModule {
   _whisperInit(modelPtr: number, modelBytes: number): number;
@@ -54,75 +59,33 @@ export interface WhisperModule {
   onWhisperProgress?: (progress: number) => number;
 }
 
-type ModuleFactory = EmscriptenFactory<WhisperModule>;
-
 export const WHISPER_GLUE_FILE = 'whisper.js';
 export const WHISPER_WASM_FILE = 'whisper.wasm';
-
-let loadPromise: Promise<WhisperModule | null> | null = null;
-let loadFailedReason: string | null = null;
+const MODULE_NAME = 'whisper';
 
 export function resolveWhisperAssetUrl(fileName: string, baseUrl?: string): string {
-  const root = baseUrl
-    ? baseUrl.endsWith('/')
-      ? baseUrl
-      : `${baseUrl}/`
-    : getWasmPublicBaseUrl();
-  return new URL(fileName, root).href;
+  return resolveWasmAssetUrl(fileName, baseUrl);
 }
 
 /** Load the module once. Returns null when the build is not deployed. */
 export async function loadWhisperModule(options?: {
   baseUrl?: string;
 }): Promise<WhisperModule | null> {
-  if (loadFailedReason) return null;
-  if (loadPromise) return loadPromise;
-
-  loadPromise = (async () => {
-    try {
-      const jsUrl = resolveWhisperAssetUrl(WHISPER_GLUE_FILE, options?.baseUrl);
-      const wasmUrl = resolveWhisperAssetUrl(WHISPER_WASM_FILE, options?.baseUrl);
-
-      const mod = (await import(/* @vite-ignore */ jsUrl)) as { default: ModuleFactory };
-      const factory = mod.default;
-      if (typeof factory !== 'function') {
-        throw new Error('whisper module factory missing');
-      }
-
-      const wasmBinary = await readWasmBinaryIfFileUrl(wasmUrl);
-      return await factory({
-        ...(wasmBinary ? { wasmBinary } : {}),
-        locateFile: (path: string) =>
-          path.endsWith('.wasm')
-            ? wasmUrl
-            : resolveWhisperAssetUrl(path, options?.baseUrl),
-      });
-    } catch (err) {
-      loadFailedReason = (err as Error)?.message || String(err);
-      console.warn(
-        '[whisper] WASM load failed — auto-captioning disabled:',
-        loadFailedReason,
-      );
-      return null;
-    }
-  })();
-
-  return loadPromise;
+  return loadEmscriptenModule<WhisperModule>(MODULE_NAME, 'createWhisperModule', options);
 }
 
 export function getWhisperLoadFailure(): string | null {
-  return loadFailedReason;
+  return getEmscriptenLoadFailure(MODULE_NAME);
 }
 
 export function _resetWhisperLoadStateForTests(): void {
-  loadPromise = null;
-  loadFailedReason = null;
+  _resetEmscriptenModuleForTests(MODULE_NAME);
 }
 
-/** Copy a JS string into the module heap. Caller frees the pointer. */
-export function allocString(module: WhisperModule, value: string): number {
+/** Copy a JS string into the module heap as NUL-terminated UTF-8 (freed with the scope). */
+export function allocString(module: WhisperModule, heap: HeapScope, value: string): number {
   const bytes = module.lengthBytesUTF8(value) + 1;
-  const ptr = module._malloc(bytes);
+  const ptr = heap.alloc(bytes);
   module.stringToUTF8(value, ptr, bytes);
   return ptr;
 }

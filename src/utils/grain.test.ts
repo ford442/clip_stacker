@@ -10,11 +10,13 @@ import {
   GRAIN_BLUR_TAP_LIMIT,
   GRAIN_UNIFORM_FLOATS,
   appendGrainFilters,
+  applyGrainFilmStock,
   applyGrainPreset,
   buildGrainBloomFfmpegGraph,
   buildGrainFfmpegFilters,
   grainBlurSigma,
   grainFrameSeedFromTime,
+  grainMonochromeBias,
   grainWantsOpticalBlur,
   isotropicGaussianWeight,
   isGrainNeutral,
@@ -22,6 +24,7 @@ import {
   packGrainUniforms,
   separableGaussianWeight,
 } from './grain';
+import { GRAIN_FILM_STOCKS } from './filmGrain';
 import { TIMELINE_EXPORT_FPS } from './webcodecs-timeline';
 
 describe('grain settings', () => {
@@ -317,5 +320,98 @@ describe('separable Gaussian (grain bloom/halation)', () => {
         bloomAmount: 0,
       }),
     ).toBe(false);
+  });
+});
+
+describe('grain quality modes', () => {
+  const base = {
+    ...DEFAULT_GRAIN,
+    enabled: true,
+    amount: 0.5,
+    vignette: { ...DEFAULT_GRAIN.vignette },
+    halation: { ...DEFAULT_GRAIN.halation },
+  };
+
+  it('omitted film fields pack as classic (old projects render unchanged)', () => {
+    const uniforms = packGrainUniforms(base, 1920, 1080, 5);
+    expect(uniforms[16]).toBe(0);
+    expect(uniforms[17]).toBe(1); // monochrome: true
+    expect(uniforms[18]).toBe(0);
+    expect(Array.from(uniforms.slice(20, 23))).toEqual([1, 1, 1]);
+    expect(packGrainUniforms({ ...base, monochrome: false }, 64, 64, 0)[17]).toBe(0);
+  });
+
+  it('packs film quality, bias, coherence and response', () => {
+    const uniforms = packGrainUniforms(
+      {
+        ...base,
+        quality: 'film',
+        monochromeBias: 0.25,
+        temporalCoherence: 3,
+        response: { shadows: 1.5, midtones: 1, highlights: 0.5 },
+      },
+      1920,
+      1080,
+      5,
+    );
+    expect(uniforms[16]).toBe(1);
+    expect(uniforms[17]).toBeCloseTo(0.25);
+    expect(uniforms[18]).toBe(1);
+    expect(Array.from(uniforms.slice(20, 23))).toEqual([1.5, 1, 0.5]);
+  });
+
+  it('normalize does not add film keys to a legacy grain pass', () => {
+    const normalized = normalizeGrainPass({ enabled: true, amount: 0.3 }, DEFAULT_GRAIN);
+    expect(normalized).not.toHaveProperty('quality');
+    expect(normalized).not.toHaveProperty('monochromeBias');
+    expect(normalized).not.toHaveProperty('temporalCoherence');
+    expect(normalized).not.toHaveProperty('response');
+    expect(normalizeFinishingSettings({}).grain).not.toHaveProperty('quality');
+  });
+
+  it('normalize round-trips and clamps film fields', () => {
+    const normalized = normalizeGrainPass(
+      {
+        enabled: true,
+        quality: 'film',
+        monochromeBias: 4,
+        temporalCoherence: -1,
+        response: { shadows: 3, midtones: 0.8, highlights: 0.2 },
+      },
+      DEFAULT_GRAIN,
+    );
+    expect(normalized.quality).toBe('film');
+    expect(normalized.monochromeBias).toBe(1);
+    expect(normalized.temporalCoherence).toBe(0);
+    expect(normalized.response).toEqual({ shadows: 2, midtones: 0.8, highlights: 0.2 });
+    expect(
+      normalizeGrainPass({ enabled: true, quality: 'bogus' as never }, DEFAULT_GRAIN),
+    ).not.toHaveProperty('quality');
+  });
+
+  it('film stocks switch to film quality and keep optical + coherence', () => {
+    const current = {
+      ...base,
+      temporalCoherence: 0.4,
+      vignette: { ...base.vignette, enabled: true, amount: 0.6 },
+    };
+    const next = applyGrainFilmStock(current, '16mm');
+    const stock = GRAIN_FILM_STOCKS.find((s) => s.id === '16mm')!;
+    expect(next.quality).toBe('film');
+    expect(next.enabled).toBe(true);
+    expect(next.size).toBe(stock.size);
+    expect(next.softness).toBe(stock.softness);
+    expect(next.amount).toBe(stock.amount);
+    expect(next.monochromeBias).toBe(stock.monochromeBias);
+    expect(next.response).toEqual(stock.response);
+    expect(next.temporalCoherence).toBe(0.4);
+    expect(next.vignette.amount).toBe(0.6);
+    expect(applyGrainFilmStock(current, 'nope' as never)).toBe(current);
+  });
+
+  it('grainMonochromeBias falls back to the classic toggle', () => {
+    expect(grainMonochromeBias({ ...base, monochrome: true })).toBe(1);
+    expect(grainMonochromeBias({ ...base, monochrome: false })).toBe(0);
+    expect(grainMonochromeBias({ ...base, monochromeBias: 0.3 })).toBe(0.3);
   });
 });

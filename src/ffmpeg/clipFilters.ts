@@ -1,5 +1,5 @@
 import type { Clip } from "../types";
-import { getClipDuration } from "../utils/project";
+import { getClipDuration } from "../utils/clipTiming";
 import { audioVolumeFilterSegment, clipHasVolumeAdjustment } from "../utils/audioVolume";
 import {
   audioTempoFilterSegment,
@@ -8,6 +8,7 @@ import {
   getClipPlaybackRate,
   videoSetptsFilter,
 } from "../utils/playbackRate";
+import { audioReversePrefix, clipIsReversed, videoReversePrefix } from "../utils/reverseClip";
 import { clipHasRateAutomation } from "../utils/timeRemap";
 import { buildVariableSpeedFilter } from "../utils/variableSpeed";
 import {
@@ -44,7 +45,8 @@ export function clipNeedsEffects(clip: Clip): boolean {
     clipHasVolumeAdjustment(clip) ||
     clipHasPlaybackRateAdjustment(clip) ||
     clipHasRateAutomation(clip) ||
-    clipHasLoop(clip)
+    clipHasLoop(clip) ||
+    clipIsReversed(clip)
   );
 }
 
@@ -274,7 +276,7 @@ export function buildSingleClipFilter(
   if (clip.kind === "video" && clipHasSourceVideo(clip)) {
     const videoInput = speedFilter
       ? speedFilter.videoLabel
-      : `[0:v]trim=start=${clip.trimStart}:end=${end},${setpts}`;
+      : `[0:v]trim=start=${clip.trimStart}:end=${end},${videoReversePrefix(clip)}${setpts}`;
     let v = videoInput;
     // Labeled speed-warp outputs (`[vspeed]`) must chain directly into the next
     // filter — a leading comma would insert an empty filter (`No such filter: ''`).
@@ -300,7 +302,7 @@ export function buildSingleClipFilter(
     if (clipHasSourceAudio(clip)) {
       const audioInput = speedFilter
         ? speedFilter.audioLabel
-        : `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo}`;
+        : `[0:a]atrim=start=${clip.trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS${atempo}`;
       let a = speedFilter
         ? `${audioInput}aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`
         : `${audioInput},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;
@@ -322,7 +324,7 @@ export function buildSingleClipFilter(
 
     const audioInput = speedFilter
       ? speedFilter.audioLabel
-      : `[0:a]atrim=start=${clip.trimStart}:end=${end},asetpts=PTS-STARTPTS${atempo}`;
+      : `[0:a]atrim=start=${clip.trimStart}:end=${end},${audioReversePrefix(clip)}asetpts=PTS-STARTPTS${atempo}`;
     let a = speedFilter
       ? `${audioInput}aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`
       : `${audioInput},aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo`;

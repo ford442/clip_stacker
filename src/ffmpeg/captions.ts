@@ -13,7 +13,7 @@
  * `drawtext` cannot vary text over time and `.srt` alone carries no styling.
  */
 
-import type { CaptionEntry, TextOverlayStyle } from '../types';
+import type { CaptionEntry, CaptionExportMode, TextOverlayStyle } from '../types';
 import {
   buildAssDocument,
   resolveCaptionStyle,
@@ -30,8 +30,7 @@ import {
   type StatusCallback,
 } from './core';
 
-/** How captions are attached to the exported MP4. */
-export type CaptionExportMode = 'none' | 'burn' | 'soft';
+export type { CaptionExportMode };
 
 export const CAPTION_EXPORT_MODE_LABELS: Record<CaptionExportMode, string> = {
   none: 'Off (timeline only)',

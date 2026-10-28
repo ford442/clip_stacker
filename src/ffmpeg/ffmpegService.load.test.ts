@@ -252,6 +252,48 @@ describe("FFmpeg loader", () => {
       }
     });
 
+    it("downloads the self-hosted multi-threaded core before any CDN", async () => {
+      const restore = mockIsolatedContext(true);
+      try {
+        await ensureFfmpeg(vi.fn(), vi.fn());
+        expect(mocked.toBlobURL.mock.calls.slice(0, 3)).toEqual([
+          ["http://localhost:3000/ffmpeg-core-mt/ffmpeg-core.js", "text/javascript"],
+          ["http://localhost:3000/ffmpeg-core-mt/ffmpeg-core.wasm", "application/wasm"],
+          ["http://localhost:3000/ffmpeg-core-mt/ffmpeg-core.worker.js", "text/javascript"],
+        ]);
+        expect(mocked.toBlobURL).not.toHaveBeenCalledWith(
+          expect.stringMatching(/^https:/),
+          expect.any(String),
+        );
+      } finally {
+        restore();
+      }
+    });
+
+    it("tries the mt CDNs, in order, when the local mt core is unavailable", async () => {
+      vi.useFakeTimers();
+      const restore = mockIsolatedContext(true);
+      try {
+        mocked.toBlobURL.mockImplementation(async (url: string) => {
+          if (url.includes("/ffmpeg-core-mt/")) throw new Error("404");
+          return `blob:${url}`;
+        });
+        const promise = ensureFfmpeg(vi.fn(), vi.fn());
+        await vi.advanceTimersByTimeAsync(10_000);
+        await promise;
+
+        const firstRemote = mocked.toBlobURL.mock.calls.find(([url]) =>
+          String(url).startsWith("https:"),
+        );
+        expect(firstRemote?.[0]).toBe(
+          "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm/ffmpeg-core.js",
+        );
+      } finally {
+        restore();
+        vi.useRealTimers();
+      }
+    });
+
     it("falls back to single-threaded when multi-threaded load fails", async () => {
       vi.useFakeTimers();
       const restore = mockIsolatedContext(true);

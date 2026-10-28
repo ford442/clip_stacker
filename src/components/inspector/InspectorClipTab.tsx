@@ -1,7 +1,9 @@
 import type { Clip, ClipAnimatableProp, ClipAutomation, ClipKeyframes } from '../../types';
 import type { CanvasSize } from '../../utils/overlayCoords';
 import type { PipCorner } from '../../utils/pipPreset';
+import { InspectorClipAudioEffectsSection } from './InspectorClipAudioEffectsSection';
 import { InspectorClipAudioSpeedSection } from './InspectorClipAudioSpeedSection';
+import type { ClipAudioEffects } from '../../utils/audioEffects';
 import { InspectorClipTrimSection } from './InspectorClipTrimSection';
 import { InspectorClipVideoToolsSection } from './InspectorClipVideoToolsSection';
 import type { ClipValues } from './types';
@@ -51,8 +53,10 @@ export interface InspectorClipTabProps {
   applyLogoPreset: (corner: PipCorner) => void;
   useAsBaseLayer: () => void;
   onAutomationChange?: (automation: ClipAutomation | undefined) => void;
+  onAudioEffectsChange?: (clipId: string, effects: ClipAudioEffects | undefined) => void;
   onExtractAudio?: () => void;
   onStabilizeChange?: (enabled: boolean) => void;
+  onReverseChange?: (enabled: boolean) => void;
   onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onApplyKenBurns?: () => void;
@@ -96,7 +100,15 @@ export function InspectorClipTab(props: InspectorClipTabProps) {
         updateVolume={(value) => props.update('volume', value)}
         onAutomationChange={props.onAutomationChange}
         onExtractAudio={props.onExtractAudio}
+        onReverseChange={props.onReverseChange}
       />
+      {props.onAudioEffectsChange && clip.hasAudio !== false && (
+        <InspectorClipAudioEffectsSection
+          clipId={clip.id}
+          effects={clip.audioEffects}
+          onChange={props.onAudioEffectsChange}
+        />
+      )}
       <InspectorClipVideoToolsSection
         clip={clip}
         values={props.values}

@@ -41,6 +41,19 @@ double sinc_cutoff_for_step(double step);
 const float* sinc_table(double cutoff);
 
 /**
+ * Coefficients (`kSincTaps` floats, 16-byte aligned) for reading at fractional
+ * clip frame `pos` from `rows`; returns `floor(pos)`. Every frame at the same
+ * fractional phase reuses them, so a run of reads costs one dot product each.
+ */
+int sinc_prepare(const float* rows, double pos, float* coeff);
+
+/** `kSincTaps`-tap inner product (SIMD): coefficients from `sinc_prepare` against a contiguous window. */
+float sinc_dot(const float* coeff, const float* window);
+
+/** One channel at `base + frac`, with coefficients from `sinc_prepare`. */
+float sinc_read(const SourceSlice& slice, int base, const float* coeff);
+
+/**
  * Interpolate `channels` (1 or 2) planar slices at fractional clip frame `pos`
  * with the polyphase table `rows`. Writes `channels` samples to `out`.
  */

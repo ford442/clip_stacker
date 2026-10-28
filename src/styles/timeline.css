@@ -2,7 +2,8 @@
    Timeline
    ============================================================ */
 .timeline-panel {
-  /* full-width panel */
+  /* full-width panel; its width drives the narrow-header container query */
+  container: timeline-panel / inline-size;
 }
 
 .timeline-track-row {
@@ -16,7 +17,7 @@
 }
 
 .timeline-track-label {
-  flex: 0 0 88px;
+  flex: 0 0 var(--timeline-gutter, 132px);
   display: flex;
   align-items: center;
   padding: 0 0.5rem;
@@ -35,7 +36,6 @@
 
 /* ── Lane chrome (M / L toggles, rename, resize) ──────────── */
 .timeline-lane-header {
-  flex: 0 0 132px;
   gap: 0.25rem;
   position: relative;
 }
@@ -86,8 +86,8 @@
 }
 
 .timeline-lane-toggle {
-  min-width: 18px;
-  height: 18px;
+  min-width: var(--ws-lane-toggle, 18px);
+  height: var(--ws-lane-toggle, 18px);
   padding: 0;
   font-size: 0.62rem;
   line-height: 1;
@@ -134,8 +134,77 @@
 }
 
 .timeline-add-track-btn {
-  font-size: 0.7rem;
-  padding: 2px 8px;
+  font-size: var(--ws-tool-font, 0.7rem);
+  padding: var(--ws-tool-pad, 2px 8px);
+  min-height: var(--ws-tool-min-h, 20px);
+  white-space: nowrap;
+}
+
+/* ── Edit tools (TimelineTools.tsx) ─────────────────────── */
+.timeline-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+/* Each group reads as one segmented control. */
+.timeline-tools-group {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: rgba(6, 9, 15, 0.55);
+}
+
+.timeline-tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  font-size: var(--ws-tool-font, 0.68rem);
+  padding: var(--ws-tool-pad, 2px 7px);
+  min-height: var(--ws-tool-min-h, 20px);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.timeline-tool-btn:hover {
+  color: var(--text, #fff);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.timeline-tool-btn.is-active {
+  background: #c9a227;
+  border-color: #c9a227;
+  color: #12140c;
+  font-weight: 700;
+}
+
+/* Shortcut letter: shown instead of the label when the timeline is narrow. */
+.timeline-tool-key {
+  display: none;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  min-width: 1ch;
+  text-align: center;
+}
+
+@container timeline-panel (max-width: 820px) {
+  .timeline-tool-label {
+    display: none;
+  }
+
+  .timeline-tool-key {
+    display: inline;
+  }
+
+  .timeline-add-track-suffix {
+    display: none;
+  }
 }
 
 /* ── Titles lane ─────────────────────────────────────────── */
@@ -177,9 +246,30 @@
 
 .timeline-header-row {
   display: flex;
-  align-items: baseline;
-  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.75rem;
   margin-bottom: 0.6rem;
+}
+
+.timeline-zoom-controls {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 0 0 auto;
+}
+
+.timeline-zoom-slider {
+  width: clamp(80px, 14vw, 220px);
+}
+
+.timeline-zoom-btn,
+.timeline-scroll-btn {
+  font-size: var(--ws-tool-font, 0.72rem);
+  padding: var(--ws-tool-pad, 2px 7px);
+  min-height: var(--ws-tool-min-h, 20px);
+  min-width: var(--ws-tool-min-h, 20px);
+  line-height: 1;
 }
 
 .timeline-header-row h2 {
@@ -193,6 +283,8 @@
 
 /* Shared scroll container for ruler + track */
 .timeline-scroll-container {
+  /* Lane-header column; the time axis starts right after it on every track row. */
+  --timeline-gutter: 132px;
   overflow-x: auto;
   padding-bottom: 4px;
   border-radius: var(--radius-sm);
@@ -200,8 +292,37 @@
   background: rgba(4, 6, 12, 0.7);
 }
 
+/* Ruler / marker / caption lanes have no header column of their own. */
+.timeline-axis-offset {
+  margin-left: var(--timeline-gutter, 132px);
+  width: max-content;
+}
+
+/* The playhead spans every lane; the ruler is its scrub handle. */
+.timeline-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px solid #ff5252;
+  z-index: 20;
+  pointer-events: none;
+}
+
+.timeline-playhead::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -6px;
+  border: 5px solid transparent;
+  border-top: 7px solid #ff5252;
+}
+
 /* ── Ruler ──────────────────────────────────────────────── */
 .timeline-ruler {
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
   display: flex;
   align-items: flex-end;
   height: 22px;

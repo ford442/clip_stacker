@@ -44,7 +44,7 @@ describe('TrackLaneHeader', () => {
     const toggles = Array.from(container.querySelectorAll('.timeline-lane-toggle')).map(
       (b) => b.textContent,
     );
-    expect(toggles).toEqual(['M', 'L']);
+    expect(toggles).toEqual(['M', 'L', 'FX']);
   });
 
   it('M toggles the lane mute flag in the store', () => {
@@ -79,5 +79,50 @@ describe('TrackLaneHeader', () => {
   it('renders nothing for a lane that no longer exists', () => {
     render(<TrackLaneHeader trackId="gone" />);
     expect(container.textContent).toBe('');
+  });
+
+  it('FX opens the lane bus dialog; adding an effect is one undo step', () => {
+    render(<TrackLaneHeader trackId={MAIN_VIDEO_TRACK_ID} showRemove={false} />);
+    const depth = editorStore.getState().undoDepth;
+    click('FX');
+    const dialog = document.body.querySelector('[role="dialog"]');
+    expect(dialog?.getAttribute('aria-label')).toBe('Video 1: lane bus');
+    const add = dialog!.querySelector<HTMLSelectElement>('select[aria-label="Add an effect to Video 1"]')!;
+    act(() => {
+      add.value = 'compressor';
+      add.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const lane = editorStore.getState().tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID)!;
+    expect(lane.audioFx?.map((e) => e.kind)).toEqual(['compressor']);
+    expect(editorStore.getState().undoDepth).toBe(depth + 1);
+    // The header badge counts active effects.
+    const fx = Array.from(container.querySelectorAll('.timeline-lane-fx'))[0]!;
+    expect(fx.textContent).toBe('FX1');
+    // Escape closes the dialog.
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  it('a locked lane opens its FX read-only', () => {
+    act(() => editorStore.getState().toggleTrackLocked(MAIN_VIDEO_TRACK_ID));
+    render(<TrackLaneHeader trackId={MAIN_VIDEO_TRACK_ID} showRemove={false} />);
+    click('FX');
+    const dialog = document.body.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain('is locked');
+    expect(dialog.querySelector<HTMLSelectElement>('select[aria-label="Add an effect to Video 1"]')!.disabled).toBe(
+      true,
+    );
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+  });
+
+  it('titles lanes have no FX', () => {
+    act(() => editorStore.getState().addTrack('text'));
+    const titles = editorStore.getState().tracks.find((t) => t.kind === 'text')!;
+    render(<TrackLaneHeader trackId={titles.id} />);
+    expect(container.querySelector('.timeline-lane-fx')).toBeNull();
   });
 });

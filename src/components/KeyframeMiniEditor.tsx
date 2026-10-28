@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import type { Keyframe, KeyframeEasing } from '../utils/keyframes';
+import { clamp } from '../utils/math';
 import {
   DEFAULT_LINEAR_EASING,
   EASING_PRESETS,
@@ -37,10 +38,6 @@ const EASING_OPTIONS: Array<{ id: string; label: string; easing: KeyframeEasing 
 const DEFAULT_HIT_PX = 10;
 const TIME_NUDGE_SEC = 0.05;
 const TIME_NUDGE_FINE_SEC = 0.01;
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
 
 function formatTime(t: number): string {
   return t.toFixed(2);

@@ -4,11 +4,12 @@ import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
 import { useClipBeatAnalysis } from "./hooks/useClipBeatAnalysis";
 import { useClipStabilization } from "./hooks/useClipStabilization";
+import { useProxyBuilder } from "./hooks/useProxyBuilder";
 import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
-import { getEffectiveTimelineClips } from "./utils/timelineClips";
-import { visibleTextOverlays } from "./utils/trackModel";
-import { setPlayheadTime, settingsActions, uiActions } from "./store";
+import { getEffectiveTimelineClips, visibleTextOverlays } from "./utils/trackModel";
+import { editorStore, playbackStore, setPlayheadTime, settingsActions, uiActions } from "./store";
+import { playheadForSelectedClip, resolveClipOutputWindow } from "./utils/previewComposition";
 import { useClipActions } from "./hooks/useClipActions";
 import { useIntercutActions } from "./hooks/useIntercutActions";
 import { useRenderActions } from "./hooks/useRenderActions";
@@ -53,6 +54,7 @@ export function App() {
   } = useEditHistory();
   useClipBeatAnalysis(clips, setClips);
   useClipStabilization(clips, setClips);
+  useProxyBuilder(clips, setClips);
   useMasterAudioBeatAnalysis();
   useClipImportChores(clips, setClips);
 
@@ -100,16 +102,31 @@ export function App() {
   });
 
   const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null!);
+  // Speed (and every other clip edit) replaces `clips`. Re-running the
+  // playhead jump on that would seek back to the in-point on every slider
+  // tick, so the only visible change was the clip block changing length.
+  const playheadPositionedForClipId = useRef<string | null>(null);
 
+  // Selecting a clip parks the (output-time) playhead on it, unless the
+  // playhead is already inside the clip — then it stays put.
   useEffect(() => {
     if (!selectedClipId) {
+      playheadPositionedForClipId.current = null;
       setPlayheadTime(null);
       return;
     }
-    const clip = clips.find((c) => c.id === selectedClipId);
-    if (!clip) return;
-    setPlayheadTime(clip.trimStart);
-  }, [selectedClipId, clips]);
+    const state = editorStore.getState();
+    const placed = resolveClipOutputWindow(
+      getEffectiveTimelineClips(state.tracks, state.clips, state.clipGroups),
+      state.clipGroups,
+      state.transitions,
+      selectedClipId,
+    );
+    if (!placed) return;
+    setPlayheadTime(
+      playheadForSelectedClip(playbackStore.getState().playheadTime, placed),
+    );
+  }, [selectedClipId]);
 
   const clipActions = useClipActions({
     clips,
@@ -237,6 +254,8 @@ export function App() {
     handleDuplicateClip: clipActions.handleDuplicateClip,
     handleDeleteClip: timelineActions.handleDeleteClip,
     handleReorder: timelineActions.handleReorder,
+    handleEditNudge: timelineActions.handleEditNudge,
+    handleRippleDelete: timelineActions.handleRippleDelete,
     handleAddCaptionAtPlayhead: captionActions.handleAddCaption,
     undo,
     redo,
@@ -284,10 +303,12 @@ export function App() {
       onInspectorChange={inspectorActions.handleInspectorChange}
       onKeyframesChange={inspectorActions.handleClipKeyframesChange}
       onAutomationChange={inspectorActions.handleClipAutomationChange}
+      onAudioEffectsChange={inspectorActions.handleClipAudioEffectsChange}
       onApplyKenBurns={inspectorActions.handleApplyKenBurns}
       onExtractAudio={inspectorActions.handleExtractAudio}
       onRife={inspectorActions.handleRife}
       onStabilizeChange={inspectorActions.handleStabilizeChange}
+      onReverseChange={inspectorActions.handleReverseChange}
       onMoveUp={timelineActions.handleMoveUp}
       onMoveDown={timelineActions.handleMoveDown}
       onReorder={timelineActions.handleReorder}

@@ -4,6 +4,16 @@
 **Date:** 2026-06-03  
 **Status:** Investigation & Design — Ready for Review  
 
+> **Stale — historical proposal, not the current routing spec.** This document
+> was written before the WebGPU preview worker and GPU export compositor
+> existed. The live preview it describes as future work has since shipped
+> (`src/webgpu/previewEngine.ts`, `src/utils/previewComposition.ts`), and
+> `calculateRenderPlan` (`src/ffmpeg/plan.ts`) now estimates the actual
+> encoder — including finishing, stabilize, keying, and captions — rather
+> than only the FFmpeg concat/reencode strategy this doc assumes. Read it for
+> historical rationale only; for current routing behavior, read
+> `src/utils/hybrid-encoder.ts` and `src/ffmpeg/plan.ts` directly.
+
 ---
 
 ## Table of Contents

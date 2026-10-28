@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import type { Clip, ClipTransition, TextOverlay } from "../types";
 import type { CaptionsPanelProps } from "./CaptionsPanel";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
@@ -21,7 +21,22 @@ import { TextOverlayPanel } from "./TextOverlayPanel";
 import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MemoryWarningModal } from "./MemoryWarningModal";
 import { RecoveryModal } from "./RecoveryModal";
-import { RenderFailurePanel } from "./RenderFailurePanel";
+import { LazyBoundary, lazyNamed } from "./LazyBoundary";
+import {
+  CollapsedRail,
+  PanelSplitter,
+  TimelineSplitter,
+  WORKSPACE_ZONE_IDS,
+  WorkspaceControls,
+} from "./WorkspaceChrome";
+import { useWorkspaceLayoutVars } from "../hooks/useWorkspaceLayoutVars";
+
+// Only shown after a failed render, and it reads the FFmpeg runtime's logs, so
+// it loads with that runtime rather than with the shell.
+const RenderFailurePanel = lazyNamed(
+  () => import("./RenderFailurePanel"),
+  "RenderFailurePanel",
+);
 
 /**
  * Props are limited to things the panels cannot get for themselves: the
@@ -74,14 +89,21 @@ export type AppShellProps = {
   onInspectorChange: (values: ClipValues) => void;
   onKeyframesChange: (keyframes: Clip["keyframes"]) => void;
   onAutomationChange: (automation: Clip["automation"]) => void;
+  onAudioEffectsChange: (clipId: string, effects: Clip["audioEffects"]) => void;
   onApplyKenBurns: () => void;
   onExtractAudio: () => Promise<void>;
   onRife: (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => Promise<void>;
   onStabilizeChange: (enabled: boolean) => void;
+  onReverseChange: (enabled: boolean) => void;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
-  onMoveToTrack: (clipId: string, targetTrackId: string, startTime: number) => void;
+  onMoveToTrack: (
+    clipId: string,
+    targetTrackId: string,
+    startTime: number,
+    snapThresholdSec?: number,
+  ) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
   /** Caption-track callbacks, forwarded to the Inspector's Captions tab. */
   captions: CaptionsPanelProps;
@@ -136,10 +158,12 @@ export function AppShell(props: AppShellProps) {
     onInspectorChange,
     onKeyframesChange,
     onAutomationChange,
+    onAudioEffectsChange,
     onApplyKenBurns,
     onExtractAudio,
     onRife,
     onStabilizeChange,
+    onReverseChange,
     onMoveUp,
     onMoveDown,
     onReorder,
@@ -167,8 +191,13 @@ export function AppShell(props: AppShellProps) {
     })),
   );
 
+  // Panel sizes arrive as CSS variables on the shell (no re-render here).
+  const shellRef = useRef<HTMLElement>(null);
+  const gridRef = useRef<HTMLElement>(null);
+  useWorkspaceLayoutVars(shellRef);
+
   return (
-    <main className="app-shell">
+    <main className="app-shell" ref={shellRef}>
       <header className="app-header">
         <h1>clip_stacker</h1>
         <p>Upload, trim, reorder, fade, and merge clips into one MP4.</p>
@@ -177,6 +206,7 @@ export function AppShell(props: AppShellProps) {
             Last export: {formatEncoderPathLabel(encoderPath)}
           </span>
         )}
+        <WorkspaceControls />
       </header>
 
       <section className="panel">
@@ -195,16 +225,21 @@ export function AppShell(props: AppShellProps) {
           onCopyDebugInfo={onCopyDebugInfo}
         />
         {renderFailureMessage && !isRendering && (
-          <RenderFailurePanel
-            message={renderFailureMessage}
-            renderPlan={renderPlan}
-            onCopyDebug={onCopyDebugInfo}
-            onRetry={() => {
-              onDismissRenderFailure();
-              void onPerformRender();
-            }}
-            onDismiss={onDismissRenderFailure}
-          />
+          <LazyBoundary
+            label="Render failure details"
+            fallback={<p className="muted" role="alert">{renderFailureMessage}</p>}
+          >
+            <RenderFailurePanel
+              message={renderFailureMessage}
+              renderPlan={renderPlan}
+              onCopyDebug={onCopyDebugInfo}
+              onRetry={() => {
+                onDismissRenderFailure();
+                void onPerformRender();
+              }}
+              onDismiss={onDismissRenderFailure}
+            />
+          </LazyBoundary>
         )}
         <StorageRow
           onSaveRemote={onSaveRemote}
@@ -221,40 +256,56 @@ export function AppShell(props: AppShellProps) {
         <MediaLibraryPanel onAddClip={onAddLibraryClip} />
       </section>
 
-      <section className="layout-grid">
-        <ClipLibrary
-          onToggleVariant={onToggleVariant}
-          onDelete={onDeleteClip}
-          onGenerateIntercut={onGenerateIntercut}
-        />
-        <Preview
-          onClipLayoutCommit={onClipLayoutCommit}
-          onTextOverlayLayoutCommit={onTextOverlayLayoutCommit}
-          onPreviewDragStart={onPreviewDragStart}
-        />
-        <Inspector
-          onChange={onInspectorChange}
-          onKeyframesChange={onKeyframesChange}
-          onAutomationChange={onAutomationChange}
-          onApplyKenBurns={onApplyKenBurns}
-          onExtractAudio={onExtractAudio}
-          onRife={onRife}
-          onStabilizeChange={onStabilizeChange}
-          captions={captions}
-        />
+      <section className="layout-grid" ref={gridRef}>
+        <div className="workspace-zone workspace-zone--library" id={WORKSPACE_ZONE_IDS.library}>
+          <CollapsedRail side="library" />
+          <ClipLibrary
+            onToggleVariant={onToggleVariant}
+            onDelete={onDeleteClip}
+            onGenerateIntercut={onGenerateIntercut}
+          />
+        </div>
+        <PanelSplitter side="library" gridRef={gridRef} />
+        <div className="workspace-zone workspace-zone--preview" id={WORKSPACE_ZONE_IDS.preview}>
+          <Preview
+            onClipLayoutCommit={onClipLayoutCommit}
+            onTextOverlayLayoutCommit={onTextOverlayLayoutCommit}
+            onPreviewDragStart={onPreviewDragStart}
+          />
+        </div>
+        <PanelSplitter side="inspector" gridRef={gridRef} />
+        <div className="workspace-zone workspace-zone--inspector" id={WORKSPACE_ZONE_IDS.inspector}>
+          <CollapsedRail side="inspector" />
+          <Inspector
+            onChange={onInspectorChange}
+            onKeyframesChange={onKeyframesChange}
+            onAutomationChange={onAutomationChange}
+            onAudioEffectsChange={onAudioEffectsChange}
+            onApplyKenBurns={onApplyKenBurns}
+            onExtractAudio={onExtractAudio}
+            onRife={onRife}
+            onStabilizeChange={onStabilizeChange}
+            onReverseChange={onReverseChange}
+            captions={captions}
+          />
+        </div>
       </section>
 
-      <Timeline
-        onMoveUp={onMoveUp}
-        onMoveDown={onMoveDown}
-        onReorder={onReorder}
-        onMoveToTrack={onMoveToTrack}
-        onTransitionUpdate={onTransitionUpdate}
-        onDelete={onDeleteClip}
-        onCaptionResize={onCaptionResize}
-        onCaptionAdd={captions.onAdd}
-        morphProcessingIndex={morphProcessingIndex}
-      />
+      <TimelineSplitter gridRef={gridRef} shellRef={shellRef} />
+
+      <div className="workspace-timeline" id={WORKSPACE_ZONE_IDS.timeline}>
+        <Timeline
+          onMoveUp={onMoveUp}
+          onMoveDown={onMoveDown}
+          onReorder={onReorder}
+          onMoveToTrack={onMoveToTrack}
+          onTransitionUpdate={onTransitionUpdate}
+          onDelete={onDeleteClip}
+          onCaptionResize={onCaptionResize}
+          onCaptionAdd={captions.onAdd}
+          morphProcessingIndex={morphProcessingIndex}
+        />
+      </div>
 
       <TextOverlayPanel
         onAdd={onAddTextOverlay}

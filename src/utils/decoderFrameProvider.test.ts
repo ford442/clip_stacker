@@ -62,6 +62,20 @@ beforeEach(() => {
 });
 
 describe('TimelineDecoderFrameProvider', () => {
+  it('exports from the original file even when a proxy is ready for preview', async () => {
+    const { proxyStore } = await import('../store/proxyStore');
+    const { proxyStoreKey } = await import('./proxyMedia');
+    const proxyBlob = new Blob([new Uint8Array([2])]);
+    proxyStore.getState().setReady(proxyStoreKey('abc'), proxyBlob, 1706, 960);
+    openMock.mockResolvedValue(makeFakeCursor());
+    const clip = makeClip({ proxy: { profile: 'h264-960-v1', hash: 'abc', width: 1706, height: 960 } });
+
+    await new TimelineDecoderFrameProvider().getFrame(makeLayer(), clip);
+
+    expect(openMock.mock.calls[0]![0]).toBe(clip.file);
+    proxyStore.getState().evict(proxyStoreKey('abc'));
+  });
+
   it('returns null for audio and still-image clips without opening a cursor', async () => {
     const provider = new TimelineDecoderFrameProvider();
     const audioClip = makeClip({ kind: 'audio' });

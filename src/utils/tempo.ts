@@ -11,6 +11,7 @@
 
 import type { Clip } from '../types';
 import { clampClipPlaybackRate, roundPlaybackRate } from './playbackRate';
+import { clamp01Finite } from './math';
 
 /** Musical window candidate tempi are folded into. */
 export const MIN_TEMPO_BPM = 70;
@@ -32,11 +33,6 @@ export interface TempoEstimate {
   confidence: number;
   /** First beat time that fits the chosen grid, or null. */
   offsetSec: number | null;
-}
-
-function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
 }
 
 function median(sorted: number[]): number {
@@ -100,9 +96,9 @@ export function clusterIoiBpm(beatTimes: number[]): TempoEstimate {
 
   const bpm = median(best);
   const deviations = sortedCopy(best.map((v) => Math.abs(v - bpm) / bpm));
-  const tightness = clamp01(1 - median(deviations) / TIGHTNESS_FLOOR);
+  const tightness = clamp01Finite(1 - median(deviations) / TIGHTNESS_FLOOR);
   const support = best.length / ordered.length;
-  const confidence = clamp01(tightness * (0.5 + 0.5 * support));
+  const confidence = clamp01Finite(tightness * (0.5 + 0.5 * support));
 
   return { bpm, confidence, offsetSec: gridOffsetSec(beats, bpm) };
 }

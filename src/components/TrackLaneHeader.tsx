@@ -8,13 +8,16 @@ import {
   MIN_TRACK_HEIGHT,
 } from '../utils/trackModel';
 import { editorStore } from '../store/editorStore';
+import { activeBusEffectCount, laneDuckActive } from '../utils/audioBus';
+import { LaneFxDialog } from './audio/BusFxDialog';
 
 /**
  * Lane chrome for one timeline track (#168 Phase A).
  *
  * Track state belongs on the lane header, not in another Inspector tab, so this
- * owns the lane's name, its **M**(ute) / **L**(ock) toggles, the remove button
- * and the drag-to-resize handle. Everything routes through `editorActions`,
+ * owns the lane's name, its **M**(ute) / **L**(ock) toggles, its **FX** (the
+ * lane bus: insert chain and ducking), the remove button and the
+ * drag-to-resize handle. Everything routes through `editorActions`,
  * which delegates to the pure helpers in `utils/trackModel.ts` — this component
  * never mutates a `Track` itself.
  */
@@ -35,6 +38,7 @@ function TrackLaneHeaderImpl({ trackId, showRemove = true }: Props) {
   const track = useEditorTrack(trackId);
   const [renaming, setRenaming] = useState(false);
   const [draft, setDraft] = useState('');
+  const [fxOpen, setFxOpen] = useState(false);
   const resizeRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
   const label = track?.label ?? (track ? KIND_LABEL[track.kind] : '');
@@ -61,6 +65,14 @@ function TrackLaneHeaderImpl({ trackId, showRemove = true }: Props) {
   if (!track) return null;
 
   const removable = showRemove && canRemoveTrack(editorStore.getState().tracks, trackId);
+  const fxCount = activeBusEffectCount(track.audioFx);
+  const ducked = laneDuckActive(track.duck);
+  const fxSummary = [
+    fxCount > 0 ? `${fxCount} effect${fxCount === 1 ? '' : 's'}` : '',
+    ducked ? 'sidechain duck' : '',
+  ]
+    .filter(Boolean)
+    .join(', ');
 
   const commitRename = () => {
     setRenaming(false);
@@ -128,6 +140,20 @@ function TrackLaneHeaderImpl({ trackId, showRemove = true }: Props) {
         >
           L
         </button>
+        {track.kind !== 'text' && (
+          <button
+            type="button"
+            className={`timeline-lane-toggle timeline-lane-fx${fxSummary ? ' has-fx' : ''}`}
+            aria-haspopup="dialog"
+            aria-label={`${label} bus FX${fxSummary ? ` (${fxSummary})` : ''}`}
+            onClick={() => setFxOpen(true)}
+            title={fxSummary ? `${label} bus: ${fxSummary}` : `${label} bus: add EQ, dynamics or a sidechain duck`}
+          >
+            FX
+            {fxCount > 0 && <span className="timeline-lane-fx-count">{fxCount}</span>}
+            {ducked && <span className="timeline-lane-fx-duck" aria-hidden="true" />}
+          </button>
+        )}
         {removable && (
           <button
             type="button"
@@ -164,6 +190,7 @@ function TrackLaneHeaderImpl({ trackId, showRemove = true }: Props) {
         aria-valuemin={MIN_TRACK_HEIGHT}
         aria-valuemax={MAX_TRACK_HEIGHT}
       />
+      {fxOpen && <LaneFxDialog trackId={trackId} onClose={() => setFxOpen(false)} />}
     </div>
   );
 }

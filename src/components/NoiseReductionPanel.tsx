@@ -3,7 +3,11 @@ import {
   DEFAULT_NOISE_REDUCTION,
   type NoiseReductionPass,
 } from '../utils/finishing';
-import { NOISE_REDUCTION_MAX_RADIUS } from '../utils/noiseReduction';
+import {
+  NOISE_REDUCTION_MAX_RADIUS,
+  NOISE_REDUCTION_QUALITY_OPTIONS,
+  type NoiseReductionQuality,
+} from '../utils/noiseReduction';
 
 interface Props {
   settings: NoiseReductionPass;
@@ -56,6 +60,8 @@ export function NoiseReductionPanel({ settings, onChange }: Props) {
       <div className="inspector-group-label">Noise reduction</div>
       <p className="inspector-hint">
         Spatial + optional temporal denoise — applied first, before color.
+        Quality trades speed for edge retention: Standard is the fastest,
+        High keeps edges and cleans chroma, Patch (NL-means) is strongest.
         WebGPU preview/export are WYSIWYG. FFmpeg fallback uses hqdn3d (slow).
         Canvas2D is ungraded.
       </p>
@@ -128,9 +134,30 @@ export function NoiseReductionPanel({ settings, onChange }: Props) {
           )}
 
           <div className="noise-reduction-group-label">Spatial</div>
+          <label
+            title={
+              NOISE_REDUCTION_QUALITY_OPTIONS.find(
+                (o) => o.id === (settings.quality ?? 'standard'),
+              )?.description
+            }
+          >
+            Quality
+            <select
+              value={settings.quality ?? 'standard'}
+              onChange={(e) =>
+                patch({ quality: e.target.value as NoiseReductionQuality })
+              }
+            >
+              {NOISE_REDUCTION_QUALITY_OPTIONS.map((option) => (
+                <option key={option.id} value={option.id} title={option.description}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </label>
           <SliderRow
             label="Strength"
-            title="Edge-aware bilateral strength (0 = off)"
+            title="Spatial denoise strength (0 = off); also sets how hard the High / Patch modes filter"
             min={0}
             max={1}
             step={0.01}

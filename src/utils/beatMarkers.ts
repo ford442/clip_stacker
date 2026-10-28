@@ -34,12 +34,17 @@ export function buildBeatMarkerLayouts(
     const pxPerSec = width / duration;
     const hasCurve = clipHasRateAutomation(clip);
     const rate = getClipPlaybackRate(clip);
+    const sourceLen = Math.max(0, trimEnd - trimStart);
 
     for (const t of beats) {
       if (!Number.isFinite(t) || t < trimStart || t > trimEnd) continue;
+      // A reversed clip shows the trim end first, so a beat at the end of
+      // the source sits at the start of the output span.
+      const fromTrim = t - trimStart;
+      const forwardOffset = clip.reversed ? Math.max(0, sourceLen - fromTrim) : fromTrim;
       const local = hasCurve
-        ? outputLocalAtSourceOffset(clip, t - trimStart)
-        : (t - trimStart) / rate;
+        ? outputLocalAtSourceOffset(clip, forwardOffset)
+        : forwardOffset / rate;
       markers.push({
         clipId: clip.id,
         sourceTime: t,

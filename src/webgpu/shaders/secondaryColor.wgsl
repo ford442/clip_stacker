@@ -2,6 +2,8 @@
 @group(0) @binding(1) var inputTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> u: SecondaryColorUniforms;
 
+const SCENE_LINEAR: bool = false;
+
 struct SecondaryGradeUniforms {
   // vec4 0
   enabled: f32,
@@ -168,7 +170,8 @@ fn applyGrade(hsl: vec3<f32>, uv: vec2<f32>, g: SecondaryGradeUniforms) -> vec3<
   var h = fract(hsl.x + g.hueShift * mask);
   if (h < 0.0) { h = h + 1.0; }
   let s = clamp(hsl.y + (hsl.y * (g.satScale - 1.0) + g.satOffset) * mask, 0.0, 1.0);
-  let l = clamp(hsl.z + g.lumOffset * mask, 0.0, 1.0);
+  let lRaw = hsl.z + g.lumOffset * mask;
+  let l = select(clamp(lRaw, 0.0, 1.0), max(lRaw, 0.0), SCENE_LINEAR);
   return vec3<f32>(h, s, l);
 }
 
@@ -192,7 +195,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     hsl = applyGrade(hsl, in.uv, u.grades[2]);
   }
 
-  let graded = clamp(hslToRgb(hsl), vec3<f32>(0.0), vec3<f32>(1.0));
+  let gradedRgb = hslToRgb(hsl);
+  let graded = select(
+    clamp(gradedRgb, vec3<f32>(0.0), vec3<f32>(1.0)),
+    max(gradedRgb, vec3<f32>(0.0)),
+    SCENE_LINEAR,
+  );
   let rgb = mix(src.rgb, graded, mixAmt);
   return vec4<f32>(rgb, src.a);
 }

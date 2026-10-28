@@ -7,18 +7,25 @@
  * ever transfers the `File`, once) and serves each layer from its own
  * forward-only `DecoderFrameCursor`, exactly like GPU export.
  *
+ * The registered blob is whatever main resolved for preview: the clip's proxy
+ * when one is ready and proxies are on, the original `File` otherwise (see
+ * `resolvePreviewMedia`). A proxy layer never opens a full-res decoder.
+ *
  * Anything it cannot serve (WebM/alpha, stills, audio-only, RIFE morph segments
  * with their own blob URL, or a clip whose media was never registered) returns
  * null and stays on the `<video>` fallback for the rest of the session.
  */
 
 import type { Clip } from '../types';
+import type { PreviewMediaSource } from '../utils/proxyMedia';
 import { DecoderFrameCursor } from '../utils/decoderCursor';
 import {
   DecoderCursorPool,
   DEFAULT_MAX_DECODER_CURSORS,
   type ForwardFrameCursor,
 } from '../utils/decoderCursorPool';
+import { ReverseChunkCache } from '../utils/reverseFrames';
+import { clipIsReversed } from '../utils/reverseClip';
 import type { CapturedFrame, FrameRequest, WorkerClip } from './previewWorkerProtocol';
 
 /** Ring-buffer depth per *active* layer (not per library clip). */
@@ -43,11 +50,14 @@ export interface PreviewFrameSplit {
   decoded: CapturedFrame[];
   /** Requests that must still go to the main thread's `<video>` pool. */
   fallback: FrameRequest[];
+  /** How many of `decoded` came from proxy bytes rather than the original. */
+  proxyDecoded: number;
 }
 
 export class PreviewDecoderSource {
-  private readonly media = new Map<string, Blob>();
+  private readonly media = new Map<string, { blob: Blob; source: PreviewMediaSource }>();
   private readonly pool: DecoderCursorPool;
+  private readonly reverseCache: ReverseChunkCache;
   private pendingOpen: { blob: Blob; trimStart: number; trimEnd: number } | null = null;
 
   constructor(
@@ -59,18 +69,24 @@ export class PreviewDecoderSource {
       if (!open) throw new Error('no media staged for cursor open');
       return this.cursorFactory(open.blob, open.trimStart, open.trimEnd);
     }, maxConcurrent);
+    this.reverseCache = new ReverseChunkCache(async (_key, trimStart, trimEnd) => {
+      const open = this.pendingOpen;
+      if (!open) throw new Error('no media staged for reverse cursor');
+      return this.cursorFactory(open.blob, trimStart, trimEnd);
+    });
   }
 
   get activeCount(): number {
     return this.pool.activeCount;
   }
 
-  /** Register (or replace) the source blob for a clip. */
-  setClipMedia(clipId: string, blob: Blob): void {
-    if (this.media.get(clipId) === blob) return;
-    this.media.set(clipId, blob);
+  /** Register (or replace) the preview blob for a clip — its proxy or its original. */
+  setClipMedia(clipId: string, blob: Blob, source: PreviewMediaSource = 'original'): void {
+    if (this.media.get(clipId)?.blob === blob) return;
+    this.media.set(clipId, { blob, source });
     // A replaced blob invalidates any cursor already decoding the old bytes.
     this.pool.pruneKeys((key) => !key.startsWith(`${clipId}::`));
+    this.reverseCache.pruneKeys((key) => !key.startsWith(`${clipId}::`));
   }
 
   hasClipMedia(clipId: string): boolean {
@@ -83,11 +99,13 @@ export class PreviewDecoderSource {
       if (!clipIds.has(id)) this.media.delete(id);
     }
     this.pool.pruneKeys((key) => clipIds.has(key.slice(0, key.indexOf('::'))));
+    this.reverseCache.pruneKeys((key) => clipIds.has(key.slice(0, key.indexOf('::'))));
   }
 
   /** Free every live decoder without forgetting registered media (pause/idle). */
   releaseCursors(): void {
     this.pool.pruneKeys(() => false);
+    this.reverseCache.destroy();
   }
 
   /**
@@ -100,17 +118,22 @@ export class PreviewDecoderSource {
   ): Promise<PreviewFrameSplit> {
     const decoded: CapturedFrame[] = [];
     const fallback: FrameRequest[] = [];
+    let proxyDecoded = 0;
 
     // Different layers own different cursors, but cursor opens hand a blob
     // through `pendingOpen`, so requests are served sequentially. Decode is
     // already the serialized resource here; parallelism would only queue on it.
     for (const request of requests) {
       const captured = await this.tryServe(request, clipsById);
-      if (captured) decoded.push(captured);
-      else fallback.push(request);
+      if (captured) {
+        decoded.push(captured);
+        if (this.media.get(request.clipId)?.source === 'proxy') proxyDecoded += 1;
+      } else {
+        fallback.push(request);
+      }
     }
 
-    return { decoded, fallback };
+    return { decoded, fallback, proxyDecoded };
   }
 
   private async tryServe(
@@ -123,7 +146,7 @@ export class PreviewDecoderSource {
     const clip = clipsById.get(request.clipId);
     if (!clip || clip.kind !== 'video' || clip.stillImage) return null;
 
-    const blob = this.media.get(request.clipId);
+    const blob = this.media.get(request.clipId)?.blob;
     if (!blob) return null;
 
     const key = decoderLayerKey(request);
@@ -131,9 +154,13 @@ export class PreviewDecoderSource {
 
     const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     this.pendingOpen = { blob, trimStart: clip.trimStart, trimEnd };
-    let frame: VideoFrame | null = null;
+    let frame: VideoFrame | null;
     try {
-      frame = await this.pool.frameAt(key, request.sourceTime);
+      // Reversed playback seeks backward every frame. The chunk cache decodes
+      // ~1s at a time instead of reopening the decoder per frame.
+      frame = clipIsReversed(clip)
+        ? ((await this.reverseCache.frameAt(key, request.sourceTime, clip.trimStart, trimEnd)) as VideoFrame | null)
+        : await this.pool.frameAt(key, request.sourceTime);
     } catch {
       return null;
     } finally {
@@ -152,6 +179,7 @@ export class PreviewDecoderSource {
 
   destroy(): void {
     this.pool.destroy();
+    this.reverseCache.destroy();
     this.media.clear();
   }
 }

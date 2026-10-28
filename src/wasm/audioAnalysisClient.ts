@@ -2,7 +2,8 @@
  * Main-thread proxy around the audio analysis worker.
  */
 
-import { getWasmPublicBaseUrl, type AudioBandEnergies } from './audioAnalysis';
+import type { AudioBandEnergies } from './audioAnalysis';
+import { getWasmPublicBaseUrl } from './emscriptenLoader';
 import type { OfflineAnalysisResult } from './offlineAnalysis';
 import type {
   AnalysisWorkerRequest,

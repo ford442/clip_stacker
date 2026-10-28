@@ -6,6 +6,9 @@ export const PLAYHEAD_EPSILON_SEC = 1e-4;
 interface PlaybackState {
   playheadTime: number | null;
   setPlayheadTime: (t: number | null) => void;
+  /** True while the user drags the playhead on the timeline ruler; playback yields to it. */
+  scrubbing: boolean;
+  setScrubbing: (scrubbing: boolean) => void;
 }
 
 function playheadTimesEqual(a: number | null, b: number | null): boolean {
@@ -23,6 +26,9 @@ export const playbackStore = createStore<PlaybackState>()((set) => ({
       if (playheadTimesEqual(state.playheadTime, t)) return state;
       return { playheadTime: t };
     }),
+  scrubbing: false,
+  setScrubbing: (scrubbing) =>
+    set((state) => (state.scrubbing === scrubbing ? state : { scrubbing })),
 }));
 
 export const setPlayheadTime = (t: number | null) =>
@@ -30,5 +36,5 @@ export const setPlayheadTime = (t: number | null) =>
 
 /** Test helper — resets playhead without going through equality guards. */
 export function __resetPlaybackStoreForTests(): void {
-  playbackStore.setState({ playheadTime: null });
+  playbackStore.setState({ playheadTime: null, scrubbing: false });
 }

@@ -5,8 +5,9 @@
  *  - Decode: VideoDecoder (mp4box demux + ring buffer; see webcodecs-decoder.ts)
  *  - Composite: WebGPU exportCompositor / timelinePreview (VideoFrame → shaders)
  *  - Encode: VideoEncoder (hardware H.264/HEVC/AV1) ← canvas after GPU flush
- *  - Mux: mp4-muxer (video + optional WebCodecs AAC); FFmpeg only for audio mux
- *    fallback via muxVideoWithAudio when AudioEncoder path is unavailable
+ *  - Mux: Mp4Writer (`container/`, Mediabunny) — video + optional WebCodecs AAC;
+ *    FFmpeg only for audio mux fallback via muxVideoWithAudio when the
+ *    AudioEncoder path is unavailable
  *  - Decode fallback: HTMLVideoElement → requestVideoFrameCallback when a clip
  *    cannot be demuxed/decoded with WebCodecs
  *
@@ -17,13 +18,12 @@
  *
  * Implementation is split by responsibility:
  *  - webcodecs-codec.ts — codec probe, bitrate, progress stages
- *  - webcodecs-mux.ts — mp4-muxer session + optional AAC mix-in
+ *  - webcodecs-mux.ts — Mp4Writer session + optional AAC mix-in
  *  - webcodecs-compositor.ts — canvas/WebGPU draw + overlay pass
  *  - webcodecs-clip-encode.ts — sequential per-clip encode
  *  - webcodecs-timeline-export.ts — timeline compositor encode
  */
 
-import { ArrayBufferTarget } from 'mp4-muxer';
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { getClipDuration } from './project';
@@ -33,6 +33,10 @@ import {
   shouldUseTimelineGpuExport,
 } from './renderEligibility';
 import { DEFAULT_FINISHING, type FinishingSettings } from './finishing';
+import {
+  DEFAULT_COLOR_MANAGEMENT,
+  type ColorManagementSettings,
+} from './colorManagement';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import {
   TARGET_FPS,
@@ -59,9 +63,12 @@ export {
   REC709_COLOR_SPACE,
   VIDEO_ENCODER_LATENCY_MODE,
   WEBCODECS_PROGRESS_STAGES,
+  AV1_10BIT_CODEC,
+  HEVC_MAIN10_CODEC,
   buildVideoEncoderConfig,
   codecCandidates,
   crfToBitsPerPixel,
+  getLastEncoderColorSpace,
   getLastResolvedEncoderCodec,
   h264CodecString,
   isWebCodecsAvailable,
@@ -72,7 +79,7 @@ export {
 /**
  * Encode timeline video with hardware H.264. When `includeWebCodecsAudio` is
  * true, timeline audio is mixed and encoded with `AudioEncoder` into the same
- * mp4-muxer session (no FFmpeg on the happy path).
+ * MP4 writer session (no FFmpeg on the happy path).
  */
 export async function encodeVideoWithWebCodecs(
   clips: Clip[],
@@ -91,6 +98,7 @@ export async function encodeVideoWithWebCodecs(
    * a separate stream (see `ffmpeg/captions.ts`).
    */
   captionBurnIn: CaptionPlanOptions = {},
+  colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
 ): Promise<Blob> {
   const { width, height } = parseOutputResolution(settings.outputResolution);
 
@@ -112,6 +120,7 @@ export async function encodeVideoWithWebCodecs(
       finishing,
       includeWebCodecsAudio,
       captionBurnIn,
+      colorManagement,
     );
   }
 
@@ -130,7 +139,14 @@ export async function encodeVideoWithWebCodecs(
   );
 
   const bitrate = resolveEncoderBitrate(settings, width, height);
-  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height, bitrate);
+  const outputColor = colorManagement.outputColor;
+  const encoderCodec = await resolveEncoderCodec(
+    settings.videoCodec,
+    width,
+    height,
+    bitrate,
+    outputColor,
+  );
   const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
 
   let videoError: Error | null = null;
@@ -139,7 +155,10 @@ export async function encodeVideoWithWebCodecs(
     error: (e) => { videoError = e; },
   });
 
-  videoEncoder.configure(buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TARGET_FPS));
+  videoEncoder.configure(
+    buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TARGET_FPS, outputColor),
+  );
+  compositor.colorManagement = colorManagement;
 
   let videoTimeUs = 0;
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
@@ -181,6 +200,7 @@ export async function encodeVideoWithWebCodecs(
         overlayPass,
       );
       if (videoError) throw videoError;
+      muxer.throwIfFailed();
 
       elapsedDuration += getClipDuration(clip);
       onProgress?.({
@@ -205,10 +225,9 @@ export async function encodeVideoWithWebCodecs(
       onProgress,
     );
 
-    muxer.finalize();
+    const buffer = await muxer.finalize();
     onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.finalize, progress: 0.92, indeterminate: false });
 
-    const { buffer } = muxer.target as ArrayBufferTarget;
     return new Blob([buffer], { type: 'video/mp4' });
   } finally {
     compositor.gpuCompositor?.destroy();

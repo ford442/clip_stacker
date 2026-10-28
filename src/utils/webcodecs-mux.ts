@@ -1,7 +1,9 @@
-import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import type { Clip, ClipGroup, ClipTransition } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
+import { Mp4Writer } from './container';
 import {
+  AAC_CHANNELS,
+  AAC_SAMPLE_RATE,
   addAacChunksToMuxer,
   encodeTimelineAudio,
 } from './webcodecs-audio';
@@ -13,26 +15,17 @@ export function createExportMuxer(
   height: number,
   encoderCodec: ResolvedEncoderCodec,
   includeAudio: boolean,
-): Muxer<ArrayBufferTarget> {
-  return new Muxer({
-    target: new ArrayBufferTarget(),
+): Mp4Writer {
+  return new Mp4Writer({
     video: { codec: encoderCodec.muxerCodec, width, height },
     ...(includeAudio
-      ? {
-          audio: {
-            codec: 'aac' as const,
-            sampleRate: 48_000,
-            numberOfChannels: 2,
-          },
-        }
+      ? { audio: { codec: 'aac' as const, sampleRate: AAC_SAMPLE_RATE, numberOfChannels: AAC_CHANNELS } }
       : {}),
-    fastStart: 'in-memory',
-    firstTimestampBehavior: 'offset',
   });
 }
 
 export async function muxTimelineAudioIfRequested(
-  muxer: Muxer<ArrayBufferTarget>,
+  muxer: Mp4Writer,
   clips: Clip[],
   clipGroups: ClipGroup[],
   transitions: ClipTransition[],

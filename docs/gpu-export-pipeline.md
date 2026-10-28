@@ -11,7 +11,7 @@ fallback and explicit override only.
                                                                                 │ H.264/HEVC/AV1
                                                                                 ▼
 ┌─────────────┐   PCM mix (OfflineAudioContext)   ┌─────────────┐        ┌────────────────┐
-│ Clip audio  │ ────────────────────────────────► │AudioEncoder │ ─────► │ mp4-muxer      │
+│ Clip audio  │ ────────────────────────────────► │AudioEncoder │ ─────► │ Mp4Writer      │
 │ (schedule)  │                                   │ (AAC-LC)    │        │ (video + audio)│
 └─────────────┘                                   └─────────────┘        └───────┬────────┘
                                                                                  ▼
@@ -64,10 +64,10 @@ fallback and explicit override only.
    (including dissolve overlaps and PiP overlays). `OfflineAudioContext`
    renders the mix; `AudioEncoder` produces AAC-LC chunks
    (`src/utils/webcodecs-audio.ts`).
-5. **Mux** — a single `mp4-muxer` session writes both video and audio tracks
-   when the WebCodecs A/V path is selected (`webcodecs-av`). Otherwise
-   `mp4-muxer` writes video-only and `muxVideoWithAudio` (`src/ffmpeg/mux.ts`)
-   adds source audio via FFmpeg.
+5. **Mux** — a single `Mp4Writer` session (`src/utils/container/`, backed by
+   Mediabunny) writes both video and audio tracks when the WebCodecs A/V path
+   is selected (`webcodecs-av`). Otherwise it writes video-only and
+   `muxVideoWithAudio` (`src/ffmpeg/mux.ts`) adds source audio via FFmpeg.
 
 ## Path selection
 
