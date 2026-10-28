@@ -59,3 +59,9 @@ export {
   settingsActions,
   type SettingsState,
 } from './settingsStore';
+export {
+  driveLibraryStore,
+  driveLibraryActions,
+  useDriveLibraryItems,
+  type DriveLibraryState,
+} from './driveLibraryStore';

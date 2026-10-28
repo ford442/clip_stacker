@@ -2,12 +2,15 @@ import { useCallback, useState } from "react";
 import { ContaboStorageManagerClient, type MediaLibraryItem } from "../utils/project";
 import { formatBytes } from "../utils/memory";
 import { useStorageAuthToken, useStorageEndpoint } from "../store";
+import { DriveLibrarySection } from "./segments/DriveLibrarySection";
 
 interface Props {
   onAddClip: (item: MediaLibraryItem) => Promise<void>;
+  /** Add local files to the timeline (a segment cut in the browser). */
+  onAddFiles: (files: File[]) => Promise<void>;
 }
 
-export function MediaLibraryPanel({ onAddClip }: Props) {
+export function MediaLibraryPanel({ onAddClip, onAddFiles }: Props) {
   const endpoint = useStorageEndpoint();
   const authToken = useStorageAuthToken();
   const [items, setItems] = useState<MediaLibraryItem[]>([]);
@@ -57,6 +60,7 @@ export function MediaLibraryPanel({ onAddClip }: Props) {
 
   return (
     <div className="media-library">
+      <DriveLibrarySection onAddClip={onAddClip} onAddFiles={onAddFiles} />
       <div className="media-library-header">
         <h3>Media library</h3>
         <button type="button" onClick={fetchItems} disabled={loading}>

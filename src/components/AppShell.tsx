@@ -253,7 +253,7 @@ export function AppShell(props: AppShellProps) {
           pendingRemoteUploadError={pendingRemoteUploadError}
           onResolveRemoteUploadError={onResolveRemoteUploadError}
         />
-        <MediaLibraryPanel onAddClip={onAddLibraryClip} />
+        <MediaLibraryPanel onAddClip={onAddLibraryClip} onAddFiles={onAddClips} />
       </section>
 
       <section className="layout-grid" ref={gridRef}>

@@ -40,6 +40,14 @@ export { applyProjectData } from './project/applyProjectData';
 export { loadRemoteProject } from './project/loadRemoteProject';
 
 export { ContaboStorageManagerClient } from './project/contaboClient';
+export type {
+  ContaboJob,
+  ContaboJobRequest,
+  ContaboJobResult,
+  ContaboJobSource,
+  ContaboJobStatus,
+  ContaboJobType,
+} from './project/contaboJobs';
 
 export type {
   RemoteUploadProgressEvent,

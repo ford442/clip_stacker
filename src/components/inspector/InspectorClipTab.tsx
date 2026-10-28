@@ -6,6 +6,7 @@ import { InspectorClipAudioSpeedSection } from './InspectorClipAudioSpeedSection
 import type { ClipAudioEffects } from '../../utils/audioEffects';
 import { InspectorClipTrimSection } from './InspectorClipTrimSection';
 import { InspectorClipVideoToolsSection } from './InspectorClipVideoToolsSection';
+import { InspectorSegmentSection } from './InspectorSegmentSection';
 import type { ClipValues } from './types';
 
 export interface InspectorClipTabProps {
@@ -136,6 +137,7 @@ export function InspectorClipTab(props: InspectorClipTabProps) {
         onKeyframesChange={props.onKeyframesChange}
         onApplyKenBurns={props.onApplyKenBurns}
       />
+      {clip.kind === 'video' && !clip.stillImage && <InspectorSegmentSection clip={clip} />}
     </div>
   );
 }

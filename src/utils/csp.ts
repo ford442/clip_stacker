@@ -8,6 +8,10 @@ import type { Plugin } from 'vite';
  *
  * connect-src and media-src use https: because storage endpoints and remote
  * media URLs are user-configurable (Contabo/S3 signed URLs, etc.).
+ *
+ * Google Drive import (utils/googleDrive.ts) needs exactly: the Identity
+ * Services script + stylesheet, the Google API loader (Picker), and frames
+ * for the sign-in popup helper and the Picker itself. Nothing broader.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",
@@ -16,9 +20,10 @@ export const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
   "form-action 'self'",
   // blob: required for @ffmpeg/util toBlobURL dynamic imports of the WASM core
-  "script-src 'self' 'wasm-unsafe-eval' blob:",
+  "script-src 'self' 'wasm-unsafe-eval' blob: https://accounts.google.com/gsi/client https://apis.google.com",
+  "frame-src https://accounts.google.com/gsi/ https://docs.google.com https://content.googleapis.com",
   "worker-src 'self' blob:",
-  "style-src 'self' 'unsafe-inline'",
+  "style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style",
   "img-src 'self' blob: data:",
   "font-src 'self'",
   "media-src 'self' blob: data: https:",

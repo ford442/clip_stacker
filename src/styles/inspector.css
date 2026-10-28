@@ -544,3 +544,46 @@
   gap: 0.5rem;
   padding-top: 0.3rem;
 }
+
+/* ============================================================
+   Segment extract / replace
+   ============================================================ */
+.segment-range {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.segment-range label {
+  flex: 1 1 6rem;
+  min-width: 0;
+}
+
+.segment-actions,
+.segment-session-working,
+.segment-session-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.segment-processing {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.segment-session {
+  display: grid;
+  gap: 0.4rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(6, 9, 15, 0.65);
+}
+
+.segment-session progress {
+  flex: 1 1 8rem;
+  accent-color: var(--gold);
+}

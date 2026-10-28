@@ -43,6 +43,30 @@ To run that same v4.26 pipeline on a Colab GPU:
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ford442/clip_stacker/blob/main/huggingface/RIFE/RIFE_Colab.ipynb)
 
+## Google Drive import and segment extract / replace
+
+**Import from Drive** (toolbar, next to *Add clips*) opens the Google Drive Picker and adds the chosen audio/video to the media library as a *reference* — `{ kind: 'drive', fileId, name, size, mimeType }`. Nothing is downloaded. References live in this browser only (`clip_stacker.driveLibrary.v1`); the OAuth token is kept in memory and never written to storage. The scope is `drive.file`, so the app can only read files you pick.
+
+Build-time configuration (Google Cloud OAuth *Web* client; add the app's origin under *Authorized JavaScript origins*, enable the Drive and Picker APIs):
+
+| Variable | |
+|---|---|
+| `VITE_GOOGLE_CLIENT_ID` | OAuth client id (required) |
+| `VITE_GOOGLE_API_KEY` | Browser API key for the Picker (required) |
+| `VITE_GOOGLE_APP_ID` | Cloud project number; needed for `drive.file` grants to cover picked files |
+
+Without the first two, the button explains what is missing.
+
+**Segment extract / replace** (Inspector → Clip → *Segment extract / replace*, and *Extract segment…* on each Drive file):
+
+- *Extract segment…* cuts `[start, end]` of the clip. Small and local media is cut in the browser (FFmpeg.wasm, stream copy first, exact re-encode if the copy is not the right length). Large Drive files and remote URLs go to a Contabo `extract` job, which downloads straight from Drive; the browser never holds them. A clip over 256 MB is cut on the server only if it is already in the remote library (*Save remote*).
+- *Send to processing* picks where the segment is processed: **Browser FFmpeg**, **HF RIFE Space**, **Colab (manual)** (download the cut, process it, import the result) or **Contabo job** (`extract` or `rife`).
+- *Replace with result* swaps the processed segment in at the same timeline position as one undo step. A clip is cut into `[before][replaced][after]` for a sub-range; a transition into or out of the clip stays attached.
+
+Every result has to be **exactly as long as the segment** (±0.25 s, trimmed to the exact length on replace), otherwise the cut, import or replace is refused. That keeps later items in place and a later lossless concat possible. For the same reason only RIFE *interpolation* is offered here, not Boomerang. Sub-range replace needs a clip that plays at source speed (no speed change, loop, reverse or speed automation); those clips can be replaced over their whole trimmed range.
+
+The Contabo job API (`POST/GET /webhook/clip-stacker/jobs`, `POST .../jobs/{id}/cancel`) is documented in `contabo_storage_manager`; the code is in `src/utils/segments/` and `ContaboStorageManagerClient`.
+
 ## Tech Stack
 
 - React 18 + TypeScript
@@ -104,6 +128,7 @@ The app ships with a CSP that allows:
 - `'wasm-unsafe-eval'`, `script-src blob:`, and `worker-src blob:` for FFmpeg WebAssembly (dynamic core imports via blob URLs)
 - `blob:` / `data:` / `https:` for media previews, renders, and remote storage downloads
 - `https:` / `wss:` for user-configurable storage endpoints, CDN fallbacks, and HuggingFace RIFE
+- Google Drive import only: `accounts.google.com/gsi/client` and `apis.google.com` scripts, `accounts.google.com/gsi/style`, and `accounts.google.com/gsi/`, `docs.google.com`, `content.googleapis.com` frames
 
 `connect-src` and `media-src` intentionally allow `https:` because storage endpoints and signed media URLs are not known at build time.
 
