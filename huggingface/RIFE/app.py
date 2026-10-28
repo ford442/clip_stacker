@@ -21,6 +21,7 @@ import sys
 import numpy as np
 import gradio as gr
 import uuid
+import zipfile
 import traceback
 import threading
 from collections import OrderedDict
@@ -827,6 +828,33 @@ def name_like_source(result_path, orig_name, used_names):
     shutil.move(result_path, dest)
     return dest
 
+def make_batch_zip(job):
+    """Zip finished clips with their original names (parentheses included).
+
+    Gradio's File download path runs strip_invalid_filename_characters on
+    the served basename and only keeps `._-, ` — so a plain File output
+    loses `()` even when the on-disk file has them. Zip member names are
+    not subject to that sanitizer, so Cubase sees the original stems.
+    """
+    results = job.get("results") or []
+    if not results:
+        return None
+    zip_path = os.path.join(WORKSPACE_DIR, f"rife_batch_{job.get('run', 'out')}.zip")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_STORED) as zf:
+        used = set()
+        for path in results:
+            if not path or not os.path.exists(path):
+                continue
+            member = os.path.basename(path)
+            stem, ext = os.path.splitext(member)
+            n = 2
+            while member in used:
+                member = f"{stem}_{n}{ext}"
+                n += 1
+            used.add(member)
+            zf.write(path, arcname=member)
+    return zip_path
+
 def start_batch_job(video_files, multi_factor, output_fps):
     """Build the job state for a batch run (no GPU work happens here).
 
@@ -1365,6 +1393,7 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             batch_btn = gr.Button("▶ Process All", variant="primary")
             batch_status = gr.Markdown()
             batch_outputs = gr.File(label="Processed Videos", file_count="multiple")
+            batch_zip = gr.File(label="Download all (zip — original names, keeps parentheses)")
             batch_job = gr.State(None)
             batch_api_btn = gr.Button(visible=False)
 
@@ -1387,11 +1416,11 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                 if not video_files:
                     raise gr.Error("Upload at least one video first.")
                 job = start_batch_job(video_files, multi_factor, output_fps)
-                return job, [], batch_job_status(job)
+                return job, [], None, batch_job_status(job)
 
             def step_batch_ui(job):
                 if not job or not job["pending"]:
-                    return gr.skip(), gr.skip(), gr.skip()
+                    return gr.skip(), gr.skip(), gr.skip(), gr.skip()
                 try:
                     advanced = advance_batch_job(job)
                 except Exception as e:
@@ -1402,17 +1431,18 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                     msg = (f"Batch stopped after {len(job['results'])}/"
                            f"{job['total']} clips: {e}")
                     gr.Warning(msg)
-                    return gr.skip(), gr.skip(), f"❌ {msg}"
+                    return gr.skip(), gr.skip(), gr.skip(), f"❌ {msg}"
                 if advanced is None:
                     # Duplicate/stale trigger: the event that claimed this
                     # chunk will write the job and fire the next step.
-                    return (gr.skip(), gr.skip(),
+                    return (gr.skip(), gr.skip(), gr.skip(),
                             "⏳ Chunk already claimed by a concurrent event — waiting for it to finish…")
-                return advanced, advanced["results"], batch_job_status(advanced)
+                zip_path = None if advanced["pending"] else make_batch_zip(advanced)
+                return advanced, advanced["results"], zip_path, batch_job_status(advanced)
 
             batch_btn.click(start_batch_ui,
                             inputs=[batch_inputs, batch_multi, batch_fps],
-                            outputs=[batch_job, batch_outputs, batch_status],
+                            outputs=[batch_job, batch_outputs, batch_zip, batch_status],
                             api_name=False,
                             preprocess=False)
             # trigger_mode="multiple": with the default "always_last", the
@@ -1424,7 +1454,7 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             # claim_batch_chunk still drops any duplicate that gets through.
             batch_job.change(step_batch_ui,
                              inputs=batch_job,
-                             outputs=[batch_job, batch_outputs, batch_status],
+                             outputs=[batch_job, batch_outputs, batch_zip, batch_status],
                              api_name=False,
                              trigger_mode="multiple")
             # API callers keep the single-request route (all chunks in one

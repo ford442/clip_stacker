@@ -142,6 +142,12 @@ returning the path; Gradio's File component then uses that basename as the
 download name. Do not return `gr.FileData` objects — File.postprocess expects
 plain path strings and raises TypeError otherwise.
 
+Individual File downloads still lose parentheses: Gradio's download cache
+runs `strip_invalid_filename_characters` (only `._-, ` survive) and the
+frontend does the same. When a batch finishes, a zip is written with the
+original stems as member names (parentheses included) — use that for Cubase.
+
+
 ## Deploying
 
 The Space is a git repository on HuggingFace. To push this directory to it:
