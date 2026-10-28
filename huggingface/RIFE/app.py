@@ -827,22 +827,6 @@ def name_like_source(result_path, orig_name, used_names):
     shutil.move(result_path, dest)
     return dest
 
-def as_file_outputs(paths):
-    """Wrap result paths as FileData so the download name keeps parentheses.
-
-    Gradio's File component and the download headers strip characters such as
-    `()` from a plain path's basename. Returning an explicit FileData with
-    `orig_name` set to that basename (which `name_like_source` already wrote
-    with the original characters) is what survives to the browser.
-    """
-    out = []
-    for path in paths or []:
-        if not path:
-            out.append(path)
-            continue
-        out.append(gr.FileData(path=path, orig_name=os.path.basename(path)))
-    return out
-
 def start_batch_job(video_files, multi_factor, output_fps):
     """Build the job state for a batch run (no GPU work happens here).
 
@@ -950,7 +934,7 @@ def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
         job = advance_batch_job(job)
     if count:
         progress(1.0, desc="Done")
-    return as_file_outputs(job["results"])
+    return job["results"]
 
 @spaces.GPU(required=True)
 def morph_transition(frame_pair_video, frame_count, output_fps=30):
@@ -1424,7 +1408,7 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                     # chunk will write the job and fire the next step.
                     return (gr.skip(), gr.skip(),
                             "⏳ Chunk already claimed by a concurrent event — waiting for it to finish…")
-                return advanced, as_file_outputs(advanced["results"]), batch_job_status(advanced)
+                return advanced, advanced["results"], batch_job_status(advanced)
 
             batch_btn.click(start_batch_ui,
                             inputs=[batch_inputs, batch_multi, batch_fps],
