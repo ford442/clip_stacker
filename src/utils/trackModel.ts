@@ -49,6 +49,8 @@ export {
   nextTrackLabel,
   removeTrack,
   renameTrack,
+  setTrackAudioFx,
+  setTrackDuck,
   setTrackHeight,
   setTrackLocked,
   setTrackMuted,

@@ -442,6 +442,21 @@ export function TimelineCompositorPreview({
     requestRender(playheadTime ?? globalTimeRef.current);
   }, [previewSize, playheadTime, requestRender]);
 
+  // Dragging the timeline ruler takes the playhead: playback pauses (in place,
+  // without writing the old time back over the scrub position) and the paused
+  // render path follows the playhead from here.
+  useEffect(
+    () =>
+      playbackStore.subscribe((state, prev) => {
+        if (!state.scrubbing || prev.scrubbing || !playingRef.current) return;
+        playingRef.current = false;
+        audioPlayback.pause();
+        setAudioClockActive(false);
+        setIsPlaying(false);
+      }),
+    [audioPlayback],
+  );
+
   useEffect(() => {
     playingRef.current = isPlaying;
     if (isPlaying || !previewActive) return;
@@ -517,7 +532,10 @@ export function TimelineCompositorPreview({
 
   return (
     <div ref={wrapperRef} className="preview-video-wrapper">
-      <div className="preview-canvas-stack">
+      <div
+        className="preview-canvas-stack"
+        style={{ '--preview-aspect': timelineAspectRatio } as React.CSSProperties}
+      >
         <canvas
           key={canvasGeneration}
           ref={canvasRef}

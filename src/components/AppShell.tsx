@@ -1,4 +1,4 @@
-import type { RefObject } from "react";
+import { useRef, type RefObject } from "react";
 import type { Clip, ClipTransition, TextOverlay } from "../types";
 import type { CaptionsPanelProps } from "./CaptionsPanel";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
@@ -22,6 +22,14 @@ import { KeyboardShortcutsModal } from "./KeyboardShortcutsModal";
 import { MemoryWarningModal } from "./MemoryWarningModal";
 import { RecoveryModal } from "./RecoveryModal";
 import { LazyBoundary, lazyNamed } from "./LazyBoundary";
+import {
+  CollapsedRail,
+  PanelSplitter,
+  TimelineSplitter,
+  WORKSPACE_ZONE_IDS,
+  WorkspaceControls,
+} from "./WorkspaceChrome";
+import { useWorkspaceLayoutVars } from "../hooks/useWorkspaceLayoutVars";
 
 // Only shown after a failed render, and it reads the FFmpeg runtime's logs, so
 // it loads with that runtime rather than with the shell.
@@ -183,8 +191,13 @@ export function AppShell(props: AppShellProps) {
     })),
   );
 
+  // Panel sizes arrive as CSS variables on the shell (no re-render here).
+  const shellRef = useRef<HTMLElement>(null);
+  const gridRef = useRef<HTMLElement>(null);
+  useWorkspaceLayoutVars(shellRef);
+
   return (
-    <main className="app-shell">
+    <main className="app-shell" ref={shellRef}>
       <header className="app-header">
         <h1>clip_stacker</h1>
         <p>Upload, trim, reorder, fade, and merge clips into one MP4.</p>
@@ -193,6 +206,7 @@ export function AppShell(props: AppShellProps) {
             Last export: {formatEncoderPathLabel(encoderPath)}
           </span>
         )}
+        <WorkspaceControls />
       </header>
 
       <section className="panel">
@@ -242,42 +256,56 @@ export function AppShell(props: AppShellProps) {
         <MediaLibraryPanel onAddClip={onAddLibraryClip} />
       </section>
 
-      <section className="layout-grid">
-        <ClipLibrary
-          onToggleVariant={onToggleVariant}
-          onDelete={onDeleteClip}
-          onGenerateIntercut={onGenerateIntercut}
-        />
-        <Preview
-          onClipLayoutCommit={onClipLayoutCommit}
-          onTextOverlayLayoutCommit={onTextOverlayLayoutCommit}
-          onPreviewDragStart={onPreviewDragStart}
-        />
-        <Inspector
-          onChange={onInspectorChange}
-          onKeyframesChange={onKeyframesChange}
-          onAutomationChange={onAutomationChange}
-          onAudioEffectsChange={onAudioEffectsChange}
-          onApplyKenBurns={onApplyKenBurns}
-          onExtractAudio={onExtractAudio}
-          onRife={onRife}
-          onStabilizeChange={onStabilizeChange}
-          onReverseChange={onReverseChange}
-          captions={captions}
-        />
+      <section className="layout-grid" ref={gridRef}>
+        <div className="workspace-zone workspace-zone--library" id={WORKSPACE_ZONE_IDS.library}>
+          <CollapsedRail side="library" />
+          <ClipLibrary
+            onToggleVariant={onToggleVariant}
+            onDelete={onDeleteClip}
+            onGenerateIntercut={onGenerateIntercut}
+          />
+        </div>
+        <PanelSplitter side="library" gridRef={gridRef} />
+        <div className="workspace-zone workspace-zone--preview" id={WORKSPACE_ZONE_IDS.preview}>
+          <Preview
+            onClipLayoutCommit={onClipLayoutCommit}
+            onTextOverlayLayoutCommit={onTextOverlayLayoutCommit}
+            onPreviewDragStart={onPreviewDragStart}
+          />
+        </div>
+        <PanelSplitter side="inspector" gridRef={gridRef} />
+        <div className="workspace-zone workspace-zone--inspector" id={WORKSPACE_ZONE_IDS.inspector}>
+          <CollapsedRail side="inspector" />
+          <Inspector
+            onChange={onInspectorChange}
+            onKeyframesChange={onKeyframesChange}
+            onAutomationChange={onAutomationChange}
+            onAudioEffectsChange={onAudioEffectsChange}
+            onApplyKenBurns={onApplyKenBurns}
+            onExtractAudio={onExtractAudio}
+            onRife={onRife}
+            onStabilizeChange={onStabilizeChange}
+            onReverseChange={onReverseChange}
+            captions={captions}
+          />
+        </div>
       </section>
 
-      <Timeline
-        onMoveUp={onMoveUp}
-        onMoveDown={onMoveDown}
-        onReorder={onReorder}
-        onMoveToTrack={onMoveToTrack}
-        onTransitionUpdate={onTransitionUpdate}
-        onDelete={onDeleteClip}
-        onCaptionResize={onCaptionResize}
-        onCaptionAdd={captions.onAdd}
-        morphProcessingIndex={morphProcessingIndex}
-      />
+      <TimelineSplitter gridRef={gridRef} shellRef={shellRef} />
+
+      <div className="workspace-timeline" id={WORKSPACE_ZONE_IDS.timeline}>
+        <Timeline
+          onMoveUp={onMoveUp}
+          onMoveDown={onMoveDown}
+          onReorder={onReorder}
+          onMoveToTrack={onMoveToTrack}
+          onTransitionUpdate={onTransitionUpdate}
+          onDelete={onDeleteClip}
+          onCaptionResize={onCaptionResize}
+          onCaptionAdd={captions.onAdd}
+          morphProcessingIndex={morphProcessingIndex}
+        />
+      </div>
 
       <TextOverlayPanel
         onAdd={onAddTextOverlay}

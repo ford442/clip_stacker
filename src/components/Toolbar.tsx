@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState, forwardRef } from 'react';
+import { RenderPlanAudioNotes } from './audio/RenderPlanAudioNotes';
 import type { BrowserCapabilities } from '../utils/feature-detector';
 import { detectCapabilities } from '../utils/feature-detector';
+import { fetchDemoClips } from '../utils/demoClips';
+import { describeEncoderBadge } from '../utils/encoderPathLabel';
 import { ProgressBar } from './ProgressBar';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { settingsActions, settingsStore, useCanRedo, useCanUndo } from '../store';
 
 interface Props {
-  onAddClips: (files: File[]) => void;
+  onAddClips: (files: File[]) => void | Promise<void>;
   onMerge: () => void;
   /** Offload resolution-normalization + concat to the HuggingFace GPU space. */
   onGpuStitch?: () => void;
@@ -102,6 +105,16 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     e.target.value = '';
   };
 
+  const handleLoadDemo = async () => {
+    const { setStatus } = settingsStore.getState();
+    setStatus('Loading demo clips...');
+    try {
+      await onAddClips(await fetchDemoClips());
+    } catch (err) {
+      setStatus(`Could not load the demo clips: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
+
   const handleProjectFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) onLoadProject(file);
@@ -110,11 +123,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
 
   const mediaRecorderAvailable = caps?.mediaRecorderMp4 ?? typeof MediaRecorder !== 'undefined';
 
-  const gpuLabel = useCanvasRenderer
-    ? '🎨 Canvas'
-    : caps?.webcodecs
-    ? '⚡ GPU'
-    : '🖥 CPU';
+  const encoderBadge = describeEncoderBadge(caps, { useCanvasRenderer, forceFFmpeg });
 
   const gpuTitle = caps
     ? `Rescaling exports auto-use hardware H.264 when available (WebCodecs/WebGPU), with FFmpeg audio mux and CPU fallback. WebCodecs: ${caps.webcodecs ? 'yes' : 'no'} · Hardware H.264: ${caps.hardwareH264 ? 'yes' : 'no'} · WebGPU: ${caps.webgpu ? 'yes' : 'no'} · MediaRecorder: ${caps.mediaRecorderMp4 ? 'yes' : 'no'}`
@@ -124,7 +133,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     <>
       <div className="toolbar">
         <label className="button-like">
-          Add clips (MP4 / WAV / MP3)
+          Add clips (MP4 / WAV / MP3 / JPG / PNG / WEBP)
           <input
             ref={clipInputRef}
             type="file"
@@ -133,6 +142,14 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             onChange={handleClipChange}
           />
         </label>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={handleLoadDemo}
+          title="Add two short built-in clips to try trimming, splitting, transitions and export without your own media"
+        >
+          Load demo clips
+        </button>
         <button
           type="button"
           className="btn-primary"
@@ -245,7 +262,15 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
 
         {/* Encoder / renderer controls */}
         <div className="encoder-badge" title={gpuTitle}>
-          <span className="encoder-indicator">{gpuLabel}</span>
+          <span className="encoder-indicator">{encoderBadge.label}</span>
+          {encoderBadge.webgpuUnavailable && (
+            <span
+              className="encoder-indicator encoder-indicator--warn"
+              title="WebGPU could not be initialised, so the GPU preview and compositor export are unavailable."
+            >
+              WebGPU unavailable
+            </span>
+          )}
 
           {/* Canvas renderer toggle (requires MediaRecorder) */}
           {mediaRecorderAvailable && (
@@ -354,6 +379,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
                 Force FFmpeg / Canvas renderer to preserve the shader look.
               </p>
             )}
+          <RenderPlanAudioNotes plan={renderPlan} />
           {renderPlan.ffmpegFinishingGaps && renderPlan.ffmpegFinishingGaps.length > 0 && (
             <p className="render-plan-warning" role="alert">
               ⚠ {renderPlan.ffmpegFinishingGaps.join(' and ')}{' '}

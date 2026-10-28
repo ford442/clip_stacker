@@ -1,4 +1,5 @@
 import { memo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ClipGroup } from '../types';
 import {
   editorActions,
@@ -224,7 +225,7 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
       <AutoCutPanel />
       <ProxyPlaybackToggle />
       {clips.length === 0 && activeGroups.length === 0 && (
-        <p className="muted">No clips yet. Add clips above.</p>
+        <p className="muted">No clips yet. Add clips above, or try “Load demo clips”.</p>
       )}
       <ul className="clip-list" role="list" aria-label="Clip library">
         {activeGroups.map((group) => (
@@ -244,7 +245,10 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
           />
         ))}
       </ul>
-      {intercutMounted && (
+      {/* Portalled: `.panel`'s backdrop-filter makes it the containing block
+          for fixed descendants, and the library zone scrolls, so a modal left
+          in place would be clipped to the column. */}
+      {intercutMounted && createPortal(
         <LazyBoundary label="Intercut generator" fallback={null}>
           <IntercutModal
             isOpen={intercutOpen}
@@ -258,7 +262,8 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
               return ok;
             }}
           />
-        </LazyBoundary>
+        </LazyBoundary>,
+        document.body,
       )}
     </section>
   );

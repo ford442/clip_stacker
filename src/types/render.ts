@@ -39,8 +39,8 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   preset: 'medium',
   videoBitrate: 8_000_000,
   filename: 'stacked',
-  outputResolution: RESOLUTION_PRESETS['720p'],
-  resolutionPreset: '720p',
+  outputResolution: RESOLUTION_PRESETS['1080p'],
+  resolutionPreset: '1080p',
   videoCodec: 'h264',
 };
 
@@ -142,7 +142,7 @@ export interface RenderPlan {
    * (`no-preference` on a machine with no hardware encoder). Resolved plans only.
    */
   videoEncoder?: { codec: string; hardwareAcceleration: HardwareAcceleration };
-  /** True when any finishing pass (noise reduction / color / LUT / sharpen / grain) is enabled. */
+  /** True when any finishing pass (noise reduction / color / curves / LUT / sharpen / CA / bloom / grain) is enabled. */
   finishingActive?: boolean;
   /** True when any clip has an active stabilization matrix that will be applied. */
   stabilizeActive?: boolean;
@@ -157,8 +157,9 @@ export interface RenderPlan {
   shaderTextFallbackRisk?: boolean;
   /**
    * Finishing features present in the project that FFmpeg cannot apply:
-   * creative LUT and secondary-color window / power-window grades are
-   * WebGPU-only (FFmpeg only bakes hue-only secondary grades into a `lut3d`).
+   * creative LUT, curves & levels, secondary-color window / power-window
+   * grades, chromatic aberration and bloom are WebGPU-only (FFmpeg only bakes hue-only secondary grades
+   * into a `lut3d`, and has no radial per-channel scale for CA).
    * Populated whenever `encoderIntent` is `'ffmpeg'` and one of these is
    * active; absent otherwise.
    */
@@ -179,6 +180,28 @@ export interface RenderPlan {
    *   `scale` + `rotate`. See `pictureTransformGaps` for what that loses.
    */
   pictureTransform?: 'gpu' | 'ffmpeg';
+  /**
+   * Where lane-bus / master FX, sidechain ducks and the loudness target ran,
+   * when the project has any. Resolved plans only.
+   *
+   * - `engine` — the media engine's bus graph mixed the export.
+   * - `offline-fallback` — the media engine was unavailable, so the premix
+   *   ran on OfflineAudioContext: dry, with no bus FX, ducks or loudness.
+   * - `none` — no audio premix ran for this render, so the bus settings
+   *   never reached the file.
+   */
+  audioFx?: 'engine' | 'offline-fallback' | 'none';
+  /**
+   * Loudness normalization the export applied: the target, what pass 1
+   * measured, the gain it applied, and what the delivered file reads.
+   */
+  loudness?: {
+    targetLufs: number;
+    measuredLufs: number;
+    gainDb: number;
+    outputLufs: number;
+    outputTruePeakDb: number;
+  };
   /**
    * What the FFmpeg picture-transform fallback cannot reproduce (e.g. the
    * optical-flow stabilization warp on a rotated clip — `@ffmpeg/core` has no

@@ -8,6 +8,7 @@ import { useShallow } from 'zustand/react/shallow';
 import {
   settingsActions,
   settingsStore,
+  uiStore,
   useEditorClip,
   useEditorClipGroups,
   useEditorClips,
@@ -20,7 +21,7 @@ import {
   clipLayoutToDisplayPixels,
   layoutPixelToNormValue,
 } from '../utils/overlayCoords';
-import { extractWaveformPeaks } from '../utils/waveform';
+import { clipHasExtractableAudio, extractWaveformPeaks } from '../utils/waveform';
 import { clampClipVolume } from '../utils/audioVolume';
 import {
   clampClipLoopCount,
@@ -98,6 +99,15 @@ function InspectorImpl({
     return resolved?.localTime ?? 0;
   }, [clip, clips, clipGroups, transitions, playheadTime]);
   const [tab, setTab] = useState<InspectorTab>('clip');
+  // Other panels (the preview's Effects Stack) can ask for a tab.
+  useEffect(
+    () =>
+      uiStore.subscribe((state, prev) => {
+        const request = state.inspectorTabRequest;
+        if (request && request !== prev.inspectorTabRequest) setTab(request.tab);
+      }),
+    [],
+  );
   const [rifeMultiplier, setRifeMultiplier] = useState<2 | 4>(2);
   const [activeKeyframeProp, setActiveKeyframeProp] = useState<ClipAnimatableProp>('x');
   const inspectorRef = useRef<HTMLDivElement>(null);
@@ -200,7 +210,7 @@ function InspectorImpl({
       }
     }
 
-    if (clip.stillImage && clip.hasAudio === false) return;
+    if (!clipHasExtractableAudio(clip)) return;
     if (completedWaves.current.has(clip.id) || generatingWaves.current.has(clip.id)) return;
     generatingWaves.current.add(clip.id);
     extractWaveformPeaks(clip.objectUrl, INSPECTOR_WAVEFORM_SAMPLES).then(
@@ -212,6 +222,12 @@ function InspectorImpl({
       (error) => {
         generatingWaves.current.delete(clip.id);
         completedWaves.current.add(clip.id);
+        // EncodingError = the file has no decodable audio track (e.g. an
+        // un-probed silent video); that is expected, not worth a warning.
+        if (error instanceof DOMException && error.name === 'EncodingError') {
+          console.debug(`No decodable audio for clip "${clip.title}" (${clip.id}); no waveform.`);
+          return;
+        }
         console.warn(`Could not extract waveform for clip "${clip.title}" (${clip.id}).`, error);
       },
     );

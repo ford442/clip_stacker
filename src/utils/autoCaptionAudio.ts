@@ -7,6 +7,11 @@
  * `buildAudioSchedule`) rather than a raw source file, and the clip scope
  * renders that same mix restricted to one clip's schedule entries — which is
  * also where the cue time offset comes from.
+ *
+ * It is the pre-bus mix on purpose: clip inserts and the legacy bed step
+ * apply (they are part of each clip's sound), but lane / master FX,
+ * sidechain ducks, loudness normalization and the limiter do not — EQ and
+ * limiting should not change what the speech model hears (`bus: null`).
  */
 
 import type { AutoCaptionScope, Clip, ClipGroup, ClipTransition, Track } from '../types';
@@ -16,6 +21,9 @@ import { getTimelineClips } from './timelineClips';
 import { renderTimelineAudioMix } from './webcodecs-audio';
 
 export type { AutoCaptionScope };
+
+/** No buses, no limiter: see the module note. */
+const PRE_BUS = { bus: null, limiter: null } as const;
 
 export interface AutoCaptionAudio {
   audio: AudioBuffer;
@@ -67,13 +75,13 @@ export async function renderAutoCaptionAudio(
       ...entry,
       timelineStart: entry.timelineStart - start,
     }));
-    const audio = await renderTimelineAudioMix(shifted, durationSec, undefined, schedule);
+    const audio = await renderTimelineAudioMix(shifted, durationSec, undefined, schedule, PRE_BUS);
     return { audio, timeOffsetSec: start, durationSec };
   }
 
   const durationSec = computeTotalDuration(getTimelineClips(clips, groups), transitions);
   if (durationSec <= 0) throw new Error('The timeline is empty.');
-  const audio = await renderTimelineAudioMix(schedule, durationSec);
+  const audio = await renderTimelineAudioMix(schedule, durationSec, undefined, schedule, PRE_BUS);
   return { audio, timeOffsetSec: 0, durationSec };
 }
 

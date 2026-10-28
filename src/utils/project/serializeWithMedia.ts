@@ -1,3 +1,4 @@
+import type { MasterBusSettings } from '../audioBus';
 import type {
   CaptionEntry,
   Clip,
@@ -49,6 +50,8 @@ export interface SerializeProjectOptions {
   captionStyle?: Partial<TextOverlayStyle>;
   /** Output color / working space. Omitted from the file when left at the default. */
   colorManagement?: ColorManagementSettings;
+  /** Master bus FX and loudness target. Omitted from the file when empty. */
+  masterBus?: MasterBusSettings;
 }
 
 function sanitizeUploadFileName(fileName: string): string {
@@ -223,6 +226,7 @@ export async function serializeProjectWithMedia(
     options.captions ?? [],
     options.captionStyle ?? {},
     options.colorManagement,
+    options.masterBus,
   );
   if (mediaMode === 'metadata') return project;
 

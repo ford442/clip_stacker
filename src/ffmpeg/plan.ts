@@ -21,6 +21,9 @@ import {
 } from "../utils/resolution";
 import {
   isFinishingActive,
+  isBloomActive,
+  isChromaticAberrationActive,
+  isCurvesActive,
   isLutFinishingPassActive,
   type FinishingSettings,
 } from "../utils/finishing";
@@ -166,11 +169,20 @@ export function calculateRenderPlan(
 
   const ffmpegFinishingGaps: string[] = [];
   if (encoderIntent === 'ffmpeg') {
+    if (isCurvesActive(context.finishing?.curves)) {
+      ffmpegFinishingGaps.push('Curves & levels');
+    }
     if (isLutFinishingPassActive(context.finishing?.lut)) {
       ffmpegFinishingGaps.push('Creative LUT');
     }
     if (secondaryHasWindowGrades(context.finishing?.secondaryColor)) {
       ffmpegFinishingGaps.push('Secondary color window grades');
+    }
+    if (isChromaticAberrationActive(context.finishing?.chromaticAberration)) {
+      ffmpegFinishingGaps.push('Chromatic aberration');
+    }
+    if (isBloomActive(context.finishing?.bloom)) {
+      ffmpegFinishingGaps.push('Bloom & glow');
     }
   }
 

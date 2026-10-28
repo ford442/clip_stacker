@@ -147,3 +147,79 @@ function(clip_stacker_wasm_module target)
     )
   endif()
 endfunction()
+
+# A glue-free module (`-sSTANDALONE_WASM --no-entry`): plain extern "C"
+# exports and its own exported memory, no Emscripten JS runtime. For realms
+# that cannot load the MODULARIZE glue — the AudioWorkletGlobalScope has no
+# fetch / importScripts — so JS compiles the .wasm and instantiates it with a
+# handful of WASI stubs. Same compile flags, size budget and debug switch as
+# `clip_stacker_wasm_module`; output is `<target>.wasm` only.
+function(clip_stacker_standalone_wasm target)
+  cmake_parse_arguments(ARG "" "INITIAL_MEMORY;MAXIMUM_MEMORY;GZIP_BUDGET" "EXPORTED_FUNCTIONS" ${ARGN})
+  if(NOT ARG_INITIAL_MEMORY)
+    set(ARG_INITIAL_MEMORY 1048576)
+  endif()
+  if(NOT ARG_MAXIMUM_MEMORY)
+    set(ARG_MAXIMUM_MEMORY 33554432)
+  endif()
+  if(NOT DEFINED ARG_GZIP_BUDGET)
+    set(ARG_GZIP_BUDGET "${CLIP_STACKER_WASM_GZIP_BUDGET}")
+  endif()
+
+  target_compile_features(${target} PUBLIC cxx_std_17)
+  set_target_properties(${target} PROPERTIES CXX_EXTENSIONS OFF C_EXTENSIONS OFF)
+  target_include_directories(${target} PRIVATE "${CLIP_STACKER_COMMON_INCLUDE}")
+  target_compile_options(${target} PRIVATE
+    -msimd128
+    -Wall
+    -Wextra
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
+    $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
+  )
+
+  if(CLIP_STACKER_WASM_DEBUG)
+    target_compile_options(${target} PRIVATE -O0 -g)
+    target_compile_definitions(${target} PRIVATE DEBUG)
+  else()
+    target_compile_options(${target} PRIVATE -O3 -flto)
+    target_compile_definitions(${target} PRIVATE NDEBUG)
+  endif()
+
+  set(_exports "_malloc,_free")
+  foreach(fn IN LISTS ARG_EXPORTED_FUNCTIONS)
+    string(APPEND _exports ",${fn}")
+  endforeach()
+
+  target_link_options(${target} PRIVATE
+    "SHELL:-s STANDALONE_WASM=1"
+    --no-entry
+    -fno-exceptions
+    "SHELL:-s FILESYSTEM=0"
+    "SHELL:-s ALLOW_MEMORY_GROWTH=1"
+    "SHELL:-s INITIAL_MEMORY=${ARG_INITIAL_MEMORY}"
+    "SHELL:-s MAXIMUM_MEMORY=${ARG_MAXIMUM_MEMORY}"
+    "SHELL:-s STACK_SIZE=${CLIP_STACKER_WASM_STACK_SIZE}"
+    "SHELL:-s EXPORTED_FUNCTIONS=${_exports}"
+    -msimd128
+  )
+  if(CLIP_STACKER_WASM_DEBUG)
+    target_link_options(${target} PRIVATE -O0 -g "SHELL:-s ASSERTIONS=1" "SHELL:--profiling-funcs")
+  else()
+    target_link_options(${target} PRIVATE -O3 -flto)
+  endif()
+
+  set_target_properties(${target} PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CLIP_STACKER_WASM_OUT}"
+    SUFFIX ".wasm"
+  )
+
+  if(NOT CLIP_STACKER_WASM_DEBUG AND ARG_GZIP_BUDGET GREATER 0)
+    add_custom_command(TARGET ${target} POST_BUILD
+      COMMAND "${CMAKE_COMMAND}" -E env "WASM_GZIP_BUDGET=${ARG_GZIP_BUDGET}"
+              "${CLIP_STACKER_ROOT}/scripts/wasm-size-check.sh"
+              "${CLIP_STACKER_WASM_OUT}/${target}.wasm"
+      COMMENT "gzip budget check for ${target}"
+      VERBATIM
+    )
+  endif()
+endfunction()

@@ -13,6 +13,12 @@
  */
 
 import type { CaptionEntry, Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, TextOverlayStyle, RenderPlan } from '../types';
+import {
+  exportAudioBus,
+  exportBusActive,
+  getLastExportAudioReport,
+  resetExportAudioReport,
+} from './exportAudioBus';
 import { DEFAULT_FINISHING, isFinishingActive, type FinishingSettings } from '../utils/finishing';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
@@ -87,6 +93,9 @@ export async function hybridMergeClips(
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
+  // The audio premix reports what its bus graph did; start each render clean.
+  resetExportAudioReport();
+  const busActive = exportBusActive(exportAudioBus());
 
   // Probed once, up front, so both the render-plan estimate and the GPU
   // eligibility check below agree on whether WebGPU is actually there.
@@ -132,6 +141,14 @@ export async function hybridMergeClips(
     delete keyed.pictureTransform;
     delete keyed.pictureTransformGaps;
     Object.assign(keyed, pictureTransformPlanFields(clips, path));
+    // Bus FX / ducks / loudness: what the audio premix reported, or `none`
+    // when no premix ran for this render (the settings never reached it).
+    delete keyed.audioFx;
+    delete keyed.loudness;
+    if (busActive) {
+      const report = getLastExportAudioReport();
+      Object.assign(keyed, report.audioFx ? report : { audioFx: 'none' });
+    }
     return wideColorWhere
       ? stampWideColor(keyed, wideColorWhere, colorManagement)
       : keyed;

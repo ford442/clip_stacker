@@ -85,6 +85,8 @@ float dot_taps(const float* coeff, const float* x) {
 
 }  // namespace
 
+float sinc_dot(const float* coeff, const float* window) { return dot_taps(coeff, window); }
+
 double sinc_cutoff_for_step(double step) {
   return step > 1.0 ? kSincRolloff / step : kSincRolloff;
 }

@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef } from 'react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { setPlayheadTime } from '../store/playbackStore';
@@ -15,11 +15,14 @@ import {
   useEditorTimelineClips,
   useEditorTracks,
   useEditorTransitions,
+  useFinishingView,
   useSelectedClipId,
   useSelectedTextOverlayId,
 } from '../store';
 import type { Clip, TextOverlay } from '../types';
 import { sanitizeFilename } from '../utils/filename';
+import { applyFinishingPreviewView } from '../utils/finishingStack';
+import { EffectsStack } from './EffectsStack';
 import { TimelineCompositorPreview } from './TimelineCompositorPreview';
 
 interface Props {
@@ -64,6 +67,12 @@ function PreviewImpl({
       showCaptionsInPreview: s.showCaptionsInPreview,
     })),
   );
+  // Bypass / "show before" are preview-only; export reads the store's finishing.
+  const finishingView = useFinishingView();
+  const previewFinishing = useMemo(
+    () => applyFinishingPreviewView(finishing, finishingView),
+    [finishing, finishingView],
+  );
   const exportFilename = exportSettings.filename;
   const onSelectClip = editorActions.setSelectedClipId;
   const onSelectTextOverlay = uiActions.setSelectedTextOverlayId;
@@ -73,7 +82,7 @@ function PreviewImpl({
       ? sanitizeFilename(exportFilename)
       : 'stacked.mp4';
     return (
-      <section className="panel">
+      <section id="preview-panel" className="panel preview-panel">
         <h2>Preview</h2>
         <video
           controls
@@ -89,7 +98,7 @@ function PreviewImpl({
 
   if (timelineClips.some((item) => item.kind === 'video')) {
     return (
-      <section className="panel">
+      <section id="preview-panel" className="panel preview-panel">
         <h2>Preview</h2>
         <TimelineCompositorPreview
           timelineClips={timelineClips}
@@ -100,7 +109,7 @@ function PreviewImpl({
           captions={showCaptionsInPreview ? captions : undefined}
           captionStyle={captionStyle}
           exportSettings={exportSettings}
-          finishing={finishing}
+          finishing={previewFinishing}
           colorManagement={colorManagement}
           selectedClipId={selectedClipId}
           selectedTextOverlayId={selectedTextOverlayId}
@@ -110,13 +119,14 @@ function PreviewImpl({
           onTextOverlayLayoutCommit={onTextOverlayLayoutCommit}
           onPreviewDragStart={onPreviewDragStart}
         />
+        <EffectsStack />
       </section>
     );
   }
 
   if (!clip || clip.kind !== 'audio') {
     return (
-      <section className="panel">
+      <section id="preview-panel" className="panel preview-panel">
         <h2>Preview</h2>
         <div className="muted">No clip selected.</div>
       </section>
@@ -124,7 +134,7 @@ function PreviewImpl({
   }
 
   return (
-    <section className="panel">
+    <section id="preview-panel" className="panel preview-panel">
       <h2>Preview</h2>
       <AudioClipPreview clip={clip} />
     </section>

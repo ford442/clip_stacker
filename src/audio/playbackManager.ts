@@ -12,6 +12,10 @@ import { ProcessedAudioCache } from './processedAudioCache';
 import { createAudioContext } from './context';
 import { bandEnergy, ZERO_ANALYSER_LEVELS, type AnalyserLevels } from './analyserLevels';
 import { applyGainEnvelope, applyPanEnvelope } from './gainEnvelope';
+import { planBusGraph, type BusGraphPlan } from './fxGraph';
+import { PreviewBusRouting } from './busRouting';
+import type { MasterBusSettings } from '../utils/audioBus';
+import { audioFxStore } from '../store/audioFxStore';
 
 // Analyser meter levels and the gain / pan envelope maths live in sibling
 // modules; re-exported for existing importers.
@@ -54,6 +58,8 @@ interface ActiveSource {
  * Decodes clip audio into cached `AudioBuffer`s, schedules
  * `AudioBufferSourceNode`s at sample-accurate timeline offsets, and exposes
  * `AudioContext.currentTime` as the master clock for the visual playhead.
+ * Lane / master FX and sidechain ducks run in the bus-graph AudioWorklet
+ * (`busRouting.ts`) when the project has any.
  */
 export class AudioPlaybackManager {
   private ctx: AudioContext | null = null;
@@ -81,6 +87,9 @@ export class AudioPlaybackManager {
   private masterVolume = 1;
   private analyserTimeDomain: Float32Array | null = null;
   private analyserFrequency: Float32Array | null = null;
+  private readonly busRouting = new PreviewBusRouting();
+  private busPlan: BusGraphPlan | null = null;
+  private unsubscribeMeters: (() => void) | null = null;
 
   /** Whether Web Audio routing is usable (false → muted visual preview). */
   get isAvailable(): boolean {
@@ -186,7 +195,9 @@ export class AudioPlaybackManager {
    */
   getCurrentTime(): number {
     if (this.state === 'playing' && this.ctx) {
-      return this.timelineOrigin + (this.ctx.currentTime - this.contextOrigin);
+      // The bus graph's look-ahead delays what is heard; the picture follows.
+      const heard = this.ctx.currentTime - this.contextOrigin - this.busRouting.latencySec;
+      return this.timelineOrigin + Math.max(0, heard);
     }
     return this.pausedAt;
   }
@@ -208,6 +219,10 @@ export class AudioPlaybackManager {
       this.masterGain.connect(this.analyser);
       this.analyser.connect(this.ctx.destination);
       this.available = true;
+      // A loudness meter opening or closing can start / stop the bus graph.
+      this.unsubscribeMeters ??= audioFxStore.subscribe((next, prev) => {
+        if ((next.meterRequests > 0) !== (prev.meterRequests > 0)) void this.syncBusRouting();
+      });
       this.emit();
       return true;
     } catch {
@@ -245,7 +260,9 @@ export class AudioPlaybackManager {
     groups: ClipGroup[],
     transitions: ClipTransition[],
     tracks: Track[] = [],
+    masterBus?: MasterBusSettings,
   ): Promise<void> {
+    this.busPlan = tracks.length > 0 || masterBus ? planBusGraph(tracks, masterBus) : null;
     const nextSchedule = buildAudioSchedule(clips, groups, transitions, tracks);
     const structureUnchanged = schedulesMatchStructure(this.schedule, nextSchedule);
     this.schedule = nextSchedule;
@@ -260,11 +277,14 @@ export class AudioPlaybackManager {
 
     const generation = ++this.syncGeneration;
     const ctx = this.ctx;
-    await Promise.all(this.schedule.map((entry) => this.resolveBuffer(entry, ctx)));
+    const [rerouted] = await Promise.all([
+      this.syncBusRouting(false),
+      ...this.schedule.map((entry) => this.resolveBuffer(entry, ctx)),
+    ]);
     if (generation !== this.syncGeneration) return;
 
     if (this.state === 'playing') {
-      if (structureUnchanged && this.active.length > 0) {
+      if (structureUnchanged && !rerouted && this.active.length > 0) {
         this.applyLiveGains();
       } else {
         const t = this.getCurrentTime();
@@ -285,6 +305,7 @@ export class AudioPlaybackManager {
     }
 
     this.stopSources();
+    this.busRouting.reset();
     this.pausedAt = Math.max(0, timelineTime);
     this.timelineOrigin = this.pausedAt;
     this.contextOrigin = this.ctx.currentTime;
@@ -327,6 +348,7 @@ export class AudioPlaybackManager {
     if (generation !== this.seekGeneration || this.state !== 'playing') return;
 
     this.stopSources();
+    this.busRouting.reset();
     this.timelineOrigin = this.pausedAt;
     this.contextOrigin = this.ctx.currentTime;
     await this.scheduleFrom(this.pausedAt);
@@ -348,6 +370,10 @@ export class AudioPlaybackManager {
     this.syncGeneration += 1;
     this.seekGeneration += 1;
     this.stopSources();
+    this.busRouting.dispose();
+    this.busPlan = null;
+    this.unsubscribeMeters?.();
+    this.unsubscribeMeters = null;
     this.cache.clear();
     this.remapCache.clear();
     this.processedCache.clear();
@@ -376,9 +402,40 @@ export class AudioPlaybackManager {
     }
   }
 
+  /** Restart the preview loudness meter's integrated / range / peak readings. */
+  resetBusMeter(): void {
+    this.busRouting.resetMeter();
+  }
+
   // ---------------------------------------------------------------------------
   // Internals
   // ---------------------------------------------------------------------------
+
+  /**
+   * Start, retune or stop the bus-graph worklet for the current plan. With
+   * `reschedule`, a playing preview reconnects its sources when the lane
+   * inputs changed; resolves whether they did.
+   */
+  private async syncBusRouting(reschedule = true): Promise<boolean> {
+    const ctx = this.ctx;
+    const master = this.masterGain;
+    if (!ctx || !master) return false;
+    const meter = audioFxStore.getState().meterRequests > 0;
+    const changed = await this.busRouting.sync(ctx, master, this.busPlan, meter, () => {
+      void this.rescheduleIfPlaying();
+    });
+    if (changed && reschedule) await this.rescheduleIfPlaying();
+    return changed;
+  }
+
+  private async rescheduleIfPlaying(): Promise<void> {
+    if (this.state !== 'playing' || !this.ctx) return;
+    const t = this.getCurrentTime();
+    this.stopSources();
+    this.timelineOrigin = t;
+    this.contextOrigin = this.ctx.currentTime;
+    await this.scheduleFrom(t);
+  }
 
   /** Decoded → rate-remapped → insert-processed buffer for one entry. */
   private async resolveBuffer(
@@ -550,6 +607,8 @@ export class AudioPlaybackManager {
           ctx.currentTime,
         );
 
+        // Its lane's bus input when the bus graph runs, else the master gain.
+        const destination = this.busRouting.destination(entry.trackId, master);
         let panner: StereoPannerNode | null = null;
         if (typeof ctx.createStereoPanner === 'function') {
           panner = ctx.createStereoPanner();
@@ -564,10 +623,10 @@ export class AudioPlaybackManager {
           );
           source.connect(gain);
           gain.connect(panner);
-          panner.connect(master);
+          panner.connect(destination);
         } else {
           source.connect(gain);
-          gain.connect(master);
+          gain.connect(destination);
         }
 
         try {

@@ -103,6 +103,7 @@ export function useProjectSaveLoad({
           captions: editorStore.getState().captions,
           captionStyle: editorStore.getState().captionStyle,
           colorManagement: settingsStore.getState().colorManagement,
+          masterBus: editorStore.getState().masterBus,
         },
         tracks,
         editorStore.getState().masterAudio,
@@ -142,6 +143,7 @@ export function useProjectSaveLoad({
           finishing: loadedFinishing,
           colorManagement: loadedColorManagement,
           masterAudio: loadedMasterAudio,
+          masterBus: loadedMasterBus,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -160,6 +162,7 @@ export function useProjectSaveLoad({
           masterAudioMarkers: loadedMasterMarkers,
           selectedClipId: selectedId,
           masterAudio: loadedMasterAudio,
+          ...(loadedMasterBus ? { masterBus: loadedMasterBus } : {}),
         });
         setFinishing(loadedFinishing);
         setColorManagement(loadedColorManagement);
@@ -249,6 +252,7 @@ export function useProjectSaveLoad({
             mediaClient: client,
             captions: editorStore.getState().captions,
             captionStyle: editorStore.getState().captionStyle,
+            masterBus: editorStore.getState().masterBus,
             onRemoteUploadProgress: (event) => {
               setRemoteUploadItems((prev) => {
                 const next = [...prev];
@@ -316,6 +320,7 @@ export function useProjectSaveLoad({
           finishing: loadedFinishing,
           colorManagement: loadedColorManagement,
           masterAudio: loadedMasterAudio,
+          masterBus: loadedMasterBus,
           skippedClipCount,
           skippedClipFileNames,
           invalidColorWarnings,
@@ -346,6 +351,7 @@ export function useProjectSaveLoad({
           masterAudioMarkers: loadedMasterMarkers,
           selectedClipId: selectedId,
           masterAudio: loadedMasterAudio,
+          ...(loadedMasterBus ? { masterBus: loadedMasterBus } : {}),
         });
         setFinishing(loadedFinishing);
         setColorManagement(loadedColorManagement);

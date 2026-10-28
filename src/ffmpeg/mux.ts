@@ -342,8 +342,9 @@ export async function muxVideoWithAudio(
     0,
   );
 
-  // Volume/pan automation, insert effects and the bus limiter are not FFmpeg filters —
-  // offline-mix in the browser and mux the premixed WAV.
+  // Volume/pan automation, insert effects, lane buses, audio lanes and the bus
+  // limiter are not FFmpeg filters — offline-mix in the browser and mux the
+  // premixed WAV.
   if (timelineNeedsAudioPremix(clips)) {
     onStatus("Rendering automated audio mix...");
     emitProgress(onProgress, "Premixing automated audio", 0.88, true);

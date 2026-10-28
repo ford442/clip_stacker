@@ -67,8 +67,8 @@ describe("calculateRenderPlan", () => {
 
   it('does not force re-encoding for loopCount 1 (default, matches current behavior)', () => {
     const clips = [
-      makeClip({ videoWidth: 1280, videoHeight: 720, loopCount: 1 }),
-      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1280, videoHeight: 720 }),
+      makeClip({ videoWidth: 1920, videoHeight: 1080, loopCount: 1 }),
+      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1920, videoHeight: 1080 }),
     ];
 
     const plan = calculateRenderPlan(clips, [], [], DEFAULT_EXPORT_SETTINGS);
@@ -79,8 +79,8 @@ describe("calculateRenderPlan", () => {
 
   it('uses lossless concat when fixed resolution already matches all clips', () => {
     const clips = [
-      makeClip({ videoWidth: 1280, videoHeight: 720 }),
-      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1280, videoHeight: 720 }),
+      makeClip({ videoWidth: 1920, videoHeight: 1080 }),
+      makeClip({ id: 'clip-2', title: 'Clip 2', videoWidth: 1920, videoHeight: 1080 }),
     ];
 
     const plan = calculateRenderPlan(clips, [], [], DEFAULT_EXPORT_SETTINGS);
@@ -381,6 +381,54 @@ describe("calculateRenderPlan", () => {
         finishing,
       });
       expect(plan.ffmpegFinishingGaps).toContain('Creative LUT');
+    });
+
+    it('reports bloom as an FFmpeg gap (WebGPU-only pass)', () => {
+      const finishing = {
+        ...DEFAULT_FINISHING,
+        bloom: { ...DEFAULT_FINISHING.bloom!, enabled: true, amount: 0.5 },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+        finishing,
+      });
+      expect(plan.finishingActive).toBe(true);
+      expect(plan.ffmpegFinishingGaps).toEqual(['Bloom & glow']);
+    });
+
+    it('reports curves & levels as an FFmpeg gap (WebGPU-only pass)', () => {
+      const finishing = {
+        ...DEFAULT_FINISHING,
+        curves: {
+          ...DEFAULT_FINISHING.curves!,
+          enabled: true,
+          levels: { ...DEFAULT_FINISHING.curves!.levels, gamma: 1.4 },
+        },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+        finishing,
+      });
+      expect(plan.finishingActive).toBe(true);
+      expect(plan.ffmpegFinishingGaps).toEqual(['Curves & levels']);
+    });
+
+    it('reports chromatic aberration as an FFmpeg gap (WebGPU-only pass)', () => {
+      const finishing = {
+        ...DEFAULT_FINISHING,
+        chromaticAberration: { enabled: true, amount: 0.5, radial: 1, angle: 0, spectral: true },
+      };
+      const plan = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        forceFFmpeg: true,
+        finishing,
+      });
+      expect(plan.finishingActive).toBe(true);
+      expect(plan.ffmpegFinishingGaps).toEqual(['Chromatic aberration']);
+      const gpu = calculateRenderPlan([makeClip()], [], [], DEFAULT_EXPORT_SETTINGS, {
+        webGpuAvailable: true,
+        finishing,
+      });
+      expect(gpu.ffmpegFinishingGaps).toBeUndefined();
     });
 
     it('omits ffmpegFinishingGaps when the GPU encoder is estimated (nothing is skipped)', () => {

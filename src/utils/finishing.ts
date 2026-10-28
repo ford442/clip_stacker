@@ -3,13 +3,16 @@
  * compositing on the WebGPU preview and GPU export paths.
  *
  * Pass order (professional):
- *   noise reduction → primary color → secondary color → LUT → sharpen → grain
+ *   noise reduction → primary color → curves & levels → secondary color →
+ *   LUT → sharpen →
+ *   chromatic aberration → bloom → grain
  *
  * Primary color (exposure / WB / lift-gamma-gain), secondary color (hue /
  * window qualifiers), noise reduction (spatial bilateral + optional temporal),
  * sharpening (unsharp + midtone detail), and film grain / optical emulation
- * are implemented on WebGPU with best-effort FFmpeg WASM parity. Canvas2D does
- * not apply finishing (grain is not WYSIWYG on Canvas2D).
+ * are implemented on WebGPU with best-effort FFmpeg WASM parity. Chromatic
+ * aberration, bloom and curves & levels are WebGPU-only (reported in `RenderPlan.ffmpegFinishingGaps`).
+ * Canvas2D does not apply finishing (grain is not WYSIWYG on Canvas2D).
  */
 
 import {
@@ -46,11 +49,35 @@ import {
   normalizeGrainPass,
   type GrainSettings,
 } from './grain';
+import {
+  CA_AMOUNT_RECOMMENDED,
+  DEFAULT_CHROMATIC_ABERRATION_PARAMS,
+  isChromaticAberrationNeutral,
+  normalizeChromaticAberrationPass,
+  type ChromaticAberrationSettings,
+} from './chromaticAberration';
+import {
+  DEFAULT_CURVES_PARAMS,
+  identityCurves,
+  isCurvesNeutral,
+  normalizeCurvesPass,
+  type CurvesSettings,
+} from './curves';
+import {
+  BLOOM_AMOUNT_RECOMMENDED,
+  DEFAULT_BLOOM_PARAMS,
+  isBloomNeutral,
+  normalizeBloomPass,
+  type BloomSettings,
+} from './bloom';
 import { clamp01 } from './math';
 
 export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
 export type { SharpenSettings } from './sharpen';
+export type { ChromaticAberrationSettings } from './chromaticAberration';
+export type { BloomSettings, BloomMode } from './bloom';
+export type { CurvesSettings, CurvePoint, CurveChannel, LevelsSettings } from './curves';
 export type { SecondaryColorSettings, SecondaryGrade, SecondaryMaskType } from './secondaryColor';
 export type {
   GrainSettings,
@@ -71,6 +98,9 @@ export type NoiseReductionPass = NoiseReductionSettings;
 /** Primary color correction / balancing — before creative LUT. */
 export type PrimaryColorPass = PrimaryColorSettings;
 
+/** Curves & levels — after primary, before secondary; WebGPU only. */
+export type CurvesPass = CurvesSettings;
+
 /** Secondary / selective color — hue qualifiers + power windows (≤3 grades). */
 export type SecondaryColorPass = SecondaryColorSettings;
 /** Creative 3D LUT — maps to the existing LutPass / ColorGradeSettings. */
@@ -84,6 +114,12 @@ export interface LutFinishingPass extends FinishingPassBase {
 /** Sharpening / detail enhancement — after LUT, before grain. */
 export type SharpenPass = SharpenSettings;
 
+/** Chromatic aberration (lens colour fringe) — after sharpen, before grain; WebGPU only. */
+export type ChromaticAberrationPass = ChromaticAberrationSettings;
+
+/** Bloom / glow / light wrap — after CA, before grain; WebGPU only. */
+export type BloomPass = BloomSettings;
+
 /** Film grain + optical emulation — applied last (WebGPU + best-effort FFmpeg). */
 export type GrainPass = GrainSettings;
 
@@ -94,9 +130,12 @@ export type GrainPass = GrainSettings;
 export interface FinishingSettings {
   noiseReduction?: NoiseReductionPass;
   primaryColor?: PrimaryColorPass;
+  curves?: CurvesPass;
   secondaryColor?: SecondaryColorPass;
   lut?: LutFinishingPass;
   sharpen?: SharpenPass;
+  chromaticAberration?: ChromaticAberrationPass;
+  bloom?: BloomPass;
   grain?: GrainPass;
 }
 
@@ -113,6 +152,13 @@ export const DEFAULT_PRIMARY_COLOR: PrimaryColorPass = {
   lift: [...DEFAULT_PRIMARY_COLOR_PARAMS.lift] as [number, number, number],
   gamma: [...DEFAULT_PRIMARY_COLOR_PARAMS.gamma] as [number, number, number],
   gain: [...DEFAULT_PRIMARY_COLOR_PARAMS.gain] as [number, number, number],
+};
+
+export const DEFAULT_CURVES: CurvesPass = {
+  enabled: false,
+  amount: 1,
+  levels: { ...DEFAULT_CURVES_PARAMS.levels },
+  curves: identityCurves(),
 };
 
 export const DEFAULT_SECONDARY_COLOR: SecondaryColorPass = {
@@ -133,6 +179,19 @@ export const DEFAULT_SHARPEN: SharpenPass = {
   ...DEFAULT_SHARPEN_PARAMS,
 };
 
+export const DEFAULT_CHROMATIC_ABERRATION: ChromaticAberrationPass = {
+  enabled: false,
+  amount: CA_AMOUNT_RECOMMENDED,
+  ...DEFAULT_CHROMATIC_ABERRATION_PARAMS,
+};
+
+export const DEFAULT_BLOOM: BloomPass = {
+  enabled: false,
+  amount: BLOOM_AMOUNT_RECOMMENDED,
+  ...DEFAULT_BLOOM_PARAMS,
+  tint: [...DEFAULT_BLOOM_PARAMS.tint],
+};
+
 export const DEFAULT_GRAIN: GrainPass = {
   enabled: false,
   amount: GRAIN_AMOUNT_RECOMMENDED,
@@ -144,9 +203,12 @@ export const DEFAULT_GRAIN: GrainPass = {
 export const DEFAULT_FINISHING: FinishingSettings = {
   noiseReduction: { ...DEFAULT_NOISE_REDUCTION },
   primaryColor: { ...DEFAULT_PRIMARY_COLOR },
+  curves: { ...DEFAULT_CURVES, levels: { ...DEFAULT_CURVES.levels }, curves: identityCurves() },
   secondaryColor: { ...DEFAULT_SECONDARY_COLOR, grades: [] },
   lut: { ...DEFAULT_LUT_PASS },
   sharpen: { ...DEFAULT_SHARPEN },
+  chromaticAberration: { ...DEFAULT_CHROMATIC_ABERRATION },
+  bloom: { ...DEFAULT_BLOOM, tint: [...DEFAULT_BLOOM.tint] },
   grain: {
     ...DEFAULT_GRAIN,
     vignette: { ...DEFAULT_GRAIN.vignette },
@@ -172,6 +234,10 @@ export function isPrimaryColorActive(pass: PrimaryColorPass | undefined): boolea
   return passAmount(pass) > 0;
 }
 
+export function isCurvesActive(pass: CurvesPass | undefined): boolean {
+  return !isCurvesNeutral(pass);
+}
+
 export function isSecondaryColorActive(pass: SecondaryColorPass | undefined): boolean {
   if (passAmount(pass) <= 0) return false;
   return hasActiveSecondaryGrades(pass);
@@ -191,6 +257,16 @@ export function isSharpenActive(pass: SharpenPass | undefined): boolean {
   return amount > 0 || midtone > 0;
 }
 
+export function isChromaticAberrationActive(
+  pass: ChromaticAberrationPass | undefined,
+): boolean {
+  return !isChromaticAberrationNeutral(pass);
+}
+
+export function isBloomActive(pass: BloomPass | undefined): boolean {
+  return !isBloomNeutral(pass);
+}
+
 export function isGrainActive(pass: GrainPass | undefined): boolean {
   if (!pass?.enabled) return false;
   return !isGrainNeutral(pass);
@@ -202,9 +278,12 @@ export function isFinishingActive(settings: FinishingSettings | undefined): bool
   return (
     isNoiseReductionActive(settings.noiseReduction) ||
     isPrimaryColorActive(settings.primaryColor) ||
+    isCurvesActive(settings.curves) ||
     isSecondaryColorActive(settings.secondaryColor) ||
     isLutFinishingPassActive(settings.lut) ||
     isSharpenActive(settings.sharpen) ||
+    isChromaticAberrationActive(settings.chromaticAberration) ||
+    isBloomActive(settings.bloom) ||
     isGrainActive(settings.grain)
   );
 }
@@ -270,9 +349,15 @@ export function normalizeFinishingSettings(
   return {
     noiseReduction: normalizeNoiseReductionPass(raw?.noiseReduction, DEFAULT_NOISE_REDUCTION),
     primaryColor: normalizePrimaryColorPass(raw?.primaryColor, DEFAULT_PRIMARY_COLOR),
+    curves: normalizeCurvesPass(raw?.curves, DEFAULT_CURVES),
     secondaryColor: normalizeSecondaryColorPass(raw?.secondaryColor, DEFAULT_SECONDARY_COLOR),
     lut: normalizeLutPass(raw?.lut),
     sharpen: normalizeSharpenPass(raw?.sharpen, DEFAULT_SHARPEN),
+    chromaticAberration: normalizeChromaticAberrationPass(
+      raw?.chromaticAberration,
+      DEFAULT_CHROMATIC_ABERRATION,
+    ),
+    bloom: normalizeBloomPass(raw?.bloom, DEFAULT_BLOOM),
     grain: normalizeGrainPass(raw?.grain, DEFAULT_GRAIN),
   };
 }

@@ -10,6 +10,8 @@ import type {
   SyncMarker,
 } from '../types';
 import { cloneTracks } from './trackModel';
+import type { FinishingSettings } from './finishing';
+import type { MasterBusSettings } from './audioBus';
 
 /** Maximum undo snapshots kept in memory. */
 export const MAX_EDIT_HISTORY = 50;
@@ -31,6 +33,18 @@ export interface EditSnapshot {
    */
   selectedClipIds?: string[];
   masterAudio: MasterAudio | null;
+  /**
+   * Master bus FX and loudness target. Optional so snapshots built before
+   * buses (and callers that never set it) restore "no master bus".
+   */
+  masterBus?: MasterBusSettings;
+  /**
+   * Finishing lives in the settings store, not the edit history. Only an
+   * entry that changed the whole stack at once (applying a finishing preset)
+   * carries it; undo / redo restore finishing for those entries alone, so
+   * every other undo step leaves finishing exactly as it is.
+   */
+  finishing?: FinishingSettings;
 }
 
 /** Shallow-clone clip metadata while reusing File / objectUrl references. */
@@ -62,6 +76,8 @@ export function cloneSnapshot(snapshot: EditSnapshot): EditSnapshot {
     masterAudio: snapshot.masterAudio
       ? { ...snapshot.masterAudio }
       : null,
+    ...(snapshot.masterBus ? { masterBus: structuredClone(snapshot.masterBus) } : {}),
+    ...(snapshot.finishing ? { finishing: structuredClone(snapshot.finishing) } : {}),
   };
 }
 

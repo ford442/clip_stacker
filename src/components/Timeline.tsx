@@ -37,6 +37,7 @@ import { SyncDragProvider } from '../context/SyncDragContext';
 import { useTimelineDragDrop } from '../hooks/useTimelineDragDrop';
 import { TimelineHeader } from './TimelineHeader';
 import { TimelineLaneRows } from './TimelineLaneRows';
+import { TimelinePlayhead } from './TimelinePlayhead';
 import { TimelineRuler } from './TimelineRuler';
 import { TimelineSelectionScroll } from './TimelineSelectionScroll';
 
@@ -366,6 +367,11 @@ function TimelineImpl({
           }}
         />
 
+        <TimelinePlayhead totalDuration={totalDuration} pixelsPerSecond={pixelsPerSecond} />
+
+        {/* Ruler and the lanes without a header column start where the track
+            lanes' time axis starts, so one x maps to one time on every row. */}
+        <div className="timeline-axis-offset">
         <TimelineRuler
           totalDuration={totalDuration}
           pixelsPerSecond={pixelsPerSecond}
@@ -391,6 +397,7 @@ function TimelineImpl({
           onResize={onCaptionResize}
           onAddAt={onCaptionAdd}
         />
+        </div>
 
         <div
           className={`timeline-track-row timeline-track-row--main${

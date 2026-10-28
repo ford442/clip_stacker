@@ -291,7 +291,7 @@ std::vector<float> mix_fx(const Schedule& s, int frames, int chunk, const std::v
                                static_cast<double>(e.pan_keys.size())});
       if (fx_rows) {
         rows.insert(rows.end(), {static_cast<double>(ranges[i].first), static_cast<double>(ranges[i].second),
-                                 static_cast<double>(i)});
+                                 static_cast<double>(i), -1.0});
       }
     }
     if (pcm.empty()) pcm.push_back(0.f);
@@ -1044,7 +1044,7 @@ TEST_CASE(fx_session_rejects_malformed_calls) {
   float out[8] = {};
   const float pcm[4] = {};
   const int meta[MIX_SLICE_STRIDE] = {0, 4, 1, 48000, 0, 4};
-  double row[MIX_ENTRY_FX_STRIDE] = {0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0};
+  double row[MIX_ENTRY_FX_STRIDE] = {0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, -1};
   // Effects need a session: the stateless entry point refuses the flag.
   CHECK(mix_timeline_audio_range(out, 4, 0, 48000, 2, pcm, 4, meta, 1, row, 1, nullptr, 0, MIX_FLAG_EFFECTS) == CS_EINVAL);
 

@@ -1,6 +1,12 @@
 import type { Clip, Track, TrackKind } from '../types';
 import { createClipId } from './media';
 import {
+  normalizeBusEffects,
+  normalizeLaneDuck,
+  type BusEffect,
+  type LaneDuck,
+} from './audioBus';
+import {
   cloneTrack,
   cloneTracks,
   DEFAULT_AUDIO_LABEL,
@@ -159,4 +165,51 @@ export function renameTrack(
     ...track,
     label: trimmed || nextTrackLabel([], track.kind),
   }));
+}
+
+// ─── Lane buses ──────────────────────────────────────────────────────────────
+
+/**
+ * Replace a lane's bus insert chain (`undefined` / empty = dry). Refused (the
+ * same array back) on a locked lane, a titles lane, or when nothing changed,
+ * so the store pushes no empty undo step.
+ */
+export function setTrackAudioFx(
+  tracks: Track[],
+  trackId: string,
+  fx: BusEffect[] | undefined,
+): Track[] {
+  const track = tracks.find((t) => t.id === trackId);
+  if (!track || track.locked || track.kind === 'text') return tracks;
+  const next = normalizeBusEffects(fx);
+  if (JSON.stringify(next ?? null) === JSON.stringify(track.audioFx ?? null)) return tracks;
+  return patchTrack(tracks, trackId, (t) => {
+    const patched = { ...t };
+    if (next) patched.audioFx = next;
+    else delete patched.audioFx;
+    return patched;
+  });
+}
+
+/**
+ * Set a lane's ducking: a sidechain duck, `'off'`, or `undefined` for the
+ * legacy step. A lane cannot key off itself. Same refusals as
+ * {@link setTrackAudioFx}.
+ */
+export function setTrackDuck(
+  tracks: Track[],
+  trackId: string,
+  duck: LaneDuck | undefined,
+): Track[] {
+  const track = tracks.find((t) => t.id === trackId);
+  if (!track || track.locked || track.kind === 'text') return tracks;
+  const next = normalizeLaneDuck(duck);
+  if (typeof next === 'object' && next.sourceTrackId === trackId) return tracks;
+  if (JSON.stringify(next ?? null) === JSON.stringify(track.duck ?? null)) return tracks;
+  return patchTrack(tracks, trackId, (t) => {
+    const patched = { ...t };
+    if (next) patched.duck = next;
+    else delete patched.duck;
+    return patched;
+  });
 }

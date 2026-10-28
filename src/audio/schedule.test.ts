@@ -268,3 +268,45 @@ describe('lane mute (#168 Phase A)', () => {
     ).toEqual(['base']);
   });
 });
+
+describe('buildAudioSchedule: lane routing', () => {
+  const lanes = (duck?: Track['duck']): Track[] => [
+    { id: 'v1', kind: 'video', items: [{ clipId: 'vox', startTime: 0 }] },
+    { id: 'v2', kind: 'video', items: [{ clipId: 'pip', startTime: 1 }] },
+    { id: 'a1', kind: 'audio', items: [{ clipId: 'music', startTime: 0 }], ...(duck ? { duck } : {}) },
+  ];
+  const clips = () => [
+    makeClip('vox', 6),
+    makeClip('pip', 2, { layerIndex: 1, timelineStart: 1 }),
+    makeClip('music', 8, { kind: 'audio' }),
+  ];
+
+  it('tags every entry with its holding lane', () => {
+    const schedule = buildAudioSchedule(clips(), [], [], lanes());
+    expect(Object.fromEntries(schedule.map((e) => [e.clipId, e.trackId]))).toEqual({
+      vox: 'v1',
+      pip: 'v2',
+      music: 'a1',
+    });
+  });
+
+  it('without tracks, entries carry no lane (they mix to the master sum)', () => {
+    const schedule = buildAudioSchedule([makeClip('vox', 6)], [], []);
+    expect(schedule[0]).not.toHaveProperty('trackId');
+  });
+
+  it('a lane with its own ducking opts out of the legacy step', () => {
+    const legacy = buildAudioSchedule(clips(), [], [], lanes());
+    const music = legacy.find((e) => e.clipId === 'music')!;
+    expect(effectiveEntryVolume(music, legacy)).toBe(music.volume * BED_DUCK_LINEAR);
+
+    for (const duck of ['off', { sourceTrackId: 'v1', depthDb: 9, thresholdDb: -40, attack: 0.05, hold: 0.2, release: 0.5 }] as const) {
+      const schedule = buildAudioSchedule(clips(), [], [], lanes(duck));
+      const entry = schedule.find((e) => e.clipId === 'music')!;
+      expect(entry.laneDuck).toBe(duck === 'off' ? 'off' : 'sidechain');
+      expect(effectiveEntryVolume(entry, schedule)).toBe(entry.volume);
+      // Changing a lane's ducking is a structure change: the preview reroutes.
+      expect(schedulesMatchStructure(legacy, schedule)).toBe(false);
+    }
+  });
+});

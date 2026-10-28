@@ -298,6 +298,21 @@ describe('webcodecs-audio', () => {
       expect(timelineNeedsAudioPremix([makeClip('a', 2)], limiter)).toBe(true);
     });
 
+    it('routes FFmpeg exports through the premix for buses, loudness and audio lanes', () => {
+      const clips = [makeClip('a', 2)];
+      const dry = { tracks: [{ id: 'v1', kind: 'video' as const, items: [{ clipId: 'a', startTime: 0 }] }] };
+      expect(timelineNeedsAudioPremix(clips, null, dry)).toBe(false);
+      expect(
+        timelineNeedsAudioPremix(clips, null, { ...dry, masterBus: { loudness: { targetLufs: -14, truePeakDb: -1 } } }),
+      ).toBe(true);
+      const gate = { id: 'g', kind: 'gate' as const, enabled: true, thresholdDb: -50, rangeDb: 40, attack: 0, hold: 0, release: 0.1 };
+      expect(timelineNeedsAudioPremix(clips, null, { tracks: [{ ...dry.tracks[0]!, audioFx: [gate] }] })).toBe(true);
+      // A music bed on an audio lane is not in FFmpeg's filter graph: premix it in.
+      const bed = { id: 'a1', kind: 'audio' as const, items: [{ clipId: 'm', startTime: 0 }] };
+      expect(timelineNeedsAudioPremix(clips, null, { tracks: [...dry.tracks, bed] })).toBe(true);
+      expect(timelineNeedsAudioPremix(clips, null, { tracks: [...dry.tracks, { ...bed, muted: true }] })).toBe(false);
+    });
+
     it('reads the master limiter from the export settings', () => {
       const previous = settingsStore.getState().exportSettings;
       try {

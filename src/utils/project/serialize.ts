@@ -26,6 +26,12 @@ import {
 } from '../colorManagement';
 import { normalizeClipAutomation } from '../clipAutomation';
 import { normalizeClipAudioEffects } from '../audioEffects';
+import {
+  normalizeBusEffects,
+  normalizeLaneDuck,
+  normalizeMasterBus,
+  type MasterBusSettings,
+} from '../audioBus';
 import { normalizeCaptions } from '../subtitles';
 export function serializeProject(
   clips: Clip[],
@@ -39,19 +45,28 @@ export function serializeProject(
   captions: CaptionEntry[] = [],
   captionStyle: Partial<TextOverlayStyle> = {},
   colorManagement?: ColorManagementSettings,
+  masterBus?: MasterBusSettings,
 ): Project {
-  const serializedTracks: SerializedTrack[] = tracks.map((track) => ({
-    id: track.id,
-    kind: track.kind,
-    ...(track.label ? { label: track.label } : {}),
-    items: track.items.map((item) => ({
-      clipId: item.clipId,
-      startTime: item.startTime,
-    })),
-    ...(track.muted ? { muted: true } : {}),
-    ...(track.locked ? { locked: true } : {}),
-    ...(track.height != null ? { height: track.height } : {}),
-  }));
+  const serializedTracks: SerializedTrack[] = tracks.map((track) => {
+    // Bypassed effects round-trip too, like clip inserts.
+    const audioFx = normalizeBusEffects(track.audioFx);
+    const duck = normalizeLaneDuck(track.duck);
+    return {
+      id: track.id,
+      kind: track.kind,
+      ...(track.label ? { label: track.label } : {}),
+      items: track.items.map((item) => ({
+        clipId: item.clipId,
+        startTime: item.startTime,
+      })),
+      ...(track.muted ? { muted: true } : {}),
+      ...(track.locked ? { locked: true } : {}),
+      ...(track.height != null ? { height: track.height } : {}),
+      ...(audioFx ? { audioFx } : {}),
+      ...(duck ? { duck } : {}),
+    };
+  });
+  const savedMasterBus = normalizeMasterBus(masterBus);
 
   return {
     schemaVersion: PROJECT_SCHEMA_VERSION,
@@ -179,6 +194,7 @@ export function serializeProject(
     ...(Object.keys(captionStyle).length > 0 ? { captionStyle: { ...captionStyle } } : {}),
     ...(isFinishingActive(finishing) ? { finishing } : {}),
     ...(isColorManagementActive(colorManagement) ? { colorManagement } : {}),
+    ...(savedMasterBus ? { masterBus: savedMasterBus } : {}),
     ...(masterAudio
       ? {
           masterAudio: {

@@ -1,0 +1,624 @@
+{
+  "schema_version": "2",
+  "name": "MiniMax Music 3",
+  "description": "Full-song generation with MiniMax Music 3 on ZeroGPU: tagged lyrics + a structured caption (Global metadata / Vocal details / Arrangement, per the official prompting guide) feed the diffusers pipeline (AR frames -> windowed DiT decode -> vocoder), plus an ffmpeg share-video visualizer. Edit the Lyrics and caption reference nodes to shape the song.",
+  "runtime": {
+    "default": "client"
+  },
+  "view": {
+    "default": "canvas"
+  },
+  "references": [
+    {
+      "id": "ref_lyrics",
+      "label": "Lyrics",
+      "role": "reference",
+      "asset_type": "text",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Lyrics",
+          "type": "text"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Lyrics",
+          "type": "text"
+        }
+      ],
+      "x": 40,
+      "y": 80,
+      "width": 300,
+      "height": 200,
+      "data": {
+        "out": "[intro]\n\n[verse]\nRiding on a beam of light tonight\nEvery little star is burning bright\n[pre-chorus]\nHold your breath, the sky is opening\n[chorus]\nWe are made of sound and time\nEvery heartbeat keeps the rhyme\n[outro]"
+      }
+    },
+    {
+      "id": "ref_global",
+      "label": "Global Metadata",
+      "role": "reference",
+      "asset_type": "text",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Global Metadata",
+          "type": "text"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Global Metadata",
+          "type": "text"
+        }
+      ],
+      "x": 40,
+      "y": 310,
+      "width": 300,
+      "height": 160,
+      "data": {
+        "out": "Basic Attributes: bpm is 120. key is C, and scale is major. Synth-Pop / Electropop. Global Emotional Progression: The track opens in shimmering anticipation, a filtered pulse like city lights coming on at dusk. The verse glides forward with hopeful momentum, the pre-chorus holds its breath as the arrangement tightens and rises, and the chorus bursts open into wide-screen euphoria \u2014 bright, weightless, celebratory. The outro drifts back down into a starry afterglow, ending on air and quiet wonder. Application Scenarios & Imagery: a night drive under neon overpasses with the windows down; a planetarium dome igniting as the lights dim; a rooftop countdown at midnight. Sonics & Production Profile: a polished, modern pop mix with a wide stereo image \u2014 airy sparkling highs, present mid-range vocals, and a tight, punchy low end; side-chained compression gives the chorus a gentle pumping lift, and the outro dissolves into long reverb tails."
+      }
+    },
+    {
+      "id": "ref_vocals",
+      "label": "Vocal Details",
+      "role": "reference",
+      "asset_type": "text",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Vocal Details",
+          "type": "text"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Vocal Details",
+          "type": "text"
+        }
+      ],
+      "x": 40,
+      "y": 500,
+      "width": 300,
+      "height": 140,
+      "data": {
+        "out": "Vocal Gender & Timbre: Singer A (Female), a warm mezzo-soprano with an intimate, breathy texture in her low register and a clear, ringing brightness when she lifts. Vocal Style: soft and close-miked through the verse, phrasing like a secret; the pre-chorus rises with held, urgent notes, and the chorus opens into a confident, soaring belt with sustained tones riding the beat; over the outro she dissolves into wordless, airy ad-libs echoing the chorus melody. Harmony/Backing Vocals: a single ghost double shadows the pre-chorus; stacked parallel harmonies in thirds widen the chorus into a glowing wall; the verse stays solo and intimate. Vocal FX: light plate reverb throughout, tempo-synced delay throws on chorus line endings, subtle saturation for chorus presence, and a longer, washier reverb on the outro ad-libs."
+      }
+    },
+    {
+      "id": "ref_arrangement",
+      "label": "Arrangement",
+      "role": "reference",
+      "asset_type": "text",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Arrangement",
+          "type": "text"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Arrangement",
+          "type": "text"
+        }
+      ],
+      "x": 40,
+      "y": 670,
+      "width": 300,
+      "height": 160,
+      "data": {
+        "out": "Instrument Lifecycle Description (Primary/Secondary Layering): Primary: a round, side-chained analog-style synth bass anchors the harmony from the first verse through the chorus, under a soft pad bed that opens the intro and never fully leaves. Secondary: a shimmering arpeggio enters at the pre-chorus and runs through the chorus; wide analog pads and a bright synth counter-melody appear only in the chorus to lift it; a sparse felt piano takes over the outro as the synths fall away. Groove & Foundation Progression: the intro pulses on a filtered four-on-the-floor kick; the verse keeps drums minimal \u2014 kick, soft clap, ticking closed hat; the pre-chorus adds open hats and a rising snare build, and the chorus lands with the full kit: punchy kick on every beat, layered claps, driving crash accents. After the chorus the drums drop out entirely, leaving piano, pad, and air for the outro. Embellishments, Textures & Spatial FX: a white-noise riser and reverse swell launch the chorus; glittering bell accents answer the vocal there; and the final piano chord rings into a long, starlit reverb wash."
+      }
+    },
+    {
+      "id": "ref_duration",
+      "label": "Duration (s)",
+      "role": "reference",
+      "asset_type": "number",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Duration (s)",
+          "type": "number"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Duration (s)",
+          "type": "number"
+        }
+      ],
+      "x": 40,
+      "y": 860,
+      "width": 200,
+      "height": 90,
+      "data": {
+        "out": 60
+      }
+    },
+    {
+      "id": "ref_seed",
+      "label": "Seed",
+      "role": "reference",
+      "asset_type": "number",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Seed",
+          "type": "number"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Seed",
+          "type": "number"
+        }
+      ],
+      "x": 260,
+      "y": 860,
+      "width": 200,
+      "height": 90,
+      "data": {
+        "out": 0
+      }
+    },
+    {
+      "id": "ref_randomize",
+      "label": "Randomize Seed",
+      "role": "reference",
+      "asset_type": "boolean",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Randomize Seed",
+          "type": "boolean"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Randomize Seed",
+          "type": "boolean"
+        }
+      ],
+      "x": 40,
+      "y": 980,
+      "width": 200,
+      "height": 90,
+      "data": {
+        "out": true
+      }
+    },
+    {
+      "id": "ref_steps",
+      "label": "Flow-matching Steps",
+      "role": "reference",
+      "asset_type": "number",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Flow-matching Steps",
+          "type": "number"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Flow-matching Steps",
+          "type": "number"
+        }
+      ],
+      "x": 260,
+      "y": 980,
+      "width": 200,
+      "height": 90,
+      "data": {
+        "out": 30
+      }
+    },
+    {
+      "id": "ref_guidance",
+      "label": "Guidance Scale",
+      "role": "reference",
+      "asset_type": "number",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Guidance Scale",
+          "type": "number"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Guidance Scale",
+          "type": "number"
+        }
+      ],
+      "x": 40,
+      "y": 1100,
+      "width": 200,
+      "height": 90,
+      "data": {
+        "out": 1.7
+      }
+    },
+    {
+      "id": "ref_title",
+      "label": "Video Title",
+      "role": "reference",
+      "asset_type": "text",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Video Title",
+          "type": "text"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Video Title",
+          "type": "text"
+        }
+      ],
+      "x": 1180,
+      "y": 640,
+      "width": 220,
+      "height": 100,
+      "data": {
+        "out": ""
+      }
+    }
+  ],
+  "operators": [
+    {
+      "id": "op_generate",
+      "label": "generate_song",
+      "role": "operator",
+      "kind": "fn",
+      "source": "fn",
+      "fn": "generate_song",
+      "inputs": [
+        {
+          "id": "in_0",
+          "label": "lyrics",
+          "type": "text",
+          "required": true
+        },
+        {
+          "id": "in_1",
+          "label": "global_meta",
+          "type": "text"
+        },
+        {
+          "id": "in_2",
+          "label": "vocal_details",
+          "type": "text"
+        },
+        {
+          "id": "in_3",
+          "label": "arrangement",
+          "type": "text"
+        },
+        {
+          "id": "in_4",
+          "label": "duration",
+          "type": "number"
+        },
+        {
+          "id": "in_5",
+          "label": "seed",
+          "type": "number"
+        },
+        {
+          "id": "in_6",
+          "label": "randomize_seed",
+          "type": "boolean"
+        },
+        {
+          "id": "in_7",
+          "label": "steps",
+          "type": "number"
+        },
+        {
+          "id": "in_8",
+          "label": "guidance",
+          "type": "number"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_0",
+          "label": "audio",
+          "type": "audio",
+          "output_index": 0
+        },
+        {
+          "id": "out_1",
+          "label": "seed_used",
+          "type": "number",
+          "output_index": 1
+        },
+        {
+          "id": "out_2",
+          "label": "stats",
+          "type": "text",
+          "output_index": 2
+        }
+      ],
+      "x": 560,
+      "y": 400,
+      "width": 280,
+      "height": 300,
+      "data": {}
+    },
+    {
+      "id": "op_video",
+      "label": "make_video",
+      "role": "operator",
+      "kind": "fn",
+      "source": "fn",
+      "fn": "make_video",
+      "inputs": [
+        {
+          "id": "in_0",
+          "label": "audio",
+          "type": "audio",
+          "required": true
+        },
+        {
+          "id": "in_1",
+          "label": "title",
+          "type": "text"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out_0",
+          "label": "video",
+          "type": "video",
+          "output_index": 0
+        }
+      ],
+      "x": 1180,
+      "y": 420,
+      "width": 240,
+      "height": 140,
+      "data": {}
+    }
+  ],
+  "subjects": [
+    {
+      "id": "sub_song",
+      "label": "Output Song",
+      "role": "subject",
+      "asset_type": "audio",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Audio",
+          "type": "audio"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Audio",
+          "type": "audio"
+        }
+      ],
+      "x": 1100,
+      "y": 200,
+      "width": 240,
+      "height": 130,
+      "data": {}
+    },
+    {
+      "id": "sub_seed",
+      "label": "Seed Used",
+      "role": "subject",
+      "asset_type": "number",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Seed",
+          "type": "number"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Seed",
+          "type": "number"
+        }
+      ],
+      "x": 1100,
+      "y": 360,
+      "width": 220,
+      "height": 100,
+      "data": {}
+    },
+    {
+      "id": "sub_stats",
+      "label": "Stats",
+      "role": "subject",
+      "asset_type": "text",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Stats",
+          "type": "text"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Stats",
+          "type": "text"
+        }
+      ],
+      "x": 1100,
+      "y": 490,
+      "width": 220,
+      "height": 100,
+      "data": {}
+    },
+    {
+      "id": "sub_video",
+      "label": "Share Video",
+      "role": "subject",
+      "asset_type": "video",
+      "inputs": [
+        {
+          "id": "in",
+          "label": "Video",
+          "type": "video"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "out",
+          "label": "Video",
+          "type": "video"
+        }
+      ],
+      "x": 1500,
+      "y": 420,
+      "width": 240,
+      "height": 130,
+      "data": {}
+    }
+  ],
+  "edges": [
+    {
+      "id": "e_lyr",
+      "from_node_id": "ref_lyrics",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_0",
+      "type": "text"
+    },
+    {
+      "id": "e_gm",
+      "from_node_id": "ref_global",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_1",
+      "type": "text"
+    },
+    {
+      "id": "e_vd",
+      "from_node_id": "ref_vocals",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_2",
+      "type": "text"
+    },
+    {
+      "id": "e_arr",
+      "from_node_id": "ref_arrangement",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_3",
+      "type": "text"
+    },
+    {
+      "id": "e_dur",
+      "from_node_id": "ref_duration",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_4",
+      "type": "number"
+    },
+    {
+      "id": "e_seed",
+      "from_node_id": "ref_seed",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_5",
+      "type": "number"
+    },
+    {
+      "id": "e_rand",
+      "from_node_id": "ref_randomize",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_6",
+      "type": "boolean"
+    },
+    {
+      "id": "e_steps",
+      "from_node_id": "ref_steps",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_7",
+      "type": "number"
+    },
+    {
+      "id": "e_guid",
+      "from_node_id": "ref_guidance",
+      "from_port_id": "out",
+      "to_node_id": "op_generate",
+      "to_port_id": "in_8",
+      "type": "number"
+    },
+    {
+      "id": "e_audio",
+      "from_node_id": "op_generate",
+      "from_port_id": "out_0",
+      "to_node_id": "sub_song",
+      "to_port_id": "in",
+      "type": "audio"
+    },
+    {
+      "id": "e_seed_out",
+      "from_node_id": "op_generate",
+      "from_port_id": "out_1",
+      "to_node_id": "sub_seed",
+      "to_port_id": "in",
+      "type": "number"
+    },
+    {
+      "id": "e_stats",
+      "from_node_id": "op_generate",
+      "from_port_id": "out_2",
+      "to_node_id": "sub_stats",
+      "to_port_id": "in",
+      "type": "text"
+    },
+    {
+      "id": "e_audio_v",
+      "from_node_id": "op_generate",
+      "from_port_id": "out_0",
+      "to_node_id": "op_video",
+      "to_port_id": "in_0",
+      "type": "audio"
+    },
+    {
+      "id": "e_title",
+      "from_node_id": "ref_title",
+      "from_port_id": "out",
+      "to_node_id": "op_video",
+      "to_port_id": "in_1",
+      "type": "text"
+    },
+    {
+      "id": "e_video",
+      "from_node_id": "op_video",
+      "from_port_id": "out_0",
+      "to_node_id": "sub_video",
+      "to_port_id": "in",
+      "type": "video"
+    }
+  ]
+}

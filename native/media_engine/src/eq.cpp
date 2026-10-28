@@ -7,21 +7,12 @@
 
 namespace media_engine {
 
-namespace {
-
 using cs::kPi;
 
-double clamp_finite(double v, double lo, double hi, double fallback) {
-  if (!std::isfinite(v)) return fallback;
-  return std::max(lo, std::min(hi, v));
-}
-
-}  // namespace
-
-bool Biquad::design(const double* row, double sample_rate) {
+bool Biquad::design(const double* row, double sample_rate, bool keep_state) {
   const double kind = row[MIX_FX_KIND];
   if (kind != MIX_FX_PEAKING && kind != MIX_FX_LOW_SHELF && kind != MIX_FX_HIGH_SHELF &&
-      kind != MIX_FX_HIGH_PASS) {
+      kind != MIX_FX_HIGH_PASS && kind != MIX_FX_LOW_PASS) {
     return false;
   }
   if (!(sample_rate > 0) || !std::isfinite(sample_rate)) return false;
@@ -59,10 +50,17 @@ bool Biquad::design(const double* row, double sample_rate) {
     a0 = (a + 1.0) - (a - 1.0) * cw + sqrt_a2;
     a1 = 2.0 * ((a - 1.0) - (a + 1.0) * cw);
     a2 = (a + 1.0) - (a - 1.0) * cw - sqrt_a2;
-  } else {
+  } else if (kind == MIX_FX_HIGH_PASS) {
     b0 = (1.0 + cw) * 0.5;
     b1 = -(1.0 + cw);
     b2 = (1.0 + cw) * 0.5;
+    a0 = 1.0 + alpha;
+    a1 = -2.0 * cw;
+    a2 = 1.0 - alpha;
+  } else {
+    b0 = (1.0 - cw) * 0.5;
+    b1 = 1.0 - cw;
+    b2 = (1.0 - cw) * 0.5;
     a0 = 1.0 + alpha;
     a1 = -2.0 * cw;
     a2 = 1.0 - alpha;
@@ -72,8 +70,17 @@ bool Biquad::design(const double* row, double sample_rate) {
   b2_ = b2 / a0;
   a1_ = a1 / a0;
   a2_ = a2 / a0;
-  z1_[0] = z1_[1] = z2_[0] = z2_[1] = 0.0;
+  if (!keep_state) reset();
   return true;
+}
+
+void Biquad::set(double b0, double b1, double b2, double a1, double a2) {
+  b0_ = b0;
+  b1_ = b1;
+  b2_ = b2;
+  a1_ = a1;
+  a2_ = a2;
+  reset();
 }
 
 double Biquad::magnitude_db(double freq, double sample_rate) const {

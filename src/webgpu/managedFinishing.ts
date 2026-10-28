@@ -10,9 +10,15 @@ import { PrimaryColorGpuPass } from './primaryColorPass';
 import { SecondaryColorGpuPass } from './secondaryColorPass';
 import { SharpenGpuPass } from './sharpenPass';
 import { GrainGpuPass } from './grainPass';
+import { ChromaticAberrationGpuPass } from './chromaticAberrationPass';
+import { CurvesGpuPass } from './curvesPass';
+import { BloomGpuPass } from './bloomPass';
 import { ColorManagementGpuPass } from './colorManagementPass';
 import type { FinishingSettings } from '../utils/finishing';
 import {
+  isBloomActive,
+  isChromaticAberrationActive,
+  isCurvesActive,
   isGrainActive,
   isLutFinishingPassActive,
   isNoiseReductionActive,
@@ -49,9 +55,12 @@ interface ManagedFinishing {
   xformUnorm: ColorManagementGpuPass;
   noise: NoiseReductionGpuPass;
   primary: PrimaryColorGpuPass;
+  curves: CurvesGpuPass;
   secondary: SecondaryColorGpuPass;
   lut: LutPass;
   sharpen: SharpenGpuPass;
+  chromaticAberration: ChromaticAberrationGpuPass;
+  bloom: BloomGpuPass;
   grain: GrainGpuPass;
 }
 
@@ -66,7 +75,10 @@ export class ManagedFinishingChain {
   /**
    * Scene-linear Rec.2020 finishing. The 8-bit chain in `finishingPassChain.ts`
    * is not used.
-   * Order: input → noise → primary → secondary → LUT → sharpen → output → grain → present.
+   * Order: input → noise → primary → curves → secondary → LUT → sharpen → chromatic
+   * aberration → bloom → output → grain → present. CA and bloom are optical
+   * effects, so they run in the scene-linear working space, before the output
+   * transform (bloom adds light there instead of screening).
    */
   apply(
     device: GPUDevice,
@@ -148,6 +160,19 @@ export class ManagedFinishingChain {
       swap();
     }
 
+    if (isCurvesActive(settings.curves) && settings.curves) {
+      managed.curves.applyBetweenTextures(
+        device,
+        current,
+        next.createView(),
+        width,
+        height,
+        settings.curves,
+        encoder,
+      );
+      swap();
+    }
+
     if (isSecondaryColorActive(settings.secondaryColor) && settings.secondaryColor) {
       managed.secondary.applyBetweenTextures(
         device,
@@ -186,6 +211,35 @@ export class ManagedFinishingChain {
         width,
         height,
         settings.sharpen,
+        encoder,
+      );
+      swap();
+    }
+
+    if (
+      isChromaticAberrationActive(settings.chromaticAberration) &&
+      settings.chromaticAberration
+    ) {
+      managed.chromaticAberration.applyBetweenTextures(
+        device,
+        current,
+        next.createView(),
+        width,
+        height,
+        settings.chromaticAberration,
+        encoder,
+      );
+      swap();
+    }
+
+    if (isBloomActive(settings.bloom) && settings.bloom) {
+      managed.bloom.applyBetweenTextures(
+        device,
+        current,
+        next.createView(),
+        width,
+        height,
+        settings.bloom,
         encoder,
       );
       swap();
@@ -265,9 +319,12 @@ export class ManagedFinishingChain {
       xformUnorm: ColorManagementGpuPass.create(device, 'rgba8unorm'),
       noise: NoiseReductionGpuPass.create(device, WORKING_FORMAT, true),
       primary: PrimaryColorGpuPass.create(device, WORKING_FORMAT),
+      curves: CurvesGpuPass.create(device, WORKING_FORMAT, true),
       secondary: SecondaryColorGpuPass.create(device, WORKING_FORMAT, true),
       lut: LutPass.create(device, WORKING_FORMAT, true),
       sharpen: SharpenGpuPass.create(device, WORKING_FORMAT, true),
+      chromaticAberration: ChromaticAberrationGpuPass.create(device, WORKING_FORMAT),
+      bloom: BloomGpuPass.create(device, WORKING_FORMAT, true),
       grain: GrainGpuPass.create(device, WORKING_FORMAT),
     };
   }
@@ -314,9 +371,12 @@ export class ManagedFinishingChain {
     managed.xformUnorm.destroy();
     managed.noise.destroy();
     managed.primary.destroy();
+    managed.curves.destroy();
     managed.secondary.destroy();
     managed.lut.destroy();
     managed.sharpen.destroy();
+    managed.chromaticAberration.destroy();
+    managed.bloom.destroy();
     managed.grain.destroy();
     this.managed = null;
   }

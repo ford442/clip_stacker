@@ -18,11 +18,23 @@ Actual FTP/SFTP credentials never leave the VPS.
 
 Requirements:
   pip install requests
+
+Size equality is not content equality for the unhashed entry files
+(index.html, assets/utf16-boot.js, .htaccess). utf16-boot.js is the real
+module entry: its ENTRY_UTF8 / ENTRY_UTF16 strings are fixed-width Vite
+hashes, so a new build often keeps the same byte size. Those paths are
+always uploaded. Hashed assets, wasm, and media are still size-skipped.
+
+After this fix, confirm the host's directory index is the uploaded
+index.html and remove any extra UTF-16 index (index.html.utf16, type-map,
+MultiViews). This script does not delete remote files; a stale directory
+index keeps serving the old document at the directory URL.
 """
 
 import io
 import os
 import sys
+import time
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -49,7 +61,12 @@ DEPLOY_TARGET: str = os.getenv("DEPLOY_TARGET", "test")
 
 
 def fetch_remote_sizes(target_folder, target_site="test"):
-    """Ask the VPS for {rel_path: bytes} already on the deploy target."""
+    """Ask the VPS for {rel_path: bytes} already on the deploy target.
+
+    An empty map means "upload everything", so a transient listing failure
+    is retried before that fallback. A genuinely empty target still uploads
+    everything after the retries.
+    """
     base = CONTABO_BASE_URL.rstrip("/")
     url = f"{base}/api/deploy/{PROJECT_NAME}/sizes"
     headers = {}
@@ -59,21 +76,58 @@ def fetch_remote_sizes(target_folder, target_site="test"):
     params = {"target_site": target_site or "test"}
     if target_folder:
         params["target_folder"] = target_folder
-    try:
-        response = requests.get(url, params=params, headers=headers, timeout=60)
-        if response.status_code == 200:
-            files = response.json().get("files") or {}
-            print(f"Remote size map: {len(files)} file(s)")
-            return {str(k).replace("\\", "/"): int(v) for k, v in files.items()}
-        print(f"  ! sizes HTTP {response.status_code}; uploading all files")
-    except Exception as exc:
-        print(f"  ! Could not fetch remote sizes ({exc}); uploading all files")
+    last_note = "Could not fetch remote sizes"
+    for attempt in range(1, 4):
+        try:
+            response = requests.get(url, params=params, headers=headers, timeout=90)
+        except Exception as exc:
+            last_note = f"Could not fetch remote sizes ({exc})"
+            print(f"  ! {last_note} (attempt {attempt}/3)")
+        else:
+            if response.status_code != 200:
+                last_note = f"sizes HTTP {response.status_code}"
+                print(f"  ! {last_note} (attempt {attempt}/3)")
+            else:
+                files = response.json().get("files") or {}
+                sizes = {str(k).replace("\\", "/"): int(v) for k, v in files.items()}
+                if sizes:
+                    print(f"Remote size map: {len(sizes)} file(s)")
+                    return sizes
+                last_note = "sizes map empty"
+                print(f"  ! {last_note} (attempt {attempt}/3)")
+        if attempt < 3:
+            time.sleep(2)
+    print(f"  ! {last_note}; uploading all files")
     return {}
+
+
+# Stable filenames. A Vite hash inside them is a fixed width, so rewriting
+# the entry does not change the byte size. Size equality is not content
+# equality here; assets/utf16-boot.js is the real module entry.
+ALWAYS_UPLOAD_PATHS = frozenset({
+    "index.html",
+    "assets/utf16-boot.js",
+    ".htaccess",
+})
+
+
+def should_skip_upload(rel_posix: str, local_size: int, remote_sizes: dict[str, int]) -> bool:
+    """True when the remote copy can stay because its byte size matches.
+
+    Never size-skips the unhashed entry files in ALWAYS_UPLOAD_PATHS, even
+    when the remote size equals local_size. Every other path (hashed
+    assets, wasm, media) is skipped on a size match.
+    """
+    rel = rel_posix.replace("\\", "/")
+    if rel in ALWAYS_UPLOAD_PATHS:
+        return False
+    return remote_sizes.get(rel) == local_size
 
 
 def build_zip(build_path: Path, skip_sizes=None) -> bytes:
     """Zip the contents of build_path into an in-memory archive."""
     buf = io.BytesIO()
+    sizes = skip_sizes or {}
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for file in sorted(build_path.rglob("*")):
             if file.is_dir():
@@ -85,11 +139,18 @@ def build_zip(build_path: Path, skip_sizes=None) -> bytes:
                 continue
             rel_s = str(rel).replace("\\", "/")
             local_size = file.stat().st_size
-            if (skip_sizes or {}).get(rel_s) == local_size:
-                print(f"  = {rel} ({local_size} bytes, unchanged)")
+            # Size equality is not content equality for the unhashed entry
+            # files. utf16-boot.js is the real module entry: ENTRY_UTF8 /
+            # ENTRY_UTF16 swap a fixed-width Vite hash and the file stays
+            # the same number of bytes.
+            if should_skip_upload(rel_s, local_size, sizes):
+                print(f"  = {rel_s} ({local_size} bytes, unchanged)")
                 continue
             zf.write(file, rel_s)
-            print(f"  + {rel}")
+            if rel_s in ALWAYS_UPLOAD_PATHS:
+                print(f"  ! {rel_s} ({local_size} bytes, always upload)")
+            else:
+                print(f"  + {rel_s}")
     return buf.getvalue()
 
 
@@ -117,11 +178,21 @@ def deploy_bundle(build_path: Path) -> bool:
             return True
 
     print("Uploading bundle...")
+    # The bundle endpoint size-skips each zip entry again. force writes the
+    # entries we packed (always-upload files plus real size changes) and
+    # does not re-send hashed assets left out of the zip. Skip force when
+    # the size map was empty: that zip is the whole dist, and the server's
+    # own size-skip is what keeps a listing failure from rewriting it.
+    form = {"target_folder": target_folder, "target_site": DEPLOY_TARGET}
+    if skip_sizes:
+        form["force"] = "1"
+    else:
+        print("  ! No remote size map; not forcing (server will size-skip).")
     try:
         response = requests.post(
             url,
             files={"bundle": ("build.zip", zip_bytes, "application/zip")},
-            data={"target_folder": target_folder, "target_site": DEPLOY_TARGET},
+            data=form,
             headers=headers,
             timeout=300,
         )
@@ -132,6 +203,8 @@ def deploy_bundle(build_path: Path) -> bool:
     if response.status_code == 200:
         data = response.json()
         print(f"  \u2713 {data.get('uploaded', 0)} files uploaded")
+        if data.get("skipped"):
+            print(f"  server skipped {data.get('skipped')} same-size file(s)")
         if data.get("failed"):
             print("  Failures:")
             for f in data["failed"]:
