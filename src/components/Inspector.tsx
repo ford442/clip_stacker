@@ -109,6 +109,7 @@ function InspectorImpl({
     [],
   );
   const [rifeMultiplier, setRifeMultiplier] = useState<2 | 4>(2);
+  const [rifeOutputFormat, setRifeOutputFormat] = useState<'mp4' | 'prores'>('mp4');
   const [activeKeyframeProp, setActiveKeyframeProp] = useState<ClipAnimatableProp>('x');
   const inspectorRef = useRef<HTMLDivElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -494,6 +495,8 @@ function InspectorImpl({
               setActiveKeyframeProp={setActiveKeyframeProp}
               rifeMultiplier={rifeMultiplier}
               setRifeMultiplier={setRifeMultiplier}
+              rifeOutputFormat={rifeOutputFormat}
+              setRifeOutputFormat={setRifeOutputFormat}
               rifeProcessing={rifeProcessing}
               stabilizeStatus={stabilizeStatus}
               update={update}

@@ -4,7 +4,7 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 
 ## Features
 
-- Upload and keep multiple clips in project state (MP4 video, WAV/MP3 audio)
+- Upload and keep multiple clips in project state (MP4/MOV video, WAV/MP3 audio)
 - Auto-select the newest uploaded clip while retaining older clips
 - Trim each clip with start/end offsets
 - Reorder clips in a timeline editor
@@ -14,7 +14,7 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - **News tickers / lower thirds**: use a scrolling text overlay (`scrolling` + `scrollSpeed`), which matches between preview and FFmpeg `drawtext`. Only bake a designed motion lower third to video (as WebM + alpha, placed as a full-width bottom overlay) when `drawtext` cannot express it
 - **Captions / subtitles**: a time-coded caption track with its own timeline lane. Import `.srt` / `.ass`, edit text and timings in the Inspector's *Captions* tab, drag a chip's edges to retime, press <kbd>C</kbd> to add a cue at the playhead, and export burned-in, as a toggle-able soft subtitle track, or as a sidecar `.srt` — see [Captions and subtitles](#captions-and-subtitles)
 - **Resizable workspace**: drag the splitters between Library, Preview and Inspector, and the divider above the timeline (or focus one and use the arrow keys; double-click resets it). Collapse the side panels, pick S / M / L control density, fill the window or centre it, and **Reset layout** from the header. The layout is remembered per browser
-- Merge timeline into one MP4 via FFmpeg (WebAssembly, fully in-browser)
+- Merge timeline to MP4 or edit-friendly ProRes MOV via FFmpeg WebAssembly; MOV supports ProRes LT, 422 and 422 HQ profiles
 - **Intercut generator**: pick two or three library clips and bake an accelerating strobe or explicit interval-list cut pattern (for example `2, 1, 1, 2, 3, 2`) via local FFmpeg (frame-accurate cuts; sound can follow picture, or every source can stay a steady audio stream for the whole output) — no cloud GPU / RIFE
 - **Intelligent render plan**: Before rendering, see whether the merge will be lossless concat (fast, no quality loss) or re-encoding, with the specific reason
 - Save/load projects locally as JSON with embedded source media
@@ -33,6 +33,11 @@ When you click "Render", the app automatically decides whether to use **lossless
   - Text overlays (captions, tickers, titles)
 
 The app shows you the plan and reason before rendering starts, so you understand why a "simple" merge might take longer or look slightly different.
+
+In Inspector → Export → Output, choose MP4 (default) or ProRes MOV. ProRes files
+are substantially larger. The same section has independent light denoise/deband
+and audio cleanup options (80 Hz high-pass, light noise reduction and loudness
+normalization); both run as a final pass and do not depend on RIFE.
 
 ## Hugging Face RIFE
 
@@ -61,6 +66,7 @@ Without the first two, the button explains what is missing.
 
 - *Extract segment…* cuts `[start, end]` of the clip. Small and local media is cut in the browser (FFmpeg.wasm, stream copy first, exact re-encode if the copy is not the right length). Large Drive files and remote URLs go to a Contabo `extract` job, which downloads straight from Drive; the browser never holds them. A clip over 256 MB is cut on the server only if it is already in the remote library (*Save remote*).
 - *Send to processing* picks where the segment is processed: **Browser FFmpeg**, **HF RIFE Space**, **Colab (manual)** (download the cut, process it, import the result) or **Contabo job** (`extract` or `rife`).
+- The selected video clip's RIFE controls also send its trimmed range directly to the Space; choose MP4 or ProRes MOV before processing.
 - *Replace with result* swaps the processed segment in at the same timeline position as one undo step. A clip is cut into `[before][replaced][after]` for a sub-range; a transition into or out of the clip stays attached.
 
 Every result has to be **exactly as long as the segment** (±0.25 s, trimmed to the exact length on replace), otherwise the cut, import or replace is refused. That keeps later items in place and a later lossless concat possible. For the same reason only RIFE *interpolation* is offered here, not Boomerang. Sub-range replace needs a clip that plays at source speed (no speed change, loop, reverse or speed automation); those clips can be replaced over their whole trimmed range.

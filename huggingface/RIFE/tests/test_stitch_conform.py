@@ -489,7 +489,7 @@ def test_resolve_batch_upload_entry_falls_back_to_basename(app):
 def test_batch_interpolate_videos_chunks_by_gpu_limit(app, monkeypatch):
     calls = []
 
-    def fake_chunk(chunk_paths, multi_factor, output_fps):
+    def fake_chunk(chunk_paths, multi_factor, output_fps, output_format="mp4"):
         calls.append(list(chunk_paths))
         return [f"{p}.out.mp4" for p in chunk_paths]
 
@@ -508,7 +508,7 @@ def test_batch_interpolate_videos_chunks_by_gpu_limit(app, monkeypatch):
 def test_batch_interpolate_videos_uses_size_1_at_60fps(app, monkeypatch):
     calls = []
 
-    def fake_chunk(chunk_paths, multi_factor, output_fps):
+    def fake_chunk(chunk_paths, multi_factor, output_fps, output_format="mp4"):
         calls.append(list(chunk_paths))
         return [f"{p}.out.mp4" for p in chunk_paths]
 
@@ -553,7 +553,7 @@ def test_batch_chunk_duration_is_capped(app, monkeypatch):
 def _fake_chunk_recorder(app, monkeypatch):
     calls = []
 
-    def fake_chunk(chunk_paths, multi_factor, output_fps):
+    def fake_chunk(chunk_paths, multi_factor, output_fps, output_format="mp4"):
         calls.append(list(chunk_paths))
         return [f"{p}.out.mp4" for p in chunk_paths]
 

@@ -1,4 +1,6 @@
 /** Quality settings forwarded to the FFmpeg (or WebCodecs) encode path. */
+export type VideoOutputFormat = 'mp4' | 'prores';
+
 export interface ExportSettings {
   /** H.264 CRF value (0–51; lower = higher quality). Default 18. */
   crf: number;
@@ -6,8 +8,16 @@ export interface ExportSettings {
   preset: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium' | 'slow' | 'slower' | 'veryslow';
   /** Target video bitrate in bits/s for the WebCodecs path (0 = auto from CRF). */
   videoBitrate: number;
-  /** Output filename (without extension; .mp4 is automatically appended). */
+  /** Output filename (without extension; the selected output format supplies it). */
   filename: string;
+  /** Container / video codec for the final rendered file. Omitted = MP4. */
+  outputFormat?: VideoOutputFormat;
+  /** ProRes profile (1 = LT, 2 = 422, 3 = 422 HQ). Omitted = 422 HQ. */
+  proresProfile?: 1 | 2 | 3;
+  /** Apply light hqdn3d + deband cleanup to the final export. */
+  lightVideoCleanup?: boolean;
+  /** Apply high-pass, light denoise and loudness normalization to export audio. */
+  audioCleanup?: boolean;
   /** Output resolution as WIDTHxHEIGHT, or 'original' to preserve the existing auto path. */
   outputResolution: string;
   /** Common output-size preset selected in the export UI. */
@@ -39,6 +49,10 @@ export const DEFAULT_EXPORT_SETTINGS: ExportSettings = {
   preset: 'medium',
   videoBitrate: 8_000_000,
   filename: 'stacked',
+  outputFormat: 'mp4',
+  proresProfile: 3,
+  lightVideoCleanup: false,
+  audioCleanup: false,
   outputResolution: RESOLUTION_PRESETS['1080p'],
   resolutionPreset: '1080p',
   videoCodec: 'h264',

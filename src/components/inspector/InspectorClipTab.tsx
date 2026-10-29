@@ -1,4 +1,10 @@
-import type { Clip, ClipAnimatableProp, ClipAutomation, ClipKeyframes } from '../../types';
+import type {
+  Clip,
+  ClipAnimatableProp,
+  ClipAutomation,
+  ClipKeyframes,
+  VideoOutputFormat,
+} from '../../types';
 import type { CanvasSize } from '../../utils/overlayCoords';
 import type { PipCorner } from '../../utils/pipPreset';
 import { InspectorClipAudioEffectsSection } from './InspectorClipAudioEffectsSection';
@@ -42,6 +48,8 @@ export interface InspectorClipTabProps {
   setActiveKeyframeProp: (prop: ClipAnimatableProp) => void;
   rifeMultiplier: 2 | 4;
   setRifeMultiplier: (value: 2 | 4) => void;
+  rifeOutputFormat: VideoOutputFormat;
+  setRifeOutputFormat: (value: VideoOutputFormat) => void;
   rifeProcessing: boolean;
   stabilizeStatus: string | null;
   update: (field: keyof ClipValues, value: string) => void;
@@ -58,7 +66,11 @@ export interface InspectorClipTabProps {
   onExtractAudio?: () => void;
   onStabilizeChange?: (enabled: boolean) => void;
   onReverseChange?: (enabled: boolean) => void;
-  onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
+  onRife?: (
+    mode: 'interpolation' | 'boomerang',
+    multiplier: 2 | 4,
+    outputFormat?: VideoOutputFormat,
+  ) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onApplyKenBurns?: () => void;
 }
@@ -126,6 +138,8 @@ export function InspectorClipTab(props: InspectorClipTabProps) {
         setActiveKeyframeProp={props.setActiveKeyframeProp}
         rifeMultiplier={props.rifeMultiplier}
         setRifeMultiplier={props.setRifeMultiplier}
+        rifeOutputFormat={props.rifeOutputFormat}
+        setRifeOutputFormat={props.setRifeOutputFormat}
         rifeProcessing={props.rifeProcessing}
         stabilizeStatus={props.stabilizeStatus}
         update={props.update}
