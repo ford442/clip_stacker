@@ -44,6 +44,11 @@ normalization); both run as a final pass and do not depend on RIFE.
 Frame interpolation for the app runs on the Space sourced from
 [`huggingface/RIFE/`](huggingface/RIFE/)
 ([1inkusFace/RIFE](https://huggingface.co/spaces/1inkusFace/RIFE)).
+In Library, open **Batch process clips…**, select one or more videos, then
+choose **HF RIFE interpolation** or **Browser FFmpeg cleanup / conversion**.
+RIFE supports MP4 and ProRes MOV output; optional light denoise/deband and
+audio cleanup can be enabled independently. Processed clips replace their
+library sources and can be downloaded together from the batch panel.
 To run that same v4.26 pipeline on a Colab GPU:
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ford442/clip_stacker/blob/main/huggingface/RIFE/RIFE_Colab.ipynb)
