@@ -1,6 +1,7 @@
 import type { ClipAutomation, ClipKeyframes } from '../../types';
 import type { CaptionsPanelProps } from '../CaptionsPanel';
 import type { ClipAudioEffects } from '../../utils/audioEffects';
+import type { VideoOutputFormat } from '../../types';
 
 export interface ClipValues {
   title: string;
@@ -35,7 +36,11 @@ export interface InspectorProps {
   onAudioEffectsChange?: (clipId: string, effects: ClipAudioEffects | undefined) => void;
   onApplyKenBurns?: () => void;
   onExtractAudio?: () => void;
-  onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
+  onRife?: (
+    mode: 'interpolation' | 'boomerang',
+    multiplier: 2 | 4,
+    outputFormat?: VideoOutputFormat,
+  ) => void;
   /** Toggle camera-shake stabilization for the selected video clip. */
   onStabilizeChange?: (enabled: boolean) => void;
   /** Play the selected clip's trim window backward. */

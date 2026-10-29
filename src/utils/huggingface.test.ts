@@ -306,9 +306,38 @@ describe("processClipWithRIFE", () => {
     });
     expect(body.data[1]).toBe("4");
     expect(body.data[2]).toBe(true);
+    expect(body.data[4]).toBe("mp4");
     for (const c of fetchMock.mock.calls) {
       expect((c[1] as RequestInit | undefined)?.credentials).toBe("omit");
     }
+  });
+
+  it("requests a ProRes MOV from the Space when selected", async () => {
+    const processed = new Blob([
+      new Uint8Array([
+        0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70,
+        0x71, 0x74, 0x20, 0x20, 0, 0, 0, 0,
+      ]),
+      "prores",
+    ], { type: "video/quicktime" });
+    const sse =
+      'event: complete\ndata: [{"url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/r.mov"}]\n\n';
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (url.endsWith("/upload")) return jsonResponse(["/tmp/in.mp4"]);
+      if (url.endsWith("/call/interpolate_video"))
+        return jsonResponse({ event_id: "ev1" });
+      if (url.includes("/call/interpolate_video/ev1")) return sseResponse(sse);
+      return { ok: true, status: 200, blob: async () => processed } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await processClipWithRIFE(makeBlob(), 2, "interpolation", undefined, "prores");
+    expect(result.blob.type).toBe("video/quicktime");
+    const call = fetchMock.mock.calls.find(([u]) =>
+      String(u).endsWith("/call/interpolate_video"),
+    );
+    const body = JSON.parse((call![1] as RequestInit).body as string);
+    expect(body.data[4]).toBe("prores");
   });
 });
 

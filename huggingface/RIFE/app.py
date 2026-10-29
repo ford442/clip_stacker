@@ -135,6 +135,34 @@ def nle_friendly_aac_audio_args():
     return ['-c:a', 'aac', '-b:a', '192k', '-ar', '44100', '-ac', '2']
 
 
+def normalize_output_format(output_format):
+    """Keep unknown / older-client values on the existing MP4 output path."""
+    return "prores" if str(output_format).strip().lower() == "prores" else "mp4"
+
+
+def prores_encoder_args(profile=3):
+    """FFmpeg settings for an edit-friendly ProRes 422 MOV."""
+    try:
+        profile = int(profile)
+    except (TypeError, ValueError):
+        profile = 3
+    if profile not in (1, 2, 3):
+        profile = 3
+    return [
+        '-c:v', 'prores_ks', '-profile:v', str(profile),
+        '-pix_fmt', 'yuv422p10le', '-vendor', 'apl0',
+    ]
+
+
+def convert_to_prores(input_path, output_path, profile=3):
+    subprocess.run([
+        'ffmpeg', '-i', input_path,
+        '-map', '0:v:0', '-map', '0:a?',
+        *prores_encoder_args(profile), '-c:a', 'copy',
+        '-movflags', '+faststart', '-f', 'mov', '-y', output_path,
+    ], check=True, capture_output=True, text=True)
+
+
 def stitch_scale_filter(target_w, target_h):
     """Scale/pad/fps filter chain with explicit yuv420p for concat compatibility."""
     return (
@@ -656,7 +684,7 @@ def create_boomerang_loop(input_path, output_path, fps):
                 pass
 
 def _interpolate_single(input_video_path, multi_factor, create_boomerang=False,
-                         output_fps=30):
+                         output_fps=30, output_format="mp4"):
     """Core single-clip RIFE pass. Must run inside an active @spaces.GPU lease.
 
     Shared by `interpolate_video` (one lease per call) and
@@ -713,6 +741,7 @@ def _interpolate_single(input_video_path, multi_factor, create_boomerang=False,
         except OSError:
             pass
 
+    result_path = final_path
     if create_boomerang:
         fps = get_fps(final_path)
         if create_boomerang_loop(final_path, boomerang_path, fps):
@@ -720,12 +749,21 @@ def _interpolate_single(input_video_path, multi_factor, create_boomerang=False,
                 os.remove(final_path)
             except OSError:
                 pass
-            return boomerang_path
-    return final_path
+            result_path = boomerang_path
+
+    if normalize_output_format(output_format) == "prores":
+        prores_path = os.path.join(WORKSPACE_DIR, f"final_interp_{session_id}.mov")
+        convert_to_prores(result_path, prores_path)
+        try:
+            os.remove(result_path)
+        except OSError:
+            pass
+        return prores_path
+    return result_path
 
 @spaces.GPU(required=True)
 def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
-                       output_fps=30):
+                       output_fps=30, output_format="mp4"):
     """RIFE-interpolate a clip and encode it at `output_fps`.
 
     `output_fps` defaults to 30 (STITCH_FPS) so older clients that call this
@@ -737,7 +775,7 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
     generated frame without resampling.
     """
     return _interpolate_single(input_video_path, multi_factor, create_boomerang,
-                                output_fps)
+                                output_fps, output_format)
 
 # ZeroGPU's documented default budget for an undecorated-duration @spaces.GPU
 # call is 60 seconds — calibrated for one clip. Running BATCH_GPU_CHUNK_SIZE
@@ -751,7 +789,8 @@ def interpolate_video(input_video_path, multi_factor, create_boomerang=False,
 # allowed" rather than silently, so this errs generous).
 BATCH_CHUNK_DURATION_CAP_SECONDS = 290
 
-def _batch_chunk_duration(chunk_paths, multi_factor, output_fps):
+def _batch_chunk_duration(chunk_paths, multi_factor, output_fps,
+                          output_format="mp4"):
     """`duration=` estimator for `_interpolate_batch_chunk` (spaces.GPU calls
     this with the same arguments as the decorated function itself)."""
     try:
@@ -773,14 +812,15 @@ def _batch_chunk_duration(chunk_paths, multi_factor, output_fps):
     return min(total, BATCH_CHUNK_DURATION_CAP_SECONDS)
 
 @spaces.GPU(required=True, duration=_batch_chunk_duration)
-def _interpolate_batch_chunk(chunk_paths, multi_factor, output_fps):
+def _interpolate_batch_chunk(chunk_paths, multi_factor, output_fps,
+                             output_format="mp4"):
     """Interpolate up to BATCH_GPU_CHUNK_SIZE clips inside one GPU lease.
 
     No boomerang — this backs the "3. Batch RIFE" tab only.
     """
     return [
         _interpolate_single(path, multi_factor, create_boomerang=False,
-                             output_fps=output_fps)
+                             output_fps=output_fps, output_format=output_format)
         for path in chunk_paths
     ]
 
@@ -818,10 +858,11 @@ def name_like_source(result_path, orig_name, used_names):
     if not result_path:
         return result_path
     stem = os.path.splitext(os.path.basename(orig_name))[0] or "clip"
-    name = f"{stem}.mp4"
+    extension = os.path.splitext(result_path)[1] or ".mp4"
+    name = f"{stem}{extension}"
     n = 2
     while name in used_names:
-        name = f"{stem}_{n}.mp4"
+        name = f"{stem}_{n}{extension}"
         n += 1
     used_names.add(name)
     dest = os.path.join(WORKSPACE_DIR, name)
@@ -855,7 +896,7 @@ def make_batch_zip(job):
             zf.write(path, arcname=member)
     return zip_path
 
-def start_batch_job(video_files, multi_factor, output_fps):
+def start_batch_job(video_files, multi_factor, output_fps, output_format="mp4"):
     """Build the job state for a batch run (no GPU work happens here).
 
     The job is a plain dict so it can live in a `gr.State` between events:
@@ -870,6 +911,7 @@ def start_batch_job(video_files, multi_factor, output_fps):
         "used_names": [],
         "multi": multi_factor,
         "fps": output_fps,
+        "format": normalize_output_format(output_format),
         "total": len(entries),
     }
 
@@ -910,7 +952,8 @@ def advance_batch_job(job):
     size = batch_chunk_size(job.get("fps"))
     chunk = job["pending"][:size]
     chunk_paths = [path for path, _ in chunk]
-    chunk_results = _interpolate_batch_chunk(chunk_paths, job["multi"], job["fps"])
+    chunk_results = _interpolate_batch_chunk(
+        chunk_paths, job["multi"], job["fps"], job.get("format", "mp4"))
     used_names = set(job["used_names"])
     results = list(job["results"])
     for (_, orig_name), result in zip(chunk, chunk_results):
@@ -932,6 +975,7 @@ def batch_job_status(job):
     return f"⏳ {done}/{total} clips done — interpolating clips {done + 1}-{nxt}…"
 
 def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
+                              output_format="mp4",
                               progress=gr.Progress()):
     """Run RIFE on each uploaded clip, chunked to respect ZeroGPU limits.
 
@@ -952,7 +996,7 @@ def batch_interpolate_videos(video_files, multi_factor, output_fps=30,
     `gr.State` change loop in the UI), and each event arrives with a fresh
     token.
     """
-    job = start_batch_job(video_files, multi_factor, output_fps)
+    job = start_batch_job(video_files, multi_factor, output_fps, output_format)
     count = job["total"]
     while job["pending"]:
         done = len(job["results"])
@@ -1274,6 +1318,10 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                                                   label="RIFE Multiplier")
                     fps_select      = gr.Dropdown(["30", "60", "native"], value="60",
                                                   label="Output FPS")
+                    output_format_select = gr.Dropdown(
+                        ["mp4", "prores"], value="mp4",
+                        label="Output Format",
+                    )
                     boomerang_check = gr.Checkbox(label="Create Boomerang Loop",
                                                   value=False)
                     interp_btn      = gr.Button("▶ Process Video", variant="primary")
@@ -1282,7 +1330,7 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
 
             interp_btn.click(interpolate_video,
                              inputs=[video_input, multi_select, boomerang_check,
-                                     fps_select],
+                                     fps_select, output_format_select],
                              outputs=video_output,
                              api_name="interpolate_video")
 
@@ -1390,6 +1438,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                                       label="RIFE Multiplier")
             batch_fps = gr.Dropdown(["30", "60", "native"], value="60",
                                     label="Output FPS")
+            batch_output_format = gr.Dropdown(
+                ["mp4", "prores"], value="mp4", label="Output Format")
             batch_btn = gr.Button("▶ Process All", variant="primary")
             batch_status = gr.Markdown()
             batch_outputs = gr.File(label="Processed Videos", file_count="multiple")
@@ -1412,10 +1462,12 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             # `orig_name`) for each upload, not the bare sanitized path
             # Gradio's default File preprocessing would collapse it to — see
             # _resolve_batch_upload_entry.
-            def start_batch_ui(video_files, multi_factor, output_fps):
+            def start_batch_ui(video_files, multi_factor, output_fps,
+                               output_format):
                 if not video_files:
                     raise gr.Error("Upload at least one video first.")
-                job = start_batch_job(video_files, multi_factor, output_fps)
+                job = start_batch_job(
+                    video_files, multi_factor, output_fps, output_format)
                 return job, [], None, batch_job_status(job)
 
             def step_batch_ui(job):
@@ -1441,7 +1493,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                 return advanced, advanced["results"], zip_path, batch_job_status(advanced)
 
             batch_btn.click(start_batch_ui,
-                            inputs=[batch_inputs, batch_multi, batch_fps],
+                            inputs=[batch_inputs, batch_multi, batch_fps,
+                                    batch_output_format],
                             outputs=[batch_job, batch_outputs, batch_zip, batch_status],
                             api_name=False,
                             preprocess=False)
@@ -1460,7 +1513,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             # API callers keep the single-request route (all chunks in one
             # call); see batch_interpolate_videos for its token caveat.
             batch_api_btn.click(batch_interpolate_videos,
-                                inputs=[batch_inputs, batch_multi, batch_fps],
+                                inputs=[batch_inputs, batch_multi, batch_fps,
+                                        batch_output_format],
                                 outputs=batch_outputs,
                                 api_name="batch_interpolate",
                                 preprocess=False)

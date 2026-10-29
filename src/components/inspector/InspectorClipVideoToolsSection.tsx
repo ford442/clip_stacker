@@ -1,5 +1,6 @@
 import { type SyntheticEvent } from 'react';
 import type { Clip, ClipAnimatableProp, ClipKeyframes } from '../../types';
+import type { VideoOutputFormat } from '../../types';
 import {
   clipHasKeyframes,
   clipHasPictureTransform,
@@ -39,6 +40,8 @@ interface InspectorClipVideoToolsSectionProps {
   setActiveKeyframeProp: (prop: ClipAnimatableProp) => void;
   rifeMultiplier: 2 | 4;
   setRifeMultiplier: (value: 2 | 4) => void;
+  rifeOutputFormat: VideoOutputFormat;
+  setRifeOutputFormat: (value: VideoOutputFormat) => void;
   rifeProcessing: boolean;
   stabilizeStatus: string | null;
   update: (field: keyof ClipValues, value: string) => void;
@@ -46,7 +49,11 @@ interface InspectorClipVideoToolsSectionProps {
   applyLogoPreset: (corner: PipCorner) => void;
   useAsBaseLayer: () => void;
   onStabilizeChange?: (enabled: boolean) => void;
-  onRife?: (mode: 'interpolation' | 'boomerang', multiplier: 2 | 4) => void;
+  onRife?: (
+    mode: 'interpolation' | 'boomerang',
+    multiplier: 2 | 4,
+    outputFormat?: VideoOutputFormat,
+  ) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onApplyKenBurns?: () => void;
 }
@@ -67,6 +74,8 @@ export function InspectorClipVideoToolsSection({
   setActiveKeyframeProp,
   rifeMultiplier,
   setRifeMultiplier,
+  rifeOutputFormat,
+  setRifeOutputFormat,
   rifeProcessing,
   stabilizeStatus,
   update,
@@ -127,21 +136,33 @@ export function InspectorClipVideoToolsSection({
                 <option value={4}>4×</option>
               </select>
             </label>
+            <label style={{ margin: 0 }}>
+              Output
+              <select
+                value={rifeOutputFormat}
+                onChange={(e) => setRifeOutputFormat(e.target.value as VideoOutputFormat)}
+                style={{ marginLeft: '0.4rem' }}
+                disabled={rifeProcessing}
+              >
+                <option value="mp4">MP4</option>
+                <option value="prores">ProRes MOV</option>
+              </select>
+            </label>
           </div>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => onRife('interpolation', rifeMultiplier)}
+              onClick={() => onRife('interpolation', rifeMultiplier, rifeOutputFormat)}
               disabled={rifeProcessing}
               title={`Apply RIFE ${rifeMultiplier}× frame interpolation to this clip (per-clip, before merging)`}
             >
-              {rifeProcessing ? '⏳ Processing…' : `✨ Smoother (${rifeMultiplier}×)`}
+              {rifeProcessing ? '⏳ Processing…' : `✨ Send to RIFE (${rifeMultiplier}×)`}
             </button>
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => onRife('boomerang', rifeMultiplier)}
+              onClick={() => onRife('boomerang', rifeMultiplier, rifeOutputFormat)}
               disabled={rifeProcessing}
               title="Apply Boomerang (loop forward+reverse) with RIFE frame interpolation"
             >

@@ -230,7 +230,14 @@ export function useRenderActions(deps: RenderActionsDeps) {
         },
       );
 
-      const url = URL.createObjectURL(captionedBlob);
+      const { finalizeRenderedVideo } = ffmpegService;
+      const renderedBlob = await finalizeRenderedVideo(
+        captionedBlob,
+        exportSettings,
+        trackFfmpegLoading,
+        handleProgress,
+      );
+      const url = URL.createObjectURL(renderedBlob);
       setOutputUrl(url);
       setEncoderPath(result.path);
 
@@ -240,7 +247,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
       }
 
       const pathLabel = formatEncoderPathLabel(result.path);
-      setStatus(`Render complete via ${pathLabel}. Download your merged MP4.`);
+      const outputLabel = exportSettings.outputFormat === 'prores' ? 'ProRes MOV' : 'MP4';
+      setStatus(`Render complete via ${pathLabel}. Download your merged ${outputLabel}.`);
       setProgressStage(`Render complete via ${pathLabel}`);
       setProgressValue(1);
       setProgressIndeterminate(false);

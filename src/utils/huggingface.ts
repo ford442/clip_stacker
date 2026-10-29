@@ -8,6 +8,7 @@
  */
 
 export type RifeMode = "interpolation" | "boomerang";
+export type RifeOutputFormat = "mp4" | "prores";
 
 export interface RifeProgressEvent {
   stage: "uploading" | "processing" | "downloading";
@@ -57,6 +58,7 @@ export async function processClipWithRIFE(
   multiplier: 2 | 4 = 2,
   mode: RifeMode = "interpolation",
   onProgress?: (event: RifeProgressEvent) => void,
+  outputFormat: RifeOutputFormat = "mp4",
 ): Promise<RifeResult> {
   onProgress?.({
     stage: "uploading",
@@ -70,7 +72,7 @@ export async function processClipWithRIFE(
     message: "Uploading clip to RIFE…",
   });
   const path = await uploadClipForRife(videoBlob);
-  return interpolateUploadedClip(path, multiplier, mode, onProgress);
+  return interpolateUploadedClip(path, multiplier, mode, onProgress, outputFormat);
 }
 
 /**
@@ -95,6 +97,7 @@ export async function processClipsWithRIFE(
   multiplier: 2 | 4 = 2,
   mode: RifeMode = "interpolation",
   onProgress?: (event: RifeBatchProgressEvent) => void,
+  outputFormat: RifeOutputFormat = "mp4",
 ): Promise<RifeResult[]> {
   if (videoBlobs.length === 0) return [];
 
@@ -120,7 +123,7 @@ export async function processClipsWithRIFE(
         : undefined;
       const path = await uploads[i];
       results.push(
-        await interpolateUploadedClip(path, multiplier, mode, forClip),
+        await interpolateUploadedClip(path, multiplier, mode, forClip, outputFormat),
       );
     }
   } finally {
@@ -152,6 +155,7 @@ async function interpolateUploadedClip(
   multiplier: 2 | 4,
   mode: RifeMode,
   onProgress?: (event: RifeProgressEvent) => void,
+  outputFormat: RifeOutputFormat = "mp4",
 ): Promise<RifeResult> {
   const isBoomerang = mode === "boomerang";
 
@@ -165,7 +169,7 @@ async function interpolateUploadedClip(
 
     // The space's interpolate_video endpoint accepts:
     //   [video (VideoData), multiplier ("2"/"4"/"8"), boomerang (bool),
-    //    output fps ("30"/"60"/"native")]
+    //    output fps ("30"/"60"/"native"), output format ("mp4"/"prores")]
     // Its input is a gr.Video, whose data model is VideoData
     // `{ video: FileData, subtitles }` — not a bare FileData like the gr.File
     // inputs of /stitch and /morph. Gradio validates that shape before the
@@ -176,6 +180,7 @@ async function interpolateUploadedClip(
       String(multiplier),
       isBoomerang,
       RIFE_OUTPUT_FPS,
+      outputFormat,
     ]);
     output = extractGradioOutputValue(data);
   } catch (err: unknown) {
@@ -598,17 +603,17 @@ function resolveSpaceFileUrl(output: unknown): string | undefined {
   return undefined;
 }
 
-function isMp4Container(bytes: Uint8Array): boolean {
+function isIsoBmffContainer(bytes: Uint8Array): boolean {
   return (
     bytes.length >= 12 &&
     String.fromCharCode(...bytes.slice(4, 8)) === "ftyp"
   );
 }
 
-/** Guard that a downloaded blob is a real MP4 before handing it to FFmpeg. */
-async function assertValidMp4Blob(blob: Blob, label: string): Promise<Blob> {
+/** Guard that a downloaded MP4 or MOV is a real ISO Base Media File. */
+async function assertValidVideoBlob(blob: Blob, label: string): Promise<Blob> {
   const header = new Uint8Array(await blob.slice(0, 12).arrayBuffer());
-  if (isMp4Container(header)) return blob;
+  if (isIsoBmffContainer(header)) return blob;
 
   if (!blob.type.startsWith("video/")) {
     const preview = new TextDecoder()
@@ -622,7 +627,7 @@ async function assertValidMp4Blob(blob: Blob, label: string): Promise<Blob> {
   }
 
   throw new Error(
-    `Unexpected ${label} video output format (missing MP4 ftyp box; got ${blob.type || "unknown type"}).`,
+    `Unexpected ${label} video output format (missing ISO BMFF ftyp box; got ${blob.type || "unknown type"}).`,
   );
 }
 
@@ -654,7 +659,7 @@ async function fetchSpaceFileWithRetry(url: string, label: string): Promise<Resp
  */
 async function downloadSpaceFile(output: unknown, label: string): Promise<Blob> {
   if (output instanceof Blob) {
-    return assertValidMp4Blob(output, label);
+    return assertValidVideoBlob(output, label);
   }
 
   const url = resolveSpaceFileUrl(output);
@@ -672,5 +677,5 @@ async function downloadSpaceFile(output: unknown, label: string): Promise<Blob> 
 
   const response = await fetchSpaceFileWithRetry(url, label);
   const blob = await response.blob();
-  return assertValidMp4Blob(blob, label);
+  return assertValidVideoBlob(blob, label);
 }

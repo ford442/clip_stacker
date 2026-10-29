@@ -114,6 +114,18 @@ def test_is_still_image_recognises_common_extensions(app, tmp_path):
     assert app.is_still_image(video) is False
 
 
+def test_prores_output_format_and_encoder_args(app):
+    assert app.normalize_output_format("prores") == "prores"
+    assert app.normalize_output_format("unknown") == "mp4"
+    assert app.prores_encoder_args(1) == [
+        "-c:v", "prores_ks", "-profile:v", "1",
+        "-pix_fmt", "yuv422p10le", "-vendor", "apl0",
+    ]
+    assert app.prores_encoder_args(2)[3] == "2"
+    assert app.prores_encoder_args(3)[3] == "3"
+    assert app.prores_encoder_args(9)[3] == "3"
+
+
 def test_still_image_does_not_conform(app, tmp_path):
     path = make_still_image(tmp_path / "still.png")
     assert app.clip_already_conforms(path, "1920", "1080") is False

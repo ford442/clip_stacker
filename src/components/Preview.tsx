@@ -78,19 +78,25 @@ function PreviewImpl({
   const onSelectTextOverlay = uiActions.setSelectedTextOverlayId;
 
   if (outputUrl) {
-    const downloadFilename = exportFilename
-      ? sanitizeFilename(exportFilename)
-      : 'stacked.mp4';
+    const extension = exportSettings.outputFormat === 'prores' ? 'mov' : 'mp4';
+    const downloadFilename = sanitizeFilename(exportFilename || 'stacked')
+      .replace(/\.mp4$/i, `.${extension}`);
     return (
       <section id="preview-panel" className="panel preview-panel">
         <h2>Preview</h2>
-        <video
-          controls
-          src={outputUrl}
-          aria-label="Rendered output video preview. Press space to play/pause."
-        />
+        {extension === 'mp4' ? (
+          <video
+            controls
+            src={outputUrl}
+            aria-label="Rendered output video preview. Press space to play/pause."
+          />
+        ) : (
+          <p className="inspector-hint">
+            ProRes MOV is ready to download. Browser playback may not support this codec.
+          </p>
+        )}
         <a href={outputUrl} download={downloadFilename}>
-          Download merged MP4
+          Download merged {extension.toUpperCase()}
         </a>
       </section>
     );

@@ -5,6 +5,7 @@ import type {
   ClipAutomation,
   ExportSettings,
   OverlayBlendMode,
+  VideoOutputFormat,
 } from "../types";
 import { sanitizeClipAdjustments, ContaboStorageManagerClient } from "../utils/project";
 import { getClipDuration } from "../utils/clipTiming";
@@ -320,7 +321,11 @@ export function useInspectorActions({
   );
 
   const handleRife = useCallback(
-    async (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => {
+    async (
+      mode: "interpolation" | "boomerang",
+      multiplier: 2 | 4,
+      outputFormat: VideoOutputFormat = "mp4",
+    ) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
       const { rifeProcessingClipId, setRifeProcessingClipId, setStatus } = settingsStore.getState();
       if (rifeProcessingClipId) return; // Already processing
@@ -355,18 +360,21 @@ export function useInspectorActions({
           (event) => {
             setStatus(event.message ?? `RIFE: ${event.stage}…`);
           },
+          outputFormat,
         );
         const blobWithAudio = await muxProcessedVideoWithSourceAudio(
           blob,
           clipSnapshot,
           setStatus,
+          outputFormat,
         );
 
         const modeLabel = mode === "boomerang" ? "boomerang" : `${multiplier}x`;
         const baseName = clipSnapshot.file.name.replace(/\.[^.]+$/, "");
+        const extension = outputFormat === "prores" ? "mov" : "mp4";
         const processedFile = new File(
           [blobWithAudio],
-          `rife_${modeLabel}_${baseName}.mp4`,
+          `rife_${modeLabel}_${baseName}.${extension}`,
           { type: blobWithAudio.type },
         );
         const processedUrl = URL.createObjectURL(processedFile);

@@ -6,6 +6,7 @@ import type {
   ClipTransition,
   TextOverlay,
   RenderPlan,
+  VideoOutputFormat,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/clipTiming";
@@ -71,6 +72,7 @@ export async function muxProcessedVideoWithSourceAudio(
   videoBlob: Blob,
   clip: Clip,
   onStatus: StatusCallback,
+  outputFormat: VideoOutputFormat = "mp4",
 ): Promise<Blob> {
   clearFfmpegLogs();
 
@@ -81,11 +83,16 @@ export async function muxProcessedVideoWithSourceAudio(
   }
 
   const ffmpeg = await ensureFfmpeg(onStatus);
-  const videoExt = videoBlob.type.includes("webm") ? "webm" : "mp4";
+  const videoExt = outputFormat === "prores"
+    ? "mov"
+    : videoBlob.type.includes("webm")
+      ? "webm"
+      : "mp4";
   const videoInputName = `processed-video.${videoExt}`;
   const sourceExt = getSafeExtension(clip.file.name, "mp4");
   const sourceInputName = `source-audio.${sourceExt}`;
-  const outputName = "processed-with-audio.mp4";
+  const isProRes = outputFormat === "prores";
+  const outputName = isProRes ? "processed-with-audio.mov" : "processed-with-audio.mp4";
   const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
 
   for (const name of [videoInputName, sourceInputName, outputName]) {
@@ -131,6 +138,7 @@ export async function muxProcessedVideoWithSourceAudio(
           "+faststart",
           "-t",
           String(duration),
+          ...(isProRes ? ["-f", "mov"] : []),
           outputName,
         ],
         null,
@@ -167,6 +175,7 @@ export async function muxProcessedVideoWithSourceAudio(
           "192k",
           "-movflags",
           "+faststart",
+          ...(isProRes ? ["-f", "mov"] : []),
           outputName,
         ],
         null,
@@ -186,7 +195,9 @@ export async function muxProcessedVideoWithSourceAudio(
         ? "Source audio restored."
         : "Silent audio track added.",
     );
-    return new Blob([plain], { type: "video/mp4" });
+    return new Blob([plain], {
+      type: isProRes ? "video/quicktime" : "video/mp4",
+    });
   } finally {
     try {
       await ffmpeg.deleteFile(videoInputName);

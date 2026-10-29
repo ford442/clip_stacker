@@ -38,7 +38,7 @@ export function InspectorExportTab({
   return (
     <div className="inspector-fields">
       <InspectorSection id="export.output" title="Output">
-        <label title="Output filename (without .mp4 extension)">
+        <label title="Output filename (without the file extension)">
           Filename
           <input
             type="text"
@@ -50,6 +50,78 @@ export function InspectorExportTab({
         <p className="inspector-hint">
           {sanitizeFilename(exportSettings.filename)}
         </p>
+
+        <label>
+          Format
+          <select
+            value={exportSettings.outputFormat ?? 'mp4'}
+            onChange={(e) =>
+              onExportSettingsChange({
+                ...exportSettings,
+                outputFormat: e.target.value as NonNullable<ExportSettings['outputFormat']>,
+              })
+            }
+          >
+            <option value="mp4">MP4 (H.264)</option>
+            <option value="prores">ProRes MOV</option>
+          </select>
+        </label>
+        {exportSettings.outputFormat === 'prores' && (
+          <>
+            <label>
+              ProRes profile
+              <select
+                value={exportSettings.proresProfile ?? 3}
+                onChange={(e) =>
+                  onExportSettingsChange({
+                    ...exportSettings,
+                    proresProfile: Number(e.target.value) as 1 | 2 | 3,
+                  })
+                }
+              >
+                <option value={3}>422 HQ</option>
+                <option value={2}>422</option>
+                <option value={1}>LT</option>
+              </select>
+            </label>
+            <p className="inspector-hint">
+              ProRes MOV files are substantially larger than MP4.
+            </p>
+          </>
+        )}
+        <label className="inspector-checkbox-label">
+          <input
+            type="checkbox"
+            checked={exportSettings.lightVideoCleanup ?? false}
+            onChange={(e) =>
+              onExportSettingsChange({
+                ...exportSettings,
+                lightVideoCleanup: e.target.checked,
+              })
+            }
+          />
+          Light denoise + deband
+        </label>
+        <label className="inspector-checkbox-label">
+          <input
+            type="checkbox"
+            checked={exportSettings.audioCleanup ?? false}
+            onChange={(e) =>
+              onExportSettingsChange({
+                ...exportSettings,
+                audioCleanup: e.target.checked,
+              })
+            }
+          />
+          Audio cleanup
+        </label>
+        {(exportSettings.lightVideoCleanup || exportSettings.audioCleanup) && (
+          <p className="inspector-hint">
+            Cleanup is applied after rendering and works independently of RIFE.
+            Audio cleanup uses an 80 Hz high-pass, light noise reduction and
+            loudness normalization.
+          </p>
+        )}
 
         <label title="Choose the render canvas size. Original preserves the existing auto/lossless path when possible.">
           Resolution
