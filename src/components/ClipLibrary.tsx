@@ -318,6 +318,11 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut, onBatc
                 </select>
               </label>
               {batchBackend === 'hf-rife' && (
+                <p className="muted">
+                  Selected clips are uploaded to the public Hugging Face RIFE Space.
+                </p>
+              )}
+              {batchBackend === 'hf-rife' && (
                 <label>
                   RIFE multiplier
                   <select
