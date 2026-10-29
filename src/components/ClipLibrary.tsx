@@ -15,6 +15,7 @@ import { ProxyBadge, ProxyPlaybackToggle } from './ProxyBadge';
 import { settingsStore } from '../store/settingsStore';
 import { useStore } from 'zustand';
 import type { IntercutGeneratorConfig } from '../ffmpeg/intercutGenerator';
+import type { BatchProcessingOptions } from '../utils/batchClipProcessing';
 
 interface ClipLibraryActions {
   onToggleVariant: (groupId: string, variant: 'A' | 'B') => void;
@@ -191,20 +192,41 @@ const IntercutModal = lazyNamed(() => import('./IntercutModal'), 'IntercutModal'
 
 interface Props extends ClipLibraryActions {
   onGenerateIntercut: (config: IntercutGeneratorConfig) => Promise<boolean>;
+  onBatchProcess: (clipIds: string[], options: BatchProcessingOptions) => Promise<boolean>;
 }
 
-function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Props) {
+function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut, onBatchProcess }: Props) {
   const clips = useEditorClips();
   const clipGroups = useEditorClipGroups();
   const [intercutOpen, setIntercutOpen] = useState(false);
   // The modal (and the intercut planner/FFmpeg code behind it) loads on first
   // open, then stays mounted so its form keeps its values between openings.
   const [intercutMounted, setIntercutMounted] = useState(false);
+  const [batchOpen, setBatchOpen] = useState(false);
+  const [batchClipIds, setBatchClipIds] = useState<string[]>([]);
+  const [batchBackend, setBatchBackend] = useState<BatchProcessingOptions['backend']>('hf-rife');
+  const [batchMultiplier, setBatchMultiplier] = useState<2 | 4>(2);
+  const [batchOutputFormat, setBatchOutputFormat] = useState<'mp4' | 'prores'>('mp4');
+  const [lightVideoCleanup, setLightVideoCleanup] = useState(false);
+  const [audioCleanup, setAudioCleanup] = useState(false);
+  const [completedBatchIds, setCompletedBatchIds] = useState<string[]>([]);
   const intercutProcessing = useStore(settingsStore, (s) => s.intercutProcessing);
+  const processing = useStore(
+    settingsStore,
+    (s) => s.rifeProcessingClipId !== null || s.isRendering || s.intercutProcessing,
+  );
 
   const ungroupedClipIds = clips.filter((c) => !c.groupId).map((c) => c.id);
   const activeGroups = clipGroups.filter((g) => g.variants.A || g.variants.B);
-  const videoCount = clips.filter((c) => c.kind === 'video').length;
+  const videoClips = clips.filter((c) => c.kind === 'video');
+  const videoCount = videoClips.length;
+  const selectedBatchClips = videoClips.filter((clip) => batchClipIds.includes(clip.id));
+  const canRunBatch = selectedBatchClips.length > 0 &&
+    (batchBackend !== 'browser-ffmpeg' ||
+      lightVideoCleanup ||
+      audioCleanup ||
+      batchOutputFormat === 'prores');
+  const completedBatchClips = videoClips.filter((clip) => completedBatchIds.includes(clip.id));
 
   return (
     <section className="panel library-panel">
@@ -224,6 +246,170 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut }: Prop
       )}
       <AutoCutPanel />
       <ProxyPlaybackToggle />
+      {videoCount > 0 && (
+        <div className="clip-batch">
+          <button
+            type="button"
+            className="btn-secondary"
+            aria-expanded={batchOpen}
+            onClick={() => setBatchOpen((open) => !open)}
+            disabled={processing}
+          >
+            {batchOpen ? 'Close batch processing' : 'Batch process clips…'}
+          </button>
+          {batchOpen && (
+            <div className="clip-batch-panel">
+              <p className="muted">Select video clips, then process them together.</p>
+              <div className="clip-batch-selection-actions">
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={processing}
+                  onClick={() => {
+                    setBatchClipIds(videoClips.map((clip) => clip.id));
+                    setCompletedBatchIds([]);
+                  }}
+                >
+                  Select all videos
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={processing || batchClipIds.length === 0}
+                  onClick={() => {
+                    setBatchClipIds([]);
+                    setCompletedBatchIds([]);
+                  }}
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="clip-batch-list" role="group" aria-label="Select clips for batch processing">
+                {videoClips.map((clip) => (
+                  <label key={clip.id} className="inspector-checkbox-label">
+                    <input
+                      type="checkbox"
+                      checked={batchClipIds.includes(clip.id)}
+                      disabled={processing}
+                      onChange={(event) => {
+                        setBatchClipIds((ids) =>
+                          event.target.checked
+                            ? [...ids, clip.id]
+                            : ids.filter((id) => id !== clip.id),
+                        );
+                        setCompletedBatchIds([]);
+                      }}
+                    />
+                    {clip.title}
+                  </label>
+                ))}
+              </div>
+              <label>
+                Processing
+                <select
+                  value={batchBackend}
+                  disabled={processing}
+                  onChange={(event) =>
+                    setBatchBackend(event.target.value as BatchProcessingOptions['backend'])
+                  }
+                >
+                  <option value="hf-rife">HF RIFE interpolation</option>
+                  <option value="browser-ffmpeg">Browser FFmpeg cleanup / conversion</option>
+                </select>
+              </label>
+              {batchBackend === 'hf-rife' && (
+                <label>
+                  RIFE multiplier
+                  <select
+                    value={batchMultiplier}
+                    disabled={processing}
+                    onChange={(event) => setBatchMultiplier(Number(event.target.value) as 2 | 4)}
+                  >
+                    <option value={2}>2×</option>
+                    <option value={4}>4×</option>
+                  </select>
+                </label>
+              )}
+              <label>
+                Output format
+                <select
+                  value={batchOutputFormat}
+                  disabled={processing}
+                  onChange={(event) => setBatchOutputFormat(event.target.value as 'mp4' | 'prores')}
+                >
+                  <option value="mp4">MP4</option>
+                  <option value="prores">ProRes MOV</option>
+                </select>
+              </label>
+              <label className="inspector-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={lightVideoCleanup}
+                  disabled={processing}
+                  onChange={(event) => setLightVideoCleanup(event.target.checked)}
+                />
+                Light denoise + deband
+              </label>
+              <label className="inspector-checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={audioCleanup}
+                  disabled={processing}
+                  onChange={(event) => setAudioCleanup(event.target.checked)}
+                />
+                Audio cleanup
+              </label>
+              <p className="muted">
+                Cleanup options run independently of RIFE. ProRes MOV files are substantially larger.
+                {batchBackend === 'browser-ffmpeg' &&
+                  ' Select cleanup or ProRes output to enable FFmpeg processing.'}
+              </p>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={processing || !canRunBatch}
+                onClick={async () => {
+                  setCompletedBatchIds([]);
+                  const options: BatchProcessingOptions = {
+                    backend: batchBackend,
+                    multiplier: batchMultiplier,
+                    outputFormat: batchOutputFormat,
+                    lightVideoCleanup,
+                    audioCleanup,
+                  };
+                  if (await onBatchProcess(selectedBatchClips.map((clip) => clip.id), options)) {
+                    setCompletedBatchIds(selectedBatchClips.map((clip) => clip.id));
+                  }
+                }}
+              >
+                {processing
+                  ? '⏳ Processing batch…'
+                  : batchBackend === 'hf-rife'
+                    ? `✨ Send ${selectedBatchClips.length} to RIFE`
+                    : `Process ${selectedBatchClips.length} with FFmpeg`}
+              </button>
+              {completedBatchClips.length > 0 && (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => {
+                    for (const clip of completedBatchClips) {
+                      const link = document.createElement('a');
+                      link.href = clip.objectUrl;
+                      link.download = clip.file.name;
+                      document.body.appendChild(link);
+                      link.click();
+                      link.remove();
+                    }
+                  }}
+                >
+                  Download batch results ({completedBatchClips.length})
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {clips.length === 0 && activeGroups.length === 0 && (
         <p className="muted">No clips yet. Add clips above, or try “Load demo clips”.</p>
       )}

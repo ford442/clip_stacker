@@ -14,6 +14,7 @@ import { useClipActions } from "./hooks/useClipActions";
 import { useIntercutActions } from "./hooks/useIntercutActions";
 import { useRenderActions } from "./hooks/useRenderActions";
 import { useInspectorActions } from "./hooks/useInspectorActions";
+import { useBatchClipProcessing } from "./hooks/useBatchClipProcessing";
 import { useTimelineActions } from "./hooks/useTimelineActions";
 import { useTransitionActions } from "./hooks/useTransitionActions";
 import {
@@ -166,6 +167,11 @@ export function App() {
     pushHistory,
     pushHistoryDebounced,
   });
+  const batchProcessingActions = useBatchClipProcessing({
+    clips,
+    setClips,
+    pushHistory,
+  });
 
   const timelineActions = useTimelineActions({
     clips,
@@ -297,6 +303,7 @@ export function App() {
       onToggleVariant={clipActions.handleToggleVariant}
       onDeleteClip={timelineActions.handleDeleteClip}
       onGenerateIntercut={handleGenerateIntercut}
+      onBatchProcess={batchProcessingActions.handleBatchProcess}
       onClipLayoutCommit={handleClipLayoutCommit}
       onTextOverlayLayoutCommit={handleTextOverlayLayoutCommit}
       onPreviewDragStart={textOverlayActions.handlePreviewDragStart}

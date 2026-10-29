@@ -10,6 +10,7 @@ import type { PendingRemoteUploadError } from "../hooks/useProjectSaveLoad";
 import type { AutoSaveOffer } from "../utils/autoSave";
 import type { MediaLibraryItem, RemoteUploadProgressEvent } from "../utils/project";
 import type { IntercutGeneratorConfig } from "../ffmpeg/intercutGenerator";
+import type { BatchProcessingOptions } from "../utils/batchClipProcessing";
 import { Toolbar } from "./Toolbar";
 import { StorageRow } from "./StorageRow";
 import { MediaLibraryPanel } from "./MediaLibraryPanel";
@@ -79,6 +80,7 @@ export type AppShellProps = {
   onToggleVariant: (groupId: string, variant: "A" | "B") => void;
   onDeleteClip: (clipId: string) => void;
   onGenerateIntercut: (config: IntercutGeneratorConfig) => Promise<boolean>;
+  onBatchProcess: (clipIds: string[], options: BatchProcessingOptions) => Promise<boolean>;
   onClipLayoutCommit: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
   onTextOverlayLayoutCommit: (
     overlayId: string,
@@ -152,6 +154,7 @@ export function AppShell(props: AppShellProps) {
     onToggleVariant,
     onDeleteClip,
     onGenerateIntercut,
+    onBatchProcess,
     onClipLayoutCommit,
     onTextOverlayLayoutCommit,
     onPreviewDragStart,
@@ -263,6 +266,7 @@ export function AppShell(props: AppShellProps) {
             onToggleVariant={onToggleVariant}
             onDelete={onDeleteClip}
             onGenerateIntercut={onGenerateIntercut}
+            onBatchProcess={onBatchProcess}
           />
         </div>
         <PanelSplitter side="library" gridRef={gridRef} />
