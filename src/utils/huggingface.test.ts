@@ -313,13 +313,16 @@ describe("processClipWithRIFE", () => {
   });
 
   it("requests a ProRes MOV from the Space when selected", async () => {
-    const processed = new Blob([
-      new Uint8Array([
-        0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70,
-        0x71, 0x74, 0x20, 0x20, 0, 0, 0, 0,
-      ]),
-      "prores",
-    ], { type: "video/quicktime" });
+    const processed = new Blob(
+      [
+        new Uint8Array([
+          0, 0, 0, 20, 0x66, 0x74, 0x79, 0x70,
+          0x71, 0x74, 0x20, 0x20, 0, 0, 0, 0,
+        ]),
+        "prores",
+      ],
+      { type: "video/quicktime" },
+    );
     const sse =
       'event: complete\ndata: [{"url":"https://1inkusface-rife.hf.space/gradio_api/file=/tmp/r.mov"}]\n\n';
     const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {

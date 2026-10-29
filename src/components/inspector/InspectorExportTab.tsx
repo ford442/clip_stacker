@@ -33,6 +33,7 @@ export function InspectorExportTab({
   updateResolutionPreset,
 }: InspectorExportTabProps) {
   const limiter = normalizeMasterLimiter(exportSettings.masterLimiter);
+  const filenameExtension = exportSettings.outputFormat === 'prores' ? 'mov' : 'mp4';
   const updateLimiter = (patch: Partial<MasterLimiterSettings>) =>
     onExportSettingsChange({ ...exportSettings, masterLimiter: { ...limiter, ...patch } });
   return (
@@ -48,7 +49,7 @@ export function InspectorExportTab({
           />
         </label>
         <p className="inspector-hint">
-          {sanitizeFilename(exportSettings.filename)}
+          {sanitizeFilename(exportSettings.filename).replace(/\.mp4$/i, `.${filenameExtension}`)}
         </p>
 
         <label>

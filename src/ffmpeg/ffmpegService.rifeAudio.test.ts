@@ -167,4 +167,28 @@ describe("muxProcessedVideoWithSourceAudio", () => {
       'Clip "Clip 1" has no audio — muxing silent track (stream copy)…',
     );
   });
+
+  it("keeps ProRes video when restoring audio into a MOV", async () => {
+    const blob = new Blob([new Uint8Array([1, 2, 3])], { type: "video/quicktime" });
+    const onStatus = vi.fn();
+
+    const result = await muxProcessedVideoWithSourceAudio(
+      blob,
+      makeClip(),
+      onStatus,
+      "prores",
+    );
+
+    const instance = mocked.instances[mocked.instances.length - 1]!;
+    expect(instance.exec).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "-c:v",
+        "copy",
+        "-f",
+        "mov",
+        "processed-with-audio.mov",
+      ]),
+    );
+    expect(result.type).toBe("video/quicktime");
+  });
 });

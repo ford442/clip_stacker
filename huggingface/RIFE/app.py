@@ -135,6 +135,18 @@ def nle_friendly_aac_audio_args():
     return ['-c:a', 'aac', '-b:a', '192k', '-ar', '44100', '-ac', '2']
 
 
+def nle_friendly_prores_video_args(fps=STITCH_FPS):
+    fps_val = float(fps)
+    fps_str = str(int(fps_val)) if fps_val.is_integer() else str(fps_val)
+    return [
+        *prores_encoder_args(3),
+        '-vsync', 'cfr', '-r', fps_str,
+        '-colorspace', 'bt709', '-color_primaries', 'bt709',
+        '-color_trc', 'bt709', '-color_range', 'tv',
+        '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
+    ]
+
+
 def normalize_output_format(output_format):
     """Keep unknown / older-client values on the existing MP4 output path."""
     return "prores" if str(output_format).strip().lower() == "prores" else "mp4"
@@ -163,14 +175,15 @@ def convert_to_prores(input_path, output_path, profile=3):
     ], check=True, capture_output=True, text=True)
 
 
-def stitch_scale_filter(target_w, target_h):
-    """Scale/pad/fps filter chain with explicit yuv420p for concat compatibility."""
+def stitch_scale_filter(target_w, target_h, output_format="mp4"):
+    """Scale/pad/fps filter chain with a pixel format compatible with concat."""
+    pixel_format = "yuv422p10le" if normalize_output_format(output_format) == "prores" else "yuv420p"
     return (
         f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
         f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,"
         # PNG/JPEG density metadata can yield a non-square sample aspect that
         # editors honour, stretching the still against its neighbours.
-        f"setsar=1,fps={STITCH_FPS},format=yuv420p,"
+        f"setsar=1,fps={STITCH_FPS},format={pixel_format},"
         f"setparams=range=tv:colorspace=bt709:color_primaries=bt709:color_trc=bt709"
     )
 
@@ -557,35 +570,50 @@ def still_image_duration(path):
 
 
 def normalize_still_image_for_stitch(
-    image_path, out_path, target_w, target_h, duration=None,
+    image_path, out_path, target_w, target_h, duration=None, output_format="mp4",
 ):
-    """Turn a still image into an h264+aac clip at STITCH_FPS for concat."""
+    """Turn a still image into an NLE-friendly audio/video clip for concat."""
     hold = duration if duration is not None else still_image_duration(image_path)
     hold = max(0.1, float(hold))
+    video_args = (
+        nle_friendly_prores_video_args()
+        if normalize_output_format(output_format) == "prores"
+        else nle_friendly_h264_video_args()
+    )
     subprocess.run([
         'ffmpeg', '-loop', '1', '-t', str(hold), '-i', image_path,
         '-f', 'lavfi', '-i',
         f'anullsrc=channel_layout=stereo:sample_rate=44100:d={hold}',
-        '-vf', stitch_scale_filter(target_w, target_h),
+        '-vf', stitch_scale_filter(target_w, target_h, output_format),
         '-map', '0:v:0', '-map', '1:a:0',
-        *nle_friendly_h264_video_args(),
+        *video_args,
         *nle_friendly_aac_audio_args(),
         '-movflags', '+faststart',
         '-t', str(hold),
+        *(["-f", "mov"] if normalize_output_format(output_format) == "prores" else []),
         '-y', out_path,
     ], check=True, capture_output=True, text=True)
 
 
-def normalize_video_for_stitch(vid_path, out_path, target_w, target_h):
+def normalize_video_for_stitch(vid_path, out_path, target_w, target_h,
+                               output_format="mp4"):
     """Re-encode a video clip to the stitch target (scale/pad/fps + AAC audio)."""
-    scale = stitch_scale_filter(target_w, target_h)
+    prores_output = normalize_output_format(output_format) == "prores"
+    scale = stitch_scale_filter(target_w, target_h, output_format)
+    video_args = (
+        nle_friendly_prores_video_args()
+        if prores_output
+        else nle_friendly_h264_video_args()
+    )
+    output_args = ["-f", "mov"] if prores_output else []
     has_audio = probe_audio_codec(vid_path) != ''
     if has_audio:
         subprocess.run([
             'ffmpeg', '-i', vid_path, '-vf', scale,
-            *nle_friendly_h264_video_args(),
+            *video_args,
             *nle_friendly_aac_audio_args(),
             '-movflags', '+faststart',
+            *output_args,
             '-y', out_path,
         ], check=True, capture_output=True, text=True)
     else:
@@ -596,10 +624,11 @@ def normalize_video_for_stitch(vid_path, out_path, target_w, target_h):
             f'anullsrc=channel_layout=stereo:sample_rate=44100:d={duration}',
             '-vf', scale,
             '-map', '0:v:0', '-map', '1:a:0',
-            *nle_friendly_h264_video_args(),
+            *video_args,
             *nle_friendly_aac_audio_args(),
             '-movflags', '+faststart',
             '-t', str(duration),
+            *output_args,
             '-y', out_path,
         ], check=True, capture_output=True, text=True)
 
@@ -1069,9 +1098,25 @@ def morph_transition(frame_pair_video, frame_count, output_fps=30):
 
     return morph_out
 
-def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="Keep original audio", overlay_vol=1.0, progress=gr.Progress()):
+def build_stitch_concat_args(list_path, output_path, output_format="mp4"):
+    args = [
+        'ffmpeg', '-fflags', '+genpts', '-f', 'concat', '-safe', '0',
+        '-i', list_path, '-c', 'copy',
+        '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
+        '-muxpreload', '0', '-muxdelay', '0', '-movflags', '+faststart',
+    ]
+    if normalize_output_format(output_format) == "prores":
+        args += ['-f', 'mov']
+    return [*args, '-y', output_path]
+
+
+def stitch_videos(video_files, resolution_choice, audio_file=None,
+                  audio_mode="Keep original audio", overlay_vol=1.0,
+                  progress=gr.Progress(), output_format="mp4"):
     if not video_files:
         return None
+    output_format = normalize_output_format(output_format)
+    prores_output = output_format == "prores"
     try:
         target_w, target_h = resolution_choice.split("x")
     except:
@@ -1079,8 +1124,9 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
     
     session_id = uuid.uuid4().hex
     list_path = os.path.join(WORKSPACE_DIR, f"stitch_list_{session_id}.txt")
-    concat_video = os.path.join(WORKSPACE_DIR, f"concat_{session_id}.mp4")
-    output_final = os.path.join(WORKSPACE_DIR, f"final_stitched_{session_id}.mp4")
+    extension = "mov" if prores_output else "mp4"
+    concat_video = os.path.join(WORKSPACE_DIR, f"concat_{session_id}.{extension}")
+    output_final = os.path.join(WORKSPACE_DIR, f"final_stitched_{session_id}.{extension}")
     temp_dir = os.path.join(WORKSPACE_DIR, f"temp_stitch_{session_id}")
     os.makedirs(temp_dir, exist_ok=True)
 
@@ -1095,8 +1141,8 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
     copied = 0
     for i, vid_path in enumerate(video_files):
         progress((i / max(clip_count, 1)) * 0.85, desc=f"Normalizing clip {i + 1}/{clip_count}")
-        out = os.path.join(temp_dir, f"norm_{i}.mp4")
-        if clip_already_conforms(vid_path, target_w, target_h):
+        out = os.path.join(temp_dir, f"norm_{i}.{extension}")
+        if not prores_output and clip_already_conforms(vid_path, target_w, target_h):
             # Remux rather than re-encode: same bitstream, fresh container with
             # the faststart flag the concat step expects.
             subprocess.run([
@@ -1108,9 +1154,11 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
             ], check=True)
             copied += 1
         elif is_still_image(vid_path) or probe_video_stream(vid_path) is None:
-            normalize_still_image_for_stitch(vid_path, out, target_w, target_h)
+            normalize_still_image_for_stitch(
+                vid_path, out, target_w, target_h, output_format=output_format)
         else:
-            normalize_video_for_stitch(vid_path, out, target_w, target_h)
+            normalize_video_for_stitch(
+                vid_path, out, target_w, target_h, output_format=output_format)
         normalized.append(out)
     print(f"Stitch: {copied}/{clip_count} clips stream-copied, "
           f"{clip_count - copied} re-encoded")
@@ -1123,18 +1171,12 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
     progress(0.9, desc="Concatenating normalized clips")
 
     # ── Step 2: Concatenate videos (lossless) ───────────────────────
-    subprocess.run([
-        # +genpts regenerates presentation timestamps across the joins rather
-        # than trusting each segment's own; stale ones read as gaps in an
-        # editor. muxdelay/muxpreload 0 keeps the result starting at zero.
-        'ffmpeg', '-fflags', '+genpts', '-f', 'concat', '-safe', '0',
-        '-i', list_path,
-        '-c', 'copy',
-        '-video_track_timescale', str(VIDEO_TRACK_TIMESCALE),
-        '-muxpreload', '0', '-muxdelay', '0',
-        '-movflags', '+faststart',
-        '-y', concat_video
-    ], check=True)
+    # +genpts regenerates presentation timestamps across the joins; ProRes
+    # chunks share a profile and are concatenated without another encode.
+    subprocess.run(
+        build_stitch_concat_args(list_path, concat_video, output_format),
+        check=True,
+    )
 
     progress(0.95, desc="Finalizing stitched output")
 
@@ -1143,7 +1185,7 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
     if audio_mode == "Replace with uploaded audio" and audio_file and os.path.exists(audio_file):
         # Replace audio + force full video duration (this fixes the cut-off)
         duration = get_duration(concat_video)
-        staged = os.path.join(WORKSPACE_DIR, f"staged_{session_id}.mp4")
+        staged = os.path.join(WORKSPACE_DIR, f"staged_{session_id}.{extension}")
         cmd = [
             'ffmpeg', '-i', concat_video, '-i', audio_file,
             '-filter_complex', '[1:a]apad[a]',
@@ -1164,7 +1206,7 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
         # Mix mode (already correct)
         vol = float(overlay_vol)
         filter_complex = f"[1:a]volume={vol}[a1];[0:a][a1]amix=inputs=2:duration=first:dropout_transition=3[a]"
-        staged = os.path.join(WORKSPACE_DIR, f"staged_{session_id}.mp4")
+        staged = os.path.join(WORKSPACE_DIR, f"staged_{session_id}.{extension}")
         cmd = [
             'ffmpeg', '-i', concat_video, '-i', audio_file,
             '-filter_complex', filter_complex,
@@ -1176,7 +1218,10 @@ def stitch_videos(video_files, resolution_choice, audio_file=None, audio_mode="K
         ]
         subprocess.run(cmd, check=True)
 
-    finalize_nle_mp4(staged, output_final)
+    if prores_output:
+        os.replace(staged, output_final)
+    else:
+        finalize_nle_mp4(staged, output_final)
 
     # Cleanup
     shutil.rmtree(temp_dir, ignore_errors=True)
@@ -1319,7 +1364,7 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                     fps_select      = gr.Dropdown(["30", "60", "native"], value="60",
                                                   label="Output FPS")
                     output_format_select = gr.Dropdown(
-                        ["mp4", "prores"], value="mp4",
+                        [("MP4", "mp4"), ("ProRes MOV", "prores")], value="mp4",
                         label="Output Format",
                     )
                     boomerang_check = gr.Checkbox(label="Create Boomerang Loop",
@@ -1380,6 +1425,10 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
                     choices=["1920x1080","1280x1280","1024x1024"],
                     value="1920x1080", label="Output Resolution", scale=2
                 )
+                stitch_output_format = gr.Dropdown(
+                    choices=[("MP4", "mp4"), ("ProRes MOV", "prores")],
+                    value="mp4", label="Output Format", scale=2
+                )
                 stitch_btn = gr.Button("🎬 Stitch in Shown Order",
                                        variant="primary", scale=3)
 
@@ -1439,7 +1488,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
             batch_fps = gr.Dropdown(["30", "60", "native"], value="60",
                                     label="Output FPS")
             batch_output_format = gr.Dropdown(
-                ["mp4", "prores"], value="mp4", label="Output Format")
+                [("MP4", "mp4"), ("ProRes MOV", "prores")],
+                value="mp4", label="Output Format")
             batch_btn = gr.Button("▶ Process All", variant="primary")
             batch_status = gr.Markdown()
             batch_outputs = gr.File(label="Processed Videos", file_count="multiple")
@@ -1577,7 +1627,8 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
 
     stitch_btn.click(
         fn=stitch_videos,
-        inputs=[paths_state, res_sel, audio_input, audio_mode, audio_volume],
+        inputs=[paths_state, res_sel, audio_input, audio_mode, audio_volume,
+                stitch_output_format],
         outputs=stitch_out
     )
 
@@ -1594,10 +1645,12 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
     api_audio = gr.Audio(type="filepath", sources=["upload"], visible=False)
     api_mode = gr.Textbox(value="Keep original audio", visible=False)
     api_vol = gr.Number(value=1.0, visible=False)
+    api_format = gr.Textbox(value="mp4", visible=False)
     api_out = gr.Video(visible=False)
     api_btn = gr.Button("stitch_api", visible=False)
 
-    def stitch_api(files, resolution_choice, audio_file, audio_mode, overlay_vol):
+    def stitch_api(files, resolution_choice, audio_file, audio_mode, overlay_vol,
+                   output_format="mp4"):
         """Normalize every uploaded clip to one resolution, then concat + mux.
 
         `files` is a list of uploaded video file objects (gr.File multiple). We
@@ -1609,11 +1662,12 @@ with gr.Blocks(title="RIFE + Boomerang + Smart Stitch") as demo:
         paths = [f.name if hasattr(f, "name") else str(f) for f in files]
         return stitch_videos(
             paths, resolution_choice, audio_file, audio_mode, overlay_vol,
+            output_format=output_format,
         )
 
     api_btn.click(
         fn=stitch_api,
-        inputs=[api_files, api_res, api_audio, api_mode, api_vol],
+        inputs=[api_files, api_res, api_audio, api_mode, api_vol, api_format],
         outputs=api_out,
         api_name="stitch",
     )

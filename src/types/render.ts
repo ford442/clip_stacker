@@ -8,7 +8,7 @@ export interface ExportSettings {
   preset: 'ultrafast' | 'superfast' | 'veryfast' | 'faster' | 'fast' | 'medium' | 'slow' | 'slower' | 'veryslow';
   /** Target video bitrate in bits/s for the WebCodecs path (0 = auto from CRF). */
   videoBitrate: number;
-  /** Output filename (without extension; .mp4 is automatically appended). */
+  /** Output filename (without extension; the selected output format supplies it). */
   filename: string;
   /** Container / video codec for the final rendered file. Omitted = MP4. */
   outputFormat?: VideoOutputFormat;

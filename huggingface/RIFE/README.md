@@ -59,14 +59,14 @@ need to change the Space, change it here.
 
 These `api_name` routes are the client's contract. Changing existing
 positional arguments breaks `src/utils/huggingface.ts`. New trailing
-optionals (output fps, folder path) are backward compatible.
+optionals (output fps, output format, folder path) are backward compatible.
 
 | `api_name` | Inputs | Output |
 |---|---|---|
-| `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool), output fps (`"30"`/`"60"`/`"native"`, default `"30"`) | MP4 |
-| `stitch` | videos or still images, resolution, audio, audio mode, overlay volume | MP4 |
+| `interpolate_video` | video, multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool), output fps (`"30"`/`"60"`/`"native"`, default `"30"`), output format (`"mp4"`/`"prores"`, default `"mp4"`) | MP4 or ProRes MOV |
+| `stitch` | videos or still images, resolution, audio, audio mode, overlay volume, output format (`"mp4"`/`"prores"`, default `"mp4"`) | MP4 or ProRes MOV |
 | `morph` | 2-frame video, frame count, output fps | MP4 |
-| `batch_interpolate` | videos (optional), multiplier, output fps (`"30"`/`"60"`/`"native"`), folder path (optional) | MP4 files (one per input, in order — no stitching, no boomerang) |
+| `batch_interpolate` | videos (optional), multiplier, output fps (`"30"`/`"60"`/`"native"`), output format (`"mp4"`/`"prores"`, default `"mp4"`) | MP4 or ProRes MOV files (one per input, in order — no stitching, no boomerang) |
 | `batch_interpolate_folder` | folder path on the Space, multiplier, output fps | MP4 files |
 
 `output_fps` values:
@@ -82,10 +82,14 @@ optionals (output fps, folder path) are backward compatible.
 For a large folder of mp4s, do **not** upload the whole directory through the Gradio File widget — that still ships every byte before work starts. Copy or mount the folder onto the Space (`workspace_temp/`, `/data/`, or `$RIFE_BATCH_ROOT`) and pass the path. A local script can also loop `interpolate_video` itself, one clip per request.
 | `api_name`          | Inputs                                                  | Output |
 |---------------------|---------------------------------------------------------|--------|
-| `interpolate_video` | video (`gr.Video` → send VideoData `{video: FileData, subtitles: null}`, not a bare FileData), multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool), output fps (`"30"`/`"60"`/`"native"`, default `"30"` for old callers) | MP4    |
-| `stitch`            | videos or still images, resolution, audio, audio mode, overlay volume | MP4    |
+| `interpolate_video` | video (`gr.Video` → send VideoData `{video: FileData, subtitles: null}`, not a bare FileData), multiplier (`"2"`/`"4"`/`"8"`), boomerang (bool), output fps (`"30"`/`"60"`/`"native"`, default `"30"` for old callers), output format (`"mp4"`/`"prores"`, default `"mp4"`) | MP4 or ProRes MOV |
+| `stitch`            | videos or still images, resolution, audio, audio mode, overlay volume, output format (`"mp4"`/`"prores"`, default `"mp4"`) | MP4 or ProRes MOV |
 | `morph`             | 2-frame video, frame count, output fps                    | MP4    |
-| `batch_interpolate` | videos (multiple), multiplier (`"2"`/`"4"`/`"8"`), output fps (`"30"`/`"60"`/`"native"`, default `"30"`) | MP4 files (one per input, in order — no stitching, no boomerang) |
+| `batch_interpolate` | videos (multiple), multiplier (`"2"`/`"4"`/`"8"`), output fps (`"30"`/`"60"`/`"native"`, default `"30"`), output format (`"mp4"`/`"prores"`, default `"mp4"`) | MP4 or ProRes MOV files (one per input, in order — no stitching, no boomerang) |
+
+ProRes outputs use `prores_ks` profile 3 (422 HQ), `yuv422p10le`, vendor
+`apl0`; MP4 remains the default. In batch mode each clip stays a separate
+result, and each processed clip is converted to the selected format.
 
 `interpolate_video`/`batch_interpolate` always generate `source_fps × multiplier`
 frames via RIFE; `output_fps` only controls how those frames are resampled on
@@ -95,6 +99,11 @@ Space's old behaviour (most generated frames dropped back to 30); `"native"`
 skips resampling and tags the clip at however many frames RIFE produced. The
 `src/utils/huggingface.ts` client requests `"60"`. `stitch`'s concat path
 stays fixed at 30fps (`STITCH_FPS`) regardless.
+
+The stitch tab can return ProRes MOV as well as MP4. In ProRes mode, every
+normalized chunk is encoded as profile 3 (422 HQ), `yuv422p10le`, vendor
+`apl0`, then the chunks are joined with `-c copy`; optional audio replacement
+or mixing copies the ProRes video stream. The H.264 MP4 finalizer is skipped.
 
 The "3. Batch RIFE" tab's "▶ Process All" button runs **one GPU chunk per
 Gradio event**. ZeroGPU authorizes every `@spaces.GPU` call with the proxy
