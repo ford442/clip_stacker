@@ -1,39 +1,36 @@
 import type { DriveMediaItem } from '../types';
+import {
+  buildDriveAuthUrl,
+  DRIVE_AUTH_CHANNEL,
+  DRIVE_AUTH_TIMEOUT_MS,
+  DRIVE_FILE_SCOPE,
+  GAPI_SCRIPT_URL,
+  GIS_SCRIPT_URL,
+  parseDriveAuthMessage,
+  type DriveAuthMode,
+  type PickerDoc,
+} from './driveAuth';
 
 /**
- * Google Drive file picking: Google Identity Services (OAuth token) + the
- * Drive Picker. Only *references* come back — {@link DriveMediaItem} — the
- * media bytes are never fetched here.
+ * Google Drive file picking. Only *references* come back — {@link DriveMediaItem}
+ * — the media bytes are never fetched here.
  *
  * Scope is `drive.file`: the app can read only the files the user picks in the
  * Picker, which is also why the Contabo worker can download them with the same
  * token. Configure with `VITE_GOOGLE_CLIENT_ID`, `VITE_GOOGLE_API_KEY` and
  * (recommended, required for `drive.file` grants) `VITE_GOOGLE_APP_ID` — the
  * Cloud project number.
+ *
+ * The token client and the Picker both run in `drive-auth.html`. This page is
+ * cross-origin isolated, so it cannot host the Picker iframe or receive
+ * `window.opener` messages. The sign-in window reports back on a
+ * BroadcastChannel. A closed popup is not a failure; see `driveAuth.ts`.
  */
 
-export const GIS_SCRIPT_URL = 'https://accounts.google.com/gsi/client';
-export const GAPI_SCRIPT_URL = 'https://apis.google.com/js/api.js';
-export const DRIVE_FILE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+export { DRIVE_FILE_SCOPE, GAPI_SCRIPT_URL, GIS_SCRIPT_URL };
 
 /** Token lifetime is ~1h; renew a minute early so a job never starts with one about to lapse. */
 const TOKEN_EXPIRY_MARGIN_MS = 60_000;
-
-export const PICKER_MIME_TYPES = [
-  'video/mp4',
-  'video/quicktime',
-  'video/webm',
-  'video/x-matroska',
-  'video/mpeg',
-  'audio/mpeg',
-  'audio/wav',
-  'audio/x-wav',
-  'audio/mp4',
-  'audio/x-m4a',
-  'audio/aac',
-  'audio/ogg',
-  'audio/flac',
-];
 
 export interface GoogleDriveConfig {
   clientId: string;
@@ -53,76 +50,6 @@ export function readGoogleDriveConfig(
   const appId = env.VITE_GOOGLE_APP_ID?.trim();
   return { clientId, apiKey, ...(appId ? { appId } : {}) };
 }
-
-// ---------------------------------------------------------------------------
-// Minimal typings for the pieces of the Google globals this module touches.
-// ---------------------------------------------------------------------------
-interface TokenResponse {
-  access_token?: string;
-  expires_in?: number | string;
-  error?: string;
-  error_description?: string;
-}
-
-interface TokenClient {
-  requestAccessToken(overrides?: { prompt?: string }): void;
-}
-
-interface PickerDocument {
-  id?: string;
-  name?: string;
-  mimeType?: string;
-  sizeBytes?: number | string;
-}
-
-interface PickerResponse {
-  action?: string;
-  docs?: PickerDocument[];
-}
-
-interface PickerBuilderApi {
-  addView(view: unknown): PickerBuilderApi;
-  enableFeature(feature: unknown): PickerBuilderApi;
-  setOAuthToken(token: string): PickerBuilderApi;
-  setDeveloperKey(key: string): PickerBuilderApi;
-  setAppId(appId: string): PickerBuilderApi;
-  setTitle(title: string): PickerBuilderApi;
-  setCallback(callback: (data: PickerResponse) => void): PickerBuilderApi;
-  build(): { setVisible(visible: boolean): void };
-}
-
-interface DocsViewApi {
-  setIncludeFolders(include: boolean): DocsViewApi;
-  setMimeTypes(types: string): DocsViewApi;
-  setSelectFolderEnabled(enabled: boolean): DocsViewApi;
-}
-
-interface GoogleGlobals {
-  accounts?: {
-    oauth2?: {
-      initTokenClient(config: {
-        client_id: string;
-        scope: string;
-        callback: (response: TokenResponse) => void;
-        error_callback?: (error: { type?: string; message?: string }) => void;
-      }): TokenClient;
-    };
-  };
-  picker?: {
-    PickerBuilder: new () => PickerBuilderApi;
-    DocsView: new (viewId?: unknown) => DocsViewApi;
-    ViewId: { DOCS: unknown };
-    Feature: { MULTISELECT_ENABLED: unknown };
-    Action: { PICKED: string; CANCEL: string };
-  };
-}
-
-interface GoogleWindow {
-  google?: GoogleGlobals;
-  gapi?: { load(api: string, options: { callback: () => void; onerror?: () => void }): void };
-}
-
-const win = () => window as unknown as GoogleWindow;
 
 const scriptLoads = new Map<string, Promise<void>>();
 
@@ -148,10 +75,26 @@ export function loadScriptOnce(src: string): Promise<void> {
 
 // ---------------------------------------------------------------------------
 // Access token — memory only. It is a bearer credential for the user's Drive
-// files, so it is not written to storage; after a reload the next action asks
-// Google again (usually silent once consent was given).
+// files, so it is not written to storage; after a reload the next action opens
+// the sign-in window again. Google skips the account chooser when consent
+// is still on file.
 // ---------------------------------------------------------------------------
 let cachedToken: { value: string; expiresAt: number } | null = null;
+let stopPending: (() => void) | null = null;
+let gate: Promise<void> = Promise.resolve();
+let tokenInflight: Promise<string> | null = null;
+let pickInflight: Promise<DriveMediaItem[]> | null = null;
+
+function exclusive<T>(run: () => Promise<T>): Promise<T> {
+  const result = gate.then(run, run);
+  gate = result.then(() => undefined, () => undefined);
+  return result;
+}
+
+function rememberToken(token: string, expiresIn: number): void {
+  const seconds = expiresIn > 0 ? expiresIn : 3600;
+  cachedToken = { value: token, expiresAt: Date.now() + seconds * 1000 };
+}
 
 export function getCachedDriveToken(now = Date.now()): string | null {
   return cachedToken && cachedToken.expiresAt - TOKEN_EXPIRY_MARGIN_MS > now ? cachedToken.value : null;
@@ -161,43 +104,105 @@ export function clearDriveToken(): void {
   cachedToken = null;
 }
 
-async function requestAccessToken(config: GoogleDriveConfig): Promise<string> {
-  await loadScriptOnce(GIS_SCRIPT_URL);
-  const oauth2 = win().google?.accounts?.oauth2;
-  if (!oauth2) throw new Error('Google sign-in did not load.');
-  return new Promise<string>((resolve, reject) => {
-    const client = oauth2.initTokenClient({
-      client_id: config.clientId,
-      scope: DRIVE_FILE_SCOPE,
-      callback: (response) => {
-        if (response.error || !response.access_token) {
-          reject(new Error(response.error_description || response.error || 'Google did not return an access token.'));
-          return;
-        }
-        const seconds = Number(response.expires_in) || 3600;
-        cachedToken = { value: response.access_token, expiresAt: Date.now() + seconds * 1000 };
-        resolve(response.access_token);
-      },
-      error_callback: (error) => {
-        reject(
-          new Error(
-            error.type === 'popup_closed'
-              ? 'Google sign-in was closed before it finished.'
-              : `Google sign-in failed${error.message ? `: ${error.message}` : '.'}`,
-          ),
-        );
-      },
-    });
-    client.requestAccessToken();
+function openDriveWindow(config: GoogleDriveConfig, mode: 'token'): Promise<string>;
+function openDriveWindow(config: GoogleDriveConfig, mode: 'pick'): Promise<DriveMediaItem[]>;
+function openDriveWindow(config: GoogleDriveConfig, mode: DriveAuthMode): Promise<string | DriveMediaItem[]> {
+  if (typeof BroadcastChannel === 'undefined') {
+    return Promise.reject(new Error('Google sign-in needs BroadcastChannel in this browser.'));
+  }
+
+  const state = globalThis.crypto.randomUUID();
+  const channel = new BroadcastChannel(DRIVE_AUTH_CHANNEL);
+  let settled = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutMessage = mode === 'pick' ? 'Drive picker timed out' : 'Google sign-in timed out';
+
+  const promise = new Promise<string | DriveMediaItem[]>((resolve, reject) => {
+    const finish = (err: Error | null, value?: string | DriveMediaItem[]) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      channel.onmessage = null;
+      channel.close();
+      stopPending = null;
+      if (err) reject(err);
+      else resolve(value ?? (mode === 'pick' ? [] : ''));
+    };
+
+    stopPending = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      channel.onmessage = null;
+      channel.close();
+    };
+
+    // Callback and picker results are the only success paths. Do not watch
+    // popup.closed: COOP makes the handle null, and a real popup also closes
+    // the moment the result is on its way.
+    channel.onmessage = (event: MessageEvent) => {
+      const message = parseDriveAuthMessage(event.data, state);
+      if (!message) return;
+      if (message.type === 'ready') {
+        const accessToken = mode === 'pick' ? getCachedDriveToken() : null;
+        channel.postMessage({
+          state,
+          type: 'config',
+          clientId: config.clientId,
+          apiKey: config.apiKey,
+          ...(config.appId ? { appId: config.appId } : {}),
+          ...(accessToken ? { accessToken } : {}),
+        });
+        return;
+      }
+      if (message.type === 'error') {
+        finish(new Error(message.message));
+        return;
+      }
+      if (message.type === 'token') {
+        rememberToken(message.accessToken, message.expiresIn);
+        if (mode === 'token') finish(null, message.accessToken);
+        return;
+      }
+      if (mode === 'pick' && message.type === 'picked') {
+        finish(null, message.docs.flatMap((doc: PickerDoc) => driveItemFromPickerDoc(doc) ?? []));
+        return;
+      }
+      if (mode === 'pick' && message.type === 'cancel') finish(null, []);
+    };
+
+    timer = setTimeout(() => finish(new Error(timeoutMessage)), DRIVE_AUTH_TIMEOUT_MS);
+
+    try {
+      window.open(
+        buildDriveAuthUrl(document.baseURI, state, mode),
+        'clip-stacker-drive-auth',
+        'popup,width=960,height=700',
+      );
+    } catch (error) {
+      finish(error instanceof Error ? error : new Error(String(error)));
+    }
   });
+
+  return promise;
 }
 
-/** A valid Drive token: the cached one, or a fresh one (needs a user gesture if consent is due). */
-export async function getDriveAccessToken(config = readGoogleDriveConfig()): Promise<string> {
+/** A valid Drive token: the cached one, or a fresh one from the sign-in window. */
+export function getDriveAccessToken(config = readGoogleDriveConfig()): Promise<string> {
   const cached = getCachedDriveToken();
-  if (cached) return cached;
-  if (!config) throw new Error(DRIVE_NOT_CONFIGURED_MESSAGE);
-  return requestAccessToken(config);
+  if (cached) return Promise.resolve(cached);
+  if (!config) return Promise.reject(new Error(DRIVE_NOT_CONFIGURED_MESSAGE));
+  if (tokenInflight) return tokenInflight;
+  const pending = exclusive(async () => {
+    const again = getCachedDriveToken();
+    if (again) return again;
+    return openDriveWindow(config, 'token');
+  });
+  const wrapped = pending.finally(() => {
+    if (tokenInflight === wrapped) tokenInflight = null;
+  });
+  tokenInflight = wrapped;
+  return wrapped;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,7 +210,7 @@ export async function getDriveAccessToken(config = readGoogleDriveConfig()): Pro
 // ---------------------------------------------------------------------------
 
 /** Library reference for a picked file, or null when it is not audio/video. */
-export function driveItemFromPickerDoc(doc: PickerDocument): DriveMediaItem | null {
+export function driveItemFromPickerDoc(doc: PickerDoc): DriveMediaItem | null {
   const mimeType = doc.mimeType ?? '';
   if (!doc.id || !doc.name || !/^(video|audio)\//.test(mimeType)) return null;
   const size = Number(doc.sizeBytes);
@@ -219,56 +224,31 @@ export function driveItemFromPickerDoc(doc: PickerDocument): DriveMediaItem | nu
   };
 }
 
-async function loadPicker(): Promise<NonNullable<GoogleGlobals['picker']>> {
-  await loadScriptOnce(GAPI_SCRIPT_URL);
-  const gapi = win().gapi;
-  if (!gapi) throw new Error('Google API client did not load.');
-  await new Promise<void>((resolve, reject) => {
-    gapi.load('picker', { callback: resolve, onerror: () => reject(new Error('Google Picker failed to load.')) });
-  });
-  const picker = win().google?.picker;
-  if (!picker) throw new Error('Google Picker failed to load.');
-  return picker;
-}
-
 /**
- * Open the Drive Picker and resolve with references to the audio/video files
- * the user chose (empty when they cancel or pick nothing playable).
+ * Open the Drive Picker in the sign-in window and resolve with references to
+ * the audio/video files the user chose (empty when they cancel or pick
+ * nothing playable). The editor never embeds the Picker.
  */
-export async function pickDriveFiles(
+export function pickDriveFiles(
   config: GoogleDriveConfig | null = readGoogleDriveConfig(),
 ): Promise<DriveMediaItem[]> {
-  if (!config) throw new Error(DRIVE_NOT_CONFIGURED_MESSAGE);
-  const token = await getDriveAccessToken(config);
-  const picker = await loadPicker();
-
-  return new Promise<DriveMediaItem[]>((resolve) => {
-    const view = new picker.DocsView(picker.ViewId.DOCS)
-      .setIncludeFolders(true)
-      .setSelectFolderEnabled(false)
-      .setMimeTypes(PICKER_MIME_TYPES.join(','));
-    let builder = new picker.PickerBuilder()
-      .addView(view)
-      .enableFeature(picker.Feature.MULTISELECT_ENABLED)
-      .setTitle('Import from Google Drive')
-      .setOAuthToken(token)
-      .setDeveloperKey(config.apiKey);
-    if (config.appId) builder = builder.setAppId(config.appId);
-    builder
-      .setCallback((data) => {
-        if (data.action === picker.Action.PICKED) {
-          resolve((data.docs ?? []).flatMap((doc) => driveItemFromPickerDoc(doc) ?? []));
-        } else if (data.action === picker.Action.CANCEL) {
-          resolve([]);
-        }
-      })
-      .build()
-      .setVisible(true);
+  if (!config) return Promise.reject(new Error(DRIVE_NOT_CONFIGURED_MESSAGE));
+  if (pickInflight) return pickInflight;
+  const pending = exclusive(() => openDriveWindow(config, 'pick'));
+  const wrapped = pending.finally(() => {
+    if (pickInflight === wrapped) pickInflight = null;
   });
+  pickInflight = wrapped;
+  return wrapped;
 }
 
-/** Test seam: forget loaded scripts and the cached token. */
+/** Test seam: forget loaded scripts, the cached token, and an in-flight sign-in. */
 export function __resetGoogleDriveForTests(): void {
   scriptLoads.clear();
   cachedToken = null;
+  stopPending?.();
+  stopPending = null;
+  tokenInflight = null;
+  pickInflight = null;
+  gate = Promise.resolve();
 }

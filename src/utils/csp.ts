@@ -9,9 +9,9 @@ import type { Plugin } from 'vite';
  * connect-src and media-src use https: because storage endpoints and remote
  * media URLs are user-configurable (Contabo/S3 signed URLs, etc.).
  *
- * Google Drive import (utils/googleDrive.ts) needs exactly: the Identity
- * Services script + stylesheet, the Google API loader (Picker), and frames
- * for the sign-in popup helper and the Picker itself. Nothing broader.
+ * Google Drive import needs exactly: the Identity Services script + stylesheet
+ * and the Picker script/frames, all on drive-auth.html (the editor does not
+ * embed them). Nothing broader.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'self'",

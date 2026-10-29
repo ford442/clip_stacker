@@ -10,6 +10,7 @@ import {
   DEV_CONTENT_SECURITY_POLICY,
   cspMetaPlugin,
 } from './src/utils/csp.js';
+import { APP_COOP, DRIVE_AUTH_COOP, isDriveAuthDocument } from './src/utils/driveAuth.js';
 
 /**
  * Serve .1ijs (UTF-16LE dual-encoded JS) with an explicit charset so browsers
@@ -96,18 +97,59 @@ function cssCharsetPlugin(): Plugin {
 }
 
 // COOP/COEP make the page cross-origin isolated: SharedArrayBuffer and the
-// multi-threaded FFmpeg core depend on them.
+// multi-threaded FFmpeg core depend on them. drive-auth.html drops both so
+// the Google sign-in popup and the Drive Picker iframe can load.
 const CROSS_ORIGIN_ISOLATION_HEADERS = {
-  'Cross-Origin-Opener-Policy': 'same-origin',
+  'Cross-Origin-Opener-Policy': APP_COOP,
   'Cross-Origin-Embedder-Policy': 'require-corp',
 };
 
+/** The sign-in document must not inherit the app's isolating COOP or COEP. */
+function driveAuthCoopMiddleware(): Connect.NextHandleFunction {
+  return (req, res, next) => {
+    if (isDriveAuthDocument(req.url)) {
+      const setHeader = res.setHeader.bind(res);
+      res.setHeader = ((name: string, value: number | string | readonly string[]) => {
+        const header = name.toLowerCase();
+        if (header === 'cross-origin-opener-policy') return setHeader(name, DRIVE_AUTH_COOP);
+        if (header === 'cross-origin-embedder-policy') {
+          res.removeHeader(name);
+          return res;
+        }
+        return setHeader(name, value);
+      }) as typeof res.setHeader;
+    }
+    next();
+  };
+}
+
 export default defineConfig({
   base: './',
-  plugins: [react(), utf16JsMimePlugin(), wasmDebugPlugin(), cspMetaPlugin(), cssCharsetPlugin()],
+  plugins: [
+    {
+      name: 'clip-stacker-drive-auth-coop',
+      configureServer(server) {
+        server.middlewares.use(driveAuthCoopMiddleware());
+      },
+      configurePreviewServer(server) {
+        server.middlewares.use(driveAuthCoopMiddleware());
+      },
+    },
+    react(),
+    utf16JsMimePlugin(),
+    wasmDebugPlugin(),
+    cspMetaPlugin(),
+    cssCharsetPlugin(),
+  ],
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL('./index.html', import.meta.url)),
+        driveAuth: fileURLToPath(new URL('./drive-auth.html', import.meta.url)),
+      },
+    },
   },
   server: {
     host: 'localhost',

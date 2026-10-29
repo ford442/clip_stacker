@@ -55,7 +55,7 @@ To run that same v4.26 pipeline on a Colab GPU:
 
 ## Google Drive import and segment extract / replace
 
-**Import from Drive** (toolbar, next to *Add clips*) opens the Google Drive Picker and adds the chosen audio/video to the media library as a *reference* — `{ kind: 'drive', fileId, name, size, mimeType }`. Nothing is downloaded. References live in this browser only (`clip_stacker.driveLibrary.v1`); the OAuth token is kept in memory and never written to storage. The scope is `drive.file`, so the app can only read files you pick.
+**Import from Drive** (toolbar, next to *Add clips*) opens `drive-auth.html`, which signs in and shows the Google Drive Picker. Chosen audio/video is added to the media library as a *reference* — `{ kind: 'drive', fileId, name, size, mimeType }`. Nothing is downloaded. References live in this browser only (`clip_stacker.driveLibrary.v1`); the OAuth token is kept in memory and never written to storage. The scope is `drive.file`, so the app can only read files you pick. A closed popup is not a failure; the editor waits for the token callback and the picker result. That document is the only one served with `Cross-Origin-Opener-Policy: unsafe-none` and without `Cross-Origin-Embedder-Policy`. The rest of the app stays `same-origin` + `require-corp` so SharedArrayBuffer keeps working.
 
 Build-time configuration (Google Cloud OAuth *Web* client; add the app's origin under *Authorized JavaScript origins*, enable the Drive and Picker APIs):
 
@@ -97,7 +97,7 @@ npm run dev
 
 Open <http://localhost:5173> in your browser.
 
-> **Note:** The app requires `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` headers for FFmpeg WASM (SharedArrayBuffer). These are set automatically by the Vite dev server and preview server.
+> **Note:** The app requires `Cross-Origin-Opener-Policy: same-origin` and `Cross-Origin-Embedder-Policy: require-corp` headers for FFmpeg WASM (SharedArrayBuffer). These are set automatically by the Vite dev server and preview server. `drive-auth.html` is the exception (`Cross-Origin-Opener-Policy: unsafe-none`, no COEP) so Google sign-in and the Drive Picker can run there.
 
 ## Build
 

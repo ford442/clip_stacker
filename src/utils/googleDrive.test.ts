@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { DRIVE_AUTH_CHANNEL, DRIVE_AUTH_TIMEOUT_MS } from './driveAuth';
 import {
   __resetGoogleDriveForTests,
-  DRIVE_FILE_SCOPE,
   DRIVE_NOT_CONFIGURED_MESSAGE,
   driveItemFromPickerDoc,
-  GAPI_SCRIPT_URL,
   getCachedDriveToken,
   getDriveAccessToken,
   GIS_SCRIPT_URL,
@@ -30,61 +29,31 @@ function interceptScripts(fail: string[] = []) {
   return loaded;
 }
 
-interface PickerSetup {
-  tokenResponse?: Record<string, unknown>;
-  tokenError?: { type?: string; message?: string };
-  pickerAction?: string;
-  docs?: unknown[];
-}
-
-function installGoogle(setup: PickerSetup = {}) {
-  const calls = { scopes: [] as string[], pickerToken: '', view: {} as Record<string, unknown>, features: [] as unknown[], appId: '', key: '' };
-  const tokenClient = {
-    requestAccessToken: vi.fn(),
-  };
-  w().google = {
-    accounts: {
-      oauth2: {
-        initTokenClient: (cfg: { scope: string; callback: (r: unknown) => void; error_callback: (e: unknown) => void }) => {
-          calls.scopes.push(cfg.scope);
-          tokenClient.requestAccessToken.mockImplementation(() => {
-            if (setup.tokenError) cfg.error_callback(setup.tokenError);
-            else cfg.callback(setup.tokenResponse ?? { access_token: 'tok-1', expires_in: 3600 });
-          });
-          return tokenClient;
-        },
-      },
-    },
-    picker: {
-      ViewId: { DOCS: 'docs' },
-      Feature: { MULTISELECT_ENABLED: 'multi' },
-      Action: { PICKED: 'picked', CANCEL: 'cancel' },
-      DocsView: class {
-        setIncludeFolders(v: boolean) { calls.view.folders = v; return this; }
-        setSelectFolderEnabled(v: boolean) { calls.view.selectFolder = v; return this; }
-        setMimeTypes(v: string) { calls.view.mime = v; return this; }
-      },
-      PickerBuilder: class {
-        private cb: (d: unknown) => void = () => {};
-        addView() { return this; }
-        enableFeature(f: unknown) { calls.features.push(f); return this; }
-        setTitle() { return this; }
-        setOAuthToken(t: string) { calls.pickerToken = t; return this; }
-        setDeveloperKey(k: string) { calls.key = k; return this; }
-        setAppId(a: string) { calls.appId = a; return this; }
-        setCallback(cb: (d: unknown) => void) { this.cb = cb; return this; }
-        build() {
-          return { setVisible: () => this.cb({ action: setup.pickerAction ?? 'picked', docs: setup.docs ?? [] }) };
-        }
-      },
-    },
-  };
-  w().gapi = { load: (_api: string, o: { callback: () => void }) => o.callback() };
-  return { calls, tokenClient };
+/** What the sign-in window sends after the editor opens it. */
+function deliverOnOpen(messages: (state: string) => unknown[], options: { hang?: boolean } = {}) {
+  const opened: string[] = [];
+  const configs: unknown[] = [];
+  vi.spyOn(window, 'open').mockImplementation((url?: string | URL) => {
+    const href = String(url);
+    opened.push(href);
+    if (!options.hang) {
+      const state = new URL(href).searchParams.get('state') ?? '';
+      queueMicrotask(() => {
+        const channel = new BroadcastChannel(DRIVE_AUTH_CHANNEL);
+        channel.onmessage = (event: MessageEvent) => {
+          if (event.data?.type === 'config' && event.data?.state === state) configs.push(event.data);
+        };
+        for (const message of messages(state)) channel.postMessage(message);
+      });
+    }
+    return null;
+  });
+  return { opened, configs };
 }
 
 beforeEach(() => __resetGoogleDriveForTests());
 afterEach(() => {
+  vi.useRealTimers();
   vi.restoreAllMocks();
   delete w().google;
   delete w().gapi;
@@ -135,30 +104,45 @@ describe('loadScriptOnce', () => {
 
 describe('getDriveAccessToken', () => {
   it('requests the least-privilege drive.file scope and caches the token in memory', async () => {
-    interceptScripts();
-    const { calls, tokenClient } = installGoogle();
+    const { opened } = deliverOnOpen((state) => [{ state, type: 'token', accessToken: 'tok-1', expiresIn: 3600 }]);
     expect(getCachedDriveToken()).toBeNull();
     await expect(getDriveAccessToken(CONFIG)).resolves.toBe('tok-1');
     await expect(getDriveAccessToken(CONFIG)).resolves.toBe('tok-1');
-    expect(calls.scopes).toEqual([DRIVE_FILE_SCOPE]);
-    expect(tokenClient.requestAccessToken).toHaveBeenCalledTimes(1);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toContain('drive-auth.html');
+    expect(opened[0]).toContain('mode=token');
+    expect(opened[0]).not.toContain('api-key');
+    expect(opened[0]).not.toContain('client-id');
     expect(getCachedDriveToken()).toBe('tok-1');
     expect(JSON.stringify(Object.entries(localStorage)) + JSON.stringify(Object.entries(sessionStorage))).not.toContain('tok-1');
   });
 
   it('asks again once the token is within a minute of expiring', async () => {
-    interceptScripts();
-    installGoogle({ tokenResponse: { access_token: 'short', expires_in: 30 } });
+    deliverOnOpen((state) => [{ state, type: 'token', accessToken: 'short', expiresIn: 30 }]);
     await getDriveAccessToken(CONFIG);
     expect(getCachedDriveToken()).toBeNull();
   });
 
-  it('reports a closed popup and a denied grant in plain words', async () => {
-    interceptScripts();
-    installGoogle({ tokenError: { type: 'popup_closed' } });
-    await expect(getDriveAccessToken(CONFIG)).rejects.toThrow('closed before it finished');
-    installGoogle({ tokenResponse: { error: 'access_denied' } });
+  it('times out when the callback never arrives', async () => {
+    vi.useFakeTimers();
+    deliverOnOpen(() => [], { hang: true });
+    const timedOut = getDriveAccessToken(CONFIG);
+    const timeoutAssertion = expect(timedOut).rejects.toThrow('Google sign-in timed out');
+    await vi.advanceTimersByTimeAsync(DRIVE_AUTH_TIMEOUT_MS);
+    await timeoutAssertion;
+  });
+
+  it('reports a denied grant from the callback', async () => {
+    deliverOnOpen((state) => [{ state, type: 'error', message: 'access_denied' }]);
     await expect(getDriveAccessToken(CONFIG)).rejects.toThrow('access_denied');
+  });
+
+  it('shares one sign-in window across overlapping requests', async () => {
+    const { opened } = deliverOnOpen((state) => [{ state, type: 'token', accessToken: 'tok-1', expiresIn: 3600 }]);
+    const [first, second] = await Promise.all([getDriveAccessToken(CONFIG), getDriveAccessToken(CONFIG)]);
+    expect(first).toBe('tok-1');
+    expect(second).toBe('tok-1');
+    expect(opened).toHaveLength(1);
   });
 
   it('explains missing configuration', async () => {
@@ -167,29 +151,33 @@ describe('getDriveAccessToken', () => {
 });
 
 describe('pickDriveFiles', () => {
-  it('opens a multi-select media picker with the token, key and app id and returns references', async () => {
-    const loaded = interceptScripts();
-    const { calls } = installGoogle({
-      docs: [
-        { id: 'a', name: 'one.mp4', mimeType: 'video/mp4', sizeBytes: 5_000_000_000 },
-        { id: 'b', name: 'notes.pdf', mimeType: 'application/pdf', sizeBytes: 10 },
-      ],
-    });
+  it('takes media references from the sign-in window and keeps the api key off the url', async () => {
+    const { opened, configs } = deliverOnOpen((state) => [
+      { state, type: 'ready' },
+      { state, type: 'token', accessToken: 'tok-1', expiresIn: 3600 },
+      {
+        state,
+        type: 'picked',
+        docs: [
+          { id: 'a', name: 'one.mp4', mimeType: 'video/mp4', sizeBytes: 5_000_000_000, url: 'https://drive.example/a' },
+          { id: 'b', name: 'notes.pdf', mimeType: 'application/pdf', sizeBytes: 10 },
+        ],
+      },
+    ]);
     const items = await pickDriveFiles(CONFIG);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(items).toEqual([{ kind: 'drive', fileId: 'a', name: 'one.mp4', size: 5_000_000_000, mimeType: 'video/mp4' }]);
-    expect(loaded).toEqual([GIS_SCRIPT_URL, GAPI_SCRIPT_URL]);
-    expect(calls.pickerToken).toBe('tok-1');
-    expect(calls.key).toBe('api-key');
-    expect(calls.appId).toBe('12345');
-    expect(calls.features).toEqual(['multi']);
-    expect(String(calls.view.mime)).toContain('video/mp4');
-    expect(calls.view.selectFolder).toBe(false);
+    expect(opened[0]).toContain('mode=pick');
+    expect(opened[0]).not.toContain('api-key');
+    expect(opened[0]).not.toContain('docs.google.com');
+    expect(configs).toEqual([expect.objectContaining({ clientId: 'client-id', apiKey: 'api-key', appId: '12345' })]);
+    expect(getCachedDriveToken()).toBe('tok-1');
+    expect(JSON.stringify(Object.entries(localStorage))).not.toContain('tok-1');
   });
 
   it('resolves empty when the user cancels', async () => {
-    interceptScripts();
-    installGoogle({ pickerAction: 'cancel' });
+    deliverOnOpen((state) => [{ state, type: 'cancel' }]);
     await expect(pickDriveFiles(CONFIG)).resolves.toEqual([]);
   });
 

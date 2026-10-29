@@ -17,7 +17,7 @@ Baseline at audit time: `npm test -- --run` → **425 tests passing**;
 
 | Area | Claim | Evidence |
 |------|-------|----------|
-| Vite COOP/COEP | Dev + preview servers set isolation headers | `vite.config.ts` — `server.headers` and `preview.headers` both send `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp` |
+| Vite COOP/COEP | Dev + preview servers set isolation headers | `vite.config.ts` — `server.headers` and `preview.headers` both send `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: require-corp`. `drive-auth.html` is rewritten to `unsafe-none` with COEP removed so Google sign-in and the Drive Picker can load. |
 | WebGPU `alphaMode` | `premultiplied` compositing | `src/webgpu/previewEngine.ts:104`, `:122` (`context.configure({ …, alphaMode: "premultiplied" })`) |
 | FFmpeg in dedicated worker | FFmpeg runs off the main thread | `src/ffmpeg/workerFfmpegRuntime.ts`, `src/ffmpeg/ffmpeg.worker.ts` |
 | WebCodecs export | Encode + decode helpers present | `src/utils/webcodecs.ts`, `src/utils/hybrid-encoder.ts`, `src/utils/webcodecs-decoder.ts` (all with test coverage) |

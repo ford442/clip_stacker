@@ -1,6 +1,16 @@
 <IfModule mod_headers.c>
     Header always set Cross-Origin-Opener-Policy "same-origin"
     Header always set Cross-Origin-Embedder-Policy "require-corp"
+    # Sign-in document only. The app stays same-origin + require-corp so
+    # SharedArrayBuffer and multi-threaded FFmpeg keep working. This page
+    # drops both so the GIS popup and the Drive Picker iframe can load.
+    # Results come back on a same-origin BroadcastChannel. A closed popup
+    # is not a failure.
+    <Files "drive-auth.html">
+        Header always unset Cross-Origin-Opener-Policy
+        Header always set Cross-Origin-Opener-Policy "unsafe-none"
+        Header always unset Cross-Origin-Embedder-Policy
+    </Files>
     Header always set Content-Security-Policy "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval' blob: https://accounts.google.com/gsi/client https://apis.google.com; frame-src https://accounts.google.com/gsi/ https://docs.google.com https://content.googleapis.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://accounts.google.com/gsi/style; img-src 'self' blob: data:; font-src 'self'; media-src 'self' blob: data: https:; connect-src 'self' blob: https: wss:;"
     # Ensure browsers pick up new hashed JS/CSS after each deploy.
     <FilesMatch "^index\.html$">
