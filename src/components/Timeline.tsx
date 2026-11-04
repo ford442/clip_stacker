@@ -7,8 +7,8 @@ import {
   DEFAULT_PIXELS_PER_SECOND,
   MIN_CLIP_PIXEL_WIDTH,
   timelineContentWidth,
-} from '../utils/timelineLayout';
-import { buildBeatMarkerLayouts } from '../utils/beatMarkers';
+} from '../timeline/timelineLayout';
+import { buildBeatMarkerLayouts } from '../timeline/beatMarkers';
 import {
   cancelTimelineMediaForClip,
   getCachedThumbnails,
@@ -16,19 +16,19 @@ import {
   orphanTransitionIndices,
   requestTimelineThumbnails,
   requestTimelineWaveform,
-} from '../utils/timelineMediaCache';
-import { computeTotalDuration } from '../utils/transitions';
+} from '../media/timelineMediaCache';
+import { computeTotalDuration } from '../timeline/transitions';
 import {
   buildTrackClipLayouts,
   computeTracksDuration,
   MAIN_VIDEO_TRACK_ID,
-} from '../utils/trackModel';
+} from '../timeline/trackModel';
 import { TrackLaneHeader } from './TrackLaneHeader';
-import type { VirtualClipLayout } from './timelineClipTypes';
+import type { VirtualClipLayout } from '../timeline/timelineClipTypes';
 import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
 import { MasterAudioTrack } from './MasterAudioTrack';
-import { clipHasRateAutomation } from '../utils/timeRemap';
+import { clipHasRateAutomation } from '../timeline/timeRemap';
 import SyncMarkerLane from './SyncMarkerLane';
 import { CaptionLane } from './CaptionLane';
 import MarkerConnectionCanvas from './MarkerConnectionCanvas';

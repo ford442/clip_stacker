@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { Clip } from '../types';
-import { EASING_PRESETS, type KeyframeEasing } from '../utils/keyframes';
+import { EASING_PRESETS, type KeyframeEasing } from '../timeline/keyframes';
 import {
   estimateIntercut,
   type IntercutAudioPolicy,
@@ -15,8 +15,8 @@ import {
   type IntercutConsumeMode,
   type IntercutFinalClip,
   type IntercutSourceClock,
-} from '../utils/intercut';
-import { defaultIntercutPair } from '../utils/intercutPair';
+} from '../timeline/intercut';
+import { defaultIntercutPair } from '../timeline/intercutPair';
 import {
   useEditorClipGroups,
   useEditorClips,

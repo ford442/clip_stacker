@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { editorStore, editorActions, __resetEditorStoreForTests } from './editorStore';
-import { createBusEffect, type BusEffect } from '../utils/audioBus';
+import { createBusEffect, type BusEffect } from '../audio/audioBus';
 
 const lane = (id: string) => editorStore.getState().tracks.find((t) => t.id === id)!;
 

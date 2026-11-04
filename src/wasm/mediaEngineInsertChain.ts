@@ -4,7 +4,7 @@
  * `native/media_engine/src/audio_mix.cpp`), applied to decoded PCM.
  */
 
-import type { ClipAudioEffects } from '../utils/audioEffects';
+import type { ClipAudioEffects } from '../audio/audioEffects';
 import { CS_STATUS, getEmscriptenModule, withHeap } from './emscriptenLoader';
 import { isMediaEngineMixEnabled, MEDIA_ENGINE_MODULE } from './mediaEngine';
 import { MIX_FX_STRIDE, packAudioEffectRows, sanitizedRate } from './mediaEngineLayout';

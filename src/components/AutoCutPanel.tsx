@@ -6,19 +6,19 @@ import {
   useEditorMasterAudio,
   useEditorTracks,
 } from '../store';
-import { settingsStore } from '../store/settingsStore';
 import {
   autoCutFromReference,
   resolveClipAutoCutReference,
   resolveMasterAutoCutReference,
   type AutoCutReference,
-} from '../utils/autoEdit';
-import { beatsInTrimWindow } from '../utils/beatMarkers';
+} from '../timeline/autoEdit';
+import { beatsInTrimWindow } from '../timeline/beatMarkers';
+import { renderJobStore } from '../store/renderJobStore';
 
 /**
  * "Auto-cut to music" (#168 Phase D).
  *
- * Wires `utils/autoEdit.ts` — which had no callers — to the Library panel: pick
+ * Wires `timeline/autoEdit.ts` — which had no callers — to the Library panel: pick
  * a tempo reference (the master audio lane, or any clip with detected beats),
  * tick the B-roll to cut with, and the main video lane is rebuilt so every cut
  * lands on a beat. One `pushHistory` covers the whole rearrangement, so a single
@@ -28,7 +28,7 @@ import { beatsInTrimWindow } from '../utils/beatMarkers';
 const MASTER_REFERENCE_ID = 'master';
 
 function setStatus(message: string): void {
-  settingsStore.getState().setStatus(message);
+  renderJobStore.getState().setStatus(message);
 }
 
 function AutoCutPanelImpl() {

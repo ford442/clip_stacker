@@ -2,7 +2,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import type { useVirtualizer } from '@tanstack/react-virtual';
 import { useSelectedClipId } from '../store';
 import { editorStore } from '../store/editorStore';
-import { getEffectiveTimelineClips } from '../utils/trackModel';
+import { getEffectiveTimelineClips } from '../timeline/trackModel';
 
 /** Scrolls the virtualizer when selection changes without re-rendering the timeline track. */
 export function TimelineSelectionScroll({

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { audioFxStore, useAudioFxMeters, useAudioFxPreview } from '../../store/audioFxStore';
 import { useEditorMasterBus } from '../../store';
-import { getAudioPlaybackManager } from '../../audio/playbackManager';
+import { getAudioPlaybackManager } from '../../playback/playbackManager';
 import { safeGet, safeSet } from '../../utils/storageKeys';
 
 /** Bar scale: -36 LUFS (empty) to 0 (full). */

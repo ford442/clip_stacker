@@ -9,8 +9,8 @@ import {
   MEDIA_ENGINE_MODULE,
 } from './mediaEngine';
 import { TIME_STRETCH_HOP, wasmRemapPlanar } from './timeStretch';
-import { remapClipAudioBuffer } from '../utils/remapAudio';
-import { cycleDurationForClip } from '../utils/timeRemap';
+import { remapClipAudioBuffer } from '../audio/remapAudio';
+import { cycleDurationForClip } from '../timeline/timeRemap';
 
 const WASM_BASE = pathToFileURL(path.resolve(process.cwd(), 'public/wasm') + path.sep).href;
 const RATE = 44100;

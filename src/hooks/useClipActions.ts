@@ -1,30 +1,30 @@
 import { useCallback } from "react";
 import type { Clip } from "../types";
-import { getMediaInfo, createClipId, isImageFile, MIN_CLIP_DURATION } from "../utils/media";
-import { duplicateClip, splitClipAt } from "../utils/clipOperations";
-import { snapSplitTimeToBeat } from "../utils/beatSnap";
+import { getMediaInfo, createClipId, isImageFile, MIN_CLIP_DURATION } from "../media/media";
+import { duplicateClip, splitClipAt } from "../timeline/clipOperations";
+import { snapSplitTimeToBeat } from "../timeline/beatSnap";
 import {
   removeClipFromGroups,
-} from "../utils/clipOperations";
+} from "../timeline/clipOperations";
 import {
   findClipTrack,
   getEffectiveTimelineClips,
   isClipLocked,
   replaceClipOnTrackAfterSplit,
-} from "../utils/trackModel";
-import { downloadRemoteMedia, type MediaLibraryItem } from "../utils/project";
+} from "../timeline/trackModel";
+import { downloadRemoteMedia, type MediaLibraryItem } from "../project";
 import { editorStore, playbackStore, setPlayheadTime } from "../store";
-import { baseLaneOrder, duplicateItem, remapBaseTransitions } from "../utils/editModes";
-import { resolveClipOutputWindow } from "../utils/previewComposition";
+import { baseLaneOrder, duplicateItem, remapBaseTransitions } from "../timeline/editModes";
+import { resolveClipOutputWindow } from "../composition/previewComposition";
 import {
   outputLocalAtSourceOffset,
   sourceTimeAtOutputLocal,
   wrapOutputLocalToCycle,
-} from "../utils/timeRemap";
+} from "../timeline/timeRemap";
 import { uiStore } from "../store/uiStore";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
-import { settingsStore } from "../store/settingsStore";
+import { renderJobStore } from '../store/renderJobStore';
 
 type ClipActionsDeps = Pick<
   UseEditHistoryResult,
@@ -49,7 +49,7 @@ export function useClipActions({
   pushHistory,
 }: ClipActionsDeps) {
   const handleDuplicateClip = useCallback(() => {
-    const { setStatus, setOutputUrl } = settingsStore.getState();
+    const { setStatus, setOutputUrl } = renderJobStore.getState();
     if (!selectedClipId) {
       setStatus("Select a clip to duplicate.");
       return;
@@ -84,7 +84,7 @@ export function useClipActions({
   }, [selectedClipId, setSelectedClipId]);
 
   const handleSplitClip = useCallback(() => {
-    const { setStatus, setOutputUrl } = settingsStore.getState();
+    const { setStatus, setOutputUrl } = renderJobStore.getState();
     if (!selectedClipId) {
       setStatus("Select a clip to split.");
       return;
@@ -182,7 +182,7 @@ export function useClipActions({
 
   const handleAddClips = useCallback(
     async (files: File[]) => {
-      const { setStatus, setOutputUrl } = settingsStore.getState();
+      const { setStatus, setOutputUrl } = renderJobStore.getState();
       setStatus("Importing clips...");
       let added = 0;
       let pushedHistory = false;
@@ -250,7 +250,7 @@ export function useClipActions({
 
   const handleAddLibraryClip = useCallback(
     async (item: MediaLibraryItem) => {
-      const { setStatus, setOutputUrl } = settingsStore.getState();
+      const { setStatus, setOutputUrl } = renderJobStore.getState();
       setStatus(`Downloading ${item.name} from media library...`);
       try {
         const blob = await downloadRemoteMedia(item.url);

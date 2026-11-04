@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Track } from '../types';
-import { createBusEffect, type MasterBusSettings } from '../utils/audioBus';
+import { createBusEffect, type MasterBusSettings } from '../audio/audioBus';
 import { planBusGraph, type BusGraphPlan } from '../audio/fxGraph';
 import {
   engineReport,
@@ -20,7 +20,7 @@ import {
   measuringExportPass,
   type ExportAudioBus,
   type ExportMixPass,
-} from '../utils/exportAudioBus';
+} from '../export/exportAudioBus';
 import {
   _resetMediaEngineLoadStateForTests,
   openTimelineMixStream,

@@ -7,10 +7,10 @@ import {
   __resetEditorStoreForTests,
   editorStore,
 } from '../store/editorStore';
-import { createDefaultTracks } from '../utils/trackModel';
+import { createDefaultTracks } from '../timeline/trackModel';
 import { __resetPlaybackStoreForTests, playbackStore } from '../store/playbackStore';
-import { DEFAULT_PIXELS_PER_SECOND } from '../utils/timelineLayout';
-import { planAddClip } from '../utils/planAddClip';
+import { DEFAULT_PIXELS_PER_SECOND } from '../timeline/timelineLayout';
+import { planAddClip } from '../timeline/planAddClip';
 import type { Clip } from '../types';
 
 function makeClip(id: string): Clip {

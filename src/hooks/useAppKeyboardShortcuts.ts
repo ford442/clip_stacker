@@ -4,7 +4,7 @@ import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import type { Clip } from "../types";
 import { playbackStore } from "../store/playbackStore";
 import { uiStore } from "../store/uiStore";
-import type { TimelineEditTool } from "../utils/editModes";
+import type { TimelineEditTool } from "../timeline/editModes";
 import { EDIT_NUDGE_FRAME_SEC } from "./useTimelineActions";
 import type { UseEditHistoryResult } from "./useEditHistory";
 

@@ -4,7 +4,7 @@ import {
   disposeAudioPlaybackManager,
   getAudioPlaybackManager,
   type AudioPlaybackManager,
-} from '../audio/playbackManager';
+} from '../playback/playbackManager';
 import { useEditorMasterBus } from '../store/editorStore';
 
 /**

@@ -8,8 +8,8 @@ import {
   clampClipPlaybackRate,
   MAX_CLIP_PLAYBACK_RATE,
   MIN_CLIP_PLAYBACK_RATE,
-} from '../utils/playbackRate';
-import { remappedClipDuration, sampleRemapCurve } from '../utils/timeRemap';
+} from '../timeline/playbackRate';
+import { remappedClipDuration, sampleRemapCurve } from '../timeline/timeRemap';
 
 interface Props {
   clip: Clip;

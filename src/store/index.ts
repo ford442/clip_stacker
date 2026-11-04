@@ -60,8 +60,33 @@ export {
   type SettingsState,
 } from './settingsStore';
 export {
+  renderJobStore,
+  renderJobActions,
+  type RenderJobState,
+} from './renderJobStore';
+export {
   driveLibraryStore,
   driveLibraryActions,
   useDriveLibraryItems,
   type DriveLibraryState,
 } from './driveLibraryStore';
+export {
+  proxyStore,
+  proxyActions,
+  useProxyState,
+  type ProxyState,
+} from './proxyStore';
+export {
+  audioFxStore,
+  useAudioFxPreview,
+  useAudioFxMeters,
+  useLaneGainReduction,
+  type AudioFxState,
+} from './audioFxStore';
+export {
+  finishingPresetStore,
+  type UserFinishingPreset,
+  type ListedFinishingPreset,
+} from './finishingPresetStore';
+export { audioSyncStore, useAudioSyncStore, type AudioSyncState } from './audioSyncStore';
+export { segmentStore, segmentActions, useSegmentSession, type SegmentState } from './segmentStore';

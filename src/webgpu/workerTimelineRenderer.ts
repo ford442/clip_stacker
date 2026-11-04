@@ -1,11 +1,11 @@
-import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
 import {
   isColorManagementActive,
   type ColorManagementSettings,
-} from '../utils/colorManagement';
-import { grainFrameSeedFromTime } from '../utils/grain';
-import { layerWarpDrawParams, transitionWarpParams } from '../utils/clipTransform';
-import type { PreviewClipLayer, PreviewCompositionPlan } from '../utils/previewComposition';
+} from '../finishing/colorManagement';
+import { grainFrameSeedFromTime } from '../finishing/grain';
+import { layerWarpDrawParams, transitionWarpParams } from '../composition/clipTransform';
+import type { PreviewClipLayer, PreviewCompositionPlan } from '../composition/previewComposition';
 import { PreviewEngine, type LayerDraw } from './previewEngine';
 import type { TransitionRenderParams } from './transitions/types';
 import {

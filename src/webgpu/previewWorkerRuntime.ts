@@ -19,16 +19,16 @@ import type {
   TextOverlay,
   TextOverlayStyle,
 } from '../types';
-import type { FinishingSettings } from '../utils/finishing';
-import type { ColorManagementSettings } from '../utils/colorManagement';
-import { publishColorDebugSnapshot } from '../utils/colorManagement';
-import { resolveTimelineFinishing } from '../utils/finishing';
-import type { ColorGradeSettings } from '../utils/lut';
+import type { FinishingSettings } from '../finishing/finishing';
+import type { ColorManagementSettings } from '../finishing/colorManagement';
+import { publishColorDebugSnapshot } from '../finishing/colorManagement';
+import { resolveTimelineFinishing } from '../finishing/finishing';
+import type { ColorGradeSettings } from '../finishing/lut';
 import type {
   PreviewCompositionPlan,
   PreviewDeviceState,
-} from '../utils/previewComposition';
-import type { PreviewMediaSource } from '../utils/proxyMedia';
+} from '../composition/previewComposition';
+import type { PreviewMediaSource } from '../media/proxyMedia';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
 import {
   clearPreviewWorkerChoresRunner,

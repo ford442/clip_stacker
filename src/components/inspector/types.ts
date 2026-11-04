@@ -1,32 +1,11 @@
 import type { ClipAutomation, ClipKeyframes } from '../../types';
 import type { CaptionsPanelProps } from '../CaptionsPanel';
-import type { ClipAudioEffects } from '../../utils/audioEffects';
+import type { ClipAudioEffects } from '../../audio/audioEffects';
 import type { VideoOutputFormat } from '../../types';
 
-export interface ClipValues {
-  title: string;
-  trimStart: string;
-  trimEnd: string;
-  videoFadeIn: string;
-  videoFadeOut: string;
-  audioFadeIn: string;
-  audioFadeOut: string;
-  // PiP / compositing layout
-  layerIndex: string;
-  x: string;
-  y: string;
-  width: string;
-  height: string;
-  opacity: string;
-  /** OverlayBlendMode, or '' for the default (source alpha). */
-  overlayBlend: string;
-  chromaColor: string;
-  chromaSimilarity: string;
-  chromaBlend: string;
-  volume: string;
-  playbackRate: string;
-  loopCount: string;
-}
+// The Inspector's clip form state lives in ../../types (the action hooks use it too).
+import type { ClipValues } from '../../types';
+export type { ClipValues };
 
 export interface InspectorProps {
   onChange: (values: ClipValues) => void;

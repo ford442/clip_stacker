@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import grainShader from './shaders/grain.wgsl?raw';
-import { GRAIN_UNIFORM_FLOATS } from '../utils/grain';
+import { GRAIN_UNIFORM_FLOATS } from '../finishing/grain';
 
 /**
  * `packGrainUniforms` writes `GrainUniforms` from flat float offsets and

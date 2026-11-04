@@ -4,9 +4,10 @@ import { act } from 'react-dom/test-utils';
 import type { CaptionEntry, Clip, TextOverlay, Track } from '../types';
 import { editorStore, __resetEditorStoreForTests } from '../store/editorStore';
 import { settingsStore } from '../store/settingsStore';
-import { createDefaultTracks, MAIN_VIDEO_TRACK_ID } from '../utils/trackModel';
-import { buildPreviewCompositionPlan } from '../utils/previewComposition';
+import { createDefaultTracks, MAIN_VIDEO_TRACK_ID } from '../timeline/trackModel';
+import { buildPreviewCompositionPlan } from '../composition/previewComposition';
 import type { TimelinePreviewProps } from './TimelineCompositorPreview';
+import { renderJobStore } from '../store/renderJobStore';
 
 // The real compositor needs WebGPU; what matters here is that a one-clip
 // project reaches it, and with what.
@@ -79,7 +80,8 @@ describe('Preview', () => {
       textOverlays: [TITLE],
       captions: [CAPTION],
     });
-    settingsStore.setState({ outputUrl: null, showCaptionsInPreview: true });
+    settingsStore.setState({ showCaptionsInPreview: true });
+    renderJobStore.setState({ outputUrl: null });
   });
 
   afterEach(() => {

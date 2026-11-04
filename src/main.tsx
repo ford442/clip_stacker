@@ -3,8 +3,8 @@ import { createRoot } from "react-dom/client";
 import "./index.css";
 import { App } from "./App";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
-import { initCaptionProviders } from "./utils/captionProviderBootstrap";
-import { installFinishingPresetApi } from "./utils/finishingPresetApi";
+import { initCaptionProviders } from "./app/captionProviderBootstrap";
+import { installFinishingPresetApi } from "./actions/finishingPresetApi";
 
 // Auto-caption backends. Registering here (rather than inside a component)
 // keeps the registry out of React's lifecycle and lets tests reset it.

@@ -1,19 +1,20 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
 import { editorStore } from "../store/editorStore";
-import { getEffectiveTimelineClips } from "../utils/trackModel";
-import { resolveTargetResolution } from "../utils/resolution";
-import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
-import { computeTotalDuration } from "../utils/transitions";
+import { getEffectiveTimelineClips } from "../timeline/trackModel";
+import { resolveTargetResolution } from "../export/resolution";
+import { formatEncoderPathLabel } from "../export/encoderPathLabel";
+import { computeTotalDuration } from "../timeline/transitions";
 import { normalizeError } from "../ffmpeg/ffmpegCommon";
 import type { RenderProgressUpdate } from "../ffmpeg/ffmpegService";
 import {
   isHighMemoryUsage,
   getMemoryStatus,
 } from "../utils/memory";
-import { remoteConcatBlockers } from "../utils/renderEligibility";
+import { remoteConcatBlockers } from "../export/renderEligibility";
 
 import { settingsStore } from "../store/settingsStore";
+import { renderJobStore } from '../store/renderJobStore';
 
 // The export pipeline (encoders, FFmpeg, mp4box demux, the GPU export
 // compositor) is most of the app's code and none of it is needed to edit, so
@@ -25,7 +26,7 @@ const loadFfmpegService = (): Promise<FfmpegServiceModule> =>
 const loadRenderPipeline = () =>
   Promise.all([
     loadFfmpegService(),
-    import("../utils/hybrid-encoder"),
+    import("../export/hybridEncoder"),
     import("../ffmpeg/captions"),
     import("../webgpu/exportCompositor"),
   ]);
@@ -35,9 +36,9 @@ const loadRenderPipeline = () =>
  * the click's user activation is still live — so the report module is kept
  * once loaded (and warmed after a failed render) to generate synchronously.
  */
-let debugReportModule: typeof import("../utils/debugReport") | null = null;
+let debugReportModule: typeof import("../actions/debugReport") | null = null;
 async function loadDebugReport() {
-  debugReportModule ??= await import("../utils/debugReport");
+  debugReportModule ??= await import("../actions/debugReport");
   return debugReportModule;
 }
 
@@ -80,7 +81,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
     // Resolve which clips are on the timeline (active variants for grouped clips)
     const timelineClips = effectiveClips;
     if (timelineClips.length === 0) {
-      settingsStore.getState().setStatus("Upload clips before rendering.");
+      renderJobStore.getState().setStatus("Upload clips before rendering.");
       return;
     }
 
@@ -90,11 +91,13 @@ export function useRenderActions(deps: RenderActionsDeps) {
         exportSettings,
         finishing,
         colorManagement,
-        forceFFmpeg, 
-        useCanvasRenderer, 
-        audioReactive, 
+        forceFFmpeg,
+        useCanvasRenderer,
+        audioReactive,
         forceReencode,
         captionExportMode,
+      } = settingsStore.getState();
+      const {
         outputUrl,
         setStatus,
         setFfmpegFailed,
@@ -105,7 +108,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         setProgressStage,
         setProgressValue,
         setProgressIndeterminate,
-      } = settingsStore.getState();
+      } = renderJobStore.getState();
 
       // Reset FFmpeg load-failure state on a new render attempt.
       setFfmpegFailed(false);
@@ -174,12 +177,12 @@ export function useRenderActions(deps: RenderActionsDeps) {
       // Track FFmpeg loading phase via the exported helper so we don't couple to
       // status message strings.
       const trackFfmpegLoading = (msg: string) => {
-        settingsStore.getState().setStatus(msg);
-        settingsStore.getState().setFfmpegLoading(isFfmpegLoading());
+        renderJobStore.getState().setStatus(msg);
+        renderJobStore.getState().setFfmpegLoading(isFfmpegLoading());
       };
 
       const handleProgress = (update: RenderProgressUpdate) => {
-        const actions = settingsStore.getState();
+        const actions = renderJobStore.getState();
         actions.setProgressStage(update.stage);
         actions.setProgressIndeterminate(update.indeterminate === true);
         if (typeof update.progress === "number") {
@@ -225,7 +228,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
           crf: exportSettings.crf,
           preset: exportSettings.preset,
           totalDuration: computeTotalDuration(timelineClips, transitions),
-          onStatus: (message) => settingsStore.getState().setStatus(message),
+          onStatus: (message) => renderJobStore.getState().setStatus(message),
           onProgress: handleProgress,
         },
       );
@@ -253,7 +256,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setProgressValue(1);
       setProgressIndeterminate(false);
     } catch (error) {
-      const actions = settingsStore.getState();
+      const actions = renderJobStore.getState();
       const errMsg = normalizeError(error);
       console.error("Render failed (full details):", error);
       const recentLogs = ffmpeg?.getLastFfmpegLogs(30).join("\n");
@@ -273,7 +276,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       // Leave logs in buffer so user can click "Copy Debug Info" to grab them.
       void loadDebugReport().catch(() => undefined);
     } finally {
-      const actions = settingsStore.getState();
+      const actions = renderJobStore.getState();
       actions.setFfmpegLoading(false);
       actions.setIsRendering(false);
       // Always clean up FFmpeg VFS after each render attempt (success or failure)
@@ -315,13 +318,13 @@ export function useRenderActions(deps: RenderActionsDeps) {
   const handleGpuStitch = useCallback(async () => {
     const timelineClips = effectiveClips.filter((clip) => clip.kind === "video");
     if (clips.filter((c) => c.kind === "video").length === 0) {
-      settingsStore.getState().setStatus("Add at least one video clip before remote concat.");
+      renderJobStore.getState().setStatus("Add at least one video clip before remote concat.");
       return;
     }
 
     const { finishing } = settingsStore.getState();
     const { captions, masterAudio } = editorStore.getState();
-    const { timelineNeedsAudioPremix } = await import("../utils/webcodecs-audio");
+    const { timelineNeedsAudioPremix } = await import("../export/webcodecsAudio");
     const skippedFeatures = remoteConcatBlockers(effectiveClips, {
       transitions,
       textOverlays,
@@ -331,7 +334,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       needsAudioPremix: timelineNeedsAudioPremix(effectiveClips),
     });
     if (skippedFeatures.length > 0) {
-      settingsStore.getState().setStatus(
+      renderJobStore.getState().setStatus(
         `Remote concat only stitches plain clips end to end; this timeline has ${skippedFeatures.join(", ")} — use Render instead.`,
       );
       return;
@@ -341,6 +344,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
     try {
       const {
         exportSettings,
+      } = settingsStore.getState();
+      const {
         outputUrl,
         setStatus,
         setOutputUrl,
@@ -350,7 +355,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         setProgressIndeterminate,
         setProgressValue,
         setProgressStage,
-      } = settingsStore.getState();
+      } = renderJobStore.getState();
 
       if (outputUrl) URL.revokeObjectURL(outputUrl);
       setOutputUrl(null);
@@ -383,7 +388,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         exportSettings,
       );
       const resolution = `${width}x${height}`;
-      const { stitchClipsOnGpu } = await import("../utils/huggingface");
+      const { stitchClipsOnGpu } = await import("../remote/huggingface");
       const { blob } = await stitchClipsOnGpu(
         clipBlobs,
         resolution,
@@ -401,7 +406,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setProgressValue(1);
       setProgressIndeterminate(false);
     } catch (error) {
-      const { setStatus } = settingsStore.getState();
+      const { setStatus } = renderJobStore.getState();
       const errMsg = normalizeError(error);
       console.error("Remote concat error:", error);
       const recentLogs = ffmpeg?.getLastFfmpegLogs(30).join("\n");
@@ -419,7 +424,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
       setRenderFailureMessage(message);
       setLastRenderError(error);
     } finally {
-      const { setIsRendering, setProgressIndeterminate } = settingsStore.getState();
+      const { setIsRendering, setProgressIndeterminate } = renderJobStore.getState();
       setIsRendering(false);
       setProgressIndeterminate(false);
       ffmpeg?.aggressiveCleanupFFmpegVFS().catch(() => {});
@@ -442,14 +447,14 @@ export function useRenderActions(deps: RenderActionsDeps) {
   const handleMemoryWarningCancel = useCallback(() => {
     setShowMemoryWarning(false);
     pendingRenderRef.current = null;
-    settingsStore.getState().setStatus("Render cancelled.");
+    renderJobStore.getState().setStatus("Render cancelled.");
   }, []);
 
   /** Copy rich diagnostics (status + render plan + last FFmpeg logs + browser info) to clipboard. */
   const handleCopyDebugInfo = useCallback(async () => {
-    const { status, renderPlan, encoderPath, exportSettings, colorManagement, setStatus } =
-      settingsStore.getState();
-    let report: typeof import("../utils/debugReport");
+    const { exportSettings, colorManagement } = settingsStore.getState();
+    const { status, renderPlan, encoderPath, setStatus } = renderJobStore.getState();
+    let report: typeof import("../actions/debugReport");
     try {
       report = debugReportModule ?? (await loadDebugReport());
     } catch (err) {
@@ -488,7 +493,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
   ]);
 
   const handleDebugResetFFmpeg = useCallback(async () => {
-    const { setStatus } = settingsStore.getState();
+    const { setStatus } = renderJobStore.getState();
     setStatus("Resetting FFmpeg instance (debug action)...");
     try {
       const { resetFFmpegInstance } = await loadFfmpegService();
@@ -504,7 +509,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
   }, []);
 
   const handleRetryFfmpegLoad = useCallback(async () => {
-    const { setStatus, setFfmpegFailed, setFfmpegLoading } = settingsStore.getState();
+    const { setStatus, setFfmpegFailed, setFfmpegLoading } = renderJobStore.getState();
     setStatus("Resetting FFmpeg and retrying load...");
     setFfmpegFailed(false);
     setFfmpegLoading(true);
@@ -512,10 +517,10 @@ export function useRenderActions(deps: RenderActionsDeps) {
       const { resetFFmpegInstance, ensureFfmpeg } = await loadFfmpegService();
       await resetFFmpegInstance();
       await ensureFfmpeg(
-        (msg) => settingsStore.getState().setStatus(msg),
+        (msg) => renderJobStore.getState().setStatus(msg),
         (update) => {
-          settingsStore.getState().setProgressStage(update.stage);
-          settingsStore.getState().setProgressIndeterminate(update.indeterminate === true);
+          renderJobStore.getState().setProgressStage(update.stage);
+          renderJobStore.getState().setProgressIndeterminate(update.indeterminate === true);
         },
       );
       setStatus("FFmpeg loaded successfully. Click Render to start.");

@@ -1,13 +1,13 @@
 import { useCallback, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
-import type { EditSnapshot } from "../utils/editHistory";
+import type { EditSnapshot } from "../timeline/editHistory";
 import {
   summarizeProjectForSave,
   EMPTY_PROJECT_SAVE_MESSAGE,
   describeProjectSaveExportStatus,
   describeProjectSaveSuccessMessage,
   describeRemoteSaveSuccessMessage,
-} from "../utils/projectSave";
+} from "../project/projectSave";
 import {
   serializeProjectWithMedia,
   applyProjectData,
@@ -16,9 +16,9 @@ import {
   type RemoteProjectLoadProgressEvent,
   type RemoteUploadProgressEvent,
   type RemoteUploadErrorEvent,
-} from "../utils/project";
+} from "../project";
 import { editorStore } from "../store/editorStore";
-import { selectProjectSnapshot, type ProjectSnapshot } from "../utils/project/snapshot";
+import { selectProjectSnapshot, type ProjectSnapshot } from "../project/snapshot";
 
 /** What a save writes right now: one snapshot for manual, remote and autosave. */
 function currentProjectSnapshot(): ProjectSnapshot {
@@ -36,6 +36,7 @@ export type PendingRemoteUploadError = RemoteUploadErrorEvent & {
 };
 
 import { settingsStore } from "../store/settingsStore";
+import { renderJobStore } from '../store/renderJobStore';
 
 export function useProjectSaveLoad({
   clips,
@@ -86,7 +87,7 @@ export function useProjectSaveLoad({
   );
 
   const handleSaveProject = useCallback(async () => {
-    const { setStatus } = settingsStore.getState();
+    const { setStatus } = renderJobStore.getState();
     const summary = summarizeProjectForSave(clips, transitions, textOverlays);
     if (summary.isEmpty) {
       setStatus(EMPTY_PROJECT_SAVE_MESSAGE);
@@ -120,7 +121,8 @@ export function useProjectSaveLoad({
 
   const handleLoadProject = useCallback(
     async (file: File) => {
-      const { setFinishing, setColorManagement, setStatus } = settingsStore.getState();
+      const { setFinishing, setColorManagement } = settingsStore.getState();
+      const { setStatus } = renderJobStore.getState();
       try {
         const parsed = JSON.parse(await file.text());
         const {
@@ -170,7 +172,7 @@ export function useProjectSaveLoad({
         }
         setStatus(msg);
       } catch (error) {
-        settingsStore.getState().setStatus(`Could not load project: ${(error as Error).message}`);
+        renderJobStore.getState().setStatus(`Could not load project: ${(error as Error).message}`);
       }
     },
     [
@@ -186,7 +188,7 @@ export function useProjectSaveLoad({
 
   const handleSaveRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
-      const { setStatus } = settingsStore.getState();
+      const { setStatus } = renderJobStore.getState();
       const summary = summarizeProjectForSave(clips, transitions, textOverlays);
       if (summary.isEmpty) {
         setStatus(EMPTY_PROJECT_SAVE_MESSAGE);
@@ -254,7 +256,7 @@ export function useProjectSaveLoad({
                   typeof event.chunkTotal === "number"
                     ? ` · chunk ${event.chunkIndex + 1}/${event.chunkTotal}`
                     : "";
-                settingsStore.getState().setStatus(
+                renderJobStore.getState().setStatus(
                   `Uploading clip ${event.index}/${event.total}: ${event.fileName} (${Math.round(event.progress * 100)}%${chunkHint})`,
                 );
               }
@@ -283,7 +285,8 @@ export function useProjectSaveLoad({
 
   const handleLoadRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
-      const { setStatus, setFinishing, setColorManagement } = settingsStore.getState();
+      const { setFinishing, setColorManagement } = settingsStore.getState();
+      const { setStatus } = renderJobStore.getState();
       try {
         setIsRemoteLoading(true);
         setStatus("Loading project from remote storage...");

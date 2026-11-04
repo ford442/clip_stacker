@@ -1,4 +1,4 @@
-import { LIBRARY_THUMB_HEIGHT, LIBRARY_THUMB_WIDTH } from '../utils/media';
+import { LIBRARY_THUMB_HEIGHT, LIBRARY_THUMB_WIDTH } from '../media/media';
 import { GPU_MIN_PIXELS, pixelCount, WORKER_MIN_PIXELS } from './breakEven';
 import { gpuComputeAvailable } from './diagnostics';
 import { peekChoresGpuDevice } from './device';

@@ -7,7 +7,7 @@
  * and cancel is a flag the wrapper's progress callback reads.
  */
 
-import type { TranscriptSegment } from '../utils/captionSegments';
+import type { TranscriptSegment } from '../captions/captionSegments';
 import { fetchModel } from './whisperModelCache';
 import { withHeap } from './emscriptenLoader';
 import { allocString, loadWhisperModule, type WhisperModule } from './whisperModule';

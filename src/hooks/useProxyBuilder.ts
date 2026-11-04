@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Clip } from '../types';
 import { proxyActions, proxyStore, useProxyState } from '../store/proxyStore';
-import { fingerprintMedia, getMediaStore, type MediaStore } from '../utils/mediaStore';
+import { fingerprintMedia, getMediaStore, type MediaStore } from '../project/mediaStore';
 import {
   clipProxyKey,
   makeClipProxy,
   planProxy,
   proxyStoreKey,
-} from '../utils/proxyMedia';
-import type { EncodeProxyOptions } from '../utils/proxyEncoder';
+} from '../media/proxyMedia';
+import type { EncodeProxyOptions } from '../media/proxyEncoder';
 
 export interface ProxyBuildDeps {
   store: MediaStore;
@@ -22,7 +22,7 @@ const defaultDeps = (): ProxyBuildDeps => ({
   fingerprint: fingerprintMedia,
   // The encoder (decoder, mp4box, muxer) loads with the first proxy build.
   encode: async (source, options) =>
-    (await import('../utils/proxyEncoder')).encodeProxy(source, options),
+    (await import('../media/proxyEncoder')).encodeProxy(source, options),
 });
 
 /**

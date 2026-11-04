@@ -5,7 +5,7 @@ import {
   formatTimelineTime,
   MAX_PIXELS_PER_SECOND,
   MIN_PIXELS_PER_SECOND,
-} from '../utils/timelineLayout';
+} from '../timeline/timelineLayout';
 import { TimelineTools } from './TimelineTools';
 
 interface TimelineHeaderProps {

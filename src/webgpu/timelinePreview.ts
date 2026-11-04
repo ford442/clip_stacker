@@ -3,11 +3,11 @@
  */
 
 import type { Clip } from '../types';
-import { DEFAULT_FINISHING } from '../utils/finishing';
-import { resolveTimelineFinishing } from '../utils/finishing';
-import { isColorManagementActive } from '../utils/colorManagement';
-import { grainFrameSeedFromTime } from '../utils/grain';
-import { layerWarpDrawParams, transitionWarpParams } from '../utils/clipTransform';
+import { DEFAULT_FINISHING } from '../finishing/finishing';
+import { resolveTimelineFinishing } from '../finishing/finishing';
+import { isColorManagementActive } from '../finishing/colorManagement';
+import { grainFrameSeedFromTime } from '../finishing/grain';
+import { layerWarpDrawParams, transitionWarpParams } from '../composition/clipTransform';
 import {
   buildPreviewCompositionPlan,
   captionPlanOptions,
@@ -16,9 +16,9 @@ import {
   type PreviewDeviceState,
   type TimelineCompositor,
   type TimelineRenderOptions,
-} from '../utils/previewComposition';
-import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
-import { previewMetrics } from '../utils/previewMetrics';
+} from '../composition/previewComposition';
+import { ClipMediaPool, seekVideoTo } from '../media/clipMediaPool';
+import { previewMetrics } from '../composition/previewMetrics';
 import { PreviewEngine, type LayerDraw } from './previewEngine';
 import { captureStillFrame, captureVideoFrame } from './captureFrame';
 import {
@@ -469,7 +469,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
    */
   async compositeShaderTextOverlays(plan: PreviewCompositionPlan): Promise<void> {
     const { getTextFillRenderer } = await import('./text/textFill');
-    const { createSingleOverlayGlyphMask } = await import('../utils/textMask');
+    const { createSingleOverlayGlyphMask } = await import('../composition/textMask');
     const renderer = await getTextFillRenderer();
 
     for (const layer of plan.layers) {

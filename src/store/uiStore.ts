@@ -1,13 +1,13 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import type { StateUpdater } from './editorStore';
-import type { DropEditMode, TimelineEditTool } from '../utils/editModes';
+import type { DropEditMode, TimelineEditTool } from '../timeline/editModes';
 import {
   DEFAULT_FINISHING_PREVIEW_VIEW,
   toggleBefore,
   type FinishingPassKey,
   type FinishingPreviewView,
-} from '../utils/finishingStack';
+} from '../finishing/finishingStack';
 
 function resolveUpdater<T>(action: StateUpdater<T>, prev: T): T {
   return typeof action === 'function' ? (action as (prev: T) => T)(prev) : action;

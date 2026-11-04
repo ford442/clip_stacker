@@ -10,7 +10,7 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - Reorder clips in a timeline editor
 - Apply per-clip fade in/out controls for video and audio
 - **Picture-in-Picture overlays**: select a video clip and hit **Use as overlay (PiP)** in the Inspector to composite it over the base video in any corner; **Use as base layer** puts it back. Size, position and opacity stay editable under *Picture-in-Picture layout (advanced)*
-- **Channel logos / bugs**: **Use as channel logo** snaps the clip to a corner at ~10% of the canvas width, locked to the source's own aspect ratio, muted, and keyed on the source alpha — so a non-square mark composites without a black box on both the GPU export and the FFmpeg fallback. Transparency mode is editable under *Picture-in-Picture layout (advanced)*: source alpha (straight or premultiplied), chroma key, luma key, or an opaque rectangle. The mask has to exist in the file: use PNG/WebP for stills and WebM (VP8/VP9 + alpha) for motion — H.264 MP4 carries no alpha, so key those with chroma/luma instead. Chroma and luma keying run in the compositor itself (`src/utils/overlayKey.ts` — one `keyPixel()` shared by the WGSL shader, the Canvas2D path, and the unit tests), so the Inspector's sliders update the live preview and the default WebGPU + WebCodecs export matches it. FFmpeg's `chromakey` / `lumakey` stay as the Force-FFmpeg fallback and are tuned to the same maths, so the two paths look alike rather than merely similar. The render-plan line under the toolbar says which one ran
+- **Channel logos / bugs**: **Use as channel logo** snaps the clip to a corner at ~10% of the canvas width, locked to the source's own aspect ratio, muted, and keyed on the source alpha — so a non-square mark composites without a black box on both the GPU export and the FFmpeg fallback. Transparency mode is editable under *Picture-in-Picture layout (advanced)*: source alpha (straight or premultiplied), chroma key, luma key, or an opaque rectangle. The mask has to exist in the file: use PNG/WebP for stills and WebM (VP8/VP9 + alpha) for motion — H.264 MP4 carries no alpha, so key those with chroma/luma instead. Chroma and luma keying run in the compositor itself (`src/composition/overlayKey.ts` — one `keyPixel()` shared by the WGSL shader, the Canvas2D path, and the unit tests), so the Inspector's sliders update the live preview and the default WebGPU + WebCodecs export matches it. FFmpeg's `chromakey` / `lumakey` stay as the Force-FFmpeg fallback and are tuned to the same maths, so the two paths look alike rather than merely similar. The render-plan line under the toolbar says which one ran
 - **News tickers / lower thirds**: use a scrolling text overlay (`scrolling` + `scrollSpeed`), which matches between preview and FFmpeg `drawtext`. Only bake a designed motion lower third to video (as WebM + alpha, placed as a full-width bottom overlay) when `drawtext` cannot express it
 - **Captions / subtitles**: a time-coded caption track with its own timeline lane. Import `.srt` / `.ass`, edit text and timings in the Inspector's *Captions* tab, drag a chip's edges to retime, press <kbd>C</kbd> to add a cue at the playhead, and export burned-in, as a toggle-able soft subtitle track, or as a sidecar `.srt` — see [Captions and subtitles](#captions-and-subtitles)
 - **Resizable workspace**: drag the splitters between Library, Preview and Inspector, and the divider above the timeline (or focus one and use the arrow keys; double-click resets it). Collapse the side panels, pick S / M / L control density, fill the window or centre it, and **Reset layout** from the header. The layout is remembered per browser
@@ -76,7 +76,7 @@ Without the first two, the button explains what is missing.
 
 Every result has to be **exactly as long as the segment** (±0.25 s, trimmed to the exact length on replace), otherwise the cut, import or replace is refused. That keeps later items in place and a later lossless concat possible. For the same reason only RIFE *interpolation* is offered here, not Boomerang. Sub-range replace needs a clip that plays at source speed (no speed change, loop, reverse or speed automation); those clips can be replaced over their whole trimmed range.
 
-The Contabo job API (`POST/GET /webhook/clip-stacker/jobs`, `POST .../jobs/{id}/cancel`) is documented in `contabo_storage_manager`; the code is in `src/utils/segments/` and `ContaboStorageManagerClient`.
+The Contabo job API (`POST/GET /webhook/clip-stacker/jobs`, `POST .../jobs/{id}/cancel`) is documented in `contabo_storage_manager`; the code is in `src/remote/segments/` and `ContaboStorageManagerClient`.
 
 ## Tech Stack
 
@@ -225,7 +225,7 @@ CI fails if `public/wasm/` drifts from a clean rebuild, or if any module's gzipp
 | `media_engine` | WSOLA rate remap | `src/wasm/timeStretch.ts` |
 | `media_engine_fx` | The bus graph alone, glue-free, for the preview AudioWorklet | `src/wasm/audioFx.ts` |
 
-Export premix runs on the media engine when it loads: polyphase resampling, volume/pan automation curves and fades in C++, streamed in chunks straight into the AAC encoder, so long timelines no longer hit the 45-minute `OfflineAudioContext` cap. Disable with `?no_media_engine` to force `OfflineAudioContext` (and, past 45 minutes, FFmpeg audio mux). Do not put mix/EQ DSP in `canvas-renderer` or FFmpeg `filter_complex`.
+Export premix runs on the media engine when it loads: polyphase resampling, volume/pan automation curves and fades in C++, streamed in chunks straight into the AAC encoder, so long timelines no longer hit the 45-minute `OfflineAudioContext` cap. Disable with `?no_media_engine` to force `OfflineAudioContext` (and, past 45 minutes, FFmpeg audio mux). Do not put mix/EQ DSP in `canvasRenderer` or FFmpeg `filter_complex`.
 
 Each lane is also a bus (the lane header's **FX**): an insert chain (EQ, compressor, gate, de-esser, true-peak limiter) and an optional sidechain duck under another lane; the Master row has master-bus FX and a BS.1770 **LUFS** meter, and Export → **Loudness** normalizes the delivered mix to a target (−14 / −16 / −23 LUFS or custom) in two passes with a true-peak ceiling. Preview runs the same C++ bus graph in an AudioWorklet (`?no_audio_fx` turns it off).
 
@@ -348,7 +348,7 @@ it to a `CaptionProvider`, and puts the result on the CC lane as one undo step.
 Choose *Merge with existing cues* to keep what is already there; otherwise the
 track is replaced. Cancelling leaves the previous track untouched.
 
-Two providers ship, both behind `src/utils/captionProvider.ts` so the caption
+Two providers ship, both behind `src/captions/captionProvider.ts` so the caption
 feature knows nothing about any model:
 
 | id | Runs | Needs |
@@ -382,7 +382,7 @@ Bundled fonts (under `public/fonts/`):
 
 - Default for new and legacy overlays (no `font` field) is `roboto`.
 - `TextOverlay.font` stores the id; unknown ids fall back to the default on load.
-- Adding a font: drop a `.ttf` into `public/fonts/`, register it in `BUNDLED_FONTS` (src/utils/textOverlay.ts), add a matching `@font-face` in `src/styles/fonts.css`, and (if needed) an entry in `FONT_URL_BY_VIRTUAL` (src/ffmpeg/core.ts).
+- Adding a font: drop a `.ttf` into `public/fonts/`, register it in `BUNDLED_FONTS` (src/composition/textOverlay.ts), add a matching `@font-face` in `src/styles/fonts.css`, and (if needed) an entry in `FONT_URL_BY_VIRTUAL` (src/ffmpeg/core.ts).
 
 If a render or extract does nothing / stops with no message:
 - Check the browser console (all `[FFmpeg]` lines are now printed).

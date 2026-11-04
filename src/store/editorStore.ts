@@ -14,7 +14,7 @@ import type {
   TrackKind,
   SyncMarker,
 } from '../types';
-import { computeTotalDuration } from '../utils/transitions';
+import { computeTotalDuration } from '../timeline/transitions';
 import {
   addTrack as addTrackToList,
   createDefaultTracks,
@@ -27,7 +27,7 @@ import {
   setTrackLocked as setTrackLockedInList,
   setTrackMuted as setTrackMutedInList,
   visibleTextOverlays,
-} from '../utils/trackModel';
+} from '../timeline/trackModel';
 import {
   cloneSnapshot,
   mergeClipUrls,
@@ -35,19 +35,20 @@ import {
   syncClipGroups,
   trimHistoryStack,
   type EditSnapshot,
-} from '../utils/editHistory';
-import { cloneTracks } from '../utils/trackModel';
-import type { EditState } from '../utils/editModes';
-import { normalizeCaptions } from '../utils/subtitles';
-import { planAddClip } from '../utils/planAddClip';
-import type { FinishingSettings } from '../utils/finishing';
+} from '../timeline/editHistory';
+import { cloneTracks } from '../timeline/trackModel';
+import type { EditState } from '../timeline/editModes';
+import { normalizeCaptions } from '../captions/subtitles';
+import { planAddClip } from '../timeline/planAddClip';
+import type { FinishingSettings } from '../finishing/finishing';
 import {
   normalizeMasterBus,
   type BusEffect,
   type LaneDuck,
   type MasterBusSettings,
-} from '../utils/audioBus';
+} from '../audio/audioBus';
 import { settingsStore } from './settingsStore';
+import { registerExportStateSource } from '../export/exportSources';
 
 /**
  * Durable editing state (#144).
@@ -80,14 +81,14 @@ export interface EditorState {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
-  /** Time-coded caption cues, sorted by start time (see `utils/subtitles.ts`). */
+  /** Time-coded caption cues, sorted by start time (see `captions/subtitles.ts`). */
   captions: CaptionEntry[];
   /** Project-wide caption style; per-cue `style` overrides win over it. */
   captionStyle: Partial<TextOverlayStyle>;
   masterAudioMarkers: SyncMarker[];
   selectedClipId: string | null;
   masterAudio: MasterAudio | null;
-  /** Master bus FX and export loudness target (`utils/audioBus.ts`); undefined = none. */
+  /** Master bus FX and export loudness target (`audio/audioBus.ts`); undefined = none. */
   masterBus: MasterBusSettings | undefined;
   /** Undo/redo depths, published so `canUndo`/`canRedo` re-render on change. */
   undoDepth: number;
@@ -122,7 +123,7 @@ export interface EditorState {
   /** Replace the master bus (FX + loudness target) as one undo step. */
   setMasterBus: (next: MasterBusSettings | undefined, coalesce?: string) => void;
   /**
-   * Commit a pure edit-mode result (`utils/editModes.ts`) as one undo step:
+   * Commit a pure edit-mode result (`timeline/editModes.ts`) as one undo step:
    * lane placements, clip trims and base-lane transitions change together, so a
    * single undo restores all three. Clips the edit dropped leave their A/B
    * groups and the selection.
@@ -501,6 +502,15 @@ export const useIsClipSelected = (clipId: string) =>
  */
 export const useEditorClip = (id: string | null) =>
   useStore(editorStore, (s) => (id ? (s.clips.find((c) => c.id === id) ?? null) : null));
+
+// The export premix reads the lanes and master bus from here when a caller
+// does not pass them, without the export layer importing a store.
+registerExportStateSource({
+  audioBus: () => {
+    const { tracks, masterBus } = editorStore.getState();
+    return { tracks, ...(masterBus ? { masterBus } : {}) };
+  },
+});
 
 /**
  * Stable action references. These functions are created once when the store

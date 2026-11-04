@@ -8,8 +8,8 @@ import type { Clip } from '../../types';
 const cut = vi.hoisted(() => vi.fn());
 vi.mock('../../ffmpeg/segment', () => ({ cutSegmentWithFfmpeg: cut }));
 const mediaInfo = vi.hoisted(() => vi.fn());
-vi.mock('../../utils/media', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../../utils/media')>()),
+vi.mock('../../media/media', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../media/media')>()),
   getMediaInfo: mediaInfo,
 }));
 
@@ -17,7 +17,7 @@ import { InspectorSegmentSection, segmentRangeProblem } from './InspectorSegment
 import { editorStore, __resetEditorStoreForTests } from '../../store/editorStore';
 import { segmentActions } from '../../store/segmentStore';
 import { projectStore } from '../../store/projectStore';
-import { createTestClip } from '../../utils/project.test.helpers';
+import { createTestClip } from '../../project/project.test.helpers';
 
 const clipOf = (overrides: Partial<Clip> = {}): Clip => ({
   ...createTestClip('c1', 10),

@@ -1,4 +1,4 @@
-import { decodeAudioBuffer } from '../utils/waveform';
+import { decodeAudioBuffer } from '../media/waveform';
 
 interface CacheEntry {
   objectUrl: string;

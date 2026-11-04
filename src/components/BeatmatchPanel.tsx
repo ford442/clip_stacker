@@ -6,20 +6,20 @@ import {
   useEditorMasterAudio,
   useEditorTracks,
 } from '../store';
-import { settingsStore } from '../store/settingsStore';
 import {
   buildBeatmatchTargets,
   clipItemStartTime,
   downbeatStartTime,
   snapStartToTargetBeat,
-} from '../utils/beatmatch';
-import { sanitizeClipAdjustments } from '../utils/project';
+} from '../timeline/beatmatch';
+import { sanitizeClipAdjustments } from '../project';
 import {
   confidenceLabel,
   getClipBpm,
   matchRate,
   tapTempo,
-} from '../utils/tempo';
+} from '../timeline/tempo';
+import { renderJobStore } from '../store/renderJobStore';
 
 interface Props {
   clip: Clip;
@@ -34,7 +34,7 @@ const MASTER_TARGET_ID = 'master';
 const TAP_RESET_SEC = 3;
 
 function setStatus(message: string): void {
-  settingsStore.getState().setStatus(message);
+  renderJobStore.getState().setStatus(message);
 }
 
 /** Move a clip's track item to a new timeline start time. */

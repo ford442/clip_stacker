@@ -1,10 +1,10 @@
 import { useCallback } from 'react';
 import type { Clip } from '../types';
-import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from '../utils/media';
+import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from '../media/media';
 import { editorStore } from '../store';
-import { settingsStore } from '../store/settingsStore';
 import type { UseEditHistoryResult } from './useEditHistory';
 import type { IntercutGeneratorConfig } from '../ffmpeg/intercutGenerator';
+import { renderJobStore } from '../store/renderJobStore';
 
 type IntercutActionDeps = Pick<
   UseEditHistoryResult,
@@ -27,7 +27,7 @@ export function useIntercutActions({
         setProgressValue,
         setProgressIndeterminate,
         setOutputUrl,
-      } = settingsStore.getState();
+      } = renderJobStore.getState();
 
       if (isRendering || rifeProcessingClipId || intercutProcessing) {
         setStatus('Wait for the current FFmpeg job to finish before generating an intercut.');
@@ -43,7 +43,7 @@ export function useIntercutActions({
       try {
         const { generateIntercutClip } = await import('../ffmpeg/ffmpegService');
         const result = await generateIntercutClip(config, setStatus, (update) => {
-          const actions = settingsStore.getState();
+          const actions = renderJobStore.getState();
           actions.setProgressStage(update.stage);
           actions.setProgressValue(
             typeof update.progress === 'number' ? update.progress : null,
@@ -126,11 +126,11 @@ export function useIntercutActions({
         return true;
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        settingsStore.getState().setStatus(`Intercut failed: ${message}`);
+        renderJobStore.getState().setStatus(`Intercut failed: ${message}`);
         console.error('Intercut generation error:', err);
         return false;
       } finally {
-        const actions = settingsStore.getState();
+        const actions = renderJobStore.getState();
         actions.setIntercutProcessing(false);
         actions.setProgressIndeterminate(false);
         actions.setProgressValue(null);

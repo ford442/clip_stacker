@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
 import type { Clip, Track } from '../types';
-import { acceptsClipKind, MAIN_VIDEO_TRACK_ID } from '../utils/trackModel';
-import { snapThresholdForZoom } from '../utils/timelineSnap';
-import type { VirtualClipLayout } from '../components/timelineClipTypes';
+import { acceptsClipKind, MAIN_VIDEO_TRACK_ID } from '../timeline/trackModel';
+import { snapThresholdForZoom } from '../timeline/timelineSnap';
+import type { VirtualClipLayout } from '../timeline/timelineClipTypes';
 
 interface TimelineDragDropOptions {
   /** Main-lane clip layouts (drag indices refer to these). */

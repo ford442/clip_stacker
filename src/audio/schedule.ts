@@ -2,23 +2,23 @@ import type { Clip, ClipGroup, ClipTransition, Track } from '../types';
 import {
   buildClipTimelineSegments,
   filterBaseLayerTransitions,
-} from '../utils/previewComposition';
-import { getClipDuration } from '../utils/clipTiming';
-import { getTimelineClips } from '../utils/timelineClips';
-import { audioTracks, videoTracks } from '../utils/trackModel';
-import { placementWindow } from '../utils/trackStacking';
-import { clampClipVolume } from '../utils/audioVolume';
-import type { Keyframe } from '../utils/keyframes';
-import { normalizeClipAutomation } from '../utils/clipAutomation';
-import { getClipLoopCount, getClipPlaybackRate } from '../utils/playbackRate';
-import { clipIsReversed } from '../utils/reverseClip';
-import { clipHasRateAutomation, cycleDurationForClip } from '../utils/timeRemap';
+} from '../composition/previewComposition';
+import { getClipDuration } from '../timeline/clipTiming';
+import { getTimelineClips } from '../timeline/timelineClips';
+import { audioTracks, videoTracks } from '../timeline/trackModel';
+import { placementWindow } from '../timeline/trackStacking';
+import { clampClipVolume } from './audioVolume';
+import type { Keyframe } from '../timeline/keyframes';
+import { normalizeClipAutomation } from '../timeline/clipAutomation';
+import { getClipLoopCount, getClipPlaybackRate } from '../timeline/playbackRate';
+import { clipIsReversed } from '../timeline/reverseClip';
+import { clipHasRateAutomation, cycleDurationForClip } from '../timeline/timeRemap';
 import {
   audioEffectsSignature,
   clipAudioEffectsActive,
   normalizeClipAudioEffects,
   type ClipAudioEffects,
-} from '../utils/audioEffects';
+} from './audioEffects';
 
 /** One clip's audio placement on the output timeline. */
 export interface AudioScheduleEntry {
@@ -177,12 +177,12 @@ function entryFromClip(
  * Base-layer clips follow xfade segment math (including transition overlaps so
  * adjacent clips share audio during dissolves — no hard gap). Overlay-lane
  * clips are placed at their track item's output time (`Clip.timelineStart`,
- * derived in `utils/trackStacking.ts`).
+ * derived in `timeline/trackStacking.ts`).
  *
  * Lane mute is honored on every kind of lane: clips flattened from a muted
  * video lane carry `trackMuted` and are skipped here, and muted audio lanes
  * contribute no bed entries. Because the flag travels on the clip, the export
- * premix (`utils/webcodecs-audio.ts`, which is handed the flattened view) drops
+ * premix (`export/webcodecsAudio.ts`, which is handed the flattened view) drops
  * the same entries the preview does.
  */
 export function buildAudioSchedule(

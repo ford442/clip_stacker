@@ -24,8 +24,8 @@ import {
   withHeap,
   _resetEmscriptenModuleForTests,
 } from './emscriptenLoader';
-import type { Keyframe } from '../utils/keyframes';
-import type { ClipAudioEffects, MasterLimiterSettings } from '../utils/audioEffects';
+import type { Keyframe } from '../timeline/keyframes';
+import type { ClipAudioEffects, MasterLimiterSettings } from '../audio/audioEffects';
 import type { BusGraphPlan } from '../audio/fxGraph';
 import {
   createBusSession,

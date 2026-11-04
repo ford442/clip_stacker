@@ -1,17 +1,17 @@
 /**
  * Film grain + optical emulation pass — always last in the finishing chain.
  * Procedural grain is seeded by integer frame index for WYSIWYG export/preview
- * (`classic` hash grain, or the blue-noise `film` model in utils/filmGrain.ts).
+ * (`classic` hash grain, or the blue-noise `film` model in finishing/filmGrain.ts).
  * Bloom / halation use a separable Gaussian (H then V) matching the old 17×17 kernel.
  */
 
 import grainShader from './shaders/grain.wgsl?raw';
-import type { GrainPass } from '../utils/finishing';
+import type { GrainPass } from '../finishing/finishing';
 import {
   GRAIN_UNIFORM_FLOATS,
   grainWantsOpticalBlur,
   packGrainUniforms,
-} from '../utils/grain';
+} from '../finishing/grain';
 
 export class GrainGpuPass {
   private readonly grainPipeline: GPURenderPipeline;

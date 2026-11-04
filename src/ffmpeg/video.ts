@@ -4,44 +4,44 @@ import type {
   ClipTransition,
   TextOverlay,
 } from "../types";
-import { getClipDuration } from "../utils/clipTiming";
-import { clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
-import { resolveClipLayoutPixels } from "../utils/overlayCoords";
-import { audioVolumeFilterSegment, getClipVolume } from "../utils/audioVolume";
+import { getClipDuration } from "../timeline/clipTiming";
+import { clampOverlayPosition, isOverlayOffCanvas } from "../project";
+import { resolveClipLayoutPixels } from "../composition/overlayCoords";
+import { audioVolumeFilterSegment, getClipVolume } from "../audio/audioVolume";
 import {
   audioTempoFilterSegment,
   getClipPlaybackRate,
   videoSetptsFilter,
-} from "../utils/playbackRate";
-import { audioReversePrefix, videoReversePrefix } from "../utils/reverseClip";
-import { getTransitionXfadeName } from "../utils/transitions";
+} from "../timeline/playbackRate";
+import { audioReversePrefix, videoReversePrefix } from "../timeline/reverseClip";
+import { getTransitionXfadeName } from "../timeline/transitions";
 import {
   buildOverlayAlphaFilters,
   buildOverlayFilter,
-} from "../utils/overlayBlend";
-import { resolveAnimatedPictureTransform } from "../utils/animatedLayout";
+} from "../composition/overlayBlend";
+import { resolveAnimatedPictureTransform } from "../composition/animatedLayout";
 import {
   buildFfmpegFramePictureFilters,
   buildFfmpegPictureFilters,
   isIdentityPictureTransform,
-} from "../utils/clipTransform";
-import { appendPrimaryColorFilters, type PrimaryColorSettings } from "../utils/primaryColor";
+} from "../composition/clipTransform";
+import { appendPrimaryColorFilters, type PrimaryColorSettings } from "../finishing/primaryColor";
 import {
   appendNoiseReductionFilters,
   type NoiseReductionSettings,
-} from "../utils/noiseReduction";
+} from "../finishing/noiseReduction";
 import {
   appendSecondaryColorFilters,
   type SecondaryColorSettings,
-} from "../utils/secondaryColor";
+} from "../finishing/secondaryColor";
 import {
   appendSharpenFilters,
   type SharpenSettings,
-} from "../utils/sharpen";
+} from "../finishing/sharpen";
 import {
   appendGrainFilters,
   type GrainSettings,
-} from "../utils/grain";
+} from "../finishing/grain";
 import {
   emitProgress,
   safeExec,

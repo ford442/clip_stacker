@@ -1,5 +1,5 @@
 import { useEffect, type RefObject } from 'react';
-import { clampClipVolume } from '../utils/audioVolume';
+import { clampClipVolume } from '../audio/audioVolume';
 import { resumeAudioContext } from '../audio/context';
 import { getAudioContext, noteElementBinding } from '../audio/audioService';
 

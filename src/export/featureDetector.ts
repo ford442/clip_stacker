@@ -1,0 +1,172 @@
+import { probeWebGpu, publishWebGpuProbe } from '../webgpu/webgpuProbe';
+import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
+import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
+import { probeH264EncoderAcceleration } from './webcodecsCodec';
+
+export interface BrowserCapabilities {
+  /** WebCodecs API (VideoEncoder / VideoDecoder / VideoFrame) available. */
+  webcodecs: boolean;
+  /** WebGPU API available. */
+  webgpu: boolean;
+  /** OffscreenCanvas + transferControlToOffscreen for worker preview. */
+  offscreenCanvas: boolean;
+  /** Hardware-accelerated H.264 VideoEncoder reported as supported. */
+  hardwareH264: boolean;
+  /**
+   * The acceleration hint an H.264 encoder actually configures with at 720p
+   * (`no-preference` on machines with no hardware encoder), or null when no
+   * H.264 encoder is available at all.
+   */
+  h264EncoderAcceleration: HardwareAcceleration | null;
+  /** MediaRecorder can produce MP4 container output. */
+  mediaRecorderMp4: boolean;
+  /** SharedArrayBuffer available (required for FFmpeg.wasm multi-threaded). */
+  sharedArrayBuffer: boolean;
+  /** Page is cross-origin isolated (COOP + COEP headers active). */
+  crossOriginIsolated: boolean;
+  /** requestVideoFrameCallback available on HTMLVideoElement. */
+  videoFrameCallback: boolean;
+}
+
+/** Which FFmpeg WASM core variant can be loaded in this context. */
+export type FfmpegCoreVariant = 'mt' | 'st';
+
+/**
+ * Resolve which FFmpeg core variant to attempt first.
+ * Multi-threaded requires SharedArrayBuffer AND cross-origin isolation.
+ */
+export function resolveFfmpegCoreVariant(): FfmpegCoreVariant {
+  const g = globalThis as { crossOriginIsolated?: boolean };
+  if (typeof SharedArrayBuffer === 'undefined' || !g.crossOriginIsolated) {
+    return 'st';
+  }
+  return 'mt';
+}
+
+let _cached: BrowserCapabilities | null = null;
+
+export async function detectCapabilities(): Promise<BrowserCapabilities> {
+  if (_cached) return _cached;
+
+  const sharedArrayBuffer = typeof SharedArrayBuffer !== "undefined";
+  const crossOriginIsolated =
+    !!(globalThis as { crossOriginIsolated?: boolean }).crossOriginIsolated;
+
+  const webcodecs =
+    typeof VideoEncoder !== "undefined" &&
+    typeof VideoDecoder !== "undefined" &&
+    typeof VideoFrame !== "undefined";
+
+  let webgpu: boolean;
+  try {
+    const probe = await probeWebGpu();
+    publishWebGpuProbe('main', probe);
+    webgpu = probe.ok;
+  } catch {
+    webgpu = false;
+  }
+
+  const offscreenCanvas =
+    typeof OffscreenCanvas !== "undefined" &&
+    typeof HTMLCanvasElement !== "undefined" &&
+    typeof HTMLCanvasElement.prototype.transferControlToOffscreen === "function";
+
+  const mediaRecorderMp4 =
+    typeof MediaRecorder !== "undefined" &&
+    (MediaRecorder.isTypeSupported("video/mp4;codecs=avc1,mp4a.40.2") ||
+      MediaRecorder.isTypeSupported("video/mp4"));
+
+  const videoFrameCallback =
+    "requestVideoFrameCallback" in HTMLVideoElement.prototype;
+
+  const h264EncoderAcceleration = webcodecs
+    ? await probeH264EncoderAcceleration(1280, 720)
+    : null;
+  const hardwareH264 = h264EncoderAcceleration === "prefer-hardware";
+
+  _cached = {
+    webcodecs,
+    webgpu,
+    offscreenCanvas,
+    hardwareH264,
+    h264EncoderAcceleration,
+    mediaRecorderMp4,
+    sharedArrayBuffer,
+    crossOriginIsolated,
+    videoFrameCallback,
+  };
+  return _cached;
+}
+
+// ---------------------------------------------------------------------------
+// Preview backend selection
+// ---------------------------------------------------------------------------
+
+/** Which compositor drives the live timeline preview. */
+export type PreviewBackend = "webgpu" | "canvas2d" | "unavailable";
+
+/**
+ * Max simultaneous layers the WebGPU preview path is budgeted for. Beyond this
+ * a labeled Canvas2D compositor is used (performance only — not a GPU fallback).
+ */
+export const WEBGPU_LAYER_BUDGET = 16;
+
+/**
+ * Choose the preview compositor backend.
+ *
+ * WebGPU is required for the GPU preview session. A failed adapter/device
+ * probe is `unavailable` (hard-fail) — Canvas2D is not a GPU fallback.
+ * Canvas2D is used only when WebGPU probed OK but the layer budget is exceeded
+ * (performance compositor, labeled as such).
+ */
+export function selectPreviewBackend(
+  caps: Pick<BrowserCapabilities, "webgpu">,
+  layerCount = 0,
+  canvas2dAvailable = true,
+): PreviewBackend {
+  if (caps.webgpu && layerCount <= WEBGPU_LAYER_BUDGET) return "webgpu";
+  if (caps.webgpu && canvas2dAvailable) return "canvas2d";
+  return "unavailable";
+}
+
+/** Short human-readable label for the active preview backend (UI badge). */
+export function previewBackendLabel(backend: PreviewBackend): string {
+  switch (backend) {
+    case "webgpu":
+      return "WebGPU Worker";
+    case "canvas2d":
+      return "Canvas2D (layer budget)";
+    default:
+      return "GPU preview unavailable";
+  }
+}
+
+/** Probe whether a 2D canvas context can be created in this environment. */
+export function isCanvas2dAvailable(): boolean {
+  try {
+    return !!document.createElement("canvas").getContext("2d");
+  } catch {
+    return false;
+  }
+}
+
+/** Return a human-readable summary of detected capabilities. */
+export function formatCapabilities(caps: BrowserCapabilities): string {
+  const lines: string[] = [];
+  lines.push(`WebCodecs: ${caps.webcodecs ? "✓" : "✗"}`);
+  lines.push(`Hardware H.264: ${caps.hardwareH264 ? "✓" : "✗"}`);
+  if (!caps.hardwareH264) {
+    lines.push(
+      `Software H.264: ${caps.h264EncoderAcceleration ? "✓" : "✗"}`,
+    );
+  }
+  lines.push(`WebGPU: ${caps.webgpu ? "✓" : "✗"}`);
+  lines.push(formatGpuChoreDiagnostics());
+  lines.push(formatMediaEngineDiagnostics());
+  lines.push(`OffscreenCanvas: ${caps.offscreenCanvas ? "✓" : "✗"}`);
+  lines.push(`MediaRecorder MP4: ${caps.mediaRecorderMp4 ? "✓" : "✗"}`);
+  lines.push(`SharedArrayBuffer: ${caps.sharedArrayBuffer ? "✓" : "✗"}`);
+  lines.push(`CrossOriginIsolated: ${caps.crossOriginIsolated ? "✓" : "✗"}`);
+  lines.push(`FFmpeg: ${caps.sharedArrayBuffer && caps.crossOriginIsolated ? "multi-threaded" : "single-threaded"}`);
+  return lines.join(" · ");
+}

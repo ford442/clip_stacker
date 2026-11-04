@@ -3,10 +3,10 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { ClipLibrary } from './ClipLibrary';
 import { editorStore, __resetEditorStoreForTests } from '../store/editorStore';
-import { settingsStore } from '../store/settingsStore';
-import { createTestClip } from '../utils/project.test.helpers';
-import type { BatchProcessingOptions } from '../utils/batchClipProcessing';
+import { createTestClip } from '../project/project.test.helpers';
+import type { BatchProcessingOptions } from '../remote/batchClipProcessing';
 import type { ClipGroup } from '../types';
+import { renderJobStore } from '../store/renderJobStore';
 
 vi.mock('./AutoCutPanel', () => ({ AutoCutPanel: () => null }));
 vi.mock('./ProxyBadge', () => ({
@@ -23,7 +23,7 @@ describe('ClipLibrary batch processing', () => {
       clips: [createTestClip('alpha', 5), createTestClip('bravo', 5)],
       clipGroups: [] as ClipGroup[],
     });
-    settingsStore.setState({
+    renderJobStore.setState({
       intercutProcessing: false,
       isRendering: false,
       rifeProcessingClipId: null,
@@ -61,7 +61,7 @@ describe('ClipLibrary batch processing', () => {
     container?.remove();
     container = null;
     __resetEditorStoreForTests();
-    settingsStore.setState({
+    renderJobStore.setState({
       intercutProcessing: false,
       isRendering: false,
       rifeProcessingClipId: null,

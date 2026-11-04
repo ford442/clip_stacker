@@ -5,7 +5,7 @@
  * then mux with `-stream_loop -1` + `-c:a copy` so silence cost is ~remux, not encode.
  */
 
-import { Mp4Writer } from '../utils/container';
+import { Mp4Writer } from '../export/container';
 import type { IFfmpegRuntime } from './ffmpegRuntime';
 import type { StatusCallback } from './ffmpegCommon';
 import {
@@ -15,7 +15,7 @@ import {
   AAC_FRAME_SAMPLES,
   extractPlanarFrame,
   isAudioEncoderAvailable,
-} from '../utils/webcodecs-audio';
+} from '../export/webcodecsAudio';
 
 /** Virtual filename written into the FFmpeg VFS. */
 export const SILENT_AAC_UNIT_NAME = 'silent_unit.m4a';

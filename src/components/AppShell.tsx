@@ -1,16 +1,16 @@
 import { useRef, type RefObject } from "react";
 import type { Clip, ClipTransition, TextOverlay } from "../types";
 import type { CaptionsPanelProps } from "./CaptionsPanel";
-import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
-import { settingsStore, uiActions } from "../store";
+import { formatEncoderPathLabel } from "../export/encoderPathLabel";
+import { uiActions } from "../store";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { ClipValues } from "./Inspector";
 import type { PendingRemoteUploadError } from "../hooks/useProjectSaveLoad";
-import type { AutoSaveOffer } from "../utils/autoSave";
-import type { MediaLibraryItem, RemoteUploadProgressEvent } from "../utils/project";
+import type { AutoSaveOffer } from "../project/autoSave";
+import type { MediaLibraryItem, RemoteUploadProgressEvent } from "../project";
 import type { IntercutGeneratorConfig } from "../ffmpeg/intercutGenerator";
-import type { BatchProcessingOptions } from "../utils/batchClipProcessing";
+import type { BatchProcessingOptions } from "../remote/batchClipProcessing";
 import { Toolbar } from "./Toolbar";
 import { StorageRow } from "./StorageRow";
 import { MediaLibraryPanel } from "./MediaLibraryPanel";
@@ -31,6 +31,7 @@ import {
   WorkspaceControls,
 } from "./WorkspaceChrome";
 import { useWorkspaceLayoutVars } from "../hooks/useWorkspaceLayoutVars";
+import { renderJobStore } from '../store/renderJobStore';
 
 // Only shown after a failed render, and it reads the FFmpeg runtime's logs, so
 // it loads with that runtime rather than with the shell.
@@ -186,7 +187,7 @@ export function AppShell(props: AppShellProps) {
   // Only the three fields this shell itself renders — a progress tick during a
   // render must not re-render every panel below.
   const { encoderPath, isRendering, renderPlan } = useStore(
-    settingsStore,
+    renderJobStore,
     useShallow((s) => ({
       encoderPath: s.encoderPath,
       isRendering: s.isRendering,

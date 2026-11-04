@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getFontPublicUrl } from './textOverlay';
+import { getFontPublicUrl } from '../composition/textOverlay';
 
 describe('resolvePublicAssetUrl via getFontPublicUrl', () => {
   it('returns a URL containing the font filename', () => {

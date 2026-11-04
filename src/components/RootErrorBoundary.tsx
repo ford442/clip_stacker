@@ -1,7 +1,8 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { readAutoSaveOffer } from '../utils/autoSave';
+import { readAutoSaveOffer } from '../project/autoSave';
 import { editorStore } from '../store/editorStore';
 import { settingsStore } from '../store/settingsStore';
+import { renderJobStore } from '../store/renderJobStore';
 
 interface RootErrorBoundaryState {
   error: Error | null;
@@ -36,13 +37,14 @@ export class RootErrorBoundary extends Component<{ children: ReactNode }, RootEr
     crash.stack = `${error?.stack ?? ''}\n\nComponent stack:${componentStack}`;
     let text: string;
     try {
-      const { generateDebugReport } = await import('../utils/debugReport');
+      const { generateDebugReport } = await import('../actions/debugReport');
       const settings = settingsStore.getState();
+      const job = renderJobStore.getState();
       const editor = editorStore.getState();
       text = generateDebugReport({
-        status: settings.status,
-        renderPlan: settings.renderPlan,
-        encoderPath: settings.encoderPath,
+        status: job.status,
+        renderPlan: job.renderPlan,
+        encoderPath: job.encoderPath,
         clips: editor.clips,
         clipGroups: editor.clipGroups,
         transitions: editor.transitions,

@@ -5,7 +5,7 @@ import {
   editorActions,
   __resetEditorStoreForTests,
 } from './editorStore';
-import { MIN_CAPTION_DURATION_SEC } from '../utils/subtitles';
+import { MIN_CAPTION_DURATION_SEC } from '../captions/subtitles';
 
 const CUE_A: CaptionEntry = { id: 'a', startSec: 3, endSec: 4, text: 'Later' };
 const CUE_B: CaptionEntry = { id: 'b', startSec: 1, endSec: 2, text: 'Earlier' };

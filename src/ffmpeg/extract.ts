@@ -2,7 +2,7 @@ import { fetchFile } from "@ffmpeg/util";
 import type {
   Clip,
 } from "../types";
-import { getClipDuration } from "../utils/clipTiming";
+import { getClipDuration } from "../timeline/clipTiming";
 import {
   clearFfmpegLogs,
   safeExec,

@@ -32,9 +32,9 @@ AudioPlaybackManager ── scheduleFrom() ──► AudioBufferSourceNode(s)
 | `src/store/audioSyncStore.ts`, `src/components/AudioSyncOffsetControl.tsx` | Per-browser A/V offset (view state) and its preview control |
 | `src/audio/schedule.ts` | Timeline placements, bed ducking, structure compare |
 | `src/audio/processedAudioCache.ts` | Clip insert effects (EQ / compressor) baked into a copy of the buffer by the media-engine C++ |
-| `src/audio/playbackManager.ts` | Master chain on the shared context, play/pause/seek, analyser meter |
+| `src/playback/playbackManager.ts` | Master chain on the shared context, play/pause/seek, analyser meter |
 | `src/audio/timeStretch.worker.ts`, `timeStretchClient.ts` | Rate-automation WSOLA in a worker (chunked WASM session) |
-| `src/audio/busRouting.ts` | Lane inputs → bus-graph AudioWorklet (lane / master FX, ducks, loudness meter) |
+| `src/playback/busRouting.ts` | Lane inputs → bus-graph AudioWorklet (lane / master FX, ducks, loudness meter) |
 | `src/audio/fxGraph.ts` | Tracks + master bus → the engine's packed bus layout (shared with export) |
 | `src/wasm/audioFx.ts`, `public/worklets/audio-fx-processor.js` | Compile `media_engine_fx.wasm`, register the processor, drive the node |
 | `src/hooks/useTimelineAudioPlayback.ts` | Sync schedule + dispose on unmount |

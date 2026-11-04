@@ -2,18 +2,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import type { CaptionEntry } from '../types';
-import type { CaptionProvider } from '../utils/captionProvider';
+import type { CaptionProvider } from '../captions/captionProvider';
 import {
   registerCaptionProvider,
   __resetCaptionProvidersForTests,
-} from '../utils/captionProvider';
+} from '../captions/captionProvider';
 import { editorStore, __resetEditorStoreForTests } from '../store/editorStore';
 import { settingsStore } from '../store/settingsStore';
 import { useAutoCaption, type UseAutoCaptionResult } from './useAutoCaption';
+import { renderJobStore } from '../store/renderJobStore';
 
 // The real mixer needs OfflineAudioContext and decoded media; the hook's job is
 // what it does with the cues, so the audio render is stubbed.
-vi.mock('../utils/autoCaptionAudio', () => ({
+vi.mock('../captions/autoCaptionAudio', () => ({
   renderAutoCaptionAudio: vi.fn(async () => ({
     audio: { length: 0 } as unknown as AudioBuffer,
     timeOffsetSec: 0,
@@ -55,7 +56,7 @@ describe('useAutoCaption', () => {
     settingsStore.getState().setAutoCaptionMerge(false);
     settingsStore.getState().setAutoCaptionScope('timeline');
     editorStore.getState().setCaptions(EXISTING);
-    settingsStore.getState().setStatus('');
+    renderJobStore.getState().setStatus('');
   });
 
   afterEach(() => {
@@ -134,7 +135,7 @@ describe('useAutoCaption', () => {
     });
 
     expect(editorStore.getState().captions).toEqual(EXISTING);
-    expect(settingsStore.getState().status).toMatch(/cancelled/i);
+    expect(renderJobStore.getState().status).toMatch(/cancelled/i);
     expect(hook!.running).toBe(false);
   });
 });

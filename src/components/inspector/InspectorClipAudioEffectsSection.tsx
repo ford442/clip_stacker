@@ -10,7 +10,7 @@ import {
   type AudioEqBand,
   type AudioEqBandType,
   type ClipAudioEffects,
-} from '../../utils/audioEffects';
+} from '../../audio/audioEffects';
 import { getMediaEngineLoadFailure, isMediaEngineMixEnabled } from '../../wasm/mediaEngine';
 import { FxNumberField as NumberField } from '../audio/FxNumberField';
 

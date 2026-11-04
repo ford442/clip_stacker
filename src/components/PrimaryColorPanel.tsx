@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import {
   DEFAULT_PRIMARY_COLOR,
   type PrimaryColorPass,
-} from '../utils/finishing';
+} from '../finishing/finishing';
 
 interface Props {
   settings: PrimaryColorPass;

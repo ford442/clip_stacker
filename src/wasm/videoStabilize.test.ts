@@ -14,7 +14,7 @@ import {
   renderGrayFrame,
   renderHandheldClip,
   residualTrack,
-} from '../utils/stabilize.test.helpers';
+} from '../media/stabilize.test.helpers';
 
 const WASM_BASE = pathToFileURL(
   path.resolve(process.cwd(), 'public/wasm') + path.sep,

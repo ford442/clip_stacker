@@ -16,7 +16,7 @@
  */
 
 import type { AudioScheduleEntry } from './schedule';
-import { audioEffectsSignature } from '../utils/audioEffects';
+import { audioEffectsSignature } from './audioEffects';
 import {
   isMediaEngineMixEnabled,
   loadMediaEngineModule,

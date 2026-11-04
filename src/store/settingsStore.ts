@@ -3,15 +3,15 @@ import type {
   AutoCaptionScope,
   CaptionExportMode,
   ExportSettings,
-  RenderPlan,
 } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
+import { registerExportStateSource } from '../export/exportSources';
 import { STORAGE_KEYS, safeGet, safeRemove, safeSet } from '../utils/storageKeys';
-import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
 import {
   DEFAULT_COLOR_MANAGEMENT,
   type ColorManagementSettings,
-} from '../utils/colorManagement';
+} from '../finishing/colorManagement';
 
 /** localStorage key for the self-hosted transcription endpoint (#auto-caption). */
 export const AUTO_CAPTION_ENDPOINT_KEY = STORAGE_KEYS.autoCaptionEndpoint.key;
@@ -21,6 +21,11 @@ function readStoredEndpoint(): string {
   return safeGet('autoCaptionEndpoint') ?? '';
 }
 
+/**
+ * Project and export settings (what a project saves: export settings,
+ * finishing, colour management) plus per-session export preferences.
+ * Render-job progress lives in `renderJobStore`.
+ */
 export interface SettingsState {
   exportSettings: ExportSettings;
   finishing: FinishingSettings;
@@ -53,20 +58,6 @@ export interface SettingsState {
   /** Self-hosted transcription endpoint for the `whisper-http` provider. */
   autoCaptionEndpoint: string;
 
-  status: string;
-  progressStage: string;
-  progressValue: number | null;
-  progressIndeterminate: boolean;
-
-  isRendering: boolean;
-  ffmpegLoading: boolean;
-  ffmpegFailed: boolean;
-  outputUrl: string | null;
-  encoderPath: string;
-  renderPlan: RenderPlan | null;
-  rifeProcessingClipId: string | null;
-  intercutProcessing: boolean;
-
   setExportSettings: (settings: ExportSettings) => void;
   setFinishing: (settings: FinishingSettings) => void;
   setColorManagement: (settings: ColorManagementSettings) => void;
@@ -81,20 +72,6 @@ export interface SettingsState {
   setAutoCaptionScope: (scope: AutoCaptionScope) => void;
   setAutoCaptionMerge: (v: boolean) => void;
   setAutoCaptionEndpoint: (endpoint: string) => void;
-
-  setStatus: (status: string) => void;
-  setProgressStage: (stage: string) => void;
-  setProgressValue: (val: number | null) => void;
-  setProgressIndeterminate: (val: boolean) => void;
-
-  setIsRendering: (v: boolean) => void;
-  setFfmpegLoading: (v: boolean) => void;
-  setFfmpegFailed: (v: boolean) => void;
-  setOutputUrl: (url: string | null) => void;
-  setEncoderPath: (path: string) => void;
-  setRenderPlan: (plan: RenderPlan | null) => void;
-  setRifeProcessingClipId: (id: string | null) => void;
-  setIntercutProcessing: (v: boolean) => void;
 }
 
 export const settingsStore = createStore<SettingsState>()((set) => ({
@@ -113,20 +90,6 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   autoCaptionScope: 'timeline',
   autoCaptionMerge: false,
   autoCaptionEndpoint: readStoredEndpoint(),
-
-  status: '',
-  progressStage: '',
-  progressValue: null,
-  progressIndeterminate: false,
-
-  isRendering: false,
-  ffmpegLoading: false,
-  ffmpegFailed: false,
-  outputUrl: null,
-  encoderPath: '',
-  renderPlan: null,
-  rifeProcessingClipId: null,
-  intercutProcessing: false,
 
   setExportSettings: (settings) => set({ exportSettings: settings }),
   setFinishing: (settings) => set({ finishing: settings }),
@@ -147,20 +110,11 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
     if (endpoint) safeSet('autoCaptionEndpoint', endpoint);
     else safeRemove('autoCaptionEndpoint');
   },
-
-  setStatus: (status) => set({ status }),
-  setProgressStage: (stage) => set({ progressStage: stage }),
-  setProgressValue: (val) => set({ progressValue: val }),
-  setProgressIndeterminate: (val) => set({ progressIndeterminate: val }),
-
-  setIsRendering: (v) => set({ isRendering: v }),
-  setFfmpegLoading: (v) => set({ ffmpegLoading: v }),
-  setFfmpegFailed: (v) => set({ ffmpegFailed: v }),
-  setOutputUrl: (url) => set({ outputUrl: url }),
-  setEncoderPath: (path) => set({ encoderPath: path }),
-  setRenderPlan: (plan) => set({ renderPlan: plan }),
-  setRifeProcessingClipId: (id) => set({ rifeProcessingClipId: id }),
-  setIntercutProcessing: (v) => set({ intercutProcessing: v }),
 }));
 
 export const settingsActions = settingsStore.getState();
+
+// The export layer reads the master limiter from here without importing a store.
+registerExportStateSource({
+  masterLimiter: () => settingsStore.getState().exportSettings.masterLimiter,
+});

@@ -2,7 +2,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Track } from '../types';
-import { createBusEffect } from '../utils/audioBus';
+import { createBusEffect } from './audioBus';
 import { planBusGraph } from './fxGraph';
 import {
   _resetMediaEngineLoadStateForTests,

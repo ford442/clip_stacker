@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { act, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { CurvesPanel } from './CurvesPanel';
-import { DEFAULT_CURVES, type CurvesPass } from '../utils/finishing';
-import { identityCurves } from '../utils/curves';
+import { DEFAULT_CURVES, type CurvesPass } from '../finishing/finishing';
+import { identityCurves } from '../finishing/curves';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;

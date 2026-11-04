@@ -1,10 +1,10 @@
 import type { Clip, ClipAutomation } from '../../types';
-import { getClipDuration } from '../../utils/clipTiming';
+import { getClipDuration } from '../../timeline/clipTiming';
 import {
   DEFAULT_CLIP_PAN,
   MAX_CLIP_PAN,
   MIN_CLIP_PAN,
-} from '../../utils/clipAutomation';
+} from '../../timeline/clipAutomation';
 import {
   beatsSpannedByDuration,
   MAX_CLIP_LOOP_COUNT,
@@ -17,8 +17,8 @@ import {
   PLAYBACK_RATE_NUDGE_COARSE,
   PLAYBACK_RATE_NUDGE_FINE,
   UI_MAX_CLIP_PLAYBACK_RATE,
-} from '../../utils/playbackRate';
-import { MIN_CLIP_DURATION } from '../../utils/media';
+} from '../../timeline/playbackRate';
+import { MIN_CLIP_DURATION } from '../../media/media';
 import { BeatmatchPanel } from '../BeatmatchPanel';
 import { KeyframeMiniEditor } from '../KeyframeMiniEditor';
 import { WaveformCanvas } from '../WaveformCanvas';

@@ -7,9 +7,9 @@ import { useClipStabilization } from "./hooks/useClipStabilization";
 import { useProxyBuilder } from "./hooks/useProxyBuilder";
 import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
-import { getEffectiveTimelineClips, visibleTextOverlays } from "./utils/trackModel";
-import { editorStore, playbackStore, setPlayheadTime, settingsActions, uiActions } from "./store";
-import { playheadForSelectedClip, resolveClipOutputWindow } from "./utils/previewComposition";
+import { getEffectiveTimelineClips, visibleTextOverlays } from "./timeline/trackModel";
+import { editorStore, playbackStore, setPlayheadTime, uiActions } from "./store";
+import { playheadForSelectedClip, resolveClipOutputWindow } from "./composition/previewComposition";
 import { useClipActions } from "./hooks/useClipActions";
 import { useIntercutActions } from "./hooks/useIntercutActions";
 import { useRenderActions } from "./hooks/useRenderActions";
@@ -24,6 +24,7 @@ import {
 import { useCaptionActions } from "./hooks/useCaptionActions";
 import { useAppKeyboardShortcuts } from "./hooks/useAppKeyboardShortcuts";
 import { AppShell } from "./components/AppShell";
+import { renderJobActions } from './store/renderJobStore';
 
 /**
  * Composition root. All business state lives in the Zustand stores under
@@ -257,7 +258,7 @@ export function App() {
     undo,
     redo,
     setShowKeyboardShortcuts: uiActions.setShowKeyboardShortcuts,
-    setStatus: settingsActions.setStatus,
+    setStatus: renderJobActions.setStatus,
   });
 
   return (

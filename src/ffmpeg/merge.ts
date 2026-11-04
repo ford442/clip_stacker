@@ -7,8 +7,8 @@ import type {
   TextOverlay,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/clipTiming";
-import { buildTransitionFilterComplex } from "../utils/transitions";
+import { getClipDuration } from "../timeline/clipTiming";
+import { buildTransitionFilterComplex } from "../timeline/transitions";
 import {
   DEFAULT_FINISHING,
   isGrainActive,
@@ -17,16 +17,16 @@ import {
   isSecondaryColorActive,
   isSharpenActive,
   type FinishingSettings,
-} from "../utils/finishing";
-import { buildPrimaryColorFfmpegFilters } from "../utils/primaryColor";
-import { buildNoiseReductionFfmpegFilters } from "../utils/noiseReduction";
-import { buildSecondaryColorFfmpegFilters } from "../utils/secondaryColor";
-import { buildSharpenFfmpegFilters } from "../utils/sharpen";
-import { buildGrainFfmpegFilters } from "../utils/grain";
+} from "../finishing/finishing";
+import { buildPrimaryColorFfmpegFilters } from "../finishing/primaryColor";
+import { buildNoiseReductionFfmpegFilters } from "../finishing/noiseReduction";
+import { buildSecondaryColorFfmpegFilters } from "../finishing/secondaryColor";
+import { buildSharpenFfmpegFilters } from "../finishing/sharpen";
+import { buildGrainFfmpegFilters } from "../finishing/grain";
 import {
   renderTimelineAudioMixWav,
   timelineNeedsAudioPremix,
-} from "../utils/webcodecs-audio";
+} from "../export/webcodecsAudio";
 import {
   clearFfmpegLogs,
   emitProgress,
@@ -45,7 +45,7 @@ import {
   ProgressCallback,
 } from "./core";
 import { mergeClipsWithCompositing } from "./video";
-import { clipHasPictureTransform } from "../utils/animatedLayout";
+import { clipHasPictureTransform } from "../composition/animatedLayout";
 import { calculateRenderPlan } from "./plan";
 import { remuxVideoWithPremixWav, remuxVideoWithMasterAudio } from "./mux";
 

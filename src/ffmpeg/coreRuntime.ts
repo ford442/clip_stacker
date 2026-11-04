@@ -1,12 +1,12 @@
 import { fetchFile } from "@ffmpeg/util";
 import type { TextOverlay } from "../types";
-import { assertValidBundledFontBytes } from "../utils/fontBytes";
+import { assertValidBundledFontBytes } from "../media/fontBytes";
 import {
   buildDrawtextFilter,
   getFontPublicUrl,
   getBundledFont,
   resolveFontFileForOverlay,
-} from "../utils/textOverlay";
+} from "../composition/textOverlay";
 import {
   bakeSecondaryColorLut,
   secondaryHasHueGrades,
@@ -14,7 +14,7 @@ import {
   secondaryLutToCubeText,
   SECONDARY_COLOR_LUT_FILENAME,
   type SecondaryColorSettings,
-} from "../utils/secondaryColor";
+} from "../finishing/secondaryColor";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   extractErrorMessage,
@@ -30,7 +30,7 @@ import {
   MAX_LOG_BUFFER,
 } from "./ffmpegManager";
 
-export { buildDrawtextFilter } from "../utils/textOverlay";
+export { buildDrawtextFilter } from "../composition/textOverlay";
 export {
   buildSilentAacLoopInputArgs,
   ensureSilentAacUnit,

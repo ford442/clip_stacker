@@ -1,0 +1,494 @@
+import type {
+  CaptionEntry,
+  Clip,
+  ClipGroup,
+  ClipKind,
+  ClipProxy,
+  ClipTransition,
+  MasterAudio,
+  Project,
+  SerializedClip,
+  SerializedClipGroup,
+  TextOverlayStyle,
+  Track,
+} from '../types';
+import { createClipId, getMediaInfo, MIN_CLIP_DURATION } from '../media/media';
+import {
+  migrateClipKeyframesToNormalized,
+  migratePixelClipLayout,
+  parseLayoutReferenceResolution,
+} from '../composition/overlayCoords';
+import {
+  getColorGradeFromFinishing,
+  resolveFinishingFromProject,
+} from '../finishing/finishing';
+import { normalizeColorManagement } from '../finishing/colorManagement';
+import { resolveProjectTracks, syncTracksWithClips } from '../timeline/trackModel';
+import { sanitizeClipAdjustments } from './clipHelpers';
+import { downloadRemoteMedia } from './remoteMedia';
+import {
+  buildRemoteDownloadStage,
+  calculateRemoteDownloadProgress,
+  countRemoteProjectDownloads,
+  emitRemoteProjectLoadProgress,
+  hasRestorableRemoteMedia,
+  selectMediaSource,
+} from './remoteLoadProgress';
+import { deserializeTextOverlays, usesPixelLayoutForProject } from './applyTextOverlays';
+import type { AppliedProjectData, ApplyProjectDataOptions } from './types';
+import { normalizeClipAutomation } from '../timeline/clipAutomation';
+import { normalizeClipAudioEffects } from '../audio/audioEffects';
+import { normalizeBusEffects, normalizeLaneDuck, normalizeMasterBus } from '../audio/audioBus';
+import { createCaptionId, normalizeCaptions } from '../captions/subtitles';
+
+function inferKind(savedClip: SerializedClip, file: File): ClipKind {
+  if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
+  if (file.type.startsWith('audio/')) return 'audio';
+  if (file.type.startsWith('video/')) return 'video';
+  if (/\.(wav|mp3)$/i.test(file.name)) return 'audio';
+  return 'video';
+}
+
+/**
+ * Beat metadata saved with a master track. Absent (or unparsable) values leave
+ * the track without tempo, and `useMasterAudioBeatAnalysis` re-derives it.
+ */
+function restoredMasterTempo(
+  saved: NonNullable<Project['masterAudio']>,
+): Pick<MasterAudio, 'beatTimestamps' | 'bpmEstimate' | 'bpmConfidence'> {
+  const beats = Array.isArray(saved.beatTimestamps)
+    ? saved.beatTimestamps.map((t) => Number(t)).filter((t) => Number.isFinite(t) && t >= 0)
+    : [];
+  return {
+    ...(beats.length > 0 ? { beatTimestamps: beats } : {}),
+    ...(saved.bpmEstimate != null && Number(saved.bpmEstimate) > 0
+      ? { bpmEstimate: Number(saved.bpmEstimate) }
+      : {}),
+    ...(saved.bpmConfidence != null && Number.isFinite(Number(saved.bpmConfidence))
+      ? { bpmConfidence: Math.min(1, Math.max(0, Number(saved.bpmConfidence))) }
+      : {}),
+  };
+}
+
+async function restoreMasterAudio(
+  project: Project,
+  clips: Clip[],
+): Promise<MasterAudio | null> {
+  const saved = project.masterAudio;
+  if (!saved?.fileName) return null;
+
+  const tempo = restoredMasterTempo(saved);
+
+  const byName = clips.find((c) => c.file.name === saved.fileName);
+  if (byName) {
+    return {
+      file: byName.file,
+      objectUrl: byName.objectUrl,
+      fileName: saved.fileName,
+      duration: saved.duration,
+      startTime: saved.startTime ?? 0,
+      ...tempo,
+    };
+  }
+
+  const mediaUrl =
+    project.mediaMode === 'remote'
+      ? saved.sourceMediaUrl ?? saved.sourceMediaDataUrl
+      : saved.sourceMediaDataUrl ?? saved.sourceMediaUrl;
+  if (!mediaUrl) return null;
+
+  try {
+    const blob = await downloadRemoteMedia(mediaUrl);
+    const file = new File([blob], saved.fileName, {
+      type: saved.fileType || blob.type || 'audio/mpeg',
+    });
+    const objectUrl = URL.createObjectURL(file);
+    return {
+      file,
+      objectUrl,
+      fileName: saved.fileName,
+      duration: saved.duration,
+      startTime: saved.startTime ?? 0,
+      ...tempo,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Restore caption cues from a saved project.
+ *
+ * Everything is coerced and clamped rather than trusted: project JSON can come
+ * from remote storage or a hand-edited file, and one malformed cue must not
+ * take the whole timeline down. Cues missing usable text or timings are
+ * dropped, and ids are regenerated when absent so the lane can key on them.
+ */
+function deserializeCaptions(raw: Project['captions']): CaptionEntry[] {
+  if (!Array.isArray(raw)) return [];
+  const entries: CaptionEntry[] = [];
+  for (const saved of raw) {
+    const text = typeof saved?.text === 'string' ? saved.text : '';
+    if (text.trim() === '') continue;
+    const startSec = Number(saved.startSec);
+    const endSec = Number(saved.endSec);
+    if (!Number.isFinite(startSec) || !Number.isFinite(endSec)) continue;
+    entries.push({
+      id: typeof saved.id === 'string' && saved.id ? saved.id : createCaptionId(),
+      startSec,
+      endSec,
+      text,
+      ...(saved.style && typeof saved.style === 'object'
+        ? { style: { ...saved.style } }
+        : {}),
+    });
+  }
+  return normalizeCaptions(entries);
+}
+
+export async function applyProjectData(
+  project: Project,
+  clips: Clip[],
+  options: ApplyProjectDataOptions = {},
+): Promise<AppliedProjectData> {
+  if (!project || !Array.isArray(project.clips)) {
+    throw new Error('Project file is invalid.');
+  }
+
+  const usesPixelLayout = usesPixelLayoutForProject(project.schemaVersion);
+  const layoutReference = parseLayoutReferenceResolution(
+    project.layoutReferenceResolution,
+  );
+
+  const byName = new Map(clips.map((clip) => [clip.file.name, clip]));
+  const mapped: Clip[] = [];
+  let skippedCount = 0;
+  const skippedClipFileNames: string[] = [];
+  const mediaDownloadWarnings: string[] = [];
+  const totalRemoteDownloads = countRemoteProjectDownloads(project, clips);
+  const remoteProgressStart = options.remoteProgressStart ?? 0;
+  const remoteProgressEnd = options.remoteProgressEnd ?? 1;
+  let remoteDownloadIndex = 0;
+
+  for (const savedClip of project.clips) {
+    let liveClip = byName.get(savedClip.fileName);
+    if (!liveClip && hasRestorableRemoteMedia(savedClip)) {
+      remoteDownloadIndex += 1;
+      const clipIndex = remoteDownloadIndex;
+      const clipCount = totalRemoteDownloads;
+      const stage = buildRemoteDownloadStage(clipIndex, clipCount, savedClip.fileName);
+      emitRemoteProjectLoadProgress(options.onProgress, {
+        stage,
+        progress: calculateRemoteDownloadProgress(
+          clipIndex,
+          clipCount,
+          0,
+          remoteProgressStart,
+          remoteProgressEnd,
+        ),
+        indeterminate: true,
+        clipIndex,
+        clipCount,
+        fileName: savedClip.fileName,
+      });
+      try {
+        const mediaUrl = selectMediaSource(savedClip, project.mediaMode);
+        if (!mediaUrl) throw new Error('No media URL available');
+        const blob = await downloadRemoteMedia(mediaUrl, (clipProgress, indeterminate) => {
+          emitRemoteProjectLoadProgress(options.onProgress, {
+            stage,
+            progress: calculateRemoteDownloadProgress(
+              clipIndex,
+              clipCount,
+              clipProgress,
+              remoteProgressStart,
+              remoteProgressEnd,
+            ),
+            indeterminate,
+            clipIndex,
+            clipCount,
+            fileName: savedClip.fileName,
+          });
+        });
+        emitRemoteProjectLoadProgress(options.onProgress, {
+          stage: `Preparing clip ${clipIndex} of ${clipCount}: ${savedClip.fileName}`,
+          progress: calculateRemoteDownloadProgress(
+            clipIndex,
+            clipCount,
+            1,
+            remoteProgressStart,
+            remoteProgressEnd,
+          ),
+          indeterminate: true,
+          clipIndex,
+          clipCount,
+          fileName: savedClip.fileName,
+        });
+        const fileType = blob.type || savedClip.fileType || 'application/octet-stream';
+        const file = new File([blob], savedClip.fileName, { type: fileType });
+        const { duration, objectUrl, videoWidth, videoHeight, hasAudio } = await getMediaInfo(file);
+        const restoredDuration = Number(savedClip.duration);
+        const effectiveDuration = Number.isFinite(restoredDuration) ? restoredDuration : duration;
+        liveClip = {
+          id: savedClip.id || createClipId(),
+          file,
+          objectUrl,
+          title: savedClip.title || savedClip.fileName,
+          kind: inferKind(savedClip, file),
+          duration: Math.max(MIN_CLIP_DURATION, effectiveDuration),
+          videoWidth: savedClip.videoWidth ?? videoWidth,
+          videoHeight: savedClip.videoHeight ?? videoHeight,
+          ...(savedClip.hasAudio === false || savedClip.hasAudio === true
+            ? { hasAudio: savedClip.hasAudio }
+            : hasAudio !== undefined
+              ? { hasAudio }
+              : {}),
+          trimStart: 0,
+          trimEnd: NaN,
+          videoFadeIn: 0,
+          videoFadeOut: 0,
+          audioFadeIn: 0,
+          audioFadeOut: 0,
+          // Remember the remote URL (not a data: URL) so a future remote
+          // save can reuse it instead of re-uploading this clip.
+          remoteSourceUrl: /^https?:\/\//i.test(mediaUrl) ? mediaUrl : undefined,
+        };
+      } catch (error) {
+        const message = (error as Error).message || String(error);
+        console.warn(`Could not restore media for "${savedClip.fileName}": ${message}`, error);
+        mediaDownloadWarnings.push(`"${savedClip.fileName}": ${message}`);
+        liveClip = undefined;
+      }
+    }
+    if (!liveClip) {
+      skippedCount++;
+      skippedClipFileNames.push(savedClip.fileName);
+      continue;
+    }
+
+    liveClip.title = savedClip.title || liveClip.title;
+    liveClip.trimStart = Number(savedClip.trimStart ?? liveClip.trimStart);
+    liveClip.trimEnd = savedClip.trimEnd == null ? NaN : Number(savedClip.trimEnd);
+    liveClip.videoFadeIn = Number(savedClip.videoFadeIn ?? liveClip.videoFadeIn);
+    liveClip.videoFadeOut = Number(savedClip.videoFadeOut ?? liveClip.videoFadeOut);
+    liveClip.audioFadeIn = Number(savedClip.audioFadeIn ?? liveClip.audioFadeIn);
+    liveClip.audioFadeOut = Number(savedClip.audioFadeOut ?? liveClip.audioFadeOut);
+    liveClip.groupId = savedClip.groupId;
+    liveClip.groupVariant = savedClip.groupVariant;
+    if (savedClip.remoteAudioUrl) liveClip.remoteAudioUrl = savedClip.remoteAudioUrl;
+    if (savedClip.rifeProcessed) {
+      liveClip.rifeProcessed = savedClip.rifeProcessed;
+      if (savedClip.rifeMultiplier != null) liveClip.rifeMultiplier = savedClip.rifeMultiplier;
+      if (savedClip.originalFps != null) liveClip.originalFps = savedClip.originalFps;
+      if (savedClip.processedFps != null) liveClip.processedFps = savedClip.processedFps;
+      if (savedClip.rifeMode) liveClip.rifeMode = savedClip.rifeMode;
+    }
+    if (savedClip.layerIndex != null) liveClip.layerIndex = Number(savedClip.layerIndex);
+    if (savedClip.x != null) liveClip.x = Number(savedClip.x);
+    if (savedClip.y != null) liveClip.y = Number(savedClip.y);
+    if (savedClip.width != null) liveClip.width = Number(savedClip.width);
+    if (savedClip.height != null) liveClip.height = Number(savedClip.height);
+    if (savedClip.opacity != null) liveClip.opacity = Number(savedClip.opacity);
+    if (savedClip.overlayBlend) liveClip.overlayBlend = savedClip.overlayBlend;
+    if (savedClip.chromaKey) {
+      liveClip.chromaKey = {
+        color: String(savedClip.chromaKey.color),
+        similarity: Number(savedClip.chromaKey.similarity),
+        blend: Number(savedClip.chromaKey.blend),
+      };
+    }
+    if (savedClip.volume != null) liveClip.volume = Number(savedClip.volume);
+    if (savedClip.playbackRate != null) {
+      liveClip.playbackRate = Number(savedClip.playbackRate);
+    }
+    if (savedClip.loopCount != null) {
+      liveClip.loopCount = Number(savedClip.loopCount);
+    }
+    if (savedClip.reversed === true) liveClip.reversed = true;
+    else delete liveClip.reversed;
+    const automation = normalizeClipAutomation(savedClip.automation);
+    if (automation) liveClip.automation = automation;
+    else delete liveClip.automation;
+    // Malformed bands are dropped rather than failing the load.
+    const audioEffects = normalizeClipAudioEffects(savedClip.audioEffects);
+    if (audioEffects) liveClip.audioEffects = audioEffects;
+    else delete liveClip.audioEffects;
+    if (usesPixelLayout && (savedClip.layerIndex ?? 0) > 0) {
+      const migrated = migratePixelClipLayout(liveClip, layoutReference);
+      liveClip.x = migrated.x;
+      liveClip.y = migrated.y;
+      liveClip.width = migrated.width;
+      liveClip.height = migrated.height;
+    }
+    if (savedClip.keyframes) {
+      liveClip.keyframes = usesPixelLayout
+        ? migrateClipKeyframesToNormalized(savedClip.keyframes, layoutReference)
+        : savedClip.keyframes;
+    }
+    if (savedClip.stillImage) liveClip.stillImage = savedClip.stillImage;
+    if (savedClip.hasAudio === false || savedClip.hasAudio === true) {
+      liveClip.hasAudio = savedClip.hasAudio;
+    }
+    if (Array.isArray(savedClip.beatTimestamps) && savedClip.beatTimestamps.length > 0) {
+      liveClip.beatTimestamps = savedClip.beatTimestamps
+        .map((t) => Number(t))
+        .filter((t) => Number.isFinite(t) && t >= 0);
+    }
+    if (savedClip.bpmEstimate != null && Number.isFinite(Number(savedClip.bpmEstimate))) {
+      liveClip.bpmEstimate = Number(savedClip.bpmEstimate);
+    }
+    if (savedClip.bpmConfidence != null && Number.isFinite(Number(savedClip.bpmConfidence))) {
+      liveClip.bpmConfidence = Math.min(1, Math.max(0, Number(savedClip.bpmConfidence)));
+    }
+    if (savedClip.bpmOverride != null && Number(savedClip.bpmOverride) > 0) {
+      liveClip.bpmOverride = Number(savedClip.bpmOverride);
+    }
+    if (Array.isArray(savedClip.lumaHistogram) && savedClip.lumaHistogram.length === 256) {
+      liveClip.lumaHistogram = savedClip.lumaHistogram.map((n) => Number(n) || 0);
+    }
+    if (savedClip.lumaLevels) {
+      liveClip.lumaLevels = {
+        black: Number(savedClip.lumaLevels.black) || 0,
+        white: Number(savedClip.lumaLevels.white) || 255,
+        mean: Number(savedClip.lumaLevels.mean) || 0,
+      };
+    }
+    if (savedClip.stabilize) {
+      // Only the toggle round-trips; useClipStabilization recomputes the
+      // matrices from the source on load.
+      liveClip.stabilize = true;
+    }
+    const proxy = sanitizeClipProxy(savedClip.proxy);
+    if (proxy) {
+      // useProxyBuilder looks the bytes up in the media store; a miss leaves
+      // the clip on its original, never broken.
+      liveClip.proxy = proxy;
+    }
+    sanitizeClipAdjustments(liveClip);
+    mapped.push(liveClip);
+  }
+
+  const activeVariantByGroupId = new Map<string, 'A' | 'B'>(
+    Array.isArray(project.clipGroups)
+      ? project.clipGroups
+          .filter((group): group is SerializedClipGroup => Boolean(group?.id))
+          .map((group) => [group.id, group.activeVariant === 'B' ? 'B' : 'A'])
+      : [],
+  );
+  const clipGroupsById = new Map<string, ClipGroup>();
+  const clipGroups: ClipGroup[] = [];
+
+  for (const clip of mapped) {
+    if (!clip.groupId || !clip.groupVariant) continue;
+    let group = clipGroupsById.get(clip.groupId);
+    if (!group) {
+      group = {
+        id: clip.groupId,
+        variants: { A: null, B: null },
+        activeVariant: activeVariantByGroupId.get(clip.groupId) ?? 'A',
+      };
+      clipGroupsById.set(clip.groupId, group);
+      clipGroups.push(group);
+    }
+    group.variants[clip.groupVariant] = clip;
+  }
+
+  const transitions: ClipTransition[] = Array.isArray(project.transitions)
+    ? project.transitions.map((t) => ({
+        afterClipIndex: Number(t.afterClipIndex),
+        type: t.type ?? 'dissolve',
+        duration: Number(t.duration ?? 0.5),
+        ...(t.params ? { params: t.params } : {}),
+        ...(typeof t.customShader === 'string' ? { customShader: t.customShader } : {}),
+        ...(t.morphSegment
+          ? {
+              morphSegment: {
+                objectUrl: '',
+                fileName: t.morphSegment.fileName ?? 'morph.mp4',
+                duration: Number(t.morphSegment.duration ?? t.duration ?? 0.5),
+                status: t.morphSegment.status ?? 'pending',
+                ...(t.morphSegment.error ? { error: t.morphSegment.error } : {}),
+              },
+            }
+          : {}),
+      }))
+    : [];
+
+  const { textOverlays, invalidColorWarnings } = deserializeTextOverlays(
+    project.textOverlays,
+    usesPixelLayout,
+    project.layoutReferenceResolution,
+  );
+
+  const captions = deserializeCaptions(project.captions);
+  const captionStyle: Partial<TextOverlayStyle> =
+    project.captionStyle && typeof project.captionStyle === 'object'
+      ? { ...project.captionStyle }
+      : {};
+
+  const finishing = resolveFinishingFromProject(project);
+  const colorGrade = getColorGradeFromFinishing(finishing);
+  const colorManagement = normalizeColorManagement(project.colorManagement);
+
+  const savedTracks = Array.isArray(project.tracks)
+    ? project.tracks.map((t): Track => {
+        const kind = t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video';
+        // Malformed effects are dropped, not thrown on; titles lanes carry no audio.
+        const audioFx = kind === 'text' ? undefined : normalizeBusEffects(t.audioFx);
+        const duck = kind === 'text' ? undefined : normalizeLaneDuck(t.duck);
+        return {
+          id: String(t.id),
+          kind,
+          ...(t.label ? { label: String(t.label) } : {}),
+          items: Array.isArray(t.items)
+            ? t.items.map((item) => ({
+                clipId: String(item.clipId),
+                startTime: Number(item.startTime) || 0,
+              }))
+            : [],
+          ...(t.muted ? { muted: true } : {}),
+          ...(t.locked ? { locked: true } : {}),
+          ...(t.height != null ? { height: Number(t.height) } : {}),
+          ...(audioFx ? { audioFx } : {}),
+          ...(duck ? { duck } : {}),
+        };
+      })
+    : undefined;
+
+  let tracks = resolveProjectTracks(savedTracks, mapped, transitions, clipGroups);
+  tracks = syncTracksWithClips(tracks, mapped, clipGroups);
+
+  const masterAudio = await restoreMasterAudio(project, mapped);
+
+  return {
+    clips: mapped,
+    tracks,
+    clipGroups,
+    transitions,
+    textOverlays,
+    captions,
+    captionStyle,
+    masterAudio,
+    masterAudioMarkers: project.masterAudioMarkers ?? [],
+    masterBus: normalizeMasterBus(project.masterBus),
+    colorGrade,
+    finishing,
+    colorManagement,
+    skippedClipCount: skippedCount,
+    skippedClipFileNames,
+    invalidColorWarnings,
+    mediaDownloadWarnings,
+  };
+}
+
+/** Coerce a saved proxy record; anything malformed is dropped rather than thrown on. */
+export function sanitizeClipProxy(value: unknown): ClipProxy | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const width = Number(v.width);
+  const height = Number(v.height);
+  if (typeof v.profile !== 'string' || !v.profile) return undefined;
+  if (typeof v.hash !== 'string' || !/^[0-9a-f]{16,128}$/i.test(v.hash)) return undefined;
+  if (!(width > 0 && height > 0)) return undefined;
+  return { profile: v.profile, hash: v.hash, width: Math.round(width), height: Math.round(height) };
+}

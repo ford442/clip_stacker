@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useRef, useState, type KeyboardEvent } from 'react';
-import type { Keyframe, KeyframeEasing } from '../utils/keyframes';
+import type { Keyframe, KeyframeEasing } from '../timeline/keyframes';
 import { clamp } from '../utils/math';
 import {
   DEFAULT_LINEAR_EASING,
@@ -8,7 +8,7 @@ import {
   sampleKeyframes,
   sortKeyframes,
   upsertKeyframe,
-} from '../utils/keyframes';
+} from '../timeline/keyframes';
 
 export interface KeyframeMiniEditorProps {
   label: string;

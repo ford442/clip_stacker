@@ -23,7 +23,7 @@ import {
   TRANSITION_UNIFORM_FLOATS,
 } from './transitionPass';
 import { createFakeGpu, fakeRenderParams, stubGpuGlobals } from './gpuTestStub';
-import { getTransitionXfadeName } from '../../utils/transitions';
+import { getTransitionXfadeName } from '../../timeline/transitions';
 
 /** Transitions added for the extended library (issue: richer transition set). */
 const NEW_TRANSITION_IDS = [

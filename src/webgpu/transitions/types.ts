@@ -1,4 +1,4 @@
-import type { Affine2x3 } from '../../utils/clipTransform';
+import type { Affine2x3 } from '../../composition/clipTransform';
 
 /** Schema for a per-transition uniform exposed in the editor. */
 export interface TransitionParamDef {
@@ -41,7 +41,7 @@ export interface TransitionRenderParams {
   custom?: Record<string, number>;
   /**
    * Layer warp for the outgoing clip (`[a, b, tx, c, d, ty]`): stabilization
-   * composed with its picture transform — see `utils/clipTransform.ts`.
+   * composed with its picture transform — see `composition/clipTransform.ts`.
    */
   fromWarpMatrix?: Affine2x3;
   /** Layer warp for the incoming clip. */

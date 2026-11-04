@@ -12,9 +12,9 @@ import { decodeAudio, DECODE_SAMPLE_RATE } from '../audio/decodeAudio';
 import type {
   CaptionProvider,
   CaptionTranscribeOptions,
-} from '../utils/captionProvider';
+} from '../captions/captionProvider';
 import type { CaptionEntry } from '../types';
-import { segmentsToCaptions } from '../utils/captionSegments';
+import { segmentsToCaptions } from '../captions/captionSegments';
 import { hasCachedModel } from './whisperModelCache';
 import { resolveWhisperAssetUrl, WHISPER_GLUE_FILE } from './whisperModule';
 import type { WhisperWorkerRequest, WhisperWorkerResponse } from './whisperWorker';
@@ -179,7 +179,7 @@ export const whisperCaptionProvider: CaptionProvider = {
     if (options?.signal?.aborted) {
       throw new DOMException('Transcription cancelled', 'AbortError');
     }
-    const { toWhisperPcm } = await import('../utils/autoCaptionAudio');
+    const { toWhisperPcm } = await import('../captions/autoCaptionAudio');
     const buffer = audio instanceof Blob ? await decodeToAudioBuffer(audio) : audio;
     const pcm = toWhisperPcm(buffer);
     return runOnWorker(pcm, options, whisperModelUrl());

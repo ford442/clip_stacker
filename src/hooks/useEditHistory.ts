@@ -1,7 +1,7 @@
 import { useStore } from 'zustand';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Clip, ClipGroup, ClipTransition, MasterAudio, TextOverlay, Track } from '../types';
-import type { EditSnapshot } from '../utils/editHistory';
+import type { EditSnapshot } from '../timeline/editHistory';
 import { editorStore } from '../store/editorStore';
 
 export interface UseEditHistoryResult {

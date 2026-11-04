@@ -4,12 +4,12 @@
  */
 
 import secondaryColorShader from './shaders/secondaryColor.wgsl?raw';
-import { shaderForSceneLinear } from '../utils/colorManagement';
-import type { SecondaryColorPass } from '../utils/finishing';
+import { shaderForSceneLinear } from '../finishing/colorManagement';
+import type { SecondaryColorPass } from '../finishing/finishing';
 import {
   SECONDARY_COLOR_UNIFORM_FLOATS,
   packSecondaryColorUniforms,
-} from '../utils/secondaryColor';
+} from '../finishing/secondaryColor';
 
 export class SecondaryColorGpuPass {
   private readonly pipeline: GPURenderPipeline;

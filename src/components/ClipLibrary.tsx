@@ -8,14 +8,14 @@ import {
   useEditorClips,
   useIsClipSelected,
 } from '../store';
-import { getClipDuration } from '../utils/clipTiming';
+import { getClipDuration } from '../timeline/clipTiming';
 import { LazyBoundary, lazyNamed } from './LazyBoundary';
 import { AutoCutPanel } from './AutoCutPanel';
 import { ProxyBadge, ProxyPlaybackToggle } from './ProxyBadge';
-import { settingsStore } from '../store/settingsStore';
 import { useStore } from 'zustand';
 import type { IntercutGeneratorConfig } from '../ffmpeg/intercutGenerator';
-import type { BatchProcessingOptions } from '../utils/batchClipProcessing';
+import type { BatchProcessingOptions } from '../remote/batchClipProcessing';
+import { renderJobStore } from '../store/renderJobStore';
 
 interface ClipLibraryActions {
   onToggleVariant: (groupId: string, variant: 'A' | 'B') => void;
@@ -210,9 +210,9 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut, onBatc
   const [lightVideoCleanup, setLightVideoCleanup] = useState(false);
   const [audioCleanup, setAudioCleanup] = useState(false);
   const [completedBatchIds, setCompletedBatchIds] = useState<string[]>([]);
-  const intercutProcessing = useStore(settingsStore, (s) => s.intercutProcessing);
+  const intercutProcessing = useStore(renderJobStore, (s) => s.intercutProcessing);
   const processing = useStore(
-    settingsStore,
+    renderJobStore,
     (s) => s.rifeProcessingClipId !== null || s.isRendering || s.intercutProcessing,
   );
 
@@ -445,7 +445,7 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut, onBatc
             isOpen={intercutOpen}
             generating={intercutProcessing}
             onClose={() => {
-              if (!settingsStore.getState().intercutProcessing) setIntercutOpen(false);
+              if (!renderJobStore.getState().intercutProcessing) setIntercutOpen(false);
             }}
             onGenerate={async (config) => {
               const ok = await onGenerateIntercut(config);

@@ -17,11 +17,11 @@ import {
   unpadRgbaRows,
   type CanvasPresentation,
   type ColorManagementSettings,
-} from "../utils/colorManagement";
+} from "../finishing/colorManagement";
 import { adoptGpuDevice } from "../gpu-chores/device";
-import type { ColorGradeSettings } from "../utils/lut";
-import { isColorGradeActive } from "../utils/lut";
-import { isFinishingActive, type FinishingSettings } from "../utils/finishing";
+import type { ColorGradeSettings } from "../finishing/lut";
+import { isColorGradeActive } from "../finishing/lut";
+import { isFinishingActive, type FinishingSettings } from "../finishing/finishing";
 import {
   ZERO_AUDIO_REACTIVE,
   type AudioReactiveState,

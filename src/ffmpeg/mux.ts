@@ -5,17 +5,17 @@ import type {
   ExportSettings,
   ClipTransition,
 } from "../types";
-import { getClipDuration } from "../utils/clipTiming";
-import { audioVolumeFilterSegment } from "../utils/audioVolume";
+import { getClipDuration } from "../timeline/clipTiming";
+import { audioVolumeFilterSegment } from "../audio/audioVolume";
 import {
   audioTempoFilterSegment,
   getClipPlaybackRate,
-} from "../utils/playbackRate";
-import { audioReversePrefix } from "../utils/reverseClip";
+} from "../timeline/playbackRate";
+import { audioReversePrefix } from "../timeline/reverseClip";
 import {
   renderTimelineAudioMixWav,
   timelineNeedsAudioPremix,
-} from "../utils/webcodecs-audio";
+} from "../export/webcodecsAudio";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import type { MasterAudio } from "../types";
 import {

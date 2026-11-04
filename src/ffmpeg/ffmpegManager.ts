@@ -17,7 +17,7 @@ import {
   toBlobURLWithFallback,
   withTimeout,
 } from './ffmpegCommon';
-import { resolveFfmpegCoreVariant } from '../utils/feature-detector';
+import { resolveFfmpegCoreVariant } from '../export/featureDetector';
 import { WorkerFfmpegRuntime } from './workerFfmpegRuntime';
 
 export const MAX_LOG_BUFFER = 300;

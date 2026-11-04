@@ -6,15 +6,15 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { clipHasLoop, getClipLoopCount } from "../utils/playbackRate";
-import { clipIsReversed } from "../utils/reverseClip";
+import { clipHasLoop, getClipLoopCount } from "../timeline/playbackRate";
+import { clipIsReversed } from "../timeline/reverseClip";
 import {
   allVideoClipsMatchOutputResolution,
   clipsHaveMixedVideoDimensions,
   clipsNeedResolutionNormalization,
   formatOutputResolution,
   usesFixedOutputResolution,
-} from "../utils/resolution";
+} from "../export/resolution";
 import {
   isFinishingActive,
   isBloomActive,
@@ -22,14 +22,14 @@ import {
   isCurvesActive,
   isLutFinishingPassActive,
   type FinishingSettings,
-} from "../utils/finishing";
-import { secondaryHasWindowGrades } from "../utils/secondaryColor";
-import { isStabilizationActive } from "../utils/stabilization";
-import { resolveLayerKey } from "../utils/overlayKey";
-import { pictureTransformPlanFields } from "../utils/renderEligibility";
-import { clipHasPictureTransform } from "../utils/animatedLayout";
-import { selectEncoderPath } from "../utils/encoderPath";
-import type { OutputColor } from "../utils/colorManagement";
+} from "../finishing/finishing";
+import { secondaryHasWindowGrades } from "../finishing/secondaryColor";
+import { isStabilizationActive } from "../media/stabilization";
+import { resolveLayerKey } from "../composition/overlayKey";
+import { pictureTransformPlanFields } from "../export/renderEligibility";
+import { clipHasPictureTransform } from "../composition/animatedLayout";
+import { selectEncoderPath } from "../export/encoderPath";
+import type { OutputColor } from "../finishing/colorManagement";
 import {
   clipNeedsEffects,
   isStillImageClip,

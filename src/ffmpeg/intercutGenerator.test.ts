@@ -10,7 +10,7 @@ import {
   intercutAudioSlices,
   intercutNeedsNormalization,
 } from './intercutGenerator';
-import { encodeWavPcm16, parseWavPcm16, quantizeIntercutSlices } from '../utils/intercutRender';
+import { encodeWavPcm16, parseWavPcm16, quantizeIntercutSlices } from '../timeline/intercutRender';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {

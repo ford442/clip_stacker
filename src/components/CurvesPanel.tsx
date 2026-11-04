@@ -1,5 +1,5 @@
 import { useRef, useState, type KeyboardEvent, type PointerEvent } from 'react';
-import { DEFAULT_CURVES, type CurvesPass } from '../utils/finishing';
+import { DEFAULT_CURVES, type CurvesPass } from '../finishing/finishing';
 import {
   CURVE_CHANNELS,
   CURVE_MAX_POINTS,
@@ -17,7 +17,7 @@ import {
   type CurveChannel,
   type CurvePoint,
   type LevelsSettings,
-} from '../utils/curves';
+} from '../finishing/curves';
 
 interface Props {
   settings: CurvesPass;

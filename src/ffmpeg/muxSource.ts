@@ -3,7 +3,7 @@ import type {
   Clip,
   VideoOutputFormat,
 } from "../types";
-import { audioReversePrefix } from "../utils/reverseClip";
+import { audioReversePrefix } from "../timeline/reverseClip";
 import {
   clearFfmpegLogs,
   safeExec,

@@ -4,9 +4,9 @@
  */
 
 import lutShader from './shaders/lut.wgsl?raw';
-import { shaderForSceneLinear } from '../utils/colorManagement';
-import type { LutData } from '../utils/lut';
-import { uploadLutTexture } from '../utils/lut';
+import { shaderForSceneLinear } from '../finishing/colorManagement';
+import type { LutData } from '../finishing/lut';
+import { uploadLutTexture } from '../finishing/lut';
 
 const LUT_UNIFORM_FLOATS = 4;
 

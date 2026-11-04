@@ -4,12 +4,12 @@
  */
 
 import denoiseShader from './shaders/denoise.wgsl?raw';
-import { shaderForSceneLinear } from '../utils/colorManagement';
-import type { NoiseReductionPass } from '../utils/finishing';
+import { shaderForSceneLinear } from '../finishing/colorManagement';
+import type { NoiseReductionPass } from '../finishing/finishing';
 import {
   NOISE_REDUCTION_UNIFORM_FLOATS,
   packNoiseReductionUniforms,
-} from '../utils/noiseReduction';
+} from '../finishing/noiseReduction';
 
 export class NoiseReductionGpuPass {
   private readonly pipeline: GPURenderPipeline;

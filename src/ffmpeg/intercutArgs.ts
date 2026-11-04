@@ -10,7 +10,7 @@ import {
   INTERCUT_AUDIO_CHANNELS,
   INTERCUT_AUDIO_SAMPLE_RATE,
   INTERCUT_OUTPUT_FPS,
-} from '../utils/intercutRender';
+} from '../timeline/intercutRender';
 
 function secondsArg(sec: number): string {
   return String(Number(sec.toFixed(6)));

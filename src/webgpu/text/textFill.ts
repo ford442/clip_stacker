@@ -18,7 +18,7 @@
 
 import textFillShader from '../shaders/textFill.wgsl?raw';
 import { acquireGpuContext, onGpuDeviceLost, onGpuDeviceRecovered } from '../gpuDevice';
-import { ffmpegColorToRgb01 } from '../../utils/color';
+import { ffmpegColorToRgb01 } from '../../composition/color';
 import { getTextShader, resolveShaderColors, resolveShaderParams } from './registry';
 
 export interface UniformSlots {

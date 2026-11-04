@@ -5,13 +5,13 @@
  */
 
 import curvesShader from './shaders/curves.wgsl?raw';
-import { shaderForSceneLinear } from '../utils/colorManagement';
-import type { CurvesPass } from '../utils/finishing';
+import { shaderForSceneLinear } from '../finishing/colorManagement';
+import type { CurvesPass } from '../finishing/finishing';
 import {
   CURVES_UNIFORM_FLOATS,
   isCurvesNeutral,
   packCurvesUniforms,
-} from '../utils/curves';
+} from '../finishing/curves';
 
 export class CurvesGpuPass {
   private readonly pipeline: GPURenderPipeline;

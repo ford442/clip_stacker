@@ -12,9 +12,9 @@ import {
   collectAutomationBreakpoints,
   DEFAULT_CLIP_PAN,
   scheduleAudioParamBreakpoints,
-} from '../utils/clipAutomation';
-import { sampleKeyframes } from '../utils/keyframes';
-import { clampClipVolume } from '../utils/audioVolume';
+} from '../timeline/clipAutomation';
+import { sampleKeyframes } from '../timeline/keyframes';
+import { clampClipVolume } from './audioVolume';
 
 /**
  * Apply volume keyframes + per-clip audio fade envelopes relative to the
