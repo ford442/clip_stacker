@@ -211,3 +211,167 @@ TEST_CASE(reads_outside_the_input_are_silence) {
   for (float v : out) silent = silent && v == 0.f;
   CHECK(silent);
 }
+
+namespace {
+
+/** A tempo curve from 0.5x up to 1.7x and back: every chunk sees a different rate. */
+std::vector<double> swept_offsets(int out_frames) {
+  const int hops = (out_frames + kHop - 1) / kHop + 1;
+  std::vector<double> offs(static_cast<size_t>(hops));
+  double pos = 3.25;
+  for (int h = 0; h < hops; ++h) {
+    offs[static_cast<size_t>(h)] = pos;
+    const double t = static_cast<double>(h) / hops;
+    pos += kHop * (0.5 + 1.2 * std::sin(kPi * t));
+  }
+  return offs;
+}
+
+struct ChunkRun {
+  int status = CS_OK;
+  int max_window = 0;
+};
+
+/**
+ * Drive a session over `offs` in chunks of `chunk_blocks[i % size]` hops,
+ * handing each call only the documented window of the source.
+ */
+ChunkRun remap_chunked(const std::vector<float>& planar, int in_frames, int channels,
+                       const std::vector<double>& offs, std::vector<float>& out, int out_frames,
+                       const std::vector<int>& chunk_blocks, int tolerance = -1) {
+  ChunkRun run;
+  void* session = time_stretch_session_create(in_frames, channels, kHop, tolerance);
+  CHECK(session != nullptr);
+  if (!session) return run;
+  const int hop = time_stretch_session_hop(session);
+  const int tol = tolerance < 0 ? hop / 2 : tolerance;
+  const double margin = 2.0 * hop + tol + 64;
+  std::vector<float> window;
+  std::vector<float> chunk;
+  int done = 0;
+  size_t step = 0;
+  while (done < out_frames) {
+    const int blocks = chunk_blocks[step++ % chunk_blocks.size()];
+    const int count = std::min(blocks * hop, out_frames - done);
+    const size_t b0 = static_cast<size_t>(done / hop);
+    const size_t n_offs = std::min(offs.size() - std::min(offs.size(), b0),
+                                   static_cast<size_t>((count + hop - 1) / hop + 1));
+    const double* o = offs.data() + std::min(offs.size(), b0);
+    double lo = 0.0;
+    double hi = 0.0;
+    if (n_offs > 0) {
+      lo = *std::min_element(o, o + n_offs) - margin;
+      hi = *std::max_element(o, o + n_offs) + margin;
+    }
+    const int first = std::max(0, std::min(in_frames, static_cast<int>(std::floor(lo))));
+    const int last = std::max(first, std::min(in_frames, static_cast<int>(std::ceil(hi))));
+    const int frames = last - first;
+    run.max_window = std::max(run.max_window, frames);
+    window.assign(static_cast<size_t>(frames) * channels, 0.f);
+    for (int c = 0; c < channels; ++c) {
+      std::copy(planar.begin() + static_cast<long>(c) * in_frames + first,
+                planar.begin() + static_cast<long>(c) * in_frames + last,
+                window.begin() + static_cast<long>(c) * frames);
+    }
+    chunk.assign(static_cast<size_t>(count) * channels, -1.f);
+    run.status = time_stretch_session_process(session, window.data(), frames, first, o,
+                                              static_cast<int>(n_offs), chunk.data(), count);
+    if (run.status != CS_OK) break;
+    for (int c = 0; c < channels; ++c) {
+      std::copy(chunk.begin() + static_cast<long>(c) * count, chunk.begin() + static_cast<long>(c + 1) * count,
+                out.begin() + static_cast<long>(c) * out_frames + done);
+    }
+    done += count;
+  }
+  time_stretch_session_destroy(session);
+  return run;
+}
+
+}  // namespace
+
+TEST_CASE(chunked_session_equals_the_whole_buffer_bit_for_bit) {
+  const int channels = 2;
+  const int out_frames = 3 * kRate + 123;  // a ragged final chunk
+  const std::vector<double> offs = swept_offsets(out_frames);
+  const int in_frames = static_cast<int>(offs.back()) + kRate / 10;
+  std::vector<float> planar(static_cast<size_t>(in_frames) * channels);
+  const std::vector<float> left = sine(220.0, in_frames, 0.4f);
+  const std::vector<float> right = sine(331.0, in_frames, 0.3f, 17.0);
+  std::copy(left.begin(), left.end(), planar.begin());
+  std::copy(right.begin(), right.end(), planar.begin() + in_frames);
+
+  std::vector<float> whole(static_cast<size_t>(out_frames) * channels, 0.f);
+  CHECK(time_stretch_remap(planar.data(), in_frames, channels, offs.data(), static_cast<int>(offs.size()), kHop,
+                           -1, whole.data(), out_frames) == CS_OK);
+  for (const std::vector<int>& pattern : {std::vector<int>{1}, std::vector<int>{7}, std::vector<int>{3, 1, 20, 2}}) {
+    std::vector<float> chunked(whole.size(), 0.f);
+    const ChunkRun run = remap_chunked(planar, in_frames, channels, offs, chunked, out_frames, pattern);
+    CHECK(run.status == CS_OK);
+    size_t mismatches = 0;
+    for (size_t i = 0; i < whole.size(); ++i) mismatches += whole[i] != chunked[i] ? 1u : 0u;
+    CHECK(mismatches == 0u);
+  }
+}
+
+TEST_CASE(chunked_session_keeps_the_curve_end_silent) {
+  // The curve covers half the output: the chunked tail is silence, as whole.
+  const int out_frames = 40 * kHop;
+  std::vector<double> offs = constant_offsets(out_frames, 0.75);
+  offs.resize(offs.size() / 2);
+  const int in_frames = 40 * kHop;
+  const std::vector<float> in = sine(440.0, in_frames);
+  std::vector<float> whole(static_cast<size_t>(out_frames), 1.f);
+  CHECK(time_stretch_remap(in.data(), in_frames, 1, offs.data(), static_cast<int>(offs.size()), kHop, -1,
+                           whole.data(), out_frames) == CS_OK);
+  std::vector<float> chunked(whole.size(), 1.f);
+  CHECK(remap_chunked(in, in_frames, 1, offs, chunked, out_frames, {3}).status == CS_OK);
+  CHECK(chunked == whole);
+  CHECK(chunked.back() == 0.f);
+}
+
+LONG_TEST_CASE(chunk_windows_stay_small_however_long_the_clip) {
+  // Ten minutes of mono source at 0.5x: each call sees a few thousand frames.
+  const int out_frames = 20 * 60 * 8000;  // 20 min of output at an 8 kHz test rate
+  const std::vector<double> offs = constant_offsets(out_frames, 0.5);
+  const int in_frames = static_cast<int>(offs.back()) + 1;
+  std::vector<float> in(static_cast<size_t>(in_frames));
+  for (int i = 0; i < in_frames; ++i) in[static_cast<size_t>(i)] = 0.25f * static_cast<float>(((static_cast<long long>(i) * 7919) % 2000) - 1000) / 1000.f;
+  std::vector<float> out(static_cast<size_t>(out_frames), 0.f);
+  const ChunkRun run = remap_chunked(in, in_frames, 1, offs, out, out_frames, {94});  // ~48k output frames
+  CHECK(run.status == CS_OK);
+  CHECK_LE(run.max_window, 94 * kHop / 2 + 2 * (2 * kHop + kHop / 2 + 64) + 2);
+}
+
+TEST_CASE(chunked_session_refuses_a_short_window_and_input_after_the_end) {
+  const int in_frames = 20 * kHop;
+  const std::vector<float> in = sine(440.0, in_frames);
+  const std::vector<double> offs = constant_offsets(8 * kHop, 1.25, 4.5 * kHop);
+  std::vector<float> out(static_cast<size_t>(4 * kHop), 0.f);
+
+  CHECK(time_stretch_session_create(0, 1, kHop, -1) == nullptr);
+  CHECK(time_stretch_session_create(1.5, 1, kHop, -1) == nullptr);
+  CHECK(time_stretch_session_create(in_frames, 9, kHop, -1) == nullptr);
+  CHECK(time_stretch_session_create(std::numeric_limits<double>::infinity(), 1, kHop, -1) == nullptr);
+
+  void* session = time_stretch_session_create(in_frames, 1, kHop, -1);
+  CHECK(session != nullptr);
+  // A window that starts too late for the first segment's reads.
+  CHECK(time_stretch_session_process(session, in.data() + 6 * kHop, 10 * kHop, 6.0 * kHop, offs.data(), 5,
+                                     out.data(), 4 * kHop) == CS_ERANGE);
+  // Window past the source, fractional start, missing pointers.
+  CHECK(time_stretch_session_process(session, in.data(), in_frames, 1.0, offs.data(), 5, out.data(), 4 * kHop) ==
+        CS_EINVAL);
+  CHECK(time_stretch_session_process(session, in.data(), 10, 0.5, offs.data(), 5, out.data(), 4 * kHop) ==
+        CS_EINVAL);
+  CHECK(time_stretch_session_process(session, in.data(), in_frames, 0.0, nullptr, 5, out.data(), 4 * kHop) ==
+        CS_EINVAL);
+  // The whole source is always enough; a short chunk is final.
+  CHECK(time_stretch_session_process(session, in.data(), in_frames, 0.0, offs.data(), 5, out.data(), 4 * kHop) ==
+        CS_OK);
+  CHECK(time_stretch_session_process(session, in.data(), in_frames, 0.0, offs.data() + 4, 4, out.data(),
+                                     3 * kHop + 1) == CS_OK);
+  CHECK(time_stretch_session_process(session, in.data(), in_frames, 0.0, offs.data(), 1, out.data(), kHop) ==
+        CS_ESTATE);
+  time_stretch_session_destroy(session);
+  time_stretch_session_destroy(nullptr);
+}

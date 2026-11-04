@@ -19,7 +19,8 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - `npm run sync:ffmpeg-core`: copy `@ffmpeg/core` / `@ffmpeg/core-mt` ESM dist into `public/ffmpeg-core{,-mt}/` (the self-hosted cores; CDNs are fallbacks). `-- --check` exits non-zero if `public/` or `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts` drifts from `node_modules`.
 - `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, video stabilize, media engine incl. time stretch, and its glue-free bus-FX build `media_engine_fx.wasm`) via the shared CMake toolchain into `public/wasm/`. Requires Emscripten (`emcmake` / `emcc`); use the SDK pinned in `native/emsdk-version` to reproduce the committed bytes.
 - `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF), written to `native/build-debug/wasm/` (never over `public/wasm`). The dev/preview servers serve it at `/wasm-debug/`; open the app with `?wasm_debug`.
-- `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan). No Emscripten needed.
+- `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan + float-cast-overflow). No Emscripten needed. `npm run test:native:pr` runs the `pr` label only (what PR CI runs; the `nightly` label holds the long battery). `npm run fuzz:native` runs the libFuzzer FX target (clang).
+- `npm run gen:true-peak-taps`: regenerate `native/media_engine/src/fx/true_peak_taps.inc` (the limiter's 4x oversampling taps, generated from the resampler's sinc table so they cannot drift).
 - `npm run build:audio-analysis` / `build:video-stabilize` / `build:media-engine`: rebuild one module. `npm run build:whisper`: the opt-in auto-caption module (not committed).
 
 ## Coding Style & Naming Conventions
@@ -602,9 +603,9 @@ Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approv
 
 Three shipped Emscripten modules (plus the glue-free `media_engine_fx` build and the opt-in whisper target) share one flag file. Do not copy-paste `emcc` invocations.
 
-- `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / `-Wall -Wextra` / strict C++17 / `EXPORTED_RUNTIME_METHODS` / `INCOMING_MODULE_JS_API=locateFile,instantiateWasm`; per-module `GZIP_BUDGET`, `THREADS` (pthreads — whisper only) and `EXCEPTIONS` (throw support — whisper only)
+- `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / `-Wall -Wextra` / strict C++17 / `-ffp-contract=off` (no FMA contraction, so host tests and WASM round alike) / `EXPORTED_RUNTIME_METHODS` / `INCOMING_MODULE_JS_API=locateFile,instantiateWasm`; per-module `GZIP_BUDGET`, `THREADS` (pthreads — whisper only), `EXCEPTIONS` (throw support — whisper only) and `MALLOC` (standalone modules; `media_engine_fx` uses emmalloc). It owns the optimisation flags: CMake's per-config `-O3 -DNDEBUG` defaults are cleared
 - `native/CMakeLists.txt` — builds `audio_analysis`, `video_stabilize`, `media_engine` (and `media_engine_fx`) into `public/wasm/`; `-DCLIP_STACKER_WHISPER=ON` adds `native/whisper/` (whisper.cpp via its own CMake, `EXCLUDE_FROM_ALL`)
-- `clip_stacker_standalone_wasm` (toolchain.cmake) — `-sSTANDALONE_WASM --no-entry`: plain `extern "C"` exports, no JS runtime, for realms that cannot load MODULARIZE glue (the AudioWorkletGlobalScope). Its only import is `env.emscripten_notify_memory_growth`; call `_initialize` after instantiating. Keep such modules free of static initializers
+- `clip_stacker_standalone_wasm` (toolchain.cmake) — `-sSTANDALONE_WASM --no-entry`: plain `extern "C"` exports, no JS runtime, for realms that cannot load MODULARIZE glue (the AudioWorkletGlobalScope). Its only import is `env.emscripten_notify_memory_growth`; call `_initialize` after instantiating — emmalloc sets its heap up there, and skipping it makes the first allocation past the initial memory trap. Keep such modules free of static initializers
 - `native/emsdk-version` — the pinned SDK (CI installs it; the committed artifacts come from it). `scripts/emscripten-flags.sh` is the cmake driver: it rejects SDKs < 3.1.64, warns above the tested major, and sends `WASM_DEBUG=1` builds to `native/build-debug/`
 - `native/common/include/` — `cs_status.h` (every `int` entry point returns a `cs_status`; `cs_span_ok` bounds check), `cs_alloc.h` (`cs::Buffer` / `try_reserve` / `can_allocate`: OOM returns `CS_ENOMEM` instead of aborting under `-fno-exceptions`), `cs_math.h` (`cs::kPi`; no `M_PI`)
 - `src/wasm/emscriptenLoader.ts` — the JS side of the boundary: `loadEmscriptenModule(name, factory)` (one instance per realm, transient fetch failures retry with backoff, then a cooldown instead of "disabled until reload"; a trap retires the instance) and `withHeap(mod, (heap) => …)` — **every `_malloc` goes through it**: null-checked, views rebuilt from the current buffer after each call, everything freed when the scope ends; null on OOM so callers fall back. `CS_STATUS` mirrors `cs_status.h`
@@ -614,6 +615,35 @@ Three shipped Emscripten modules (plus the glue-free `media_engine_fx` build and
 - CI `wasm` job installs `native/emsdk-version`, runs `npm run build:wasm` and fails on any `public/wasm` diff or stray file; the `native-host` job runs `scripts/test-native.sh`, which ctests every module (`video_stabilize`'s pure matrix / smoothing helpers live in `stab_math.h`)
 
 Keep WebGPU as the pixel owner. Do not fold video frames into this engine.
+
+## Audio service (one real-time context, one decoder)
+
+- `src/audio/audioService.ts` — the app's only real-time `AudioContext`
+  (`getAudioContext()`): lazy, resumed by the first pointer / key gesture,
+  closed on `pagehide` (suspended for the back/forward cache). Playback,
+  `useMediaVolume` and the legacy canvas export's audio-reactive analyser
+  share it; none of them closes it — they disconnect their nodes.
+  `context.boundary.test.ts` fails if anything else constructs one.
+- **Latency class.** `'interactive'` by default; the playback manager asks for
+  `'balanced'` while the bus-graph worklet is in the graph. A context's hint is
+  fixed at construction, so `applyPreferredLatency(idle)` replaces the context
+  only at an idle Play and only when no media element is bound to it
+  (`noteElementBinding`: a `MediaElementAudioSourceNode` ties its element to
+  its context for good). `onAudioContextReplaced` listeners rebuild their
+  nodes; decoded `AudioBuffer`s are context-free and kept.
+- **Decoding** goes through `decodeAudio(source, { sampleRate })`
+  (`src/audio/decodeAudio.ts`): an `OfflineAudioContext` at 48 kHz by
+  default, so beat times, waveform peaks and export PCM no longer depend on
+  the output device's rate. Whisper decodes at 16 kHz the same way. Nothing
+  else calls `decodeAudioData` (the boundary test checks).
+- **Playhead = what is heard.** `heardContextTime` uses
+  `getOutputTimestamp()` (extrapolated, never ahead of `currentTime`), else
+  `currentTime − outputLatency`; the playback clock then subtracts the bus
+  graph's look-ahead and the user's offset.
+- **A/V offset** (`src/store/audioSyncStore.ts`, ±500 ms in 5 ms steps) is
+  per-browser view state (`clip_stacker.audioSyncOffset.v1`), never in a
+  project. UI: the **A/V ms** field in the preview controls
+  (`AudioSyncOffsetControl`; double-click resets).
 
 ## Media engine (timeline PCM mix)
 
@@ -626,6 +656,7 @@ C++ owns the export premix DSP: polyphase resample, volume/pan automation curves
 - `public/wasm/media_engine.{js,wasm}` — committed artifacts (gzip budget 200 KB)
 - `src/wasm/mediaEngine.ts` — `openTimelineMixStream` (chunked; uploads only the source frames each chunk reads, each chunk in one `withHeap` scope, acquires/releases clip PCM lazily), `mixTimelineAudio` (whole buffer); lazy load, graceful disable
 - `src/utils/webcodecs-audio.ts` — `encodeScheduleAudioStreaming` feeds chunks straight to `AudioEncoder` (no length cap); `renderTimelineAudioMix` prefers WASM; OfflineAudioContext fallback (≤ `MAX_OFFLINE_AUDIO_SECONDS`)
+- **Export premix runs in a worker.** `src/audio/audioRender.worker.ts` runs `openTimelineMixStream` (and the bus session / meter); `src/audio/audioRenderClient.ts` (`openMixStream`, the `MixStream` shape export uses) posts the schedule, answers the worker's `need-pcm` from the main-thread provider (decoding needs `OfflineAudioContext`, which workers lack) in 4 MB `pcm-part` slices with a yield between them, and keeps one `pull` ahead so the worker mixes the next chunk while main encodes. Protocol: `audioRenderProtocol.ts`. Page parameters (`?media_engine_resampler`, `?wasm_debug`) are resolved on main and passed in; `?no_media_engine` never starts the worker. No Worker (tests) or a failed start → the same stream in this realm; a worker that dies mid-export fails the stream, and export falls back as for any engine failure. Output is bit-identical to the in-realm stream (`audioRenderClient.test.ts`).
 - Kill switch: `?no_media_engine` (curves and everything else go back to OfflineAudioContext). Debug: `?media_engine_resampler=linear`.
 - Keyframe semantics must match `sampleKeyframes` / `applyGainEnvelope` (`src/audio/gainEnvelope.ts`, the TS twin of `fade_gain` / `Curve` / `Panner`) / `StereoPannerNode`; change both sides together. Packed strides in `audio_mix.h` are mirrored in `mediaEngine.ts`.
 - **Insert effects** (`Clip.audioEffects`, `src/utils/audioEffects.ts`): ≤ 4 RBJ biquads then one compressor per clip (`native/media_engine/src/eq.cpp`, `dynamics.cpp`), after resample and before the volume curve; a look-ahead true-peak **bus limiter** from `ExportSettings.masterLimiter` (off by default). They are effect-block rows (`MIX_FX_STRIDE`) plus four fields on an fx entry (`MIX_ENTRY_FX_STRIDE`, `MIX_FLAG_EFFECTS`; the fourth routes it to a lane bus), run through a stateful `mix_fx_session_*` (contiguous calls from frame 0; the bus reads `mix_fx_session_latency` frames ahead). No enabled block, no bus processing and no limiter → the stream stays on `mix_timeline_audio_range`, byte-identical to before (host test pins it).
@@ -694,7 +725,25 @@ sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
   (chain editor, "Duck under", gain-reduction meter); Master row FX + **LUFS**
   meter; Export → **Loudness** target.
 - Every recursive DSP path flushes values below 1e-30 (WASM has no FTZ/DAZ);
-  `silence_after_a_tone_stays_out_of_subnormals` guards it.
+  `silence_after_a_tone_stays_out_of_subnormals` guards it. Between stages
+  `flush_sample` also zeroes NaN / inf, so one bad input cannot poison a
+  graph (the property harness found that).
+- **Real-time safe.** `bus_graph_process` / `update` / `meters` / `reset`
+  never allocate (`rt_safety_tests` counts `operator new`): `BusChain::matches`
+  compares rows in place, loudness gating is a 0.1 dB histogram (−70 … +5
+  LUFS, O(1) memory and read cost — flat over a 4 h programme, within 0.1 LU
+  of exact gating), and gain-reduction meters keep only the minimum linear
+  gain, converted to dB on read. The limiter's true-peak taps are generated
+  data (`true_peak_taps.inc`, `npm run gen:true-peak-taps`), not a table built
+  at create (−525 KB of BSS in `media_engine_fx`). Graph build is a few µs.
+- **Control rate.** Compressor and de-esser compute gain every
+  `kControlFrames` (16) frames and interpolate in between (the compressor's
+  detector still runs per frame; its ramp is extrapolated one block ahead so
+  it does not trail). `control_rate_*` tests bound the deviation from the
+  per-sample reference; goldens were re-baselined with it.
+- Frame positions crossing the JS boundary (`mix_timeline_audio_range`,
+  `mix_fx_session_range`) are `double` (exact integers to 2^53), validated
+  and carried as 64-bit in C++, so a long programme never wraps an `int`.
 - Not built yet: keyframe automation of bus FX parameters, gate / de-esser on
   clip inserts, sends / aux buses.
 
@@ -958,10 +1007,10 @@ preview proxies all use it.
 
 ### Layout
 
-- `native/media_engine/src/time_stretch.cpp` — `time_stretch_remap`: one f64 source offset per synthesis hop (`TIME_STRETCH_HOP` = 512, `2 * hop` periodic-Hann segments at 50% overlap). Each segment's start may move ±`tolerance` (default `hop / 2`) to where its first half best matches (normalized cross-correlation, coarse-to-fine) the natural continuation of the previous segment, so overlaps add in phase. Fractional starts read through the mixer's polyphase sinc (`sinc_prepare` / `sinc_read`); whole-frame starts copy, so rate 1 is bit-exact. One module, one heap with the mixer
-- `src/wasm/timeStretch.ts` — `wasmRemapPlanar` (via `withHeap`; null when the media engine is unavailable, `?no_media_engine` is set, or the heap is full)
+- `native/media_engine/src/time_stretch.cpp` — `time_stretch_session_{create,process,hop,destroy}`: the chunked form — about a second of output per call, from only the window of source it reads (`[min − 2·hop − tol − 64, max + 2·hop + tol + 64)` of that chunk's offsets, else `CS_ERANGE`), so a 10 minute clip at 0.5× peaks at a few MB of WASM heap (under 64 MB is asserted); the carried state is one segment, so chunked output equals `time_stretch_remap` bit for bit. `time_stretch_remap` (one call over the whole input): one f64 source offset per synthesis hop (`TIME_STRETCH_HOP` = 512, `2 * hop` periodic-Hann segments at 50% overlap). Each segment's start may move ±`tolerance` (default `hop / 2`) to where its first half best matches (normalized cross-correlation, coarse-to-fine) the natural continuation of the previous segment, so overlaps add in phase. Fractional starts read through the mixer's polyphase sinc (`sinc_prepare` / `sinc_read`); whole-frame starts copy, so rate 1 is bit-exact. One module, one heap with the mixer
+- `src/wasm/timeStretch.ts` — `wasmRemapPlanar` drives the session chunk by chunk in one `withHeap` scope sized for the largest chunk (null when the media engine is unavailable, `?no_media_engine` is set, or the heap is full)
+- `src/audio/timeStretch.worker.ts` + `timeStretchClient.ts` — `remapPlanarOffThread` runs it in a worker (the planar source is transferred there and back); no Worker or a failed start → this realm; a worker that dies takes the job's source with it, so `remapClipAudioBuffer` rebuilds it for the JS fallback. `RemappedAudioCache` keys are unchanged
 - `src/utils/remapAudio.ts` + `remappedAudioCache.ts` — curve → remapped `AudioBuffer` for schedule / export premix; f64 offsets (`buildSourceOffsetMap`); a null or a trap from the WASM path falls back to the JS overlap-add in `remapAudio.ts`. There is no live (AudioWorklet) stretch: preview and export both play the remapped buffer
-- `src/utils/remapAudio.ts` + `remappedAudioCache.ts` — curve → remapped `AudioBuffer` for schedule / export premix
 - `src/components/SpeedAutomationLane.tsx` — Cubase-style lane under the selected timeline clip
 - Inspector **Speed (time remap)** `KeyframeMiniEditor` — same lane as volume/pan
 

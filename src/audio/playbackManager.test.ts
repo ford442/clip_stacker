@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Clip } from '../types';
 import { ClipAudioCache } from './clipAudioCache';
+import { __resetAudioServiceForTests, getAudioContext, preferAudioLatency } from './audioService';
+import { __resetDecodeAudioForTests } from './decodeAudio';
+import { audioSyncStore } from '../store/audioSyncStore';
 import {
   applyGainEnvelope,
   applyPanEnvelope,
@@ -226,10 +229,13 @@ describe('ClipAudioCache', () => {
       .mockResolvedValueOnce(bufferA)
       .mockResolvedValueOnce(bufferB);
 
-    const ctx = {
-      decodeAudioData: decode,
-    } as unknown as BaseAudioContext;
-
+    __resetDecodeAudioForTests();
+    vi.stubGlobal(
+      'OfflineAudioContext',
+      class {
+        decodeAudioData = decode;
+      },
+    );
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => ({
@@ -237,13 +243,13 @@ describe('ClipAudioCache', () => {
       })),
     );
 
-    const first = await cache.get('c1', 'blob:a', ctx);
-    const second = await cache.get('c1', 'blob:a', ctx);
+    const first = await cache.get('c1', 'blob:a');
+    const second = await cache.get('c1', 'blob:a');
     expect(first).toBe(bufferA);
     expect(second).toBe(bufferA);
     expect(decode).toHaveBeenCalledTimes(1);
 
-    const third = await cache.get('c1', 'blob:b', ctx);
+    const third = await cache.get('c1', 'blob:b');
     expect(third).toBe(bufferB);
     expect(decode).toHaveBeenCalledTimes(2);
 
@@ -251,12 +257,15 @@ describe('ClipAudioCache', () => {
     expect(cache.size).toBe(0);
 
     vi.unstubAllGlobals();
+    __resetDecodeAudioForTests();
   });
 });
 
 describe('AudioPlaybackManager lifecycle', () => {
   afterEach(async () => {
     await disposeAudioPlaybackManager();
+    __resetAudioServiceForTests();
+    audioSyncStore.getState().setOffsetMs(0);
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -383,5 +392,100 @@ describe('AudioPlaybackManager lifecycle', () => {
       treble: 0,
     });
     await manager.dispose();
+  });
+
+  describe('shared context and latency', () => {
+    class RunningContext {
+      static made: RunningContext[] = [];
+      state: AudioContextState = 'running';
+      currentTime = 10;
+      sampleRate = 48_000;
+      baseLatency = 0.005;
+      outputLatency = 0.12;
+      destination = {};
+      latencyHint: unknown;
+      closed = vi.fn(async () => {
+        this.state = 'closed';
+      });
+      constructor(options?: { latencyHint?: unknown }) {
+        this.latencyHint = options?.latencyHint;
+        RunningContext.made.push(this);
+      }
+      close() {
+        return this.closed();
+      }
+      resume() {
+        return Promise.resolve();
+      }
+      createGain() {
+        return { gain: { value: 0 }, connect: vi.fn(), disconnect: vi.fn() } as unknown as GainNode;
+      }
+      createAnalyser() {
+        return { fftSize: 0, connect: vi.fn(), disconnect: vi.fn() } as unknown as AnalyserNode;
+      }
+    }
+
+    function install(): void {
+      RunningContext.made = [];
+      vi.stubGlobal('AudioContext', RunningContext);
+    }
+
+    it('places the playhead at what is heard: output latency and the calibrated offset', async () => {
+      install();
+      const manager = new AudioPlaybackManager();
+      expect(await manager.play(2)).toBe(true);
+      const ctx = RunningContext.made[0];
+      ctx.currentTime = 11; // one second rendered since play
+      // 1 s rendered, 0.12 s of it still in the device buffer.
+      expect(manager.getCurrentTime()).toBeCloseTo(2 + 1 - 0.12, 9);
+      audioSyncStore.getState().setOffsetMs(80);
+      expect(manager.getCurrentTime()).toBeCloseTo(2 + 1 - 0.12 - 0.08, 9);
+      expect(manager.getContextDiagnostics()).toMatchObject({ outputLatency: 0.12, syncOffsetMs: 80 });
+      await manager.dispose();
+    });
+
+    it('prefers the browser output timestamp over the reported latency', async () => {
+      install();
+      const manager = new AudioPlaybackManager();
+      await manager.play(0);
+      const ctx = RunningContext.made[0] as RunningContext & { getOutputTimestamp?: () => AudioTimestamp };
+      ctx.currentTime = 12;
+      ctx.getOutputTimestamp = () => ({ contextTime: 11.5, performanceTime: performance.now() });
+      // 11.5 heard (± the few µs since the stamp) minus the 10 s origin.
+      expect(manager.getCurrentTime()).toBeCloseTo(1.5, 2);
+      await manager.dispose();
+    });
+
+    it('uses the one shared context and never closes it on dispose', async () => {
+      install();
+      const manager = new AudioPlaybackManager();
+      await manager.ensureContext();
+      expect(RunningContext.made).toHaveLength(1);
+      expect(getAudioContext()).toBe(RunningContext.made[0]);
+      await manager.dispose();
+      expect(RunningContext.made[0].closed).not.toHaveBeenCalled();
+      expect(getAudioContext()).toBe(RunningContext.made[0]);
+    });
+
+    it('moves to a new latency class only at an idle play, rebuilding its nodes', async () => {
+      install();
+      const manager = new AudioPlaybackManager();
+      await manager.ensureContext();
+      const first = RunningContext.made[0];
+      expect(first.latencyHint).toBe('interactive');
+      preferAudioLatency('balanced');
+      expect(await manager.play(0)).toBe(true);
+      expect(RunningContext.made).toHaveLength(2);
+      const second = RunningContext.made[1];
+      expect(second.latencyHint).toBe('balanced');
+      expect(first.closed).toHaveBeenCalled();
+      expect(getAudioContext()).toBe(second);
+      expect(manager.getContextDiagnostics()?.latencyHint).toBe('balanced');
+      // Playing: a further preference waits for the next idle moment.
+      preferAudioLatency('interactive');
+      await manager.seek(1);
+      expect(RunningContext.made).toHaveLength(2);
+      await manager.dispose();
+    });
   });
 });

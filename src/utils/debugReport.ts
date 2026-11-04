@@ -283,7 +283,7 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   lines.push('## Audio Context');
   lines.push(
     audioDiagnostics
-      ? `- Sample rate: ${audioDiagnostics.sampleRate} Hz — Base latency: ${(audioDiagnostics.baseLatency * 1000).toFixed(2)} ms — State: ${audioDiagnostics.state}`
+      ? `- Sample rate: ${audioDiagnostics.sampleRate} Hz — Base latency: ${(audioDiagnostics.baseLatency * 1000).toFixed(2)} ms — Output latency: ${(audioDiagnostics.outputLatency * 1000).toFixed(1)} ms — Latency class: ${audioDiagnostics.latencyHint} — A/V offset: ${audioDiagnostics.syncOffsetMs} ms — State: ${audioDiagnostics.state}`
       : '- (no live AudioContext yet)',
   );
   lines.push('');

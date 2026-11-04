@@ -4,6 +4,7 @@
 #include "stab_math.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -18,6 +19,7 @@ namespace {
 constexpr int kMaxPoints = 220;
 constexpr int kPyramidLevels = 3;
 constexpr int kWindowHalf = 4;       // 9x9 Lucas-Kanade window
+constexpr size_t kWindowArea = (2 * kWindowHalf + 1) * (2 * kWindowHalf + 1);
 constexpr int kLkIterations = 8;
 constexpr float kMinCornerDistance = 10.f;
 constexpr float kCornerQuality = 0.01f;
@@ -76,10 +78,11 @@ Image downsampleHalf(const Image& src) {
 
 using Pyramid = std::vector<Image>;
 
-Pyramid buildPyramid(const Image& base) {
+/** Takes the frame: level 0 is `base` itself, not a copy of it. */
+Pyramid buildPyramid(Image&& base) {
   Pyramid pyr;
   pyr.reserve(kPyramidLevels);
-  pyr.push_back(base);
+  pyr.push_back(std::move(base));
   for (int i = 1; i < kPyramidLevels; ++i) {
     const Image& prev = pyr.back();
     if (prev.width < 16 || prev.height < 16) break;
@@ -204,21 +207,22 @@ bool trackPoint(const Pyramid& prev, const Pyramid& curr, Point p, Point* out) {
     const float px = p.x * scale;
     const float py = p.y * scale;
 
-    // Structure tensor of the previous frame's window (constant across iterations).
+    // Structure tensor of the previous frame's window (constant across
+    // iterations). Fixed-size: this runs per point per level (~200 points x
+    // 3 levels a frame), where two vectors each were ~1,300 mallocs a frame.
     float sxx = 0.f, syy = 0.f, sxy = 0.f;
-    std::vector<float> gradX;
-    std::vector<float> gradY;
-    const int side = kWindowHalf * 2 + 1;
-    gradX.reserve(static_cast<size_t>(side) * static_cast<size_t>(side));
-    gradY.reserve(static_cast<size_t>(side) * static_cast<size_t>(side));
+    std::array<float, kWindowArea> gradX;
+    std::array<float, kWindowArea> gradY;
+    size_t n = 0;
     for (int wy = -kWindowHalf; wy <= kWindowHalf; ++wy) {
       for (int wx = -kWindowHalf; wx <= kWindowHalf; ++wx) {
         const float sx = px + static_cast<float>(wx);
         const float sy = py + static_cast<float>(wy);
         const float ix = (sampleBilinear(ip, sx + 1.f, sy) - sampleBilinear(ip, sx - 1.f, sy)) * 0.5f;
         const float iy = (sampleBilinear(ip, sx, sy + 1.f) - sampleBilinear(ip, sx, sy - 1.f)) * 0.5f;
-        gradX.push_back(ix);
-        gradY.push_back(iy);
+        gradX[n] = ix;
+        gradY[n] = iy;
+        ++n;
         sxx += ix * ix;
         syy += iy * iy;
         sxy += ix * iy;
@@ -377,10 +381,12 @@ int stab_push_frame(StabHandle* handle, const uint8_t* gray) {
   img.width = handle->width;
   img.height = handle->height;
   const size_t count = static_cast<size_t>(img.width) * static_cast<size_t>(img.height);
-  // Peak working set below: the frame, its pyramid (~1.33x) and the corner
-  // detector's eigenvalue map, all floats. Probe it so OOM is a status, not
-  // an abort inside std::vector.
-  if (!cs::can_allocate(4 * count * sizeof(float)) ||
+  // Peak working set below, in frame-sized float planes: the frame (moved
+  // into the pyramid as level 0, not copied), the coarser levels (< 1/3),
+  // the corner detector's eigenvalue map (1) and its candidates (< 1/3 after
+  // 3x3 suppression): under 3. Probe it so OOM is a status, not an abort
+  // inside std::vector. (The previous frame's pyramid is already allocated.)
+  if (!cs::can_allocate(3 * count * sizeof(float)) ||
       !cs::try_reserve(handle->motion, handle->motion.size() + 1)) {
     return CS_ENOMEM;
   }
@@ -389,7 +395,7 @@ int stab_push_frame(StabHandle* handle, const uint8_t* gray) {
     img.data[i] = static_cast<float>(gray[i]);
   }
 
-  Pyramid pyr = buildPyramid(img);
+  Pyramid pyr = buildPyramid(std::move(img));
   const int index = static_cast<int>(handle->motion.size());
 
   if (!handle->hasPrev) {

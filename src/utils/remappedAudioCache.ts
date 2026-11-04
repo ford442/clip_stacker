@@ -43,7 +43,7 @@ export class RemappedAudioCache {
       const existing = this.entries.get(entry.clipId);
       if (existing && existing.key === key) return existing.buffer;
 
-      const source = await sourceCache.get(entry.clipId, entry.objectUrl, ctx);
+      const source = await sourceCache.get(entry.clipId, entry.objectUrl);
       if (!source) return null;
       const trimEnd = Number.isFinite(entry.reverseClip.trimEnd)
         ? (entry.reverseClip.trimEnd as number)
@@ -60,14 +60,14 @@ export class RemappedAudioCache {
     }
 
     if (!entry.rateRemap || !entry.rateRemapClip) {
-      return sourceCache.get(entry.clipId, entry.objectUrl, ctx);
+      return sourceCache.get(entry.clipId, entry.objectUrl);
     }
 
     const key = this.signature(entry);
     const existing = this.entries.get(entry.clipId);
     if (existing && existing.key === key) return existing.buffer;
 
-    const source = await sourceCache.get(entry.clipId, entry.objectUrl, ctx);
+    const source = await sourceCache.get(entry.clipId, entry.objectUrl);
     if (!source) return null;
 
     const remapped = await remapClipAudioBuffer(entry.rateRemapClip, source, ctx);

@@ -1,4 +1,4 @@
-import { createAudioContext } from '../audio/context';
+import { decodeAudio } from '../audio/decodeAudio';
 import type { Clip } from '../types';
 
 /**
@@ -12,21 +12,17 @@ export function clipHasExtractableAudio(clip: Pick<Clip, 'hasAudio' | 'stillImag
 }
 
 /**
- * Decode the audio track of an audio or video file into an AudioBuffer.
- * Works for both audio and video containers via `decodeAudioData`.
+ * Decode the audio track of an audio or video file into an AudioBuffer at
+ * 48 kHz (`decodeAudio`: an OfflineAudioContext, so the result never depends
+ * on the output device).
  */
-export async function decodeAudioBuffer(
-  objectUrl: string,
-  audioCtx: BaseAudioContext,
-): Promise<AudioBuffer> {
-  const response = await fetch(objectUrl);
-  const arrayBuffer = await response.arrayBuffer();
-  return audioCtx.decodeAudioData(arrayBuffer);
+export function decodeAudioBuffer(objectUrl: string, signal?: AbortSignal): Promise<AudioBuffer> {
+  return decodeAudio(objectUrl, signal ? { signal } : {});
 }
 
 /**
  * Extract normalized peak samples from the audio track of an audio or video file.
- * Uses the Web Audio API to decode the audio data client-side.
+ * Decodes with `decodeAudio` (no real-time AudioContext per extraction).
  *
  * @param objectUrl  Object URL pointing to the media file.
  * @param numSamples Number of peak buckets to return (default 120).
@@ -44,39 +40,33 @@ export async function extractWaveformPeaks(
   const { signal } = options;
   if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-  const audioCtx = createAudioContext();
-  try {
-    const audioBuffer = await decodeAudioBuffer(objectUrl, audioCtx);
-    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+  const audioBuffer = await decodeAudioBuffer(objectUrl, signal);
+  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
 
-    // Mix all channels down to a mono peak array
-    const numChannels = audioBuffer.numberOfChannels;
-    const totalSamples = audioBuffer.length;
-    const blockSize = Math.max(1, Math.floor(totalSamples / numSamples));
-    const peaks = new Float32Array(numSamples);
+  // Mix all channels down to a mono peak array
+  const numChannels = audioBuffer.numberOfChannels;
+  const totalSamples = audioBuffer.length;
+  const blockSize = Math.max(1, Math.floor(totalSamples / numSamples));
+  const peaks = new Float32Array(numSamples);
 
-    // Gather per-channel data once
-    const channels: Float32Array[] = [];
-    for (let c = 0; c < numChannels; c++) {
-      channels.push(audioBuffer.getChannelData(c));
-    }
-
-    for (let i = 0; i < numSamples; i++) {
-      const start = i * blockSize;
-      const end = Math.min(start + blockSize, totalSamples);
-      let max = 0;
-      for (let j = start; j < end; j++) {
-        for (let c = 0; c < numChannels; c++) {
-          const abs = Math.abs(channels[c][j]);
-          if (abs > max) max = abs;
-        }
-      }
-      peaks[i] = max;
-    }
-
-    return peaks;
-  } finally {
-    // Always close the AudioContext to free resources
-    audioCtx.close().catch(() => {});
+  // Gather per-channel data once
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < numChannels; c++) {
+    channels.push(audioBuffer.getChannelData(c));
   }
+
+  for (let i = 0; i < numSamples; i++) {
+    const start = i * blockSize;
+    const end = Math.min(start + blockSize, totalSamples);
+    let max = 0;
+    for (let j = start; j < end; j++) {
+      for (let c = 0; c < numChannels; c++) {
+        const abs = Math.abs(channels[c][j]);
+        if (abs > max) max = abs;
+      }
+    }
+    peaks[i] = max;
+  }
+
+  return peaks;
 }

@@ -1,6 +1,7 @@
 import { useEffect, type RefObject } from 'react';
 import { clampClipVolume } from '../utils/audioVolume';
-import { getSharedAudioContext, resumeAudioContext } from '../audio/context';
+import { resumeAudioContext } from '../audio/context';
+import { getAudioContext, noteElementBinding } from '../audio/audioService';
 
 /** Web Audio routing for one media element: element → gain → destination. */
 interface MediaRouting {
@@ -30,9 +31,12 @@ function routeMedia(media: HTMLMediaElement): MediaRouting | null {
     }
     return existing;
   }
+  const ctx = getAudioContext();
+  if (!ctx) return null;
   try {
-    const ctx = getSharedAudioContext();
     const source = ctx.createMediaElementSource(media);
+    // The element is bound to this context for good: it must never be replaced.
+    noteElementBinding(ctx);
     const gain = ctx.createGain();
     source.connect(gain);
     gain.connect(ctx.destination);
@@ -47,7 +51,7 @@ function routeMedia(media: HTMLMediaElement): MediaRouting | null {
 /**
  * Applies per-clip volume (0–200%) to a media element. Values outside the
  * native 0–1 `HTMLMediaElement.volume` range need Web Audio, so the element is
- * routed through a gain on the shared preview context; if that is unavailable
+ * routed through a gain on the app's one real-time context (`audioService`); if that is unavailable
  * the native volume (capped at 100%) is used instead.
  */
 export function useMediaVolume(

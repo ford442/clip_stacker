@@ -50,6 +50,7 @@ import { useProxyState } from '../store/proxyStore';
 import { parseOutputResolution } from '../utils/resolution';
 import { createRenderScheduler } from '../utils/seekCoalescer';
 import { PreviewOverlayManipulator } from './PreviewOverlayManipulator';
+import { AudioSyncOffsetControl } from './AudioSyncOffsetControl';
 import { displayedWebGpuProbe, WebGpuHardFailBanner } from './previewWebGpuFail';
 
 export interface TimelinePreviewProps {
@@ -624,6 +625,7 @@ export function TimelineCompositorPreview({
               }}
             />
           </label>
+          {audioClockActive && <AudioSyncOffsetControl />}
           <span
             className="preview-gpu-badge"
             title={

@@ -4,11 +4,16 @@
 #   npm run test:native
 #   HOST_BUILD_DIR=/tmp/host HOST_SANITIZE=0 npm run test:native
 #
+#   HOST_CTEST_ARGS="-L pr" npm run test:native   # what PR CI runs (skips the nightly battery)
+#
 # Also writes compile_commands.json and points native/compile_commands.json at
-# it unless that link already resolves to a WASM database (npm run build:wasm),
-# which clangd should prefer: it carries em++'s sysroot and the wasm32 target.
-# A missing, dangling, or host-tree link is refreshed, so clangd works without
-# an Emscripten SDK and picks up newly added host targets.
+# it unless that link already resolves to a WASM database (npm run build:wasm)
+# that covers every source the host build compiles. clangd prefers the WASM
+# one (em++'s sysroot, the wasm32 target), but a WASM database configured
+# before a source existed (say fx/bus.cpp) leaves clangd blind to that file,
+# so a stale one is replaced by the host database, with a warning. A missing,
+# dangling, or host-tree link is refreshed too, so clangd works without an
+# Emscripten SDK and picks up newly added targets.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,11 +33,34 @@ cmake -S "$NATIVE" -B "$BUILD_DIR" \
 
 LINK="$NATIVE/compile_commands.json"
 HOST_DB="$BUILD_DIR/compile_commands.json"
-# A WASM database is one whose compiler is em++/emcc.
-if [ -f "$HOST_DB" ] && ! { [ -e "$LINK" ] && grep -qE '/em(\+\+|cc)[" ]' "$LINK"; }; then
+
+# Module sources a database compiles (test, tool and fuzz files are host-only).
+db_sources() {
+  grep -oE '"file": *"[^"]+"' "$1" | sed -E 's/"file": *"([^"]+)"/\1/' \
+    | grep -vE '/(tests|tools|host_test)/' | sort -u
+}
+
+relink=0
+if [ -f "$HOST_DB" ]; then
+  # A WASM database is one whose compiler is em++/emcc.
+  if [ -e "$LINK" ] && grep -qE '/em(\+\+|cc)[" ]' "$LINK"; then
+    missing="$(comm -23 <(db_sources "$HOST_DB") <(db_sources "$LINK"))"
+    if [ -n "$missing" ]; then
+      echo "warning: native/compile_commands.json is a WASM database that predates:" >&2
+      echo "$missing" | sed 's/^/           /' >&2
+      echo "         clangd would not index those files; linking the (newer) host database" >&2
+      echo "         instead. Run 'npm run build:wasm' to get a current WASM database back." >&2
+      relink=1
+    fi
+  else
+    relink=1
+  fi
+fi
+if [ "$relink" = "1" ]; then
   rm -f "$LINK"
   ln -s "$HOST_DB" "$LINK" 2>/dev/null || cp "$HOST_DB" "$LINK"
 fi
 
 cmake --build "$BUILD_DIR" --parallel
-ctest --test-dir "$BUILD_DIR" --output-on-failure
+# shellcheck disable=SC2086 # HOST_CTEST_ARGS is a list of ctest flags
+ctest --test-dir "$BUILD_DIR" --output-on-failure ${HOST_CTEST_ARGS:-}

@@ -1,0 +1,56 @@
+name: Nightly native DSP
+
+# The long native battery PRs skip (`ctest -L nightly`: Tech 3341 / 3342
+# conformance over minutes of audio, the true-peak limiter sweep, two-pass
+# loudness normalization, the subnormal soak, the FX property soak) under both
+# compilers' sanitizers, plus a longer libFuzzer run of the effect rows.
+
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-full:
+    name: Full native battery (${{ matrix.compiler }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build and run every ctest label
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: bash scripts/test-native.sh
+
+  fuzz:
+    name: Fuzz the effect rows (10 min)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: libFuzzer
+        env:
+          FUZZ_SECONDS: 600
+        run: bash scripts/fuzz-native.sh
+
+      - name: Keep crash inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: native/build-fuzz/crash-*
+          if-no-files-found: ignore

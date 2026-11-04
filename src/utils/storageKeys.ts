@@ -52,6 +52,12 @@ export const STORAGE_KEYS = {
     legacy: [],
     area: 'local',
   },
+  /** Per-browser A/V offset calibration in ms (`store/audioSyncStore.ts`). View state. */
+  audioSyncOffset: {
+    key: 'clip_stacker.audioSyncOffset.v1',
+    legacy: [],
+    area: 'local',
+  },
   /** Whether the LUFS meter is shown (`components/audio/LoudnessMeter.tsx`). */
   loudnessMeter: {
     key: 'clip_stacker.loudnessMeter.v1',

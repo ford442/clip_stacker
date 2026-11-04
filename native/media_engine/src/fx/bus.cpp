@@ -35,9 +35,8 @@ double gain_to_reduction_db(float gain) {
 // ---------------------------------------------------------------------------
 // BusChain
 
-bool BusChain::signature(const double* rows, int count, std::vector<long long>* out,
-                         const double** ducker) const {
-  out->clear();
+template <typename Visit>
+bool BusChain::walk(const double* rows, int count, const double** ducker, Visit&& visit) const {
   if (ducker) *ducker = nullptr;
   int stages = 0;
   for (int i = 0; i < count; ++i) {
@@ -64,10 +63,16 @@ bool BusChain::signature(const double* rows, int count, std::vector<long long>* 
     }
     if (code < 0) continue;
     if (stages >= MIX_BUS_MAX_STAGES) break;
+    if (!visit(stages, code)) return false;
     ++stages;
-    if (!cs::try_push_back(*out, code)) return false;
   }
-  return true;
+  return visit(stages, -1);
+}
+
+bool BusChain::signature(const double* rows, int count, std::vector<long long>* out,
+                         const double** ducker) const {
+  out->clear();
+  return walk(rows, count, ducker, [&](int, long long code) { return code < 0 || cs::try_push_back(*out, code); });
 }
 
 bool BusChain::build(const double* rows, int count, double sample_rate, int channels, bool limiters_only,
@@ -124,8 +129,13 @@ bool BusChain::build(const double* rows, int count, double sample_rate, int chan
 }
 
 bool BusChain::matches(const double* rows, int count, const double** ducker) const {
-  std::vector<long long> next;
-  return signature(rows, count, &next, ducker) && next == signature_;
+  // In place, against the stored signature: this runs on the audio thread
+  // for every retune message (every slider drag), so it must not allocate.
+  const size_t n = signature_.size();
+  return walk(rows, count, ducker, [&](int stage, long long code) {
+    const size_t i = static_cast<size_t>(stage);
+    return code < 0 ? i == n : i < n && signature_[i] == code;
+  });
 }
 
 bool BusChain::retune(const double* rows, int count, const double** ducker) {
@@ -195,30 +205,24 @@ void BusChain::process(float* frame) {
         limiters_[s.index].process(frame, frame);
         break;
     }
+    for (int c = 0; c < channels_; ++c) frame[c] = flush_sample(frame[c]);
   }
 }
 
-double BusChain::reduction_db() const {
+double BusChain::peak_reduction_db() const {
   double db = 0.0;
-  for (const Stage& s : order_) {
-    switch (s.kind) {
-      case kBiquad:
-        break;
-      case kCompressor:
-        db += compressors_[s.index].reduction_db();
-        break;
-      case kGate:
-        db += gates_[s.index].reduction_db();
-        break;
-      case kDeEsser:
-        db += deessers_[s.index].reduction_db();
-        break;
-      case kLimiter:
-        db += gain_to_reduction_db(limiters_[s.index].last_gain());
-        break;
-    }
-  }
+  for (const Compressor& c : compressors_) db += c.peak_reduction_db();
+  for (const Gate& g : gates_) db += g.peak_reduction_db();
+  for (const DeEsser& d : deessers_) db += d.peak_reduction_db();
+  for (const Limiter& l : limiters_) db += gain_to_reduction_db(l.min_gain());
   return db;
+}
+
+void BusChain::restart_peaks() {
+  for (Compressor& c : compressors_) c.restart_peak();
+  for (Gate& g : gates_) g.restart_peak();
+  for (DeEsser& d : deessers_) d.restart_peak();
+  for (Limiter& l : limiters_) l.restart_peak();
 }
 
 // ---------------------------------------------------------------------------
@@ -296,7 +300,6 @@ int BusGraph::build(double sample_rate, int channels, const BusLayout& l, int fl
   latency_ = lane_latency_ + master_.latency() + final_.latency();
   active_ = any || !master_.empty() || !final_.empty() || output_gain_ != 1.f || meter_on_;
   processed_ = 0;
-  master_gr_peak_ = 0.0;
   return CS_OK;
 }
 
@@ -359,11 +362,6 @@ void BusGraph::process(const float* lanes, float* out, int frames) {
           for (int c = 0; c < ch; ++c) x[c] *= g;
         }
       }
-      if (meter_on_) {
-        double gr = lane.chain.empty() ? 0.0 : lane.chain.reduction_db();
-        if (lane.has_duck) gr += lane.duck.reduction_db();
-        lane.gr_peak = std::max(lane.gr_peak, gr);
-      }
       float* keep = lane_out_.data() + static_cast<size_t>(l) * ch;
       for (int c = 0; c < ch; ++c) {
         keep[c] = x[c];
@@ -375,11 +373,9 @@ void BusGraph::process(const float* lanes, float* out, int frames) {
       for (int c = 0; c < ch; ++c) sum[c] *= output_gain_;
     }
     if (!final_.empty()) final_.process(sum);
-    if (meter_on_) {
-      master_gr_peak_ = std::max(master_gr_peak_, master_.reduction_db() + final_.reduction_db());
-      // The first `latency` frames are look-ahead priming, not programme.
-      if (processed_ >= latency_) meter_.push(sum);
-    }
+    for (int c = 0; c < ch; ++c) sum[c] = flush_sample(sum[c]);
+    // The first `latency` frames are look-ahead priming, not programme.
+    if (meter_on_ && processed_ >= latency_) meter_.push(sum);
     ++processed_;
     float* o = out + static_cast<size_t>(f) * ch;
     for (int c = 0; c < ch; ++c) o[c] = sum[c];
@@ -413,23 +409,34 @@ int BusGraph::meters(double* out, int capacity) {
         v = meter_.sample_peak_db();
         break;
       case MIX_METER_MASTER_GR:
-        v = master_gr_peak_;
+        v = master_.peak_reduction_db() + final_.peak_reduction_db();
         break;
-      default:
-        v = lanes_[i - MIX_METER_LANE_GR].gr_peak;
+      default: {
+        const Lane& lane = lanes_[i - MIX_METER_LANE_GR];
+        v = lane.chain.peak_reduction_db() + (lane.has_duck ? lane.duck.peak_reduction_db() : 0.0);
         break;
+      }
     }
     out[i] = v;
   }
-  master_gr_peak_ = 0.0;
-  for (Lane& lane : lanes_) lane.gr_peak = 0.0;
+  restart_reduction_peaks();
   return n;
+}
+
+void BusGraph::restart_reduction_peaks() {
+  // Each stage tracks its own peak reduction as it runs (a compare per
+  // frame); the dB conversion happens here, at the meter's read rate.
+  master_.restart_peaks();
+  final_.restart_peaks();
+  for (Lane& lane : lanes_) {
+    lane.chain.restart_peaks();
+    lane.duck.restart_peak();
+  }
 }
 
 void BusGraph::reset_meter() {
   if (meter_on_) meter_.reset();
-  master_gr_peak_ = 0.0;
-  for (Lane& lane : lanes_) lane.gr_peak = 0.0;
+  restart_reduction_peaks();
 }
 
 void BusGraph::reset() {
@@ -536,10 +543,9 @@ LoudnessMeterHandle* loudness_meter_create(int sample_rate, int channels) {
 
 int loudness_meter_process(LoudnessMeterHandle* meter, const float* interleaved, int frames) {
   if (!meter || frames < 0 || (frames > 0 && !interleaved)) return CS_EINVAL;
-  bool ok = true;
   const int ch = meter->meter.channels();
-  for (int f = 0; f < frames; ++f) ok = meter->meter.push(interleaved + static_cast<size_t>(f) * ch) && ok;
-  return ok ? CS_OK : CS_ENOMEM;
+  for (int f = 0; f < frames; ++f) meter->meter.push(interleaved + static_cast<size_t>(f) * ch);
+  return CS_OK;
 }
 
 int loudness_meter_read(const LoudnessMeterHandle* meter, double* out, int capacity) {

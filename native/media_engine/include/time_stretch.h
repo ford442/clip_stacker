@@ -38,6 +38,45 @@ int time_stretch_remap(
     float* output,
     int out_frames);
 
+/**
+ * Chunked form of `time_stretch_remap`, for clips too long to hold in the
+ * WASM heap (a 10 minute stereo clip is 230 MB of f32). Output is produced
+ * hop-aligned chunk by chunk, each from a window of the source; the carried
+ * state is one segment, so chunked output equals `time_stretch_remap` bit
+ * for bit.
+ *
+ * `source_frames` is the whole source's length (reads outside it are
+ * silence). Returns null on bad arguments or OOM.
+ */
+void* time_stretch_session_create(double source_frames, int channels, int hop, int tolerance);
+
+/**
+ * Produce the next `out_frames` of output (a multiple of the clamped hop,
+ * except on the final call, which ends the session). `offsets` holds the
+ * source offsets of output frames `k * hop` for this chunk's blocks plus one
+ * (`out_frames / hop + 1` of them, fewer when the curve ends: output past
+ * the last offset is silence, as in `time_stretch_remap`). `window` is
+ * planar f32, `window_frames` per channel, holding source frames
+ * `[window_start, window_start + window_frames)`; it must cover
+ * `[min(offsets) - 2 * hop - tolerance - 64, max(offsets) + 2 * hop +
+ * tolerance + 64)` clipped to the source, else CS_ERANGE (and nothing is
+ * written). CS_ESTATE after the final call.
+ */
+int time_stretch_session_process(
+    void* session,
+    const float* window,
+    int window_frames,
+    double window_start,
+    const double* offsets,
+    int num_offsets,
+    float* output,
+    int out_frames);
+
+/** The clamped synthesis hop the session runs at. */
+int time_stretch_session_hop(const void* session);
+
+void time_stretch_session_destroy(void* session);
+
 #ifdef __cplusplus
 }
 #endif

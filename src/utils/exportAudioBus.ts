@@ -21,7 +21,8 @@ import type { LoudnessTarget, MasterBusSettings } from './audioBus';
 import type { MasterLimiterSettings } from './audioEffects';
 import { busGraphNeededForExport, planBusGraph, type BusGraphPlan } from '../audio/fxGraph';
 import { packLimiterRow, packTruePeakLimiterRow } from '../wasm/mediaEngineLayout';
-import type { MixMeterReading, TimelineMixStream } from '../wasm/mediaEngine';
+import type { MixMeterReading } from '../wasm/mediaEngine';
+import type { MixStream } from '../audio/audioRenderClient';
 
 /** The lane and master settings an export mixes with. */
 export interface ExportAudioBus {
@@ -106,7 +107,7 @@ export function loudnessGainDb(target: LoudnessTarget, measured: number): number
  * Run a metering stream to the end (decode + mix, no encode) and return the
  * programme's integrated loudness. Closes the stream.
  */
-export async function measureStream(stream: TimelineMixStream): Promise<number> {
+export async function measureStream(stream: MixStream): Promise<number> {
   try {
     for await (const chunk of stream) void chunk;
     return stream.readMeters()?.integrated ?? -Infinity;

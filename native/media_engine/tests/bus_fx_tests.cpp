@@ -10,6 +10,8 @@
 #include "bus.h"
 #include "effects.h"
 #include "host_test.h"
+#include "loudness.h"
+#include "resampler.h"
 
 #include <algorithm>
 #include <chrono>
@@ -250,6 +252,10 @@ double true_peak_db(std::vector<float> x) {
 
 // ---------------------------------------------------------------------------
 // Loudness meter (EBU Tech 3341 Table 1, Tech 3342 Table 1)
+//
+// LONG_TEST_CASEs (nightly, `ctest -L nightly`) push minutes of audio through
+// every stage; under ASan + UBSan they are most of the binary's run time. PRs
+// run the rest (`ctest -L pr`), which still covers every stage and reading.
 
 TEST_CASE(loudness_reads_stereo_1k_sine_at_its_level) {
   // Tech 3341 #1 and #2: M, S, I = level +/- 0.1.
@@ -261,7 +267,7 @@ TEST_CASE(loudness_reads_stereo_1k_sine_at_its_level) {
   }
 }
 
-TEST_CASE(integrated_loudness_gates_tech3341_cases_3_to_5) {
+LONG_TEST_CASE(integrated_loudness_gates_tech3341_cases_3_to_5) {
   // #3: the relative gate drops the -36 dBFS tails.
   CHECK_NEAR(measure(concat({tone(10, -36), tone(60, -23), tone(10, -36)}))[MIX_METER_INTEGRATED], -23.0, 0.1);
   // #4: the absolute gate drops the -72 dBFS ends.
@@ -285,7 +291,7 @@ TEST_CASE(short_term_and_momentary_follow_tech3341_cases_9_and_12) {
   CHECK_NEAR(measure(twelve)[MIX_METER_MOMENTARY], -23.0, 0.1);
 }
 
-TEST_CASE(loudness_range_matches_tech3342_cases_1_to_4) {
+LONG_TEST_CASE(loudness_range_matches_tech3342_cases_1_to_4) {
   CHECK_NEAR(measure(concat({tone(20, -20), tone(20, -30)}))[MIX_METER_RANGE], 10.0, 1.0);
   CHECK_NEAR(measure(concat({tone(20, -20), tone(20, -15)}))[MIX_METER_RANGE], 5.0, 1.0);
   CHECK_NEAR(measure(concat({tone(20, -40), tone(20, -20)}))[MIX_METER_RANGE], 20.0, 1.0);
@@ -361,7 +367,7 @@ std::vector<std::vector<float>> inter_sample_signals() {
   return signals;
 }
 
-TEST_CASE(limiter_holds_true_peak_ceiling_on_inter_sample_peaks) {
+LONG_TEST_CASE(limiter_holds_true_peak_ceiling_on_inter_sample_peaks) {
   for (double ceiling : {-1.0, -2.0, -0.1}) {
     for (double lookahead : {0.0, 0.0015, 0.005, 0.02}) {
       for (const auto& x : inter_sample_signals()) {
@@ -733,7 +739,7 @@ TEST_CASE(inactive_bus_session_matches_the_legacy_mix_bitwise) {
   }
 }
 
-TEST_CASE(two_pass_normalization_lands_on_target) {
+LONG_TEST_CASE(two_pass_normalization_lands_on_target) {
   // Pass 1 meters the mix; pass 2 applies target - measured and the final
   // true-peak limiter. Streaming targets: within 0.5 LU and <= -1 dBTP.
   const auto inputs = everything_inputs(20.0);
@@ -757,7 +763,7 @@ TEST_CASE(two_pass_normalization_lands_on_target) {
 // ---------------------------------------------------------------------------
 // Denormals
 
-TEST_CASE(silence_after_a_tone_stays_out_of_subnormals) {
+LONG_TEST_CASE(silence_after_a_tone_stays_out_of_subnormals) {
   // Every recursive path (biquads, envelopes, ramps, meter filters) decays
   // toward zero in silence; without the flushes those tails go subnormal,
   // which WASM (no FTZ / DAZ) and x86 both run many times slower. The output
@@ -809,6 +815,327 @@ TEST_CASE(api_rejects_malformed_layouts) {
   CHECK(loudness_meter_create(kRate, 6) == nullptr);
   CHECK(bus_graph_process(nullptr, nullptr, nullptr, 0) == CS_EINVAL);
   CHECK(mix_fx_session_meters(nullptr, nullptr, 0) == CS_EINVAL);
+}
+
+// ---------------------------------------------------------------------------
+// Real-time budget: graph build, meter reads, control-rate dynamics
+
+#if defined(__SANITIZE_ADDRESS__)
+constexpr double kTimingSlack = 8.0;  // ASan + UBSan builds run several times slower
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+constexpr double kTimingSlack = 8.0;
+#else
+constexpr double kTimingSlack = 1.0;
+#endif
+#else
+constexpr double kTimingSlack = 1.0;
+#endif
+
+template <typename Fn>
+double min_seconds(int repeats, Fn&& fn) {
+  double best = 1e9;
+  for (int r = 0; r < repeats; ++r) {
+    const auto t0 = std::chrono::steady_clock::now();
+    fn();
+    best = std::min(best, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+  }
+  return best;
+}
+
+TEST_CASE(true_peak_taps_match_sinc_table) {
+  // fx/true_peak_taps.inc is generated (scripts/gen-true-peak-taps.sh); it
+  // must be exactly the rows the mixer's own table holds.
+  const float* rows = media_engine::sinc_table(media_engine::sinc_cutoff_for_step(1.0));
+  for (int k = 0; k < 3; ++k) {
+    const float* expected = rows + static_cast<size_t>((k + 1) * media_engine::kSincPhases / 4) * media_engine::kSincTaps;
+    CHECK(std::memcmp(expected, media_engine::TruePeakDetector::taps(k), media_engine::kSincTaps * sizeof(float)) == 0);
+    float row[media_engine::kSincTaps];
+    media_engine::sinc_row(media_engine::sinc_cutoff_for_step(1.0), (k + 1) * media_engine::kSincPhases / 4, row);
+    CHECK(std::memcmp(expected, row, sizeof(row)) == 0);
+  }
+}
+
+TEST_CASE(graph_build_with_limiters_fits_well_inside_a_render_quantum) {
+  // The preview builds a graph on the audio thread, where one 128-frame
+  // quantum at 48 kHz is 2.67 ms. Building the true-peak table there took
+  // ~5.5 ms; the taps are data now.
+  std::vector<double> effects;
+  std::vector<int> buses;
+  int master_first = 0;
+  int final_first = 0;
+  const Layout l = everything_layout();
+  l.pack(&effects, &buses, &master_first, &final_first);
+  const double seconds = min_seconds(25, [&] {
+    BusGraphHandle* g = bus_graph_create(kRate, 2, effects.data(), static_cast<int>(effects.size() / MIX_FX_STRIDE),
+                                         buses.data(), 3, master_first, 3, l.gain_db, final_first, 1,
+                                         MIX_BUS_FLAG_METER);
+    CHECK(g != nullptr);
+    bus_graph_destroy(g);
+  });
+  std::printf("    graph build (3 lanes, 3 limiters, meter): %.1f us\n", seconds * 1e6);
+  CHECK_LE(seconds, 0.0005 * kTimingSlack);
+}
+
+TEST_CASE(loudness_read_cost_is_flat_over_a_four_hour_programme) {
+  // Integrated and range read a fixed histogram, so a read after four hours
+  // costs what a read after a minute does (it used to be O(blocks) plus a
+  // sort-merge that allocated).
+  media_engine::LoudnessMeter meter;
+  CHECK(meter.init(kRate, 2));
+  uint32_t seed = 99;
+  auto sub_block = [&]() {
+    seed = seed * 1664525u + 1013904223u;
+    const double lufs = -40.0 + 30.0 * static_cast<double>(seed >> 8) / 16777216.0;
+    return std::pow(10.0, (lufs + 0.691) / 10.0) * 2.0 * meter.hop();
+  };
+  auto read = [&] {
+    volatile double sink = meter.integrated() + meter.range() + meter.momentary() + meter.short_term();
+    (void)sink;
+  };
+  for (int i = 0; i < 600; ++i) meter.push_sub_block(sub_block());  // one minute
+  const double early = min_seconds(200, read);
+  for (int i = 0; i < 4 * 36000; ++i) meter.push_sub_block(sub_block());  // four hours
+  const double late = min_seconds(200, read);
+  std::printf("    read after 1 min %.2f us, after 4 h %.2f us\n", early * 1e6, late * 1e6);
+  CHECK_LE(late, early * 2.0 + 2e-6);
+  CHECK_LE(late, 50e-6 * kTimingSlack);
+}
+
+/** BS.1770 / Tech 3342 from every block energy, sorted: what the meter did before the histogram. */
+struct ExactLoudness {
+  std::vector<double> blocks;
+  std::vector<double> shorts;
+  double sub[30] = {};
+  int pos = 0;
+  long long total = 0;
+  double hop = 4800;
+
+  double window(int n) const {
+    double sum = 0;
+    for (int i = 1; i <= n; ++i) sum += sub[(pos - i + 30) % 30];
+    return sum / (n * hop);
+  }
+  void push(double s) {
+    sub[pos] = s;
+    pos = (pos + 1) % 30;
+    ++total;
+    if (total >= 4) blocks.push_back(window(4));
+    if (total >= 30) shorts.push_back(window(30));
+  }
+  static constexpr double kAbs = 1.1724653045822981e-07;
+  double integrated() const {
+    double sum = 0;
+    long long n = 0;
+    for (double z : blocks) {
+      if (z > kAbs) sum += z, ++n;
+    }
+    if (n == 0) return -INFINITY;
+    const double rel = std::max(kAbs, sum / n / 10.0);
+    double g = 0;
+    long long m = 0;
+    for (double z : blocks) {
+      if (z > rel) g += z, ++m;
+    }
+    return -0.691 + 10 * std::log10(g / m);
+  }
+  double range() const {
+    std::vector<double> v;
+    double sum = 0;
+    for (double z : shorts) {
+      if (z >= kAbs) v.push_back(z), sum += z;
+    }
+    if (v.empty()) return 0;
+    const double gate = std::max(kAbs, sum / v.size() / 100.0);
+    std::sort(v.begin(), v.end());
+    const auto first = std::lower_bound(v.begin(), v.end(), gate);
+    const long long n = v.end() - first;
+    if (n <= 0) return 0;
+    return 10 * std::log10(first[std::llround((n - 1) * 0.95)] / first[std::llround((n - 1) * 0.10)]);
+  }
+};
+
+TEST_CASE(histogram_loudness_tracks_the_exact_gating_within_a_tenth_of_a_lu) {
+  // Programmes with slow level drift, dynamics and quiet passages (some below
+  // the gates), driven through the 100 ms grid both ways.
+  for (uint32_t seed : {1u, 2u, 3u, 4u, 5u}) {
+    media_engine::LoudnessMeter meter;
+    CHECK(meter.init(kRate, 2));
+    ExactLoudness exact;
+    exact.hop = meter.hop();
+    uint32_t lcg = seed;
+    double level = -23.0;
+    for (int i = 0; i < 20 * 600; ++i) {  // 20 minutes
+      lcg = lcg * 1664525u + 1013904223u;
+      const double u = static_cast<double>(lcg >> 8) / 16777216.0;
+      level += (u - 0.5) * 1.5;
+      level = std::max(-80.0, std::min(0.0, level));
+      if (i % 1800 == 900) level -= 25.0;  // a quiet scene every three minutes
+      const double s = std::pow(10.0, (level + 0.691) / 10.0) * 2.0 * meter.hop();
+      meter.push_sub_block(s);
+      exact.push(s);
+    }
+    CHECK_NEAR(meter.integrated(), exact.integrated(), 0.1);
+    CHECK_NEAR(meter.range(), exact.range(), 0.1);
+  }
+}
+
+LONG_TEST_CASE(histogram_loudness_reads_the_conformance_signals_to_a_tenth_of_a_lu) {
+  // The Tech 3341 / 3342 signals through the full K-weighted path, at the
+  // spec's +/-0.1 LU for loudness and a tenth of an LU (not the spec's 1 LU)
+  // for the range: steady tones put every block of a level in one bin.
+  CHECK_NEAR(measure(concat({tone(10, -36), tone(60, -23), tone(10, -36)}))[MIX_METER_INTEGRATED], -23.0, 0.1);
+  CHECK_NEAR(measure(concat({tone(20, -26), tone(20.1, -20), tone(20, -26)}))[MIX_METER_INTEGRATED], -23.0, 0.1);
+  CHECK_NEAR(measure(concat({tone(20, -20), tone(20, -30)}))[MIX_METER_RANGE], 10.0, 0.1);
+  CHECK_NEAR(measure(concat({tone(20, -20), tone(20, -15)}))[MIX_METER_RANGE], 5.0, 0.1);
+  CHECK_NEAR(measure(concat({tone(20, -40), tone(20, -20)}))[MIX_METER_RANGE], 20.0, 0.1);
+  CHECK_NEAR(measure(concat({tone(20, -50), tone(20, -35), tone(20, -20), tone(20, -35), tone(20, -50)}))
+                 [MIX_METER_RANGE],
+             15.0, 0.1);
+}
+
+/** The per-sample compressor the control-rate one replaced (gain computer every frame). */
+struct PerSampleCompressor {
+  double threshold, ratio, knee, makeup, attack, release, gain_db = 0;
+  PerSampleCompressor(const Fx& r, double rate)
+      : threshold(r[MIX_FX_THRESHOLD_DB]),
+        ratio(r[MIX_FX_RATIO]),
+        knee(r[MIX_FX_KNEE_DB]),
+        makeup(std::pow(10.0, r[MIX_FX_GAIN_DB] / 20.0)),
+        attack(r[MIX_FX_ATTACK] > 0 ? std::exp(-1.0 / (r[MIX_FX_ATTACK] * rate)) : 0.0),
+        release(r[MIX_FX_RELEASE] > 0 ? std::exp(-1.0 / (r[MIX_FX_RELEASE] * rate)) : 0.0) {}
+  double curve(double x) const {
+    const double over = x - threshold;
+    if (!(knee > 0)) return over > 0 ? threshold + over / ratio : x;
+    if (2 * over < -knee) return x;
+    if (2 * over > knee) return threshold + over / ratio;
+    const double k = over + knee * 0.5;
+    return x + (1.0 / ratio - 1.0) * k * k / (2.0 * knee);
+  }
+  float gain(float peak) {
+    const double x = peak > 1e-6f ? 20.0 * std::log10(static_cast<double>(peak)) : -120.0;
+    const double target = curve(x) - x;
+    const double c = target < gain_db ? attack : release;
+    gain_db = c * gain_db + (1.0 - c) * target;
+    return static_cast<float>(std::pow(10.0, gain_db / 20.0) * makeup);
+  }
+};
+
+/** The per-sample de-esser (shelf redesigned whenever the cut moved > 1e-3 dB). */
+struct PerSampleDeEsser {
+  media_engine::Biquad detect, shelf;
+  double freq, threshold, slope, range, attack, release, reduction = 0, shelf_db = 0;
+  double rate;
+  PerSampleDeEsser(const Fx& r, double sr)
+      : freq(r[MIX_FX_FREQ]),
+        threshold(r[MIX_FX_THRESHOLD_DB]),
+        slope(1.0 - 1.0 / r[MIX_FX_RATIO]),
+        range(r[MIX_FX_RANGE_DB]),
+        attack(std::exp(-1.0 / (r[MIX_FX_ATTACK] * sr))),
+        release(std::exp(-1.0 / (r[MIX_FX_RELEASE] * sr))),
+        rate(sr) {
+    detect.design(eq(MIX_FX_HIGH_PASS, freq, 0, 0.7071067811865476).data(), rate);
+    retune(0.0);
+  }
+  void retune(double cut) {
+    shelf.design(eq(MIX_FX_HIGH_SHELF, freq, cut, 0.7071067811865476).data(), rate, true);
+    shelf_db = cut;
+  }
+  void process(float* f) {
+    double peak = 0;
+    for (int c = 0; c < 2; ++c) peak = std::max(peak, std::fabs(detect.process_d(c, f[c])));
+    double target = 0;
+    if (peak > 1e-6) {
+      const double over = 20 * std::log10(peak) - threshold;
+      if (over > 0) target = std::min(range, over * slope);
+    }
+    const double c = target > reduction ? attack : release;
+    reduction = target + (reduction - target) * c;
+    const double cut = -reduction;
+    if (cut != shelf_db && (cut == 0.0 || std::fabs(cut - shelf_db) > 1e-3)) retune(cut);
+    for (int ch = 0; ch < 2; ++ch) f[ch] = shelf.process(ch, f[ch]);
+  }
+};
+
+/** Output error energy relative to the reference output (dB). */
+double relative_error_db(const std::vector<float>& ref, const std::vector<float>& out) {
+  double e = 0, p = 0;
+  for (size_t i = 0; i < ref.size(); ++i) {
+    const double d = static_cast<double>(out[i]) - ref[i];
+    e += d * d;
+    p += static_cast<double>(ref[i]) * ref[i];
+  }
+  return 10 * std::log10(e / p);
+}
+
+TEST_CASE(control_rate_compressor_stays_close_to_the_per_sample_one) {
+  // The detector runs every frame (amplitude_db); the dB -> linear
+  // conversion runs every kControlFrames frames and the gain ramps linearly
+  // between updates. On busy programme the gain trajectory stays within a
+  // fraction of a dB of the per-sample design (a little more on a fast
+  // attack's first frames), the output error is >= 40 dB down, and steady
+  // state is the same.
+  const auto x = programme(6.0, 0.9, 31);
+  for (const Fx& r : {compressor(-24, 4, 0.005, 0.12), compressor(-18, 2, 0.01, 0.2, 6, 2),
+                      compressor(-30, 10, 0.002, 0.05, 0), compressor(-20, 3, 0.001, 0.1, 12)}) {
+    media_engine::Compressor fast;
+    CHECK(fast.design(r.data(), kRate));
+    PerSampleCompressor ref(r, kRate);
+    std::vector<float> a(x.size()), b(x.size());
+    double worst_db = 0;
+    for (size_t i = 0; i < x.size() / 2; ++i) {
+      const float peak = std::max(std::fabs(x[2 * i]), std::fabs(x[2 * i + 1]));
+      const float gf = fast.gain(peak);
+      const float gr = ref.gain(peak);
+      worst_db = std::max(worst_db, std::fabs(20 * std::log10(static_cast<double>(gf) / gr)));
+      for (int c = 0; c < 2; ++c) {
+        a[2 * i + c] = x[2 * i + c] * gr;
+        b[2 * i + c] = x[2 * i + c] * gf;
+      }
+    }
+    const double err = relative_error_db(a, b);
+    std::printf("    compressor attack %.3f s: worst gain deviation %.3f dB, error %.1f dB\n", r[MIX_FX_ATTACK],
+                worst_db, err);
+    // Fast attacks lag by up to a control block on a transient's first frames.
+    CHECK_LE(worst_db, r[MIX_FX_ATTACK] >= 0.005 ? 0.5 : 2.0);
+    CHECK_LE(err, -40.0);
+  }
+  // A steady tone settles on the same reduction either way.
+  const Fx r = compressor(-20, 4, 0.002, 0.2);
+  media_engine::Compressor fast;
+  fast.design(r.data(), kRate);
+  PerSampleCompressor ref(r, kRate);
+  float gf = 1, gr = 1;
+  for (int i = 0; i < kRate; ++i) {
+    gf = fast.gain(0.5f);
+    gr = ref.gain(0.5f);
+  }
+  CHECK_NEAR(20 * std::log10(static_cast<double>(gf)), 20 * std::log10(static_cast<double>(gr)), 1e-4);
+}
+
+TEST_CASE(control_rate_deesser_stays_close_to_the_per_sample_one) {
+  // Sibilant bursts over a low tone: the shelf ramps between control-rate
+  // designs instead of being redesigned every sample.
+  auto x = sine(4.0, 300.0, 0.3);
+  const auto ess = sine(4.0, 7500.0, 0.35);
+  for (size_t i = 0; i < x.size(); ++i) {
+    const double t = static_cast<double>(i / 2) / kRate;
+    if (std::fmod(t, 0.5) < 0.15) x[i] += ess[i];
+  }
+  for (const Fx& r : {deesser(6000, -28, 4, 8), deesser(5000, -35, 8, 12, 0.0005, 0.03)}) {
+    media_engine::DeEsser fast;
+    CHECK(fast.design(r.data(), kRate));
+    PerSampleDeEsser ref(r, kRate);
+    std::vector<float> a = x, b = x;
+    for (size_t i = 0; i < x.size() / 2; ++i) {
+      ref.process(&a[2 * i]);
+      fast.process(&b[2 * i], 2);
+    }
+    const double err = relative_error_db(a, b);
+    std::printf("    de-esser %.0f Hz: error %.1f dB\n", r[MIX_FX_FREQ], err);
+    CHECK_LE(err, -30.0);
+    for (float v : b) CHECK(std::isfinite(v));
+  }
 }
 
 }  // namespace

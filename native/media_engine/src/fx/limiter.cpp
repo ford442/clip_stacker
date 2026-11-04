@@ -11,12 +11,21 @@
 
 namespace media_engine {
 
+namespace {
+
+// The three 4x phases as static data (see true_peak_taps.inc): a detector is
+// built on the audio thread whenever the preview's bus graph is, and the full
+// 513-row Kaiser table took ~5.5 ms there against a 2.67 ms render quantum.
+const float kTruePeakTaps[3][kSincTaps] = {
+#include "true_peak_taps.inc"
+};
+
+}  // namespace
+
+const float* TruePeakDetector::taps(int phase) { return kTruePeakTaps[phase]; }
+
 void TruePeakDetector::init(int channels) {
   channels_ = channels > 1 ? 2 : 1;
-  // Copy the three phases out of the shared table: its cache slots are
-  // recycled by the mixer, so a pointer into it would not stay valid.
-  const float* rows = sinc_table(sinc_cutoff_for_step(1.0));
-  for (int k = 1; k <= 3; ++k) sinc_prepare(rows, 0.25 * k, coeff_[k - 1]);
   reset();
 }
 
@@ -40,7 +49,7 @@ float TruePeakDetector::push(const float* frame, float* delayed) {
     const float x = window[kSincHalfTaps - 1];
     delayed[c] = x;
     peak = std::max(peak, std::fabs(x));
-    for (int k = 0; k < 3; ++k) peak = std::max(peak, std::fabs(sinc_dot(coeff_[k], window)));
+    for (int k = 0; k < 3; ++k) peak = std::max(peak, std::fabs(sinc_dot(kTruePeakTaps[k], window)));
   }
   return peak;
 }
@@ -83,6 +92,7 @@ void Limiter::reset() {
   min_head_ = 0;
   min_size_ = 0;
   last_gain_ = 1.f;
+  min_gain_ = 1.f;
   detector_.reset();
 }
 
@@ -140,6 +150,7 @@ void Limiter::process(const float* in, float* out) {
 
   const float gain = static_cast<float>(box_sum_ / lookahead_);
   last_gain_ = gain;
+  if (gain < min_gain_) min_gain_ = gain;
   for (int c = 0; c < channels_; ++c) {
     const float y = oldest[c] * gain;
     out[c] = std::isfinite(y) ? std::max(-ceiling_, std::min(ceiling_, y)) : 0.f;

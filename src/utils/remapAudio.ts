@@ -10,7 +10,8 @@ import {
   cycleDurationForClip,
   integrateRateToSourceOffset,
 } from './timeRemap';
-import { TIME_STRETCH_HOP, wasmRemapPlanar } from '../wasm/timeStretch';
+import { TIME_STRETCH_HOP } from '../wasm/timeStretch';
+import { remapPlanarOffThread } from '../audio/timeStretchClient';
 
 const HOP = TIME_STRETCH_HOP;
 
@@ -149,18 +150,30 @@ export async function remapClipAudioBuffer(
   const outSec = cycleDurationForClip(clip);
   const outFrames = Math.max(1, Math.floor(outSec * sr));
 
-  const planarIn = toPlanar(source, startFrame, inFrames);
+  let planarIn = toPlanar(source, startFrame, inFrames);
   const offsets = buildSourceOffsetMap(clip, outFrames, sr, HOP, inFrames);
 
   let planarOut: Float32Array | null = null;
   try {
-    planarOut = await wasmRemapPlanar(planarIn, inFrames, channels, offsets, outFrames, HOP);
+    // The chunked WASM session, in the time-stretch worker.
+    const result = await remapPlanarOffThread({
+      input: planarIn,
+      inFrames,
+      channels,
+      offsets,
+      outFrames,
+      hop: HOP,
+    });
+    planarOut = result.output;
+    planarIn = result.input;
   } catch (err) {
     // A trap retires the module instance (emscriptenLoader); this clip still
     // gets audio from the JS path.
     console.warn('[remapAudio] WASM time stretch failed; using the JS fallback:', err);
   }
   if (!planarOut) {
+    // The source may have gone to a worker that died with it.
+    if (planarIn.length !== inFrames * channels) planarIn = toPlanar(source, startFrame, inFrames);
     planarOut = jsRemapPlanar(planarIn, inFrames, channels, offsets, outFrames, HOP);
   }
 

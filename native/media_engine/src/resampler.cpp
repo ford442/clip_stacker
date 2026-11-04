@@ -50,31 +50,33 @@ double bessel_i0(double x) {
   return sum;
 }
 
+/** Row `p` of the polyphase table for `cutoff` (see `sinc_row`). */
+void build_row(double cutoff, int p, double inv_i0_beta, float* row) {
+  const double half = static_cast<double>(kSincHalfTaps);
+  const double frac = static_cast<double>(p) / static_cast<double>(kSincPhases);
+  double taps[kSincTaps];
+  double sum = 0.0;
+  for (int j = 0; j < kSincTaps; ++j) {
+    // Distance (source frames) from the interpolated position to tap j.
+    const double x = static_cast<double>(j - kSincHalfTaps + 1) - frac;
+    const double w = x / half;
+    double h = 0.0;
+    if (w > -1.0 && w < 1.0) {
+      const double arg = kPi * cutoff * x;
+      const double sinc = x == 0.0 ? 1.0 : std::sin(arg) / arg;
+      h = sinc * bessel_i0(kSincKaiserBeta * std::sqrt(1.0 - w * w)) * inv_i0_beta;
+    }
+    taps[j] = h;
+    sum += h;
+  }
+  // Unity DC gain on every phase: no phase-dependent level ripple.
+  const double norm = sum != 0.0 ? 1.0 / sum : 0.0;
+  for (int j = 0; j < kSincTaps; ++j) row[j] = static_cast<float>(taps[j] * norm);
+}
+
 void build_table(double cutoff, float* rows) {
   const double inv_i0_beta = 1.0 / bessel_i0(kSincKaiserBeta);
-  const double half = static_cast<double>(kSincHalfTaps);
-  double taps[kSincTaps];
-  for (int p = 0; p <= kSincPhases; ++p) {
-    const double frac = static_cast<double>(p) / static_cast<double>(kSincPhases);
-    double sum = 0.0;
-    for (int j = 0; j < kSincTaps; ++j) {
-      // Distance (source frames) from the interpolated position to tap j.
-      const double x = static_cast<double>(j - kSincHalfTaps + 1) - frac;
-      const double w = x / half;
-      double h = 0.0;
-      if (w > -1.0 && w < 1.0) {
-        const double arg = kPi * cutoff * x;
-        const double sinc = x == 0.0 ? 1.0 : std::sin(arg) / arg;
-        h = sinc * bessel_i0(kSincKaiserBeta * std::sqrt(1.0 - w * w)) * inv_i0_beta;
-      }
-      taps[j] = h;
-      sum += h;
-    }
-    // Unity DC gain on every phase: no phase-dependent level ripple.
-    const double norm = sum != 0.0 ? 1.0 / sum : 0.0;
-    float* row = rows + p * kSincTaps;
-    for (int j = 0; j < kSincTaps; ++j) row[j] = static_cast<float>(taps[j] * norm);
-  }
+  for (int p = 0; p <= kSincPhases; ++p) build_row(cutoff, p, inv_i0_beta, rows + p * kSincTaps);
 }
 
 float dot_taps(const float* coeff, const float* x) {
@@ -89,6 +91,10 @@ float sinc_dot(const float* coeff, const float* window) { return dot_taps(coeff,
 
 double sinc_cutoff_for_step(double step) {
   return step > 1.0 ? kSincRolloff / step : kSincRolloff;
+}
+
+void sinc_row(double cutoff, int phase, float* out) {
+  build_row(cutoff, phase, 1.0 / bessel_i0(kSincKaiserBeta), out);
 }
 
 const float* sinc_table(double cutoff) {

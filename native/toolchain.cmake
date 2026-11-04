@@ -19,6 +19,14 @@
 #
 # No pthreads by default: only the opt-in whisper target sets THREADS (ggml's
 # worker pool). COOP/COEP is already on for FFmpeg.
+#
+# -ffp-contract=off (as host.cmake): no a*b+c is ever fused, so parity with
+# the host goldens and between preview and export never rests on the
+# optimizer choosing not to emit an FMA (relaxed-SIMD would add one).
+#
+# These functions own the optimization flags: CMake's per-config defaults
+# (-O3 -DNDEBUG for Release, -g for Debug) are cleared below so each flag is
+# passed once.
 
 if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Release or Debug" FORCE)
@@ -31,6 +39,12 @@ endif()
 
 set(CLIP_STACKER_WASM_STACK_SIZE "131072" CACHE STRING "Explicit WASM stack (bytes)")
 set(CLIP_STACKER_WASM_GZIP_BUDGET "204800" CACHE STRING "Fail if gzip(wasm) exceeds this")
+
+foreach(_lang C CXX)
+  foreach(_config RELEASE DEBUG RELWITHDEBINFO MINSIZEREL)
+    set(CMAKE_${_lang}_FLAGS_${_config} "")
+  endforeach()
+endforeach()
 
 get_filename_component(CLIP_STACKER_NATIVE_DIR "${CMAKE_CURRENT_LIST_DIR}" ABSOLUTE)
 get_filename_component(CLIP_STACKER_ROOT "${CLIP_STACKER_NATIVE_DIR}/.." ABSOLUTE)
@@ -70,6 +84,7 @@ function(clip_stacker_wasm_module target)
   target_include_directories(${target} PRIVATE "${CLIP_STACKER_COMMON_INCLUDE}")
   target_compile_options(${target} PRIVATE
     -msimd128
+    -ffp-contract=off
     -Wall
     -Wextra
     $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
@@ -97,7 +112,6 @@ function(clip_stacker_wasm_module target)
   endforeach()
 
   target_link_options(${target} PRIVATE
-    "SHELL:-s WASM=1"
     "SHELL:-s MODULARIZE=1"
     "SHELL:-s EXPORT_ES6=1"
     "SHELL:-s EXPORT_NAME=${ARG_EXPORT_NAME}"
@@ -153,9 +167,14 @@ endfunction()
 # that cannot load the MODULARIZE glue — the AudioWorkletGlobalScope has no
 # fetch / importScripts — so JS compiles the .wasm and instantiates it with a
 # handful of WASI stubs. Same compile flags, size budget and debug switch as
-# `clip_stacker_wasm_module`; output is `<target>.wasm` only.
+# `clip_stacker_wasm_module`; output is `<target>.wasm` only. MALLOC picks the
+# allocator (`dlmalloc` default, `emmalloc` for a module that allocates only
+# when it builds a graph).
 function(clip_stacker_standalone_wasm target)
-  cmake_parse_arguments(ARG "" "INITIAL_MEMORY;MAXIMUM_MEMORY;GZIP_BUDGET" "EXPORTED_FUNCTIONS" ${ARGN})
+  cmake_parse_arguments(ARG "" "INITIAL_MEMORY;MAXIMUM_MEMORY;GZIP_BUDGET;MALLOC" "EXPORTED_FUNCTIONS" ${ARGN})
+  if(NOT ARG_MALLOC)
+    set(ARG_MALLOC dlmalloc)
+  endif()
   if(NOT ARG_INITIAL_MEMORY)
     set(ARG_INITIAL_MEMORY 1048576)
   endif()
@@ -171,6 +190,7 @@ function(clip_stacker_standalone_wasm target)
   target_include_directories(${target} PRIVATE "${CLIP_STACKER_COMMON_INCLUDE}")
   target_compile_options(${target} PRIVATE
     -msimd128
+    -ffp-contract=off
     -Wall
     -Wextra
     $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
@@ -200,6 +220,7 @@ function(clip_stacker_standalone_wasm target)
     "SHELL:-s MAXIMUM_MEMORY=${ARG_MAXIMUM_MEMORY}"
     "SHELL:-s STACK_SIZE=${CLIP_STACKER_WASM_STACK_SIZE}"
     "SHELL:-s EXPORTED_FUNCTIONS=${_exports}"
+    "SHELL:-s MALLOC=${ARG_MALLOC}"
     -msimd128
   )
   if(CLIP_STACKER_WASM_DEBUG)

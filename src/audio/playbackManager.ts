@@ -9,8 +9,18 @@ import {
 } from './schedule';
 import { RemappedAudioCache } from '../utils/remappedAudioCache';
 import { ProcessedAudioCache } from './processedAudioCache';
-import { createAudioContext } from './context';
-import { bandEnergy, ZERO_ANALYSER_LEVELS, type AnalyserLevels } from './analyserLevels';
+import {
+  applyPreferredLatency,
+  audioContextLatency,
+  getAudioContext,
+  heardContextTime,
+  onAudioContextReplaced,
+  outputLatencySec,
+  preferAudioLatency,
+  type AudioLatencyClass,
+} from './audioService';
+import { audioSyncOffsetSec } from '../store/audioSyncStore';
+import { AnalyserLevelReader, ZERO_ANALYSER_LEVELS, type AnalyserLevels } from './analyserLevels';
 import { applyGainEnvelope, applyPanEnvelope } from './gainEnvelope';
 import { planBusGraph, type BusGraphPlan } from './fxGraph';
 import { PreviewBusRouting } from './busRouting';
@@ -85,11 +95,13 @@ export class AudioPlaybackManager {
   /** Coalesces rapid scrub seeks while playing into one reschedule. */
   private seekGeneration = 0;
   private masterVolume = 1;
-  private analyserTimeDomain: Float32Array | null = null;
-  private analyserFrequency: Float32Array | null = null;
+  private readonly levels = new AnalyserLevelReader();
   private readonly busRouting = new PreviewBusRouting();
   private busPlan: BusGraphPlan | null = null;
   private unsubscribeMeters: (() => void) | null = null;
+  private unsubscribeContext: (() => void) | null = null;
+  /** The shared context was replaced; the bus graph must be rebuilt on the new one. */
+  private needsRouting = false;
 
   /** Whether Web Audio routing is usable (false → muted visual preview). */
   get isAvailable(): boolean {
@@ -101,11 +113,21 @@ export class AudioPlaybackManager {
   }
 
   /** Live AudioContext sample rate / latency, for Copy Debug. Null before the context exists. */
-  getContextDiagnostics(): { sampleRate: number; baseLatency: number; state: AudioContextState } | null {
+  getContextDiagnostics(): {
+    sampleRate: number;
+    baseLatency: number;
+    outputLatency: number;
+    latencyHint: AudioLatencyClass;
+    syncOffsetMs: number;
+    state: AudioContextState;
+  } | null {
     if (!this.ctx) return null;
     return {
       sampleRate: this.ctx.sampleRate,
       baseLatency: this.ctx.baseLatency,
+      outputLatency: outputLatencySec(this.ctx),
+      latencyHint: audioContextLatency(),
+      syncOffsetMs: Math.round(audioSyncOffsetSec() * 1000),
       state: this.ctx.state,
     };
   }
@@ -130,47 +152,7 @@ export class AudioPlaybackManager {
    * Returns zeros when the graph is unavailable or idle.
    */
   readAnalyserLevels(): AnalyserLevels {
-    if (!this.analyser) return { ...ZERO_ANALYSER_LEVELS };
-
-    const binCount = this.analyser.frequencyBinCount;
-    if (!this.analyserTimeDomain || this.analyserTimeDomain.length !== this.analyser.fftSize) {
-      this.analyserTimeDomain = new Float32Array(this.analyser.fftSize);
-    }
-    if (!this.analyserFrequency || this.analyserFrequency.length !== binCount) {
-      this.analyserFrequency = new Float32Array(binCount);
-    }
-
-    this.analyser.getFloatTimeDomainData(
-      this.analyserTimeDomain as unknown as Float32Array<ArrayBuffer>,
-    );
-    this.analyser.getFloatFrequencyData(
-      this.analyserFrequency as unknown as Float32Array<ArrayBuffer>,
-    );
-
-    let sumSq = 0;
-    let peak = 0;
-    for (let i = 0; i < this.analyserTimeDomain.length; i++) {
-      const s = this.analyserTimeDomain[i];
-      sumSq += s * s;
-      const abs = Math.abs(s);
-      if (abs > peak) peak = abs;
-    }
-    const rms = Math.sqrt(sumSq / Math.max(1, this.analyserTimeDomain.length));
-
-    // Frequency data is in dB (−∞…0). Map bands to 0–1 loosely.
-    const bass = bandEnergy(this.analyserFrequency, 0, Math.floor(binCount * 0.08));
-    const mid = bandEnergy(
-      this.analyserFrequency,
-      Math.floor(binCount * 0.08),
-      Math.floor(binCount * 0.4),
-    );
-    const treble = bandEnergy(
-      this.analyserFrequency,
-      Math.floor(binCount * 0.4),
-      binCount,
-    );
-
-    return { rms, peak, bass, mid, treble };
+    return this.analyser ? this.levels.read(this.analyser) : { ...ZERO_ANALYSER_LEVELS };
   }
 
   subscribe(listener: StatusListener): () => void {
@@ -195,8 +177,12 @@ export class AudioPlaybackManager {
    */
   getCurrentTime(): number {
     if (this.state === 'playing' && this.ctx) {
-      // The bus graph's look-ahead delays what is heard; the picture follows.
-      const heard = this.ctx.currentTime - this.contextOrigin - this.busRouting.latencySec;
+      // The picture follows what is heard, not what is rendered: the output
+      // device's latency (measured by `getOutputTimestamp` where available),
+      // the bus graph's look-ahead, and the user's calibrated offset (a
+      // positive offset means sound arrives later still, e.g. a Bluetooth
+      // sink that under-reports).
+      const heard = heardContextTime(this.ctx) - this.contextOrigin - this.busRouting.latencySec - audioSyncOffsetSec();
       return this.timelineOrigin + Math.max(0, heard);
     }
     return this.pausedAt;
@@ -211,18 +197,15 @@ export class AudioPlaybackManager {
     if (this.ctx) return true;
 
     try {
-      this.ctx = createAudioContext();
-      this.masterGain = this.ctx.createGain();
-      this.masterGain.gain.value = this.masterVolume;
-      this.analyser = this.ctx.createAnalyser();
-      this.analyser.fftSize = 2048;
-      this.masterGain.connect(this.analyser);
-      this.analyser.connect(this.ctx.destination);
+      const ctx = getAudioContext();
+      if (!ctx) throw new Error('Web Audio unavailable');
+      this.attach(ctx);
       this.available = true;
       // A loudness meter opening or closing can start / stop the bus graph.
       this.unsubscribeMeters ??= audioFxStore.subscribe((next, prev) => {
         if ((next.meterRequests > 0) !== (prev.meterRequests > 0)) void this.syncBusRouting();
       });
+      this.unsubscribeContext ??= onAudioContextReplaced((next) => this.onContextReplaced(next));
       this.emit();
       return true;
     } catch {
@@ -296,6 +279,10 @@ export class AudioPlaybackManager {
 
   /** Start (or resume) playback from `timelineTime`. */
   async play(timelineTime: number): Promise<boolean> {
+    this.stopSources();
+    // Nothing of ours is sounding: the one safe moment to move the shared
+    // context to the latency class the bus graph asked for.
+    if (this.ctx) applyPreferredLatency(true);
     const ok = await this.resumeContext();
     if (!ok || !this.ctx || !this.masterGain) {
       this.pausedAt = Math.max(0, timelineTime);
@@ -303,8 +290,8 @@ export class AudioPlaybackManager {
       this.emit();
       return false;
     }
+    if (this.needsRouting) await this.syncBusRouting(false);
 
-    this.stopSources();
     this.busRouting.reset();
     this.pausedAt = Math.max(0, timelineTime);
     this.timelineOrigin = this.pausedAt;
@@ -363,8 +350,8 @@ export class AudioPlaybackManager {
   }
 
   /**
-   * Tear down the graph and close the AudioContext. Call on project unload /
-   * preview unmount to avoid DevTools leak warnings.
+   * Tear down this manager's graph. The shared context stays open (it belongs
+   * to `audioService`); only our nodes are disconnected.
    */
   async dispose(): Promise<void> {
     this.syncGeneration += 1;
@@ -374,6 +361,9 @@ export class AudioPlaybackManager {
     this.busPlan = null;
     this.unsubscribeMeters?.();
     this.unsubscribeMeters = null;
+    this.unsubscribeContext?.();
+    this.unsubscribeContext = null;
+    this.needsRouting = false;
     this.cache.clear();
     this.remapCache.clear();
     this.processedCache.clear();
@@ -383,23 +373,10 @@ export class AudioPlaybackManager {
     this.pausedAt = 0;
     this.timelineOrigin = 0;
     this.contextOrigin = 0;
-    this.analyserTimeDomain = null;
-    this.analyserFrequency = null;
 
-    const ctx = this.ctx;
-    this.ctx = null;
-    this.masterGain = null;
-    this.analyser = null;
+    this.detach();
     this.available = true;
     this.contextFailed = false;
-
-    if (ctx) {
-      try {
-        await ctx.close();
-      } catch {
-        // ignore
-      }
-    }
   }
 
   /** Restart the preview loudness meter's integrated / range / peak readings. */
@@ -420,12 +397,50 @@ export class AudioPlaybackManager {
     const ctx = this.ctx;
     const master = this.masterGain;
     if (!ctx || !master) return false;
+    this.needsRouting = false;
     const meter = audioFxStore.getState().meterRequests > 0;
     const changed = await this.busRouting.sync(ctx, master, this.busPlan, meter, () => {
       void this.rescheduleIfPlaying();
     });
+    // The WASM bus graph can take most of a render quantum: ask for a roomier
+    // output buffer while it is in the graph (applied at the next idle play).
+    preferAudioLatency(this.busRouting.active ? 'balanced' : 'interactive');
     if (changed && reschedule) await this.rescheduleIfPlaying();
     return changed;
+  }
+
+  /** Master gain -> analyser -> destination on `ctx`. */
+  private attach(ctx: AudioContext): void {
+    this.ctx = ctx;
+    this.masterGain = ctx.createGain();
+    this.masterGain.gain.value = this.masterVolume;
+    this.analyser = ctx.createAnalyser();
+    this.analyser.fftSize = 2048;
+    this.masterGain.connect(this.analyser);
+    this.analyser.connect(ctx.destination);
+  }
+
+  /** Disconnect our nodes; never closes the shared context. */
+  private detach(): void {
+    for (const node of [this.masterGain, this.analyser]) {
+      try {
+        node?.disconnect();
+      } catch {
+        // never connected
+      }
+    }
+    this.ctx = null;
+    this.masterGain = null;
+    this.analyser = null;
+  }
+
+  /** The shared context was swapped while idle: move over; decoded buffers are context-free and kept. */
+  private onContextReplaced(next: AudioContext): void {
+    this.stopSources();
+    this.busRouting.dispose();
+    this.detach();
+    this.attach(next);
+    this.needsRouting = this.busPlan !== null || audioFxStore.getState().meterRequests > 0;
   }
 
   private async rescheduleIfPlaying(): Promise<void> {

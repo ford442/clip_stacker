@@ -88,14 +88,40 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard -- public/wasm)"
 
   native-host:
-    name: Native DSP host tests
+    name: Native DSP host tests (GCC)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       # Every shipped DSP module (audio_analysis, video_stabilize, media_engine
-      # incl. the WSOLA time stretch) built with the host compiler (no
-      # Emscripten) under -Werror, ASan + UBSan, run through ctest. Includes
-      # the THD+N goldens.
-      - name: Build and run ctest
+      # incl. the WSOLA time stretch and the bus graph) built with the host
+      # compiler (no Emscripten) under -Werror, ASan + UBSan +
+      # float-cast-overflow, run through ctest. Includes the THD+N goldens,
+      # the allocation-counting real-time checks and the FX property subset.
+      # `-L pr` skips the LONG_TEST_CASE battery, which nightly-native.yml runs.
+      - name: Build and run ctest (PR subset)
+        env:
+          HOST_CTEST_ARGS: -L pr
         run: bash scripts/test-native.sh
+
+  native-host-clang:
+    name: Native DSP host tests (clang) + fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same suite under clang's sanitizers (clang's UBSan differs from
+      # GCC's; both run float-cast-overflow), then a short libFuzzer run of the
+      # effect rows.
+      - name: Build and run ctest (PR subset)
+        env:
+          CC: clang
+          CXX: clang++
+          HOST_BUILD_DIR: native/build-host-clang
+          HOST_CTEST_ARGS: -L pr
+        run: bash scripts/test-native.sh
+
+      - name: Fuzz the effect rows (30 s)
+        env:
+          FUZZ_SECONDS: 30
+        run: bash scripts/fuzz-native.sh

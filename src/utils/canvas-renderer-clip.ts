@@ -12,7 +12,7 @@ import { constantRateOutputElapsed, getClipPlaybackRate } from "./playbackRate";
 import { getClipDuration } from "./clipTiming";
 import { bassLevelFromAnalyserBytes } from "./canvas-renderer-audio";
 import { calculateLetterboxRect, computeFadeAlpha, waitForSeeked } from "./canvas-renderer-helpers";
-import { createAudioContext } from "../audio/context";
+import { getAudioContext, noteElementBinding } from "../audio/audioService";
 
 /** The error a canvas clip render fails with when its media element errors. */
 export function mediaPlaybackError(clip: Pick<Clip, "title">, media: HTMLMediaElement): Error {
@@ -26,6 +26,43 @@ const TARGET_FPS = 30;
 
 /** Fraction-of-a-frame tolerance used when deciding a clip has ended. */
 const FRAME_TOLERANCE_FRACTION = 0.5;
+
+
+/** The silent tail of each clip's analyser route, so it can be cut when the clip ends. */
+const analyserRoutes = new WeakMap<AnalyserNode, AudioNode[]>();
+
+/**
+ * element -> analyser -> zero gain -> destination on the shared context. The
+ * zero gain keeps the path pulled (an analyser only runs when connected to
+ * the destination) without making it audible. False when the element cannot
+ * be routed (`createMediaElementSource` throws for an element already bound).
+ */
+function routeElementToAnalyser(ctx: AudioContext, element: HTMLMediaElement, analyser: AnalyserNode): boolean {
+  try {
+    const source = ctx.createMediaElementSource(element);
+    noteElementBinding(ctx);
+    const silentGain = ctx.createGain();
+    silentGain.gain.value = 0;
+    source.connect(analyser);
+    analyser.connect(silentGain);
+    silentGain.connect(ctx.destination);
+    analyserRoutes.set(analyser, [source, silentGain]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function releaseAnalyserRoute(analyser: AnalyserNode): void {
+  for (const node of [analyser, ...(analyserRoutes.get(analyser) ?? [])]) {
+    try {
+      node.disconnect();
+    } catch {
+      /* never connected */
+    }
+  }
+  analyserRoutes.delete(analyser);
+}
 
 export class CanvasRenderer {
   readonly canvas: HTMLCanvasElement;
@@ -132,7 +169,10 @@ export class CanvasRenderer {
 
     if (this.options.audioReactive) {
       try {
-        audioCtx = createAudioContext();
+        // The app's one real-time context (never closed here): this clip's
+        // analyser is disconnected when the clip is done instead.
+        audioCtx = getAudioContext();
+        if (!audioCtx) throw new Error("Web Audio unavailable");
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 256;
         freqData = new Uint8Array(
@@ -181,13 +221,9 @@ export class CanvasRenderer {
         );
       }
     } finally {
-      if (audioCtx) {
-        try {
-          await audioCtx.close();
-        } catch {
-          /* ignore */
-        }
-      }
+      // Cuts the element -> analyser -> silent gain -> destination path; the
+      // element itself is discarded with the clip.
+      if (analyser) releaseAnalyserRoute(analyser);
     }
   }
 
@@ -221,18 +257,8 @@ export class CanvasRenderer {
       // A zero-gain node at the end ensures no audible output from this path
       // (the video file's audio is captured separately by FFmpeg for muxing).
       if (audioCtx && analyser) {
-        try {
-          const source = audioCtx.createMediaElementSource(video);
-          const silentGain = audioCtx.createGain();
-          silentGain.gain.value = 0;
-          source.connect(analyser);
-          analyser.connect(silentGain);
-          silentGain.connect(audioCtx.destination);
-          // Un-mute the element so the AudioContext actually receives audio data.
-          video.muted = false;
-        } catch {
-          // createMediaElementSource may throw if the element was already used.
-        }
+        // Un-mute the element so the AudioContext actually receives audio data.
+        if (routeElementToAnalyser(audioCtx, video, analyser)) video.muted = false;
       }
 
       video.src = clip.objectUrl;
@@ -339,18 +365,8 @@ export class CanvasRenderer {
     audio.playbackRate = getClipPlaybackRate(clip);
 
     if (audioCtx && analyser) {
-      try {
-        const source = audioCtx.createMediaElementSource(audio);
-        const silentGain = audioCtx.createGain();
-        silentGain.gain.value = 0;
-        source.connect(analyser);
-        analyser.connect(silentGain);
-        silentGain.connect(audioCtx.destination);
-        // Un-mute the element so AudioContext receives the audio data.
-        audio.muted = false;
-      } catch {
-        /* ignore */
-      }
+      // Un-mute the element so AudioContext receives the audio data.
+      if (routeElementToAnalyser(audioCtx, audio, analyser)) audio.muted = false;
     }
 
     const trimEnd = Number.isFinite(clip.trimEnd)

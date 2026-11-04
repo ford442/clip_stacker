@@ -61,12 +61,11 @@ import {
   isMediaEngineMixEnabled,
   isMediaEngineReady,
   loadMediaEngineModule,
-  openTimelineMixStream,
   scheduleNeedsOfflineAudioMix,
   type ClipPcmProvider,
   type MediaEngineMixEntry,
-  type TimelineMixStream,
 } from '../wasm/mediaEngine';
+import { openMixStream, type MixStream } from '../audio/audioRenderClient';
 
 /** AAC-LC — matches the existing FFmpeg mux path (192 kbps stereo @ 48 kHz). */
 export const AAC_CODEC = 'mp4a.40.2';
@@ -220,8 +219,12 @@ function toMixEntries(
   }));
 }
 
-/** Decode-only context: `decodeAudioData` resamples to 48 kHz like the mix. */
-function createDecodeContext(): OfflineAudioContext {
+/**
+ * Buffer factory for the rate-remap / reverse caches (`createBuffer` only).
+ * Decoding itself goes through `decodeAudio` (`ClipAudioCache`), at 48 kHz
+ * like the mix.
+ */
+function createBufferContext(): OfflineAudioContext {
   return new OfflineAudioContext(AAC_CHANNELS, 1, AAC_SAMPLE_RATE);
 }
 
@@ -269,11 +272,12 @@ async function openScheduleMixStream(
   fullSchedule: AudioScheduleEntry[],
   evict: boolean,
   pass: ExportMixPass,
-): Promise<{ stream: TimelineMixStream; ctx: OfflineAudioContext } | null> {
+): Promise<{ stream: MixStream; ctx: OfflineAudioContext } | null> {
   if (!(await prepareStreamingAudioMix())) return null;
   if (scheduleNeedsOfflineAudioMix(entries)) return null;
-  const ctx = createDecodeContext();
-  const stream = await openTimelineMixStream(
+  const ctx = createBufferContext();
+  // The mix runs in the audio render worker; decoding (the provider) stays here.
+  const stream = await openMixStream(
     toMixEntries(entries, fullSchedule, pass.bus),
     createSchedulePcmProvider(entries, cache, ctx, evict),
     {
@@ -301,7 +305,7 @@ async function openExportMix(
   fullSchedule: AudioScheduleEntry[],
   evict: boolean,
   options: TimelineAudioMixOptions,
-): Promise<{ stream: TimelineMixStream; ctx: OfflineAudioContext; report: () => void } | null> {
+): Promise<{ stream: MixStream; ctx: OfflineAudioContext; report: () => void } | null> {
   const bus = options.bus ?? null;
   const limiter = options.limiter ?? null;
   const target = exportBusActive(bus) ? bus.masterBus?.loudness : undefined;

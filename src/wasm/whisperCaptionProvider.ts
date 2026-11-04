@@ -8,6 +8,7 @@
  * instead of an auto-caption button.
  */
 
+import { decodeAudio, DECODE_SAMPLE_RATE } from '../audio/decodeAudio';
 import type {
   CaptionProvider,
   CaptionTranscribeOptions,
@@ -70,15 +71,8 @@ async function reachable(url: string): Promise<boolean> {
   }
 }
 
-async function decodeToAudioBuffer(blob: Blob): Promise<AudioBuffer> {
-  const Ctx =
-    typeof OfflineAudioContext !== 'undefined'
-      ? OfflineAudioContext
-      : (globalThis as { webkitOfflineAudioContext?: typeof OfflineAudioContext })
-          .webkitOfflineAudioContext;
-  if (!Ctx) throw new Error('This browser cannot decode audio for transcription.');
-  const ctx = new Ctx(1, 1, 48000);
-  return ctx.decodeAudioData(await blob.arrayBuffer());
+function decodeToAudioBuffer(blob: Blob): Promise<AudioBuffer> {
+  return decodeAudio(blob, { sampleRate: DECODE_SAMPLE_RATE });
 }
 
 /** Spawn the worker and run one transcription on it. */

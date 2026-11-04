@@ -188,10 +188,20 @@ struct MixFxSession {
 
 namespace {
 
+/**
+ * Output frame positions are f64 at the C boundary (JS numbers) and int64
+ * inside, so a programme longer than INT_MAX frames (~12.4 h at 48 kHz) does
+ * not wrap; -1 for a negative, fractional or non-finite position.
+ */
+long long frame_position(double frame) {
+  if (!(frame >= 0.0) || frame > 9007199254740992.0 || std::floor(frame) != frame) return -1;
+  return static_cast<long long>(frame);
+}
+
 int mix_core(
     float* out,
     int out_frames,
-    int start_frame,
+    long long start_frame,
     int out_sample_rate,
     int out_channels,
     const float* pcm_blob,
@@ -374,7 +384,7 @@ int mix_core(
 int mix_timeline_audio_range(
     float* out,
     int out_frames,
-    int start_frame,
+    double start_frame,
     int out_sample_rate,
     int out_channels,
     const float* pcm_blob,
@@ -388,7 +398,9 @@ int mix_timeline_audio_range(
     int flags) {
   // Insert chains carry state across calls: they need a session.
   if (flags & MIX_FLAG_EFFECTS) return CS_EINVAL;
-  return mix_core(out, out_frames, start_frame, out_sample_rate, out_channels, pcm_blob, pcm_floats, slices,
+  const long long start = frame_position(start_frame);
+  if (start < 0) return CS_EINVAL;
+  return mix_core(out, out_frames, start, out_sample_rate, out_channels, pcm_blob, pcm_floats, slices,
                   slice_count, entries, entry_count, keyframes, keyframe_count, flags, nullptr);
 }
 
@@ -516,7 +528,7 @@ int mix_fx_session_range(
     MixFxSession* session,
     float* out,
     int out_frames,
-    int start_frame,
+    double start_frame,
     const float* pcm_blob,
     int pcm_floats,
     const int* slices,
@@ -527,13 +539,15 @@ int mix_fx_session_range(
     int keyframe_count,
     int flags) {
   if (!session || !out || out_frames <= 0) return CS_EINVAL;
-  if (static_cast<long long>(start_frame) != session->next_frame) return CS_ESTATE;
+  const long long start = frame_position(start_frame);
+  if (start < 0) return CS_EINVAL;
+  if (start != session->next_frame) return CS_ESTATE;
 
   const int rate = session->sample_rate;
   const int ch = session->channels;
   media_engine::BusGraph* graph = session->graph;
   if (!graph) {
-    const int rc = mix_core(out, out_frames, start_frame, rate, ch, pcm_blob, pcm_floats, slices, slice_count,
+    const int rc = mix_core(out, out_frames, start, rate, ch, pcm_blob, pcm_floats, slices, slice_count,
                             entries, entry_count, keyframes, keyframe_count, flags, session);
     if (rc == CS_OK) session->next_frame += out_frames;
     return rc;
@@ -543,8 +557,8 @@ int mix_fx_session_range(
   // look-ahead, so it mixes `latency` extra frames and drops the graph's
   // first `latency` (silent) output frames.
   const int latency = graph->latency();
-  const int bus_begin = start_frame == 0 ? 0 : start_frame + latency;
-  const int bus_frames = start_frame == 0 ? out_frames + latency : out_frames;
+  const long long bus_begin = start == 0 ? 0 : start + latency;
+  const int bus_frames = start == 0 ? out_frames + latency : out_frames;
   const int lane_blocks = graph->lane_count() + 1;
   const size_t block = static_cast<size_t>(bus_frames) * ch;
   if (!cs::try_reserve(session->lanes, block * lane_blocks) || !cs::try_reserve(session->bus, block)) {
@@ -560,7 +574,7 @@ int mix_fx_session_range(
   if (rc != CS_OK) return rc;
   graph->process(session->lanes.data(), session->bus.data(), bus_frames);
 
-  const float* first = session->bus.data() + static_cast<size_t>(start_frame == 0 ? latency : 0) * ch;
+  const float* first = session->bus.data() + static_cast<size_t>(start == 0 ? latency : 0) * ch;
   std::copy(first, first + static_cast<size_t>(out_frames) * ch, out);
   session->next_frame += out_frames;
   return CS_OK;
