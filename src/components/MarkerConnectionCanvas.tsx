@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useMemo } from 'react';
-import { Clip, SyncMarker } from '../types';
+import { SyncMarker } from '../types';
 import { getMarkerCoordinates, generateBezierPath } from '../utils/markerMath';
 import { VirtualClipLayout } from './timelineClipTypes';
 import { useSyncDrag } from '../context/SyncDragContext';

@@ -37,7 +37,6 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     onRedo,
     onSaveProject,
     onLoadProject,
-    onTriggerLoadDialog,
     onShowKeyboardShortcuts,
     onDebugResetFFmpeg,
     onRetryFfmpegLoad,
@@ -77,7 +76,6 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
       renderPlan: s.renderPlan,
     })),
   );
-  const onToggleForceFFmpeg = settingsActions.setForceFFmpeg;
   const onToggleCanvasRenderer = settingsActions.setUseCanvasRenderer;
   const onToggleAudioReactive = settingsActions.setAudioReactive;
   const onToggleForceReencode = settingsActions.setForceReencode;

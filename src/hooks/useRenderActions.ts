@@ -1,7 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { Clip, ClipGroup, ClipTransition, ExportSettings, MasterAudio, TextOverlay, Track } from "../types";
+import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
 import { editorStore } from "../store/editorStore";
-import type { RenderPlan } from "../types";
 import { getEffectiveTimelineClips } from "../utils/trackModel";
 import { resolveTargetResolution } from "../utils/resolution";
 import { formatEncoderPathLabel } from "../utils/encoderPathLabel";
@@ -12,7 +11,6 @@ import {
   isHighMemoryUsage,
   getMemoryStatus,
 } from "../utils/memory";
-import type { FinishingSettings } from "../utils/finishing";
 import { remoteConcatBlockers } from "../utils/renderEligibility";
 
 import { settingsStore } from "../store/settingsStore";
@@ -107,7 +105,6 @@ export function useRenderActions(deps: RenderActionsDeps) {
         setProgressStage,
         setProgressValue,
         setProgressIndeterminate,
-        setFfmpegLoading
       } = settingsStore.getState();
 
       // Reset FFmpeg load-failure state on a new render attempt.
@@ -507,7 +504,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
   }, []);
 
   const handleRetryFfmpegLoad = useCallback(async () => {
-    const { setStatus, setFfmpegFailed, setFfmpegLoading, setProgressStage, setProgressIndeterminate } = settingsStore.getState();
+    const { setStatus, setFfmpegFailed, setFfmpegLoading } = settingsStore.getState();
     setStatus("Resetting FFmpeg and retrying load...");
     setFfmpegFailed(false);
     setFfmpegLoading(true);

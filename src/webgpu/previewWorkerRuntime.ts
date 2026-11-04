@@ -37,7 +37,6 @@ import {
 } from '../gpu-chores/previewWorkerBridge';
 import {
   PREVIEW_WORKER_INIT_TIMEOUT_MS,
-  SCOPES_OFF,
   toWorkerClip,
   type CapturedFrame,
   type FrameRequest,

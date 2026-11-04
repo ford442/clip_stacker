@@ -31,7 +31,6 @@ import {
 import {
   clampPixelRectToCanvas,
   DEFAULT_SNAP_THRESHOLD_PX,
-  estimateTextSizeNormalized,
   hitTestResizeHandle,
   pointInRect,
   resizePixelRect,

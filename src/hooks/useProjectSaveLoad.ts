@@ -1,6 +1,5 @@
 import { useCallback, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
-import type { FinishingSettings } from "../utils/finishing";
 import type { EditSnapshot } from "../utils/editHistory";
 import {
   summarizeProjectForSave,

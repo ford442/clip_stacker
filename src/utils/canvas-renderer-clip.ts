@@ -7,7 +7,7 @@
  */
 
 import type { Clip } from "../types";
-import type { RendererOptions, RenderProgress, ProgressCallback } from "./canvas-renderer-types";
+import type { RendererOptions, ProgressCallback } from "./canvas-renderer-types";
 import { constantRateOutputElapsed, getClipPlaybackRate } from "./playbackRate";
 import { getClipDuration } from "./clipTiming";
 import { bassLevelFromAnalyserBytes } from "./canvas-renderer-audio";

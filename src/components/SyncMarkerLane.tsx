@@ -54,9 +54,7 @@ export default function SyncMarkerLane({
     if (target.classList.contains('marker-flag-tag')) {
       // User wants to draw a cable from the flag
       if (!laneRef.current) return;
-      const rect = laneRef.current.getBoundingClientRect();
-      const parentRect = laneRef.current.parentElement?.getBoundingClientRect();
-      
+
       // We pass the start coordinates relative to the scroll container or window depending on SVG mounting
       // The simplest way to normalize is to pass coordinates that the SVG overlay can translate,
       // or we just pass the exact layout coords. For simplicity in the V1 prototype, 

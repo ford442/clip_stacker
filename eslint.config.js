@@ -38,13 +38,13 @@ export default defineConfig(
   {
     // Typed rules (they need the TS program). A promise nobody awaits or
     // catches turns a failure into an unhandled rejection and a silent bug;
-    // warn so they get found — mark intentional ones with `void`.
+    // mark intentional fire-and-forget calls with `void`.
     files: ['src/**/*.{ts,tsx}'],
     languageOptions: {
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
     },
     rules: {
-      '@typescript-eslint/no-floating-promises': 'warn',
+      '@typescript-eslint/no-floating-promises': 'error',
     },
   },
   {
@@ -65,10 +65,9 @@ export default defineConfig(
   {
     rules: {
       '@typescript-eslint/no-explicit-any': 'warn',
-      // Warn, not error: ~360 of the hits are unused imports copied into the
-      // src/ffmpeg/* modules when they were split out of one file.
+      // Unused bindings are errors; prefix an intentionally unused one with `_`.
       '@typescript-eslint/no-unused-vars': [
-        'warn',
+        'error',
         {
           argsIgnorePattern: '^_',
           varsIgnorePattern: '^_',

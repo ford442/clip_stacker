@@ -222,13 +222,13 @@ export class WorkerTimelineRenderer {
     }
   }
 
-  private getClipFadeIn(layer: PreviewClipLayer): number {
+  private getClipFadeIn(_layer: PreviewClipLayer): number {
     // Fade values are baked into layer.opacity by the composition planner;
     // pass 0 to avoid double-fading in the shader.
     return 0;
   }
 
-  private getClipFadeOut(layer: PreviewClipLayer): number {
+  private getClipFadeOut(_layer: PreviewClipLayer): number {
     return 0;
   }
 

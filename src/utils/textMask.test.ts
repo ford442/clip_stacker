@@ -4,7 +4,6 @@ import {
   createTextGlyphMask,
   createSingleOverlayGlyphMask,
 } from './textMask';
-import { resolveScrollingX } from './textOverlay';
 import { buildPreviewCompositionPlan } from './previewComposition';
 
 function baseOverlay(over: Partial<TextOverlay> = {}): TextOverlay {

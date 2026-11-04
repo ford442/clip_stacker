@@ -1,16 +1,10 @@
 import type {
   CaptionEntry,
-  Clip,
-  ClipGroup,
-  ClipTransition,
   Project,
   SerializedClip,
   SerializedMasterAudio,
   SerializedTransition,
-  TextOverlay,
-  TextOverlayStyle,
   SerializedClipGroup,
-  Track,
   SerializedTrack,
   SyncMarker,
 } from '../../types';

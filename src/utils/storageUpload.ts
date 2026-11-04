@@ -403,7 +403,7 @@ export async function uploadMediaChunked(options: ChunkedUploadOptions): Promise
     bytesConfirmed: number,
     chunkIndex?: number,
     chunkLoaded = 0,
-    chunkLength = 0,
+    _chunkLength = 0,
   ) => {
     const bytesUploaded = Math.min(totalSize, bytesConfirmed + chunkLoaded);
     onProgress?.({

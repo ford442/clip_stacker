@@ -17,32 +17,17 @@ import {
 } from "../utils/secondaryColor";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
-  buildFfmpegLoadErrorMessage,
-  clampProgress,
-  emitLoadStatus,
-  emitProgress,
   extractErrorMessage,
-  FFMPEG_CORE_CDNS,
-  FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
-  FFMPEG_LOAD_TIMEOUT_MS,
-  getCdnLabel,
-  getFfmpegCoreSources,
-  getFfmpegEnvironmentDiagnostics,
-  getLocalFfmpegCoreBaseURL,
-  parseFfmpegTimeSeconds,
   toBlobURLWithRetry as toBlobURLWithRetryBase,
   toBlobURLWithFallback as toBlobURLWithFallbackBase,
-  withTimeout,
   type FfmpegLogProgressContext,
   type ProgressCallback,
-  type RenderProgressUpdate,
   type StatusCallback,
 } from "./ffmpegCommon";
 import {
   FfmpegManager,
   getFfmpegManager,
   MAX_LOG_BUFFER,
-  setFfmpegManagerForTesting,
 } from "./ffmpegManager";
 
 export { buildDrawtextFilter } from "../utils/textOverlay";

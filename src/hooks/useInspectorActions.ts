@@ -3,7 +3,6 @@ import type {
   Clip,
   ClipKeyframes,
   ClipAutomation,
-  ExportSettings,
   OverlayBlendMode,
   VideoOutputFormat,
 } from "../types";

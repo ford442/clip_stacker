@@ -6,7 +6,6 @@ import {
   shouldEmitTimelineStatusUpdate,
   timelineFrameTimestampUs,
   timelineStatusThrottleFrames,
-  MAX_ENCODE_QUEUE_DEPTH,
   flushCaptureThenScheduleNext,
 } from './webcodecs-timeline';
 

@@ -18,11 +18,6 @@ import {
 } from './previewComposition';
 import { getBundledFont } from './textOverlay';
 import { resolveScrollingX } from './textOverlay';
-import { ffmpegColorToCss, sanitizeFfmpegColor } from './color';
-import { resolveAnimatedTextLayout } from './animatedLayout';
-
-const DEFAULT_FONT_COLOR = 'white';
-const DEFAULT_BOX_COLOR = 'black@0.5';
 
 /** Create a canvas containing only glyph alphas for the given overlays at t. */
 export function createTextGlyphMask(

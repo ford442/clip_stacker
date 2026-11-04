@@ -23,7 +23,6 @@ import { parseCanvasSize } from "../utils/pipPreset";
 import {
   BUNDLED_FONTS,
   estimateScrollCrossingSeconds,
-  getBundledFont,
   MIN_SCROLL_SPEED,
   MAX_SCROLL_SPEED,
 } from "../utils/textOverlay";

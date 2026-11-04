@@ -1,12 +1,9 @@
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import type {
   Clip,
   ExportSettings,
   ClipTransition,
   TextOverlay,
-  RenderPlan,
 } from "../types";
-import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { getClipDuration } from "../utils/clipTiming";
 import { clampOverlayPosition, isOverlayOffCanvas } from "../utils/project";
 import { resolveClipLayoutPixels } from "../utils/overlayCoords";
@@ -17,7 +14,7 @@ import {
   videoSetptsFilter,
 } from "../utils/playbackRate";
 import { audioReversePrefix, videoReversePrefix } from "../utils/reverseClip";
-import { buildTransitionFilterComplex, getTransitionXfadeName } from "../utils/transitions";
+import { getTransitionXfadeName } from "../utils/transitions";
 import {
   buildOverlayAlphaFilters,
   buildOverlayFilter,
@@ -46,60 +43,16 @@ import {
   type GrainSettings,
 } from "../utils/grain";
 import {
-  isFfmpegLoadFailed,
-  isFfmpegLoading,
-  recordFfmpegLog,
-  getLastFfmpegLogs,
-  getLastFfmpegError,
-  clearFfmpegLogs,
-  buildDetailedError,
-  extractErrorMessage,
-  clampProgress,
   emitProgress,
-  emitLoadStatus,
-  getCdnLabel,
-  getLocalFfmpegCoreBaseURL,
-  getFfmpegCoreSources,
-  buildFfmpegLoadErrorMessage,
-  parseFfmpegTimeSeconds,
   safeExec,
-  safeWriteFile,
-  safeReadFile,
-  execWithFfmpegProgress,
-  clipNeedsEffects,
-  getSafeExtension,
-  buildSingleClipFilter,
   buildClipInputArgs,
   clipHasSourceAudio,
-  getFfmpegEnvironmentDiagnostics,
-  toBlobURLWithRetry,
-  toBlobURLWithFallback,
-  withTimeout,
-  ensureFfmpeg,
-  ensureFont,
   ensureFontsForOverlays,
-  buildDrawtextFilter,
   appendTextOverlayFilters,
-  mergeClipsLossless,
-  performTwoPassEncode,
-  processClipPass1,
-  mergeClipsPass2,
-  mergeClipsWithTransitions,
-  DEFAULT_VIDEO_SIZE,
   OUTPUT_WIDTH,
   OUTPUT_HEIGHT,
-  PASS1_PROGRESS_START,
-  PASS1_PROGRESS_END,
-  FONT_CDN_URL,
-  FONT_VIRTUAL_NAME,
   StatusCallback,
-  RenderProgressUpdate,
   ProgressCallback,
-  FfmpegLogProgressContext,
-  MAX_LOG_BUFFER,
-  FFMPEG_CORE_CDNS,
-  FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
-  FFMPEG_LOAD_TIMEOUT_MS,
   type IFfmpegRuntime,
 } from "./core";
 

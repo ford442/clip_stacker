@@ -1,4 +1,4 @@
-import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ExportSettings, type ResolutionPreset } from '../../types';
+import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, type ExportSettings, type ResolutionPreset } from '../../types';
 import { sanitizeFilename } from '../../utils/filename';
 import type { FinishingSettings } from '../../utils/finishing';
 import { FinishingPanel } from '../FinishingPanel';
