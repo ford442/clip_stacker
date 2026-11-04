@@ -40,7 +40,7 @@ export function remapWaveformPeaks(
     const lo = Math.floor(idx);
     const hi = Math.min(sourcePeaks.length - 1, lo + 1);
     const frac = idx - lo;
-    return sourcePeaks[lo] * (1 - frac) + sourcePeaks[hi] * frac;
+    return sourcePeaks[lo]! * (1 - frac) + sourcePeaks[hi]! * frac;
   };
 
   for (let i = 0; i < bucketCount; i++) {

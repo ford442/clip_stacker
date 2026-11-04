@@ -146,11 +146,11 @@ export function autoCutFromReference(
   let brollIndex = 0;
 
   for (let i = 0; i < beats.length - 1; i++) {
-    const beatStart = beats[i];
-    const segmentDuration = beats[i + 1] - beatStart;
+    const beatStart = beats[i]!;
+    const segmentDuration = beats[i + 1]! - beatStart;
     if (segmentDuration < 0.1) continue;
 
-    const broll = brollClips[brollIndex % brollClips.length];
+    const broll = brollClips[brollIndex % brollClips.length]!;
     brollIndex += 1;
 
     const segment = duplicateClip(broll);

@@ -179,9 +179,9 @@ export async function renderTextOverlaysAsync(
         ].join(':');
         const filled = await renderer.render(mask, {
           time: plan.globalTime,
-          shaderId: overlay.shaderId,
-          params: overlay.shaderParams,
-          colors: overlay.shaderColors,
+          ...(overlay.shaderId !== undefined ? { shaderId: overlay.shaderId } : {}),
+          ...(overlay.shaderParams !== undefined ? { params: overlay.shaderParams } : {}),
+          ...(overlay.shaderColors !== undefined ? { colors: overlay.shaderColors } : {}),
           width: plan.canvasWidth,
           height: plan.canvasHeight,
           maskCacheKey,

@@ -229,6 +229,8 @@ export async function applyProjectData(
         const { duration, objectUrl, videoWidth, videoHeight, hasAudio } = await getMediaInfo(file);
         const restoredDuration = Number(savedClip.duration);
         const effectiveDuration = Number.isFinite(restoredDuration) ? restoredDuration : duration;
+        const restoredWidth = savedClip.videoWidth ?? videoWidth;
+        const restoredHeight = savedClip.videoHeight ?? videoHeight;
         liveClip = {
           id: savedClip.id || createClipId(),
           file,
@@ -236,8 +238,8 @@ export async function applyProjectData(
           title: savedClip.title || savedClip.fileName,
           kind: inferKind(savedClip, file),
           duration: Math.max(MIN_CLIP_DURATION, effectiveDuration),
-          videoWidth: savedClip.videoWidth ?? videoWidth,
-          videoHeight: savedClip.videoHeight ?? videoHeight,
+          ...(restoredWidth !== undefined ? { videoWidth: restoredWidth } : {}),
+          ...(restoredHeight !== undefined ? { videoHeight: restoredHeight } : {}),
           ...(savedClip.hasAudio === false || savedClip.hasAudio === true
             ? { hasAudio: savedClip.hasAudio }
             : hasAudio !== undefined
@@ -251,7 +253,7 @@ export async function applyProjectData(
           audioFadeOut: 0,
           // Remember the remote URL (not a data: URL) so a future remote
           // save can reuse it instead of re-uploading this clip.
-          remoteSourceUrl: /^https?:\/\//i.test(mediaUrl) ? mediaUrl : undefined,
+          ...(/^https?:\/\//i.test(mediaUrl) ? { remoteSourceUrl: mediaUrl } : {}),
         };
       } catch (error) {
         const message = (error as Error).message || String(error);
@@ -273,8 +275,10 @@ export async function applyProjectData(
     liveClip.videoFadeOut = Number(savedClip.videoFadeOut ?? liveClip.videoFadeOut);
     liveClip.audioFadeIn = Number(savedClip.audioFadeIn ?? liveClip.audioFadeIn);
     liveClip.audioFadeOut = Number(savedClip.audioFadeOut ?? liveClip.audioFadeOut);
-    liveClip.groupId = savedClip.groupId;
-    liveClip.groupVariant = savedClip.groupVariant;
+    if (savedClip.groupId !== undefined) liveClip.groupId = savedClip.groupId;
+    else delete liveClip.groupId;
+    if (savedClip.groupVariant !== undefined) liveClip.groupVariant = savedClip.groupVariant;
+    else delete liveClip.groupVariant;
     if (savedClip.remoteAudioUrl) liveClip.remoteAudioUrl = savedClip.remoteAudioUrl;
     if (savedClip.rifeProcessed) {
       liveClip.rifeProcessed = savedClip.rifeProcessed;
@@ -314,16 +318,13 @@ export async function applyProjectData(
     if (audioEffects) liveClip.audioEffects = audioEffects;
     else delete liveClip.audioEffects;
     if (usesPixelLayout && (savedClip.layerIndex ?? 0) > 0) {
-      const migrated = migratePixelClipLayout(liveClip, layoutReference);
-      liveClip.x = migrated.x;
-      liveClip.y = migrated.y;
-      liveClip.width = migrated.width;
-      liveClip.height = migrated.height;
+      Object.assign(liveClip, migratePixelClipLayout(liveClip, layoutReference));
     }
     if (savedClip.keyframes) {
-      liveClip.keyframes = usesPixelLayout
+      const keyframes = usesPixelLayout
         ? migrateClipKeyframesToNormalized(savedClip.keyframes, layoutReference)
         : savedClip.keyframes;
+      if (keyframes) liveClip.keyframes = keyframes;
     }
     if (savedClip.stillImage) liveClip.stillImage = savedClip.stillImage;
     if (savedClip.hasAudio === false || savedClip.hasAudio === true) {

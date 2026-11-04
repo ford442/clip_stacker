@@ -71,7 +71,7 @@ export function computeTransitionOffsets(
   let overlapSoFar = 0;
 
   for (let i = 0; i < durations.length - 1; i++) {
-    accumulated += durations[i];
+    accumulated += durations[i]!;
     const t = transMap.get(i + 1);
     if (t && t.type !== 'none' && t.duration > 0) {
       offsets.push(accumulated - overlapSoFar - t.duration);
@@ -127,8 +127,8 @@ export function buildTransitionFilterComplex(
 
   // Step 1 — per-clip trim + fade filters
   for (let i = 0; i < clips.length; i++) {
-    const clip = clips[i];
-    const dur = durations[i];
+    const clip = clips[i]!;
+    const dur = durations[i]!;
     const end = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
     const safeVOut = Math.max(0, dur - clip.videoFadeOut);
     const safeAOut = Math.max(0, dur - clip.audioFadeOut);
@@ -166,7 +166,7 @@ export function buildTransitionFilterComplex(
   let currentA = 'a0';
 
   for (let i = 1; i < clips.length; i++) {
-    accumulated += durations[i - 1];
+    accumulated += durations[i - 1]!;
     const t = transMap.get(i);
 
     if (t && t.duration > 0) {

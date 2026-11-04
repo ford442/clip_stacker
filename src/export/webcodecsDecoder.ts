@@ -57,8 +57,9 @@ export function selectDecodeWindow(
   let startIndex = 0;
   let endIndex = -1;
   for (let i = 0; i < samples.length; i++) {
-    const ctsSec = (samples[i].cts - baseCts) / samples[i].timescale;
-    if (samples[i].is_sync && ctsSec <= trimStartSec) startIndex = i;
+    const sample = samples[i]!;
+    const ctsSec = (sample.cts - baseCts) / sample.timescale;
+    if (sample.is_sync && ctsSec <= trimStartSec) startIndex = i;
     if (ctsSec < trimEndSec) endIndex = i;
   }
   if (endIndex < startIndex) return null;
@@ -313,7 +314,7 @@ export class ClipFrameDecoder {
 
     for (let i = this.window.startIndex; i <= this.window.endIndex; i++) {
       if (this.disposed) return;
-      const sample = samples[i];
+      const sample = samples[i]!;
       const chunk = new EncodedVideoChunk({
         type: sample.is_sync ? 'key' : 'delta',
         timestamp: Math.round(((sample.cts - this.baseCts) / sample.timescale) * 1_000_000),

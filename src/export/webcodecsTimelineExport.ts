@@ -36,9 +36,9 @@ import {
 import { encodeAndClose, waitForQueueBelow } from './codecQueue';
 import {
   buildVideoEncoderConfig,
-  mapWebCodecsProgress,
   resolveEncoderBitrate,
   resolveEncoderCodec,
+  webCodecsEncodeProgress,
   WEBCODECS_PROGRESS_STAGES,
 } from './webcodecsCodec';
 import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecsMux';
@@ -155,11 +155,7 @@ export async function encodeTimelineComposite(
         onStatus(`GPU timeline encode: ${globalTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s`);
         lastStatusFrame = frameIndex;
       }
-      onProgress?.({
-        stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode,
-        progress: mapWebCodecsProgress(globalTime, totalDuration),
-        indeterminate: totalDuration <= 0,
-      });
+      onProgress?.(webCodecsEncodeProgress(globalTime, totalDuration));
 
       const plan = await pendingRender!;
 

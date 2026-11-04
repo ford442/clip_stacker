@@ -168,10 +168,10 @@ export function remapBaseTransitions(
       result.push(t);
       continue;
     }
-    const incoming = prevOrder[i];
-    const outgoing = prevOrder[i - 1];
+    const incoming = prevOrder[i]!;
+    const outgoing = prevOrder[i - 1]!;
     const j = nextOrder.indexOf(incoming);
-    if (j >= 1 && resolve(nextOrder[j - 1]) === outgoing) {
+    if (j >= 1 && resolve(nextOrder[j - 1]!) === outgoing) {
       result.push(j === i ? t : { ...t, afterClipIndex: j });
     }
   }

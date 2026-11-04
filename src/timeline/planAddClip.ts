@@ -23,7 +23,7 @@ export function planAddClip(
   const matchIndex = findMatchingClipIndex(existingNames, newClip.file.name);
 
   if (matchIndex >= 0) {
-    const matchedClip = prevClips[matchIndex];
+    const matchedClip = prevClips[matchIndex]!;
     const groupId = matchedClip.groupId ?? createClipId();
 
     const existingGroup = prevGroups.find((g) => g.id === groupId);

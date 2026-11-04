@@ -21,7 +21,7 @@ export interface TranscriptSegment {
 
 export interface SegmentMappingOptions {
   /** Seconds added to every cue, so a slice maps onto the output timeline. */
-  timeOffsetSec?: number;
+  timeOffsetSec?: number | undefined;
   /** Shortest cue emitted. Defaults to {@link MIN_CAPTION_DURATION_SEC}. */
   minDurationSec?: number;
   /** Id factory — overridden in tests for stable ids. */

@@ -43,13 +43,13 @@ export function sampleKeyframes(
   if (!keyframes || keyframes.length === 0) return defaultValue;
 
   const track = sortKeyframes(keyframes);
-  if (track.length === 1) return track[0].value;
+  if (track.length === 1) return track[0]!.value;
 
-  if (t <= track[0].t) return track[0].value;
+  if (t <= track[0]!.t) return track[0]!.value;
 
   for (let i = 0; i < track.length - 1; i++) {
-    const a = track[i];
-    const b = track[i + 1];
+    const a = track[i]!;
+    const b = track[i + 1]!;
     if (t >= a.t && t <= b.t) {
       const span = b.t - a.t;
       if (span <= 0) return b.value;
@@ -59,8 +59,8 @@ export function sampleKeyframes(
     }
   }
 
-  const lastSegment = track[track.length - 2];
-  const lastKey = track[track.length - 1];
+  const lastSegment = track[track.length - 2]!;
+  const lastKey = track[track.length - 1]!;
   const endEasedU = applyEasing(1, lastSegment.easing);
   return lastSegment.value + (lastKey.value - lastSegment.value) * endEasedU;
 }

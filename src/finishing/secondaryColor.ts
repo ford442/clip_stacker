@@ -528,7 +528,7 @@ export function secondaryLutToCubeText(lut: LutData, title = 'SecondaryColor'): 
   ];
   for (let i = 0; i < lut.data.length; i += 3) {
     lines.push(
-      `${fmtCube(lut.data[i])} ${fmtCube(lut.data[i + 1])} ${fmtCube(lut.data[i + 2])}`,
+      `${fmtCube(lut.data[i]!)} ${fmtCube(lut.data[i + 1]!)} ${fmtCube(lut.data[i + 2]!)}`,
     );
   }
   return `${lines.join('\n')}\n`;

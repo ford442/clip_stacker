@@ -152,13 +152,13 @@ export function assessWebCodecsAudioMix(
 /** Mix-bus options for the export premix. */
 export interface TimelineAudioMixOptions {
   /** Look-ahead limiter on the mix output (media engine only). */
-  limiter?: MasterLimiterSettings | null;
+  limiter?: MasterLimiterSettings | null | undefined;
   /**
    * Lanes (routing, lane FX, ducks) and the master bus / loudness target.
    * Null mixes every entry straight to the master sum with no bus
    * processing — what auto-caption audio wants (`autoCaptionAudio.ts`).
    */
-  bus?: ExportAudioBus | null;
+  bus?: ExportAudioBus | null | undefined;
 }
 
 /** The export settings' master limiter, or null when it is off. */
@@ -208,8 +208,8 @@ function toMixEntries(
     audioFadeIn: entry.audioFadeIn,
     audioFadeOut: entry.audioFadeOut,
     playbackRate: entryPlaybackRate(entry),
-    volumeAutomation: entry.volumeAutomation,
-    panAutomation: entry.panAutomation,
+    ...(entry.volumeAutomation !== undefined ? { volumeAutomation: entry.volumeAutomation } : {}),
+    ...(entry.panAutomation !== undefined ? { panAutomation: entry.panAutomation } : {}),
     ...(entry.audioEffects ? { effects: entry.audioEffects } : {}),
     ...(plan && entry.trackId != null && plan.laneIndex.has(entry.trackId)
       ? { bus: plan.laneIndex.get(entry.trackId)! }

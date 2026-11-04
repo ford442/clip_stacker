@@ -29,7 +29,7 @@ export interface SnapResult {
   /** The (possibly snapped) time. */
   time: number;
   /** What it snapped to, or undefined when nothing was in range. */
-  kind?: SnapTargetKind;
+  kind?: SnapTargetKind | undefined;
 }
 
 export const SNAP_PRIORITY: SnapTargetKind[] = ['playhead', 'edge', 'marker', 'caption', 'beat'];

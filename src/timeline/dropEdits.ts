@@ -81,11 +81,10 @@ function insertItem(items: TrackItem[], item: TrackItem): TrackItem[] {
 
 /** Copy a clip as a new placement of the same media (split tail). */
 function tailCopy(clip: Clip): Clip {
+  const { groupId: _groupId, groupVariant: _groupVariant, ...ungrouped } = clip;
   return {
-    ...clip,
+    ...ungrouped,
     id: createClipId(),
-    groupId: undefined,
-    groupVariant: undefined,
   };
 }
 
@@ -253,7 +252,7 @@ export function duplicateItem(
   if (typeof at === 'string') return fail(at);
   const clips = addToPool(state.clips, clipId, copy);
   const byId = clipMap(clips);
-  const self = at.items[at.index];
+  const self = at.items[at.index]!;
 
   if (!at.base) {
     return dropEdit({ ...state, clips }, mode, copy.id, at.track.id, itemEnd(self, byId), options);

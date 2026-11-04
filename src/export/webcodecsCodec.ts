@@ -374,6 +374,16 @@ export function mapWebCodecsProgress(elapsedDuration: number, totalDuration: num
   return WEBCODECS_PROGRESS_START + (elapsedDuration / totalDuration) * WEBCODECS_PROGRESS_RANGE;
 }
 
+/** The decode → composite → encode progress update; `progress` is left out while the duration is unknown. */
+export function webCodecsEncodeProgress(elapsedDuration: number, totalDuration: number) {
+  const progress = mapWebCodecsProgress(elapsedDuration, totalDuration);
+  return {
+    stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode,
+    ...(progress !== undefined ? { progress } : {}),
+    indeterminate: totalDuration <= 0,
+  };
+}
+
 export async function isWebCodecsAvailable(
   width = parseOutputResolution().width,
   height = parseOutputResolution().height,

@@ -87,7 +87,7 @@ export function migrateLegacyClipsToTracks(
   }));
 
   const tracks = createDefaultTracks();
-  tracks[0] = { ...tracks[0], items: mainItems };
+  tracks[0] = { ...tracks[0]!, items: mainItems };
 
   if (overlayClips.length > 0) {
     const byLayer = new Map<number, Clip[]>();
@@ -100,14 +100,14 @@ export function migrateLegacyClipsToTracks(
 
     const layerKeys = [...byLayer.keys()].sort((a, b) => a - b);
     for (let i = 0; i < layerKeys.length; i++) {
-      const layer = layerKeys[i];
+      const layer = layerKeys[i]!;
       const overlayItems: TrackItem[] = (byLayer.get(layer) ?? []).map((clip) => ({
         clipId: clip.id,
         startTime: 0,
       }));
 
       if (i === 0) {
-        tracks[1] = { ...tracks[1], items: overlayItems };
+        tracks[1] = { ...tracks[1]!, items: overlayItems };
       } else {
         tracks.push({
           id: createClipId(),
@@ -302,8 +302,8 @@ export function insertClipOnTrackAfter(
   }
 
   const next = cloneTracks(tracks);
-  const track = next[located.trackIndex];
-  const afterItem = track.items[located.itemIndex];
+  const track = next[located.trackIndex]!;
+  const afterItem = track.items[located.itemIndex]!;
   const afterClip = clipById(allClips, afterClipId);
   const insertTime = afterItem.startTime + (afterClip ? getClipDuration(afterClip) : 0);
 
@@ -335,8 +335,8 @@ export function replaceClipOnTrackAfterSplit(
   if (!located) return tracks;
 
   const next = cloneTracks(tracks);
-  const track = next[located.trackIndex];
-  const sourceItem = track.items[located.itemIndex];
+  const track = next[located.trackIndex]!;
+  const sourceItem = track.items[located.itemIndex]!;
   track.items.splice(
     located.itemIndex,
     1,
@@ -394,7 +394,7 @@ export function reorderMainTrackClips(
   let target = insertBefore;
   if (fromIndex < insertBefore) target -= 1;
   target = Math.max(0, Math.min(target, reordered.length));
-  reordered.splice(target, 0, moved);
+  reordered.splice(target, 0, moved!);
 
   const mainTrack = tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID)
     ?? tracks.find((t) => t.kind === 'video');
@@ -442,7 +442,7 @@ export function buildTrackClipLayouts(
     const row: TrackClipLayout[] = [];
     const sorted = [...track.items].sort((a, b) => a.startTime - b.startTime);
     for (let itemIndex = 0; itemIndex < sorted.length; itemIndex++) {
-      const item = sorted[itemIndex];
+      const item = sorted[itemIndex]!;
       const clip = clipMap.get(item.clipId);
       if (!clip) continue;
       const duration = getClipDuration(clip);
@@ -516,9 +516,9 @@ export function moveClipToVideoLayer(
     next = addTrack(next, 'video');
   }
 
-  const targetTrack = videoTracks(next)[target];
+  const targetTrack = videoTracks(next)[target]!;
   const startTime = located
-    ? located.track.items[located.itemIndex].startTime
+    ? located.track.items[located.itemIndex]!.startTime
     : computeTrackEnd(targetTrack, clips);
 
   return moveClipBetweenTracks(next, clipId, targetTrack.id, startTime, clips);

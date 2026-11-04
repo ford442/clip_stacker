@@ -126,7 +126,7 @@ export function blueLattice(ix: number, iy: number, frame: number, octave: numbe
   const r = lattice(ix + 1, iy, frame, octave);
   const d = lattice(ix, iy - 1, frame, octave);
   const u = lattice(ix, iy + 1, frame, octave);
-  return [0, 1, 2, 3].map((k) => c[k] - 0.25 * (l[k] + r[k] + d[k] + u[k])) as V4;
+  return [0, 1, 2, 3].map((k) => c[k]! - 0.25 * (l[k]! + r[k]! + d[k]! + u[k]!)) as V4;
 }
 
 function quintic(t: number): number {
@@ -144,8 +144,8 @@ export function blueValueNoise(px: number, py: number, frame: number, octave: nu
   const b01 = blueLattice(ix, iy + 1, frame, octave);
   const b11 = blueLattice(ix + 1, iy + 1, frame, octave);
   return [0, 1, 2, 3].map((k) => {
-    const x0 = b00[k] + (b10[k] - b00[k]) * fx;
-    const x1 = b01[k] + (b11[k] - b01[k]) * fx;
+    const x0 = b00[k]! + (b10[k]! - b00[k]!) * fx;
+    const x1 = b01[k]! + (b11[k]! - b01[k]!) * fx;
     return x0 + (x1 - x0) * fy;
   }) as V4;
 }
@@ -160,7 +160,7 @@ export function filmGrainField(px: number, py: number, frame: number): V4 {
     1,
   );
   return [0, 1, 2, 3].map(
-    (k) => (o1[k] + o2[k] * FILM_GRAIN_OCTAVE2_WEIGHT) * FILM_GRAIN_NORM,
+    (k) => (o1[k]! + o2[k]! * FILM_GRAIN_OCTAVE2_WEIGHT) * FILM_GRAIN_NORM,
   ) as V4;
 }
 
@@ -208,7 +208,7 @@ export function filmGrainRgb(
   let g = filmGrainField(px, py, key);
   if (weight > 0) {
     const next = filmGrainField(px, py, key + 1);
-    g = [0, 1, 2, 3].map((k) => (g[k] * (1 - weight) + next[k] * weight) * norm) as V4;
+    g = [0, 1, 2, 3].map((k) => (g[k]! * (1 - weight) + next[k]! * weight) * norm) as V4;
   }
   const b = clamp01(monochromeBias);
   const monoNorm = 1 / Math.sqrt((1 - b) * (1 - b) + b * b);

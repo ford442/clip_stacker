@@ -50,7 +50,7 @@ export function fetchRgb(img: RgbImage, x: number, y: number): Vec3 {
   const cx = Math.min(img.width - 1, Math.max(0, x));
   const cy = Math.min(img.height - 1, Math.max(0, y));
   const i = (cy * img.width + cx) * 3;
-  return [img.data[i], img.data[i + 1], img.data[i + 2]];
+  return [img.data[i]!, img.data[i + 1]!, img.data[i + 2]!];
 }
 
 function midtoneWeight(y: number): number {
@@ -60,14 +60,14 @@ function midtoneWeight(y: number): number {
 /** Legacy `classic` unsharp (luma, hard threshold, lossy YUV round trip). */
 function classicPixel(img: RgbImage, x: number, y: number, u: Float32Array): Vec3 {
   const src = fetchRgb(img, x, y);
-  const amount = clip(u[0]);
-  const midtone = clip(u[3]);
+  const amount = clip(u[0]!);
+  const midtone = clip(u[3]!);
   if (amount <= 0 && midtone <= 0) return src;
   const yc = luma(src);
   const uCh = (src[2] - yc) * 0.565;
   const vCh = (src[0] - yc) * 0.713;
 
-  const radius = Math.min(Math.max(u[1], 0.5), 3);
+  const radius = Math.min(Math.max(u[1]!, 0.5), 3);
   const sigma = Math.max(radius * 0.5, 0.2);
   const twoSigma2 = 2 * sigma * sigma;
   const limit = Math.ceil(radius);
@@ -81,7 +81,7 @@ function classicPixel(img: RgbImage, x: number, y: number, u: Float32Array): Vec
     }
   }
   const detail = yc - sum / wSum;
-  const gate = Math.abs(detail) > clip(u[2]) ? 1 : 0;
+  const gate = Math.abs(detail) > clip(u[2]!) ? 1 : 0;
   let outY = yc + amount * detail * gate + midtone * midtoneWeight(yc) * detail;
   outY = clip(outY);
   return [
@@ -111,13 +111,13 @@ function classicPixel(img: RgbImage, x: number, y: number, u: Float32Array): Vec
  */
 function edgeAwarePixel(img: RgbImage, x: number, y: number, u: Float32Array): Vec3 {
   const src = fetchRgb(img, x, y);
-  const amount = clip(u[0]);
-  const midtone = clip(u[3]);
+  const amount = clip(u[0]!);
+  const midtone = clip(u[3]!);
   if (amount <= 0 && midtone <= 0) return src;
-  const multi = u[SHARPEN_MODE_SLOT] > 1.5;
+  const multi = u[SHARPEN_MODE_SLOT]! > 1.5;
   const yc = luma(src);
 
-  const radius = Math.min(Math.max(u[1], 0.5), 3);
+  const radius = Math.min(Math.max(u[1]!, 0.5), 3);
   const sigmaF = Math.max(radius * 0.5, 0.2);
   const sigmaM = sigmaF * SHARPEN_MS_SIGMA_RATIO;
   const twoF = 2 * sigmaF * sigmaF;
@@ -162,7 +162,7 @@ function edgeAwarePixel(img: RgbImage, x: number, y: number, u: Float32Array): V
   // Soft threshold: nothing below `thr` (like classic's hard gate), full
   // strength from 2·thr, so detail just above it — mostly noise — is not
   // boosted at full strength. Texture and edge detail are gated separately.
-  const thr = clip(u[2]);
+  const thr = clip(u[2]!);
   const softGate = (v: number) =>
     thr <= 1e-6 ? 1 : smoothstep(thr, 2 * thr, Math.abs(v));
   const textured = yc + amount * detail * softGate(detail);
@@ -180,7 +180,7 @@ function edgeAwarePixel(img: RgbImage, x: number, y: number, u: Float32Array): V
 
 /** One output pixel of `fs_main` (display-referred). */
 export function sharpenPixel(img: RgbImage, x: number, y: number, u: Float32Array): Vec3 {
-  return u[SHARPEN_MODE_SLOT] > 0.5
+  return u[SHARPEN_MODE_SLOT]! > 0.5
     ? edgeAwarePixel(img, x, y, u)
     : classicPixel(img, x, y, u);
 }

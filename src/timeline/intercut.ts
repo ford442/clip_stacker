@@ -125,7 +125,7 @@ export function frequencyHzAtTime(
   }
 
   const track: Keyframe[] = [
-    { t: 0, value: startFrequencyHz, easing },
+    { t: 0, value: startFrequencyHz, ...(easing !== undefined ? { easing } : {}) },
     { t: totalDurationSec, value: endFrequencyHz },
   ];
   return sampleKeyframes(track, outputTimeSec, startFrequencyHz);

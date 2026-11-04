@@ -187,7 +187,7 @@ export async function serializeProjectWithMedia(
   const enrichedClips: SerializedClip[] = [];
   const total = project.clips.length;
   for (let i = 0; i < project.clips.length; i++) {
-    const serialized = project.clips[i];
+    const serialized = project.clips[i]!;
     const index = i + 1;
     const clip = clipById.get(serialized.id);
     if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
@@ -199,7 +199,8 @@ export async function serializeProjectWithMedia(
     if (mediaMode === 'embed') {
       if (clip.file.size > MAX_EMBED_FILE_BYTES) {
         if (options.mediaClient) {
-          updated.sourceMediaUrl = await uploadOrReuseClipMedia(clip, index, total, options);
+          const sourceMediaUrl = await uploadOrReuseClipMedia(clip, index, total, options);
+          if (sourceMediaUrl !== undefined) updated.sourceMediaUrl = sourceMediaUrl;
           options.onEmbedWarning?.(
             `"${clip.file.name}" (${formatBytes(clip.file.size)}) is too large to embed directly ` +
               `and was uploaded to remote storage instead.`,
@@ -215,7 +216,8 @@ export async function serializeProjectWithMedia(
         updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
       }
     } else if (mediaMode === 'remote') {
-      updated.sourceMediaUrl = await uploadOrReuseClipMedia(clip, index, total, options);
+      const sourceMediaUrl = await uploadOrReuseClipMedia(clip, index, total, options);
+      if (sourceMediaUrl !== undefined) updated.sourceMediaUrl = sourceMediaUrl;
     }
     enrichedClips.push(updated);
   }

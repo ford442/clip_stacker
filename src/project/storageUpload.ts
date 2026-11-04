@@ -36,7 +36,7 @@ export interface ChunkedUploadProgress {
   /** Overall 0..1 progress across all chunks. */
   progress: number;
   /** Zero-based index of the chunk currently uploading (if any). */
-  chunkIndex?: number;
+  chunkIndex?: number | undefined;
   /** Total number of chunks for this file. */
   chunkTotal?: number;
   /** Bytes confirmed by the server so far. */
@@ -201,7 +201,7 @@ async function fetchUploadStatus(
   uploadId: string,
   authHeader: string | null | undefined,
   fetchImpl: typeof fetch,
-): Promise<{ receivedChunks: number[]; chunkSize?: number } | null> {
+): Promise<{ receivedChunks: number[]; chunkSize?: number | undefined } | null> {
   try {
     const response = await fetchImpl(`${mediaEndpoint}/upload/${uploadId}/status`, {
       headers: authHeaders(authHeader),

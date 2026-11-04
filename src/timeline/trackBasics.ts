@@ -81,7 +81,7 @@ export function findClipTrack(
   clipId: string,
 ): { track: Track; trackIndex: number; itemIndex: number } | null {
   for (let trackIndex = 0; trackIndex < tracks.length; trackIndex++) {
-    const track = tracks[trackIndex];
+    const track = tracks[trackIndex]!;
     const itemIndex = track.items.findIndex((item) => item.clipId === clipId);
     if (itemIndex >= 0) {
       return { track, trackIndex, itemIndex };

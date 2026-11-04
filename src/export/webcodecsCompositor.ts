@@ -184,9 +184,9 @@ export function drawCompositedVideoFrame(
     );
     compositor.gpuCompositor.applyFinishing(finishing, {
       frameIndex: frameIndex ?? 0,
-      colorManagement: isColorManagementActive(compositor.colorManagement)
-        ? compositor.colorManagement
-        : undefined,
+      ...(isColorManagementActive(compositor.colorManagement)
+        ? { colorManagement: compositor.colorManagement }
+        : {}),
     });
     return;
   }
@@ -239,9 +239,9 @@ export function drawCompositedFrame(
     }
     compositor.gpuCompositor.applyFinishing(finishing, {
       frameIndex: frameIndex ?? Math.max(0, Math.round(elapsed * TARGET_FPS)),
-      colorManagement: isColorManagementActive(compositor.colorManagement)
-        ? compositor.colorManagement
-        : undefined,
+      ...(isColorManagementActive(compositor.colorManagement)
+        ? { colorManagement: compositor.colorManagement }
+        : {}),
     });
     return;
   }

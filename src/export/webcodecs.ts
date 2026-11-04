@@ -41,9 +41,9 @@ import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import {
   TARGET_FPS,
   buildVideoEncoderConfig,
-  mapWebCodecsProgress,
   resolveEncoderBitrate,
   resolveEncoderCodec,
+  webCodecsEncodeProgress,
   WEBCODECS_PROGRESS_STAGES,
 } from './webcodecsCodec';
 import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecsMux';
@@ -181,13 +181,9 @@ export async function encodeVideoWithWebCodecs(
 
   try {
     for (let i = 0; i < clips.length; i++) {
-      const clip = clips[i];
+      const clip = clips[i]!;
       onStatus(`GPU encode [${i + 1}/${clips.length}]: "${clip.title}"...`);
-      onProgress?.({
-        stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode,
-        progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
-        indeterminate: totalDuration <= 0,
-      });
+      onProgress?.(webCodecsEncodeProgress(elapsedDuration, totalDuration));
 
       videoTimeUs = await encodeVideoFrames(
         videoEncoder,
@@ -204,11 +200,7 @@ export async function encodeVideoWithWebCodecs(
       muxer.throwIfFailed();
 
       elapsedDuration += getClipDuration(clip);
-      onProgress?.({
-        stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode,
-        progress: mapWebCodecsProgress(elapsedDuration, totalDuration),
-        indeterminate: totalDuration <= 0,
-      });
+      onProgress?.(webCodecsEncodeProgress(elapsedDuration, totalDuration));
     }
 
     onStatus('Flushing GPU encoder...');

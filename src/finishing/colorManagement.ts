@@ -109,9 +109,9 @@ export function mulMat3(a: Mat3, b: Mat3): Mat3 {
   for (let row = 0; row < 3; row++) {
     for (let col = 0; col < 3; col++) {
       o[row * 3 + col] =
-        a[row * 3] * b[col] +
-        a[row * 3 + 1] * b[3 + col] +
-        a[row * 3 + 2] * b[6 + col];
+        a[row * 3]! * b[col]! +
+        a[row * 3 + 1]! * b[3 + col]! +
+        a[row * 3 + 2]! * b[6 + col]!;
     }
   }
   return o as unknown as Mat3;

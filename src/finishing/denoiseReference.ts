@@ -62,7 +62,7 @@ export function fetchRgb(img: RgbImage, x: number, y: number): Vec3 {
   const cx = Math.min(img.width - 1, Math.max(0, x));
   const cy = Math.min(img.height - 1, Math.max(0, y));
   const i = (cy * img.width + cx) * 3;
-  return [img.data[i], img.data[i + 1], img.data[i + 2]];
+  return [img.data[i]!, img.data[i + 1]!, img.data[i + 2]!];
 }
 
 /** Tukey biweight: 1 at d = 0, 0 at |d| >= 1 — a hard, smooth edge stop. */
@@ -75,11 +75,11 @@ export function tukey(d: number): number {
 /** Legacy `bilateralLuma` (the `standard` mode), sampling texel centres. */
 function standardLuma(img: RgbImage, x: number, y: number, u: Float32Array): number {
   const centerY = luma(fetchRgb(img, x, y));
-  const radius = Math.min(Math.max(u[2], 0), 4);
-  if (radius < 0.01 || u[1] <= 0) return centerY;
-  const draftScale = u[6] > 0.5 ? 0.65 : 1;
+  const radius = Math.min(Math.max(u[2]!, 0), 4);
+  if (radius < 0.01 || u[1]! <= 0) return centerY;
+  const draftScale = u[6]! > 0.5 ? 0.65 : 1;
   const sigmaS = Math.max(0.5, radius) * 0.55 * draftScale;
-  const sigmaR = mix(0.04, 0.18, u[1]) * draftScale;
+  const sigmaR = mix(0.04, 0.18, u[1]!) * draftScale;
   const twoSigmaS2 = 2 * sigmaS * sigmaS;
   const twoSigmaR2 = 2 * sigmaR * sigmaR;
   let sum = 0;
@@ -97,7 +97,7 @@ function standardLuma(img: RgbImage, x: number, y: number, u: Float32Array): num
     }
   }
   if (wSum <= 1e-6) return centerY;
-  return mix(centerY, sum / wSum, clip(u[1]));
+  return mix(centerY, sum / wSum, clip(u[1]!));
 }
 
 /**
@@ -110,9 +110,9 @@ function standardLuma(img: RgbImage, x: number, y: number, u: Float32Array): num
 export function highRgb(img: RgbImage, x: number, y: number, u: Float32Array): Vec3 {
   const center = fetchRgb(img, x, y);
   const centerY = luma(center);
-  const radius = Math.min(Math.max(u[2], 0), 4);
-  const strength = clip(u[1]);
-  if (radius < 0.01 || u[1] <= 0) return center;
+  const radius = Math.min(Math.max(u[2]!, 0), 4);
+  const strength = clip(u[1]!);
+  if (radius < 0.01 || u[1]! <= 0) return center;
 
   const cutoff = mix(NR_HIGH_CUTOFF_MIN, NR_HIGH_CUTOFF_MAX, strength);
   // Guide: a 3×3 sigma filter around the centre (taps within the cutoff of
@@ -131,7 +131,7 @@ export function highRgb(img: RgbImage, x: number, y: number, u: Float32Array): V
   }
   const guide = gSum / gW;
 
-  const reach = u[6] > 0.5 ? radius : Math.min(radius * NR_HIGH_RADIUS_SCALE, NR_HIGH_MAX_REACH);
+  const reach = u[6]! > 0.5 ? radius : Math.min(radius * NR_HIGH_RADIUS_SCALE, NR_HIGH_MAX_REACH);
   const steps = Math.floor(reach + 1e-4);
   const sigmaS = Math.max(0.5, reach) * 0.5;
   const twoSigmaS2 = 2 * sigmaS * sigmaS;
@@ -169,9 +169,9 @@ export function highRgb(img: RgbImage, x: number, y: number, u: Float32Array): V
  */
 export function nlmRgb(img: RgbImage, x: number, y: number, u: Float32Array): Vec3 {
   const center = fetchRgb(img, x, y);
-  const radius = Math.min(Math.max(u[2], 0), 4);
-  const strength = clip(u[1]);
-  if (radius < 0.01 || u[1] <= 0) return center;
+  const radius = Math.min(Math.max(u[2]!, 0), 4);
+  const strength = clip(u[1]!);
+  if (radius < 0.01 || u[1]! <= 0) return center;
 
   const search = Math.min(Math.max(Math.round(radius), 1), NR_NLM_MAX_SEARCH);
   const n = search + 1;
@@ -194,8 +194,8 @@ export function nlmRgb(img: RgbImage, x: number, y: number, u: Float32Array): Ve
       let d2 = 0;
       for (let pj = -1; pj <= 1; pj++) {
         for (let pi = -1; pi <= 1; pi++) {
-          const a = block[(n + pj) * side + (n + pi)];
-          const b = block[(n + j + pj) * side + (n + i + pi)];
+          const a = block[(n + pj) * side + (n + pi)]!;
+          const b = block[(n + j + pj) * side + (n + i + pi)]!;
           d2 += (a - b) * (a - b);
         }
       }
@@ -224,11 +224,11 @@ export function nlmRgb(img: RgbImage, x: number, y: number, u: Float32Array): Ve
 /** One output pixel of the spatial stage (no temporal), as `fs_main` writes it. */
 export function denoisePixel(img: RgbImage, x: number, y: number, u: Float32Array): Vec3 {
   const src = fetchRgb(img, x, y);
-  const amount = clip(u[0]);
+  const amount = clip(u[0]!);
   if (amount <= 0) return src;
   const yuv = rgbToYuv(src);
-  const quality = u[NR_QUALITY_SLOT];
-  const lumaOnly = u[5] > 0.5;
+  const quality = u[NR_QUALITY_SLOT]!;
+  const lumaOnly = u[5]! > 0.5;
   let result: Vec3;
   if (quality > 0.5) {
     // Filter in RGB with luma-guided weights; Luma only adds just the luma
@@ -242,7 +242,7 @@ export function denoisePixel(img: RgbImage, x: number, y: number, u: Float32Arra
       result = yuvToRgb([fy, yuv[1], yuv[2]]).map(clip) as Vec3;
     } else {
       const nb = rgbToYuv(fetchRgb(img, x + 1, y + 1));
-      const k = u[1] * 0.35;
+      const k = u[1]! * 0.35;
       result = yuvToRgb([fy, mix(yuv[1], nb[1], k), mix(yuv[2], nb[2], k)]).map(clip) as Vec3;
     }
   }

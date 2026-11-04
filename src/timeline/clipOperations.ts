@@ -4,12 +4,11 @@ import { sanitizeClipAdjustments } from '../project';
 
 /** Shallow-copy a clip with a new ID, reusing the same media file and object URL. */
 export function duplicateClip(clip: Clip): Clip {
+  const { groupId: _groupId, groupVariant: _groupVariant, ...ungrouped } = clip;
   const copy: Clip = {
-    ...clip,
+    ...ungrouped,
     id: createClipId(),
     title: clip.title.trim() ? `${clip.title} (copy)` : `${clip.file.name} (copy)`,
-    groupId: undefined,
-    groupVariant: undefined,
   };
   sanitizeClipAdjustments(copy);
   return copy;
@@ -32,21 +31,18 @@ export function splitClipAt(clip: Clip, splitTime: number): [Clip, Clip] | null 
     return null;
   }
 
+  const { groupId: _groupId, groupVariant: _groupVariant, ...ungrouped } = clip;
   const left: Clip = {
-    ...clip,
+    ...ungrouped,
     trimEnd: splitTime,
-    groupId: undefined,
-    groupVariant: undefined,
   };
 
   const right: Clip = {
-    ...clip,
+    ...ungrouped,
     id: createClipId(),
     title: clip.title.trim() ? `${clip.title} (split)` : `${clip.file.name} (split)`,
     trimStart: splitTime,
     trimEnd: clip.trimEnd,
-    groupId: undefined,
-    groupVariant: undefined,
   };
 
   sanitizeClipAdjustments(left);

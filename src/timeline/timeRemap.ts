@@ -61,14 +61,14 @@ export function integrateRateToSourceOffset(
   }));
 
   if (track.length === 1) {
-    return track[0].value * tEnd;
+    return track[0]!.value * tEnd;
   }
 
   let integral = 0;
   let cursor = 0;
 
   // Before first keyframe: hold first value
-  const first = track[0];
+  const first = track[0]!;
   if (tEnd <= first.t) {
     return first.value * tEnd;
   }
@@ -79,8 +79,8 @@ export function integrateRateToSourceOffset(
   }
 
   for (let i = 0; i < track.length - 1 && cursor < tEnd - INTEGRAL_EPS; i++) {
-    const a = track[i];
-    const b = track[i + 1];
+    const a = track[i]!;
+    const b = track[i + 1]!;
     const segEnd = Math.min(b.t, tEnd);
     if (segEnd <= cursor) continue;
 
@@ -103,7 +103,7 @@ export function integrateRateToSourceOffset(
 
   // After last keyframe: hold last value
   if (cursor < tEnd) {
-    const last = track[track.length - 1];
+    const last = track[track.length - 1]!;
     integral += last.value * (tEnd - cursor);
   }
 

@@ -30,6 +30,7 @@
     "test:ui": "vitest --ui",
     "test:coverage": "vitest --coverage",
     "typecheck": "tsc --noEmit",
+    "typecheck:strict": "node scripts/check-strict.mjs",
     "lint": "eslint .",
     "check:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src"
   },
@@ -55,6 +56,7 @@
     "@eslint/js": "^10.0.1",
     "@ffmpeg/core": "0.12.10",
     "@ffmpeg/core-mt": "0.12.10",
+    "@playwright/test": "^1.64.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^6.1.2",
@@ -67,6 +69,7 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.13.0",
     "happy-dom": "^20.9.0",
+    "knip": "^6.44.1",
     "madge": "^8.0.0",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.71.2",

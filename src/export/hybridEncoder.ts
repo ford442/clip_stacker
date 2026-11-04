@@ -108,7 +108,7 @@ export async function hybridMergeClips(
       webGpuAvailable,
       forceReencode,
       outputColor: colorManagement.outputColor,
-      captionMode: captionBurnIn && captionBurnIn.captions.length > 0 ? 'burn' : undefined,
+      ...(captionBurnIn && captionBurnIn.captions.length > 0 ? { captionMode: 'burn' as const } : {}),
     });
 
   // Chroma/luma keying now lives in the compositors (WGSL + Canvas2D), so the

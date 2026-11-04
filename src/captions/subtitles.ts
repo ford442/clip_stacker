@@ -80,7 +80,7 @@ export function parseSubtitleTimestamp(value: string): number | null {
   const match = TIMESTAMP_RE.exec(value.trim());
   if (!match) return null;
   const [, hours, minutes, seconds, fraction] = match;
-  const fractionSec = Number(fraction) / 10 ** fraction.length;
+  const fractionSec = Number(fraction) / 10 ** fraction!.length;
   return (
     Number(hours ?? 0) * 3600 +
     Number(minutes) * 60 +
@@ -182,16 +182,17 @@ export function parseSrt(text: string): CaptionEntry[] {
   /** Indices of every timing line, so we know where each cue's text ends. */
   const timingIndices: number[] = [];
   for (let i = 0; i < lines.length; i++) {
-    if (SRT_TIMING_LINE_RE.test(lines[i])) timingIndices.push(i);
+    if (SRT_TIMING_LINE_RE.test(lines[i]!)) timingIndices.push(i);
   }
 
   for (let cue = 0; cue < timingIndices.length; cue++) {
-    const timingIndex = timingIndices[cue];
-    const match = SRT_TIMING_LINE_RE.exec(lines[timingIndex]);
+    const timingIndex = timingIndices[cue]!;
+    const match = SRT_TIMING_LINE_RE.exec(lines[timingIndex]!);
     if (!match) continue;
 
-    const startSec = parseSubtitleTimestamp(match[0].split('-->')[0]);
-    const endSec = parseSubtitleTimestamp(match[0].split('-->')[1]);
+    const [startText, endText] = match[0].split('-->');
+    const startSec = parseSubtitleTimestamp(startText!);
+    const endSec = parseSubtitleTimestamp(endText!);
     if (startSec === null || endSec === null) continue;
 
     // Text runs to the next timing line (or EOF). When cues are not separated
@@ -199,16 +200,16 @@ export function parseSrt(text: string): CaptionEntry[] {
     // this one's text, so drop a trailing bare-number line before trimming.
     const nextTimingIndex = timingIndices[cue + 1] ?? lines.length;
     const textLines = lines.slice(timingIndex + 1, nextTimingIndex);
-    while (textLines.length > 0 && textLines[textLines.length - 1].trim() === '') {
+    while (textLines.length > 0 && textLines[textLines.length - 1]!.trim() === '') {
       textLines.pop();
     }
     if (
       cue + 1 < timingIndices.length &&
       textLines.length > 0 &&
-      /^\s*\d+\s*$/.test(textLines[textLines.length - 1])
+      /^\s*\d+\s*$/.test(textLines[textLines.length - 1]!)
     ) {
       textLines.pop();
-      while (textLines.length > 0 && textLines[textLines.length - 1].trim() === '') {
+      while (textLines.length > 0 && textLines[textLines.length - 1]!.trim() === '') {
         textLines.pop();
       }
     }

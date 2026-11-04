@@ -33,7 +33,7 @@ export function rollEdit(state: EditState, leftClipId: string, delta: number): E
   const byId = clipMap(state.clips);
   const right = byId.get(rightItem.clipId);
   if (!right) return fail('Roll needs a clip after the edit point.');
-  if (!adjacent(at.items[at.index], rightItem, byId, at.base)) {
+  if (!adjacent(at.items[at.index]!, rightItem, byId, at.base)) {
     return fail('Roll needs two clips that touch — close the gap first.');
   }
   const reason = untrimmableReason(at.clip) ?? untrimmableReason(right);
@@ -79,7 +79,7 @@ export function slideClip(state: EditState, clipId: string, delta: number): Edit
   const at = locate(state, clipId);
   if (typeof at === 'string') return fail(at);
   const byId = clipMap(state.clips);
-  const self = at.items[at.index];
+  const self = at.items[at.index]!;
   const prevItem = at.items[at.index - 1];
   const nextItem = at.items[at.index + 1];
 
@@ -146,7 +146,7 @@ export function rippleTrim(
   if (!next) return fail('Trim would run past the source media.');
 
   const byId = clipMap(state.clips);
-  const oldEnd = itemEnd(at.items[at.index], byId);
+  const oldEnd = itemEnd(at.items[at.index]!, byId);
   const change = getClipDuration(next) - getClipDuration(at.clip);
   const clips = replaceClips(state.clips, new Map([[next.id, next]]));
   const rippled = rippleLanes(
@@ -168,7 +168,7 @@ export function rippleDelete(
   const at = locate(state, clipId);
   if (typeof at === 'string') return fail(at);
   const byId = clipMap(state.clips);
-  const self = at.items[at.index];
+  const self = at.items[at.index]!;
   const end = itemEnd(self, byId);
   const width = end - self.startTime;
 

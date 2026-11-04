@@ -93,7 +93,7 @@ export function aacLcAudioSpecificConfig(sampleRate: number, numberOfChannels: n
   let pos = 0;
   for (const [value, bits] of fields) {
     for (let bit = bits - 1; bit >= 0; bit--, pos++) {
-      if ((value >>> bit) & 1) bytes[pos >> 3] |= 0x80 >> (pos & 7);
+      if ((value >>> bit) & 1) bytes[pos >> 3]! |= 0x80 >> (pos & 7);
     }
   }
   return bytes;
@@ -104,12 +104,12 @@ function toError(err: unknown): Error {
 }
 
 /** Own copy, since the add runs after the codec callback returns. */
-function copyDescription(description: AllowSharedBufferSource | undefined): Uint8Array | undefined {
-  if (!description) return undefined;
+function copyDescription(description: AllowSharedBufferSource | undefined): { description?: Uint8Array } {
+  if (!description) return {};
   const view = ArrayBuffer.isView(description)
     ? new Uint8Array(description.buffer, description.byteOffset, description.byteLength)
     : new Uint8Array(description);
-  return view.slice();
+  return { description: view.slice() };
 }
 
 function packetFromChunk(chunk: EncodedVideoChunk | EncodedAudioChunk): Mp4Packet {
@@ -170,7 +170,7 @@ export class Mp4Writer {
           ...config,
           codedWidth: declared.width,
           codedHeight: declared.height,
-          description: copyDescription(config.description),
+          ...copyDescription(config.description),
         },
       };
     });
@@ -182,7 +182,7 @@ export class Mp4Writer {
     this.enqueue(this.audio, packet, (first) => {
       const config = meta?.decoderConfig;
       if (config) {
-        return { ...meta, decoderConfig: { ...config, description: copyDescription(config.description) } };
+        return { ...meta, decoderConfig: { ...config, ...copyDescription(config.description) } };
       }
       if (!first) return meta;
       return {

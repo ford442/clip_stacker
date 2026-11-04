@@ -64,7 +64,7 @@ export function buildVideoStack(
 
   const vTracks = orderedVideoTracks(tracks);
   for (let layerIndex = 0; layerIndex < vTracks.length; layerIndex++) {
-    const track = vTracks[layerIndex];
+    const track = vTracks[layerIndex]!;
     const sorted = [...track.items].sort((a, b) => a.startTime - b.startTime);
     for (const item of sorted) {
       const clip = clipMap.get(item.clipId);

@@ -150,7 +150,11 @@ export function deserializeTextOverlays(
                 }),
             )
           : undefined;
-        const keyframes = readTextOverlayKeyframes(o.keyframes);
+        const rawKeyframes = readTextOverlayKeyframes(o.keyframes);
+        const keyframes =
+          rawKeyframes && usesPixelLayout
+            ? migrateTextOverlayKeyframesToNormalized(rawKeyframes, layoutReference)
+            : rawKeyframes;
         const overlay: TextOverlay = {
           id: String(o.id ?? ''),
           text: String(o.text ?? ''),
@@ -167,13 +171,7 @@ export function deserializeTextOverlays(
           ...(shaderId ? { shaderId } : {}),
           ...(shaderParams ? { shaderParams } : {}),
           ...(shaderColors && Object.keys(shaderColors).length ? { shaderColors } : {}),
-          ...(keyframes
-            ? {
-                keyframes: usesPixelLayout
-                  ? migrateTextOverlayKeyframesToNormalized(keyframes, layoutReference)
-                  : keyframes,
-              }
-            : {}),
+          ...(keyframes ? { keyframes } : {}),
         };
         if (!usesPixelLayout) return [overlay];
         return [{ ...overlay, ...migratePixelTextOverlay(overlay, layoutReference) }];

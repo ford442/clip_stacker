@@ -94,7 +94,7 @@ export function findMatchingClipIndex(existingNames: string[], newName: string):
   if (!hasAutoGroupSuffix(newName)) return -1;
 
   for (let i = 0; i < existingNames.length; i++) {
-    if (isEditedVersion(existingNames[i], newName)) {
+    if (isEditedVersion(existingNames[i]!, newName)) {
       return i;
     }
   }

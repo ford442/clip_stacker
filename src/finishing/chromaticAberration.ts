@@ -177,7 +177,7 @@ export function sampleBilinear(img: RgbImage, u: number, v: number): [number, nu
   const fx = x - x0;
   const fy = y - y0;
   const at = (xx: number, yy: number, k: number) =>
-    img.data[(mirrorIndex(yy, img.height) * img.width + mirrorIndex(xx, img.width)) * 3 + k];
+    img.data[(mirrorIndex(yy, img.height) * img.width + mirrorIndex(xx, img.width)) * 3 + k]!;
   const out: [number, number, number] = [0, 0, 0];
   for (let k = 0; k < 3; k++) {
     const a = at(x0, y0, k) + (at(x0 + 1, y0, k) - at(x0, y0, k)) * fx;
@@ -196,11 +196,11 @@ export function chromaticAberrationPixel(
 ): [number, number, number] {
   const uvx = (x + 0.5) / img.width;
   const uvy = (y + 0.5) / img.height;
-  const ox = u[0] * (uvx - 0.5) + u[1];
-  const oy = u[0] * (uvy - 0.5) + u[2];
+  const ox = u[0]! * (uvx - 0.5) + u[1]!;
+  const oy = u[0]! * (uvy - 0.5) + u[2]!;
   const src = sampleBilinear(img, uvx, uvy);
   if (Math.abs(ox) + Math.abs(oy) < 1e-7) return src;
-  if (u[3] < 0.5) {
+  if (u[3]! < 0.5) {
     return [
       sampleBilinear(img, uvx - ox, uvy - oy)[0],
       src[1],
@@ -214,9 +214,9 @@ export function chromaticAberrationPixel(
     const s = sampleBilinear(img, uvx - t * ox, uvy - t * oy);
     const w = spectralWeights(t);
     for (let k = 0; k < 3; k++) {
-      acc[k] += s[k] * w[k];
-      wSum[k] += w[k];
+      acc[k]! += s[k]! * w[k]!;
+      wSum[k]! += w[k]!;
     }
   }
-  return [acc[0] / wSum[0], acc[1] / wSum[1], acc[2] / wSum[2]];
+  return [acc[0]! / wSum[0]!, acc[1]! / wSum[1]!, acc[2]! / wSum[2]!];
 }

@@ -75,7 +75,7 @@ export async function downloadRemoteMedia(
   }
 
   onProgress?.(1, false);
-  return new Blob(chunks, { type: contentType });
+  return new Blob(chunks, contentType ? { type: contentType } : {});
 }
 
 /** Format a byte count as a human-readable size (e.g. "12.3 MB"). */

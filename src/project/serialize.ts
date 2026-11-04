@@ -107,16 +107,16 @@ export function serializeProject(
       ...(automation ? { automation } : {}),
       ...(audioEffects ? { audioEffects } : {}),
       fileName: clip.file.name,
-      fileType: clip.file.type || undefined,
+      ...(clip.file.type ? { fileType: clip.file.type } : {}),
       ...(clip.groupId ? { groupId: clip.groupId } : {}),
       ...(clip.groupVariant ? { groupVariant: clip.groupVariant } : {}),
       ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
       ...(clip.rifeProcessed ? {
         rifeProcessed: clip.rifeProcessed,
-        rifeMultiplier: clip.rifeMultiplier,
-        originalFps: clip.originalFps,
-        processedFps: clip.processedFps,
-        rifeMode: clip.rifeMode,
+        ...(clip.rifeMultiplier !== undefined ? { rifeMultiplier: clip.rifeMultiplier } : {}),
+        ...(clip.originalFps !== undefined ? { originalFps: clip.originalFps } : {}),
+        ...(clip.processedFps !== undefined ? { processedFps: clip.processedFps } : {}),
+        ...(clip.rifeMode !== undefined ? { rifeMode: clip.rifeMode } : {}),
       } : {}),
       ...((clip.layerIndex ?? 0) > 0 ||
       clip.x ||

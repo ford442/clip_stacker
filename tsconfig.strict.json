@@ -1,0 +1,13 @@
+{
+  // The strictness ratchet (#365): the base config plus the flags the codebase
+  // is moving to. `npm run typecheck:strict` (scripts/check-strict.mjs) runs it
+  // and fails on any error in a directory listed in scripts/strict-ratchet.json,
+  // or when the count elsewhere rises above the recorded baseline.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*"]
+}

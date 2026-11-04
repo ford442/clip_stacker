@@ -113,10 +113,10 @@ export function canUseGpuVideoEncoder(
   options: {
     forceFFmpeg?: boolean;
     useCanvas?: boolean;
-    webGpuAvailable?: boolean;
+    webGpuAvailable?: boolean | undefined;
     /** @deprecated Prefer `finishing`. */
     colorGrade?: import('../finishing/lut').ColorGradeSettings;
-    finishing?: FinishingSettings;
+    finishing?: FinishingSettings | undefined;
   } = {},
 ): boolean {
   const finishing = options.finishing;

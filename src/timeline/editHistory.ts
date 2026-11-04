@@ -105,10 +105,10 @@ export function syncClipGroups(groups: ClipGroup[], clips: Clip[]): ClipGroup[] 
     ...group,
     variants: {
       A: group.variants.A
-        ? clipsById.get(group.variants.A.id) ?? mergeClipUrls([group.variants.A], clips)[0]
+        ? clipsById.get(group.variants.A.id) ?? mergeClipUrls([group.variants.A], clips)[0]!
         : null,
       B: group.variants.B
-        ? clipsById.get(group.variants.B.id) ?? mergeClipUrls([group.variants.B], clips)[0]
+        ? clipsById.get(group.variants.B.id) ?? mergeClipUrls([group.variants.B], clips)[0]!
         : null,
     },
   }));

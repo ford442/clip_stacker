@@ -76,8 +76,8 @@ export function buildVariableSpeedSegments(
   const segments: VariableSpeedSegment[] = [];
 
   for (let i = 0; i < sorted.length - 1; i++) {
-    const outputStart = sorted[i];
-    const outputEnd = sorted[i + 1];
+    const outputStart = sorted[i]!;
+    const outputEnd = sorted[i + 1]!;
     const span = outputEnd - outputStart;
     if (span < MIN_SEGMENT_SEC) continue;
 

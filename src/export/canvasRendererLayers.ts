@@ -250,7 +250,7 @@ export function drawCaptionLayer(
   ctx.globalAlpha = clampOpacity(baseAlpha * alpha);
   ctx.fillStyle = color;
   for (let index = 0; index < lines.length; index++) {
-    ctx.fillText(lines[index], layer.x, firstLineTop + index * lineHeight);
+    ctx.fillText(lines[index]!, layer.x, firstLineTop + index * lineHeight);
   }
 
   ctx.globalAlpha = prevAlpha;

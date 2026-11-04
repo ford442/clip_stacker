@@ -41,6 +41,11 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Strict typecheck ratchet
+        # noUncheckedIndexedAccess + exactOptionalPropertyTypes: zero errors in
+        # scripts/strict-ratchet.json's strictDirs, and no growth elsewhere.
+        run: npm run typecheck:strict
+
       - name: Lint
         run: npm run lint
 

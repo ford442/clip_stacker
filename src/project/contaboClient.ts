@@ -27,6 +27,11 @@ export class ContaboStorageManagerClient {
     return this.authToken.startsWith('Bearer ') ? this.authToken : `Bearer ${this.authToken}`;
   }
 
+  private authHeaders(): { headers?: Record<string, string> } {
+    const authHeader = this.getAuthHeader();
+    return authHeader ? { headers: { authorization: authHeader } } : {};
+  }
+
   async save(name: string, payload: Project): Promise<void> {
     const authHeader = this.getAuthHeader();
     const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -41,9 +46,8 @@ export class ContaboStorageManagerClient {
   }
 
   async load(name: string): Promise<Project> {
-    const authHeader = this.getAuthHeader();
     const response = await fetch(`${this.endpoint}?name=${encodeURIComponent(name)}`, {
-      headers: authHeader ? { authorization: authHeader } : undefined,
+      ...this.authHeaders(),
     });
     if (!response.ok) throw new Error(`Remote load failed (${response.status})`);
     const result = (await response.json()) as { payload: Project };
@@ -51,9 +55,8 @@ export class ContaboStorageManagerClient {
   }
 
   async list(): Promise<{ name: string; modified: number }[]> {
-    const authHeader = this.getAuthHeader();
     const response = await fetch(this.endpoint, {
-      headers: authHeader ? { authorization: authHeader } : undefined,
+      ...this.authHeaders(),
     });
     if (!response.ok) throw new Error(`Remote list failed (${response.status})`);
     const result = (await response.json()) as { projects: { name: string; modified: number }[] };
@@ -61,10 +64,9 @@ export class ContaboStorageManagerClient {
   }
 
   async delete(name: string): Promise<void> {
-    const authHeader = this.getAuthHeader();
     const response = await fetch(`${this.endpoint}?name=${encodeURIComponent(name)}`, {
       method: 'DELETE',
-      headers: authHeader ? { authorization: authHeader } : undefined,
+      ...this.authHeaders(),
     });
     if (!response.ok) throw new Error(`Remote delete failed (${response.status})`);
   }
@@ -171,9 +173,8 @@ export class ContaboStorageManagerClient {
    * other storage backends.
    */
   async listMedia(): Promise<MediaLibraryItem[]> {
-    const authHeader = this.getAuthHeader();
     const response = await fetch(this.mediaEndpoint, {
-      headers: authHeader ? { authorization: authHeader } : undefined,
+      ...this.authHeaders(),
     });
     if (!response.ok) throw new Error(`Media library list failed (${response.status})`);
     const result = (await response.json()) as {
@@ -185,10 +186,9 @@ export class ContaboStorageManagerClient {
 
   /** Delete a file from the remote media library (e.g. a job output that was pulled back). */
   async deleteMedia(name: string): Promise<void> {
-    const authHeader = this.getAuthHeader();
     const response = await fetch(`${this.mediaEndpoint}/${encodeURIComponent(name)}`, {
       method: 'DELETE',
-      headers: authHeader ? { authorization: authHeader } : undefined,
+      ...this.authHeaders(),
     });
     if (!response.ok) throw new Error(`Media delete failed (${response.status})`);
   }
@@ -197,18 +197,18 @@ export class ContaboStorageManagerClient {
     return this.endpoint.replace(/\/*$/, '') + '/jobs';
   }
 
-  private jobHeaders(json = false): Record<string, string> | undefined {
+  private jobHeaders(json = false): { headers?: Record<string, string> } {
     const authHeader = this.getAuthHeader();
     const headers: Record<string, string> = json ? { 'content-type': 'application/json' } : {};
     if (authHeader) headers.authorization = authHeader;
-    return Object.keys(headers).length ? headers : undefined;
+    return Object.keys(headers).length ? { headers } : {};
   }
 
   /** Start a server-side extract / splice / rife job. Returns immediately with the queued job. */
   async createJob(request: ContaboJobRequest): Promise<ContaboJob> {
     const response = await fetch(this.jobsEndpoint, {
       method: 'POST',
-      headers: this.jobHeaders(true),
+      ...this.jobHeaders(true),
       body: JSON.stringify(request),
     });
     if (!response.ok) throw new Error(await describeJobHttpError(response, 'Starting the processing job'));
@@ -217,7 +217,7 @@ export class ContaboStorageManagerClient {
 
   async getJob(jobId: string): Promise<ContaboJob> {
     const response = await fetch(`${this.jobsEndpoint}/${encodeURIComponent(jobId)}`, {
-      headers: this.jobHeaders(),
+      ...this.jobHeaders(),
     });
     if (!response.ok) throw new Error(await describeJobHttpError(response, 'Checking the processing job'));
     return (await response.json()) as ContaboJob;
@@ -226,7 +226,7 @@ export class ContaboStorageManagerClient {
   async cancelJob(jobId: string): Promise<ContaboJob> {
     const response = await fetch(`${this.jobsEndpoint}/${encodeURIComponent(jobId)}/cancel`, {
       method: 'POST',
-      headers: this.jobHeaders(),
+      ...this.jobHeaders(),
     });
     if (!response.ok) throw new Error(await describeJobHttpError(response, 'Cancelling the processing job'));
     return (await response.json()) as ContaboJob;

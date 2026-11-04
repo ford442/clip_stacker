@@ -76,7 +76,7 @@ export function addTrack(tracks: Track[], kind: TrackKind): Track[] {
   const next = cloneTracks(tracks);
   let insertAt = next.length;
   for (let i = next.length - 1; i >= 0; i--) {
-    if (next[i].kind === 'video') {
+    if (next[i]!.kind === 'video') {
       insertAt = i + 1;
       break;
     }

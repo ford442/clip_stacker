@@ -227,7 +227,7 @@ export function sampleBilinear(img: RgbImage, u: number, v: number): Vec3 {
   const at = (xx: number, yy: number, k: number) => {
     const cx = Math.min(img.width - 1, Math.max(0, xx));
     const cy = Math.min(img.height - 1, Math.max(0, yy));
-    return img.data[(cy * img.width + cx) * 3 + k];
+    return img.data[(cy * img.width + cx) * 3 + k]!;
   };
   const out: Vec3 = [0, 0, 0];
   for (let k = 0; k < 3; k++) {
@@ -308,28 +308,30 @@ export function bloomBuffer(img: RgbImage, pass: BloomSettings, sceneLinear = fa
   const plan = planBloom(pass.radius, img.width, img.height);
   const u0 = packBloomUniforms(pass, img.width, img.height, 1, plan.norm);
   const levels: RgbImage[] = [];
+  const first = plan.sizes[0]!;
   levels.push(
-    render(plan.sizes[0].width, plan.sizes[0].height, (u, v) => {
-      const c = softThreshold(downsample13(img, u, v, true), u0[2], u0[3]);
+    render(first.width, first.height, (u, v) => {
+      const c = softThreshold(downsample13(img, u, v, true), u0[2]!, u0[3]!);
       const cap = sceneLinear ? BLOOM_LINEAR_CLAMP : 1;
       return [Math.min(c[0], cap), Math.min(c[1], cap), Math.min(c[2], cap)];
     }),
   );
   for (let k = 1; k < plan.sizes.length; k++) {
-    const src = levels[k - 1];
-    levels.push(render(plan.sizes[k].width, plan.sizes[k].height, (u, v) => downsample13(src, u, v, false)));
+    const src = levels[k - 1]!;
+    const size = plan.sizes[k]!;
+    levels.push(render(size.width, size.height, (u, v) => downsample13(src, u, v, false)));
   }
   for (let k = plan.sizes.length - 2; k >= 0; k--) {
     const w = k === plan.sizes.length - 2 ? plan.deepestWeight : 1;
-    const up = levels[k + 1];
-    const dst = levels[k];
+    const up = levels[k + 1]!;
+    const dst = levels[k]!;
     levels[k] = render(dst.width, dst.height, (u, v) => {
       const i = (Math.floor(v * dst.height) * dst.width + Math.floor(u * dst.width)) * 3;
-      const base: Vec3 = [dst.data[i], dst.data[i + 1], dst.data[i + 2]];
+      const base: Vec3 = [dst.data[i]!, dst.data[i + 1]!, dst.data[i + 2]!];
       return add(base, tent9(up, u, v), w);
     });
   }
-  const top = levels[0];
+  const top = levels[0]!;
   return render(img.width, img.height, (u, v) => scale(tent9(top, u, v), plan.norm));
 }
 
@@ -340,8 +342,8 @@ export function bloomImage(img: RgbImage, pass: BloomSettings, sceneLinear = fal
   const u = packBloomUniforms(pass, img.width, img.height, 1, 1);
   const out = new Float32Array(img.data.length);
   for (let p = 0; p < img.width * img.height; p++) {
-    const src: Vec3 = [img.data[p * 3], img.data[p * 3 + 1], img.data[p * 3 + 2]];
-    const b: Vec3 = [glow.data[p * 3], glow.data[p * 3 + 1], glow.data[p * 3 + 2]];
+    const src: Vec3 = [img.data[p * 3]!, img.data[p * 3 + 1]!, img.data[p * 3 + 2]!];
+    const b: Vec3 = [glow.data[p * 3]!, glow.data[p * 3 + 1]!, glow.data[p * 3 + 2]!];
     out.set(compositeBloom(src, b, u, sceneLinear), p * 3);
   }
   return { width: img.width, height: img.height, data: out };
@@ -354,9 +356,9 @@ export function compositeBloom(
   u: ArrayLike<number>,
   sceneLinear: boolean,
 ): Vec3 {
-  const tint: Vec3 = [u[8], u[9], u[10]];
-  const gain = u[6];
-  if (u[5] > 0.5) {
+  const tint: Vec3 = [u[8]!, u[9]!, u[10]!];
+  const gain = u[6]!;
+  if (u[5]! > 0.5) {
     // Light wrap: pull the surrounding light over pixels darker than it.
     const lb = luma(b);
     const ls = luma(src);
@@ -371,5 +373,5 @@ export function compositeBloom(
   }
   const g: Vec3 = [b[0] * tint[0] * gain, b[1] * tint[1] * gain, b[2] * tint[2] * gain];
   if (sceneLinear) return add(src, g);
-  return [0, 1, 2].map((k) => 1 - (1 - clamp01(src[k])) * (1 - clamp01(g[k]))) as Vec3;
+  return [0, 1, 2].map((k) => 1 - (1 - clamp01(src[k]!)) * (1 - clamp01(g[k]!))) as Vec3;
 }

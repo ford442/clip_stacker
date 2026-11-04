@@ -71,7 +71,6 @@ export async function encodeClipsWithCanvas(
     onStatus(`Canvas capture failed: ${message}`);
     onProgress?.({
       stage: 'Canvas capture failed',
-      progress: undefined,
       indeterminate: true,
     });
     throw err instanceof Error ? err : new Error(message);

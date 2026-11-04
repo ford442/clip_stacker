@@ -118,7 +118,7 @@ export function isIdentityCurve(points: readonly CurvePoint[] | undefined): bool
   // Monotone cubic through points on y = x is the line y = x itself, but only
   // over [first.x, last.x]; flat extension outside clips unless the ends are 0 / 1.
   const onDiagonal = points.every((p) => Math.abs(p.y - p.x) < 1e-6);
-  return onDiagonal && points[0].x <= 1e-6 && points[points.length - 1].x >= 1 - 1e-6;
+  return onDiagonal && points[0]!.x <= 1e-6 && points[points.length - 1]!.x >= 1 - 1e-6;
 }
 
 export function isLevelsIdentity(levels: LevelsSettings | undefined): boolean {
@@ -203,27 +203,28 @@ export function monotoneSlopes(points: readonly CurvePoint[]): number[] {
   if (n < 2) return new Array(n).fill(0);
   const d: number[] = [];
   for (let i = 0; i < n - 1; i++) {
-    d.push((points[i + 1].y - points[i].y) / (points[i + 1].x - points[i].x));
+    d.push((points[i + 1]!.y - points[i]!.y) / (points[i + 1]!.x - points[i]!.x));
   }
   const m: number[] = new Array(n);
-  m[0] = d[0];
-  m[n - 1] = d[n - 2];
+  m[0] = d[0]!;
+  m[n - 1] = d[n - 2]!;
   for (let i = 1; i < n - 1; i++) {
-    m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2;
+    m[i] = d[i - 1]! * d[i]! <= 0 ? 0 : (d[i - 1]! + d[i]!) / 2;
   }
   for (let i = 0; i < n - 1; i++) {
-    if (d[i] === 0) {
+    const di = d[i]!;
+    if (di === 0) {
       m[i] = 0;
       m[i + 1] = 0;
       continue;
     }
-    const a = m[i] / d[i];
-    const b = m[i + 1] / d[i];
+    const a = m[i]! / di;
+    const b = m[i + 1]! / di;
     const s = a * a + b * b;
     if (s > 9) {
       const t = 3 / Math.sqrt(s);
-      m[i] = t * a * d[i];
-      m[i + 1] = t * b * d[i];
+      m[i] = t * a * di;
+      m[i + 1] = t * b * di;
     }
   }
   return m;
@@ -245,17 +246,17 @@ export function evalPackedCurve(
   if (count < 2) return v;
   const k = (i: number) => offset + i * 4;
   if (extendAbove && v > 1) return evalPackedCurve(knots, offset, count, 1) + (v - 1);
-  if (v <= knots[k(0)]) return knots[k(0) + 1];
+  if (v <= knots[k(0)]!) return knots[k(0) + 1]!;
   const last = k(count - 1);
-  if (v >= knots[last]) return knots[last + 1];
+  if (v >= knots[last]!) return knots[last + 1]!;
   let i = 0;
-  while (i < count - 2 && v > knots[k(i + 1)]) i++;
-  const x0 = knots[k(i)];
-  const y0 = knots[k(i) + 1];
-  const m0 = knots[k(i) + 2];
-  const x1 = knots[k(i + 1)];
-  const y1 = knots[k(i + 1) + 1];
-  const m1 = knots[k(i + 1) + 2];
+  while (i < count - 2 && v > knots[k(i + 1)]!) i++;
+  const x0 = knots[k(i)]!;
+  const y0 = knots[k(i) + 1]!;
+  const m0 = knots[k(i) + 2]!;
+  const x1 = knots[k(i + 1)]!;
+  const y1 = knots[k(i + 1) + 1]!;
+  const m1 = knots[k(i + 1) + 2]!;
   const h = x1 - x0;
   const t = (v - x0) / h;
   const t2 = t * t;
@@ -299,7 +300,7 @@ export function packCurvesUniforms(
       const base = 12 + c * CURVE_MAX_POINTS * 4 + i * 4;
       out[base] = p.x;
       out[base + 1] = p.y;
-      out[base + 2] = slopes[i];
+      out[base + 2] = slopes[i]!;
     });
   });
   return out;
@@ -307,11 +308,11 @@ export function packCurvesUniforms(
 
 /** Levels on one value; mirrors WGSL `applyLevels`. */
 export function applyLevelsValue(u: ArrayLike<number>, v: number, sceneLinear = false): number {
-  const range = Math.max(u[1] - u[0], 1e-6);
-  let n = (v - u[0]) / range;
+  const range = Math.max(u[1]! - u[0]!, 1e-6);
+  let n = (v - u[0]!) / range;
   n = sceneLinear ? Math.max(n, 0) : clamp01(n);
-  const g = Math.pow(n, 1 / u[2]);
-  return u[3] + g * (u[4] - u[3]);
+  const g = Math.pow(n, 1 / u[2]!);
+  return u[3]! + g * (u[4]! - u[3]!);
 }
 
 function encodeSrgb(v: number): number {
@@ -335,16 +336,17 @@ export function curvesPixel(
   u: ArrayLike<number>,
   sceneLinear = false,
 ): [number, number, number] {
-  const amount = u[5];
+  const amount = u[5]!;
   if (amount <= 0) return [rgb[0], rgb[1], rgb[2]];
   const out: [number, number, number] = [0, 0, 0];
   for (let k = 0; k < 3; k++) {
-    let v = sceneLinear ? encodeSrgb(rgb[k]) : rgb[k];
+    const src = rgb[k]!;
+    let v = sceneLinear ? encodeSrgb(src) : src;
     v = applyLevelsValue(u, v, sceneLinear);
-    v = evalPackedCurve(u, 12, u[8], v, sceneLinear);
-    v = evalPackedCurve(u, 12 + (k + 1) * CURVE_MAX_POINTS * 4, u[9 + k], v, sceneLinear);
+    v = evalPackedCurve(u, 12, u[8]!, v, sceneLinear);
+    v = evalPackedCurve(u, 12 + (k + 1) * CURVE_MAX_POINTS * 4, u[9 + k]!, v, sceneLinear);
     v = sceneLinear ? decodeSrgb(v) : clamp01(v);
-    out[k] = rgb[k] + (v - rgb[k]) * amount;
+    out[k] = src + (v - src) * amount;
   }
   return out;
 }
@@ -357,7 +359,7 @@ export function sampleCurve(points: readonly CurvePoint[], steps = 64): CurvePoi
   norm.forEach((p, i) => {
     packed[i * 4] = p.x;
     packed[i * 4 + 1] = p.y;
-    packed[i * 4 + 2] = slopes[i];
+    packed[i * 4 + 2] = slopes[i]!;
   });
   const out: CurvePoint[] = [];
   for (let s = 0; s <= steps; s++) {
@@ -428,8 +430,8 @@ export function moveCurvePoint(
   y: number,
 ): CurvePoint[] {
   if (index < 0 || index >= points.length) return points.map((p) => ({ ...p }));
-  const lo = index > 0 ? points[index - 1].x + CURVE_MIN_SPACING : 0;
-  const hi = index < points.length - 1 ? points[index + 1].x - CURVE_MIN_SPACING : 1;
+  const lo = index > 0 ? points[index - 1]!.x + CURVE_MIN_SPACING : 0;
+  const hi = index < points.length - 1 ? points[index + 1]!.x - CURVE_MIN_SPACING : 1;
   return points.map((p, i) =>
     i === index ? { x: clamp(clamp01(x), lo, Math.max(lo, hi)), y: clamp01(y) } : { ...p },
   );
@@ -449,7 +451,7 @@ function sampleCurveAt(points: readonly CurvePoint[], x: number): number {
   points.forEach((p, i) => {
     packed[i * 4] = p.x;
     packed[i * 4 + 1] = p.y;
-    packed[i * 4 + 2] = slopes[i];
+    packed[i * 4 + 2] = slopes[i]!;
   });
   return evalPackedCurve(packed, 0, points.length, x);
 }

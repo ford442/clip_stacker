@@ -126,7 +126,7 @@ export class CanvasRenderer {
     for (let i = 0; i < clips.length; i++) {
       if (this.abortRequested) break;
 
-      const clip = clips[i];
+      const clip = clips[i]!;
       const duration = getClipDuration(clip);
 
       onProgress?.({

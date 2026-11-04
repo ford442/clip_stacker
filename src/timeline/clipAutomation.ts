@@ -194,8 +194,8 @@ export function collectAutomationBreakpoints(
   // Densify between consecutive keyframes when easing is non-linear.
   const step = 1 / Math.max(8, sampleHz);
   for (let i = 0; i < track.length - 1; i++) {
-    const a = track[i];
-    const b = track[i + 1];
+    const a = track[i]!;
+    const b = track[i + 1]!;
     const easing = a.easing;
     const needsDense =
       easing &&
@@ -262,7 +262,7 @@ export function scheduleAudioParamBreakpoints(
 
   // Ensure at least the starting level is set when all points were in the past.
   if (first) {
-    const last = breakpoints[breakpoints.length - 1];
+    const last = breakpoints[breakpoints.length - 1]!;
     param.setValueAtTime(last.value, startTime);
   }
 }
@@ -307,7 +307,7 @@ export function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
   let offset = headerSize;
   for (let i = 0; i < numFrames; i++) {
     for (let ch = 0; ch < numChannels; ch++) {
-      const sample = Math.max(-1, Math.min(1, channels[ch][i] ?? 0));
+      const sample = Math.max(-1, Math.min(1, channels[ch]![i] ?? 0));
       const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
       view.setInt16(offset, int16, true);
       offset += 2;

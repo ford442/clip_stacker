@@ -164,8 +164,8 @@ export async function encodeScheduleAudioStreaming(
   options: {
     cache?: ClipAudioCache;
     fullSchedule?: AudioScheduleEntry[];
-    limiter?: MasterLimiterSettings | null;
-    bus?: ExportAudioBus | null;
+    limiter?: MasterLimiterSettings | null | undefined;
+    bus?: ExportAudioBus | null | undefined;
   } = {},
 ): Promise<EncodedAacResult | null> {
   if (typeof OfflineAudioContext === 'undefined') return null;

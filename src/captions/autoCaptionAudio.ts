@@ -97,7 +97,7 @@ export function toWhisperPcm(buffer: AudioBuffer, targetRate = 16000): Float32Ar
   const mono = new Float32Array(inputLength);
   for (let ch = 0; ch < channels; ch++) {
     const data = buffer.getChannelData(ch);
-    for (let i = 0; i < inputLength; i++) mono[i] += data[i] / channels;
+    for (let i = 0; i < inputLength; i++) mono[i]! += data[i]! / channels;
   }
 
   if (Math.abs(buffer.sampleRate - targetRate) < 1) return mono;

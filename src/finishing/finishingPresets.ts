@@ -408,7 +408,7 @@ export function finishingPresetAgentBrief(): string {
     'Use "apply": "merge" to change only the listed passes, or "replace" (default) to set the whole stack.',
     '',
     'Example:',
-    presetDocumentToJson(BUILT_IN_FINISHING_PRESETS[1]),
+    presetDocumentToJson(BUILT_IN_FINISHING_PRESETS[1]!),
     'Schema:',
     JSON.stringify(finishingPresetJsonSchema(), null, 2),
   ].join('\n');

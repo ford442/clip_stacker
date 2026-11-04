@@ -57,13 +57,13 @@ export function parseCubeLut(text: string): LutData {
 
     const sizeMatch = line.match(/^LUT_3D_SIZE\s+(\d+)/i);
     if (sizeMatch) {
-      size = Number(sizeMatch[1]);
+      size = Number(sizeMatch[1]!);
       continue;
     }
 
     const parts = line.split(/\s+/).map(Number);
     if (parts.length < 3 || parts.some((n) => !Number.isFinite(n))) continue;
-    values.push(parts[0], parts[1], parts[2]);
+    values.push(parts[0]!, parts[1]!, parts[2]!);
   }
 
   if (size <= 1) {
@@ -86,9 +86,9 @@ export function lutDataToRgba8(lut: LutData): Uint8Array {
   const out = new Uint8Array(count * 4);
   for (let i = 0; i < count; i++) {
     const base = i * 3;
-    out[i * 4] = Math.round(clamp01(lut.data[base]) * 255);
-    out[i * 4 + 1] = Math.round(clamp01(lut.data[base + 1]) * 255);
-    out[i * 4 + 2] = Math.round(clamp01(lut.data[base + 2]) * 255);
+    out[i * 4] = Math.round(clamp01(lut.data[base]!) * 255);
+    out[i * 4 + 1] = Math.round(clamp01(lut.data[base + 1]!) * 255);
+    out[i * 4 + 2] = Math.round(clamp01(lut.data[base + 2]!) * 255);
     out[i * 4 + 3] = 255;
   }
   return out;

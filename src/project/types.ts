@@ -22,7 +22,7 @@ export interface RemoteUploadProgressEvent {
   status: 'uploading' | 'uploaded' | 'failed' | 'skipped';
   message?: string;
   /** Present when the active upload is using the chunked path. */
-  chunkIndex?: number;
+  chunkIndex?: number | undefined;
   chunkTotal?: number;
 }
 
@@ -67,7 +67,7 @@ export interface RemoteProjectLoadProgressEvent {
 }
 
 export interface ApplyProjectDataOptions {
-  onProgress?: (event: RemoteProjectLoadProgressEvent) => void;
+  onProgress?: ((event: RemoteProjectLoadProgressEvent) => void) | undefined;
   remoteProgressStart?: number;
   remoteProgressEnd?: number;
 }

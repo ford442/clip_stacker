@@ -113,7 +113,7 @@ export const whisperHttpCaptionProvider: CaptionProvider = {
     const response = await fetch(endpoint, {
       method: 'POST',
       body: form,
-      signal: options?.signal,
+      ...(options?.signal ? { signal: options.signal } : {}),
     });
     if (!response.ok) {
       throw new Error(`Transcription endpoint returned ${response.status} ${response.statusText}`);
