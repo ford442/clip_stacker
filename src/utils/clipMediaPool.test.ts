@@ -79,7 +79,7 @@ describe('ClipMediaPool', () => {
   it('pauseAll pauses every pooled decoder', () => {
     const pool = createPool();
     const video = pool.getVideo(makeClip('a'));
-    video.play();
+    void video.play();
     pool.pauseAll();
     expect(video.paused).toBe(true);
   });

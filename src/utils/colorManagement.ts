@@ -206,6 +206,17 @@ export function pqToNits(code: number): number {
 }
 
 /**
+ * Settings for a 2D canvas the export composes the frame and its text on.
+ * In Display P3 the GPU canvas is P3; a bare `getContext('2d')` is sRGB, so
+ * `drawImage` would convert the frame down to sRGB (gamut-clipping it and the
+ * text drawn over it) before the P3-tagged encode. The frame is opaque, so
+ * no alpha channel.
+ */
+export function exportCanvas2dSettings(outputColor: OutputColor): CanvasRenderingContext2DSettings {
+  return { colorSpace: outputColor === 'display-p3' ? 'display-p3' : 'srgb', alpha: false };
+}
+
+/**
  * Scene-linear channel (1 = {@link PQ_REFERENCE_WHITE_NITS}) → PQ code.
  */
 export function linearToPq(

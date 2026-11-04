@@ -230,9 +230,13 @@ export class TextFillRenderer {
       format: 'rgba8unorm',
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
     });
+    // Straight alpha on purpose (unlike the overlay blit): textFill.wgsl reads
+    // coverage as max(r, g, b) · a, which is coverage for a white glyph
+    // stored straight but coverage² if the upload premultiplied it. The
+    // shader writes premultiplied colour itself.
     this.device.queue.copyExternalImageToTexture(
       { source: mask as unknown as GPUCopyExternalImageSource },
-      { texture: this.maskTex },
+      { texture: this.maskTex, premultipliedAlpha: false },
       { width, height },
     );
 

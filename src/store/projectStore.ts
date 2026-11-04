@@ -42,8 +42,9 @@ export const projectStore = createStore<ProjectState>()((set) => ({
 
   setStorageEndpoint: (endpoint) => set({ storageEndpoint: endpoint }),
   setStorageAuthToken: (token) => {
-    writeStorageAuthToken(token);
+    // State first: persisting is best effort and must never block the edit.
     set({ storageAuthToken: token });
+    writeStorageAuthToken(token);
   },
 }));
 

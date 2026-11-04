@@ -16,6 +16,7 @@ import {
 } from '../utils/finishingPresets';
 import { editorStore } from './editorStore';
 import { settingsStore } from './settingsStore';
+import { STORAGE_KEYS, safeGet, safeSet } from '../utils/storageKeys';
 
 /**
  * User finishing presets — per browser, across projects (localStorage), never
@@ -23,7 +24,7 @@ import { settingsStore } from './settingsStore';
  * `editorStore.applyFinishing`, so the apply itself is one undo step.
  */
 
-export const FINISHING_PRESETS_STORAGE_KEY = 'clip_stacker.finishingPresets.v1';
+export const FINISHING_PRESETS_STORAGE_KEY = STORAGE_KEYS.finishingPresets.key;
 
 export interface UserFinishingPreset {
   id: string;
@@ -61,12 +62,7 @@ function newId(): string {
 }
 
 function loadPresets(): UserFinishingPreset[] {
-  let raw: string | null;
-  try {
-    raw = localStorage.getItem(FINISHING_PRESETS_STORAGE_KEY);
-  } catch {
-    return [];
-  }
+  const raw = safeGet('finishingPresets');
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw) as { presets?: unknown };
@@ -96,18 +92,14 @@ function loadPresets(): UserFinishingPreset[] {
 
 /** Persist; returns an error message (e.g. storage full) instead of throwing. */
 function persist(presets: UserFinishingPreset[]): string | null {
-  try {
-    localStorage.setItem(
-      FINISHING_PRESETS_STORAGE_KEY,
-      JSON.stringify({ version: FINISHING_PRESET_VERSION, presets }),
-    );
-    return null;
-  } catch (e) {
-    const name = (e as { name?: string })?.name ?? '';
-    return /quota/i.test(name) || /quota/i.test(String(e))
-      ? 'Browser storage is full — delete a preset (custom LUTs are large) and try again.'
-      : `Could not save presets: ${(e as Error)?.message ?? e}`;
-  }
+  const result = safeSet(
+    'finishingPresets',
+    JSON.stringify({ version: FINISHING_PRESET_VERSION, presets }),
+  );
+  if (result.ok) return null;
+  return result.reason === 'quota'
+    ? 'Browser storage is full — delete a preset (custom LUTs are large) and try again.'
+    : `Could not save presets: ${result.message}`;
 }
 
 export const finishingPresetStore = createStore<FinishingPresetState>(() => ({

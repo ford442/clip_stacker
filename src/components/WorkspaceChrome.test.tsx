@@ -121,7 +121,7 @@ describe('workspace chrome', () => {
 
     const rail = container.querySelector('.workspace-rail') as HTMLButtonElement;
     expect(rail.getAttribute('aria-expanded')).toBe('false');
-    act(() => rail.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    void act(() => rail.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(layoutStore.getState().libraryCollapsed).toBe(false);
     expect(container.querySelector('.workspace-rail')).toBeNull();
   });
@@ -148,7 +148,7 @@ describe('workspace chrome', () => {
     render();
     act(() => layoutStore.getState().setSideWidth('inspector', 420));
     const insp = splitter('Resize Inspector panel')!;
-    act(() => insp.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
+    void act(() => insp.dispatchEvent(new MouseEvent('dblclick', { bubbles: true })));
     expect(layoutStore.getState().inspectorWidth).toBe(DEFAULT_WORKSPACE_LAYOUT.inspectorWidth);
   });
 

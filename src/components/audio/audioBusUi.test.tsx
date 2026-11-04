@@ -23,7 +23,7 @@ function byLabel<T extends Element>(label: string): T {
 }
 
 function press(label: string) {
-  act(() => byLabel<HTMLButtonElement>(label).dispatchEvent(new MouseEvent('click', { bubbles: true })));
+  void act(() => byLabel<HTMLButtonElement>(label).dispatchEvent(new MouseEvent('click', { bubbles: true })));
 }
 
 function choose(select: HTMLSelectElement, value: string) {

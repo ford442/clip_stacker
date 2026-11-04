@@ -175,6 +175,7 @@ export async function encodeVideoWithWebCodecs(
           width,
           height,
           captionBurnIn,
+          outputColor,
         )
       : null;
 

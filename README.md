@@ -446,4 +446,4 @@ Chunked protocol (relative to the media endpoint):
 - `POST /upload/{uploadId}/complete` → `{ url }` (same response shape as the single-request path)
 - `GET /upload/{uploadId}/status` → `{ receivedChunks }` for resume
 
-In-flight `uploadId` + completed chunk indexes are stored in `localStorage` (key `clip_stacker_upload_sessions_v1`) so closing the tab or sleeping the laptop mid-upload resumes from the last confirmed chunk on the next save of the same file. Individual chunks retry up to 3 times before the clip-level retry UI appears. Abandoned server-side staging dirs are garbage-collected after 24 hours. Server max file size defaults to **10 GiB**.
+In-flight `uploadId` + completed chunk indexes are stored in `localStorage` (key `clip_stacker.uploadSessions.v1`; the older `clip_stacker_upload_sessions_v1` is still read and migrated) so closing the tab or sleeping the laptop mid-upload resumes from the last confirmed chunk on the next save of the same file. Individual chunks retry up to 3 times before the clip-level retry UI appears. Abandoned server-side staging dirs are garbage-collected after 24 hours. Server max file size defaults to **10 GiB**.

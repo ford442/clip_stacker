@@ -618,7 +618,9 @@ export function TimelineCompositorPreview({
                 globalTimeRef.current = next;
                 setPlayheadTime(next);
                 requestRender(next);
-                void audioPlayback.seek(next);
+                audioPlayback.seek(next).catch((err: unknown) => {
+                  console.warn('[preview] audio seek failed', err);
+                });
               }}
             />
           </label>

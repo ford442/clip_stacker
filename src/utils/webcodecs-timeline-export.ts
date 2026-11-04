@@ -12,6 +12,7 @@ import {
   ColorPipelineExportError,
   DEFAULT_COLOR_MANAGEMENT,
   HDR10_COLOR_SPACE,
+  exportCanvas2dSettings,
   type ColorManagementSettings,
 } from './colorManagement';
 import {
@@ -85,7 +86,7 @@ export async function encodeTimelineComposite(
     exportCanvas = document.createElement('canvas');
     exportCanvas.width = width;
     exportCanvas.height = height;
-    exportCtx = exportCanvas.getContext('2d');
+    exportCtx = exportCanvas.getContext('2d', exportCanvas2dSettings(colorManagement.outputColor));
     if (!exportCtx) throw new Error('Could not create export canvas');
   }
 

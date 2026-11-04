@@ -25,12 +25,18 @@ export function useTimelineAudioPlayback(
   useEffect(() => {
     const manager = getAudioPlaybackManager();
     managerRef.current = manager;
-    void manager.syncTimeline(clips, groups, transitions, tracks, masterBus);
+    manager.syncTimeline(clips, groups, transitions, tracks, masterBus).catch((err: unknown) => {
+      // A failed decode / schedule leaves the previous timeline playing; log it
+      // rather than surfacing an unhandled rejection on every edit.
+      console.warn('[audio] timeline sync failed', err);
+    });
   }, [clips, groups, transitions, tracks, masterBus]);
 
   useEffect(() => {
     return () => {
-      void disposeAudioPlaybackManager();
+      disposeAudioPlaybackManager().catch((err: unknown) => {
+        console.warn('[audio] playback manager dispose failed', err);
+      });
     };
   }, []);
 

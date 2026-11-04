@@ -40,6 +40,8 @@ bool Compressor::design(const double* row, double sample_rate, bool keep_state) 
 
 double Compressor::static_curve(double x_db) const {
   const double over = x_db - threshold_;
+  // Hard knee: the quadratic below would be 0 / 0 at the threshold itself.
+  if (!(knee_ > 0.0)) return over > 0.0 ? threshold_ + over / ratio_ : x_db;
   if (2.0 * over < -knee_) return x_db;
   if (2.0 * over > knee_) return threshold_ + over / ratio_;
   // Quadratic knee, centred on the threshold.

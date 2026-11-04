@@ -87,8 +87,13 @@ void Limiter::reset() {
 }
 
 void Limiter::process(const float* in, float* out) {
+  // A non-finite sample is silenced before detection: NaN compares false
+  // everywhere, so it would slip past the gain and the clamp below would turn
+  // it into DC at the ceiling (`std::min(ceiling, NaN)` is the ceiling).
+  float clean[2] = {0.f, 0.f};
+  for (int c = 0; c < channels_; ++c) clean[c] = std::isfinite(in[c]) ? in[c] : 0.f;
   float frame[2] = {0.f, 0.f};
-  const double peak = detector_.push(in, frame);
+  const double peak = detector_.push(clean, frame);
   const double need = peak > detect_ceiling_ ? detect_ceiling_ / peak : 1.0;
 
   const int window = lookahead_ + 1;
@@ -137,7 +142,7 @@ void Limiter::process(const float* in, float* out) {
   last_gain_ = gain;
   for (int c = 0; c < channels_; ++c) {
     const float y = oldest[c] * gain;
-    out[c] = std::max(-ceiling_, std::min(ceiling_, y));
+    out[c] = std::isfinite(y) ? std::max(-ceiling_, std::min(ceiling_, y)) : 0.f;
   }
 }
 

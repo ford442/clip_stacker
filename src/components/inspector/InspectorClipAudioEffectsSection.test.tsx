@@ -40,7 +40,7 @@ describe('InspectorClipAudioEffectsSection', () => {
     const onChange = vi.fn();
     render(<InspectorClipAudioEffectsSection clipId="a" effects={undefined} onChange={onChange} />);
     const add = Array.from(container.querySelectorAll('button')).find((b) => b.textContent?.includes('Add EQ band'))!;
-    act(() => add.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    void act(() => add.dispatchEvent(new MouseEvent('click', { bubbles: true })));
     expect(onChange).toHaveBeenCalledWith('a', { eq: [DEFAULT_EQ_BAND] });
 
     const effects: ClipAudioEffects = { eq: [DEFAULT_EQ_BAND] };
@@ -50,7 +50,7 @@ describe('InspectorClipAudioEffectsSection', () => {
     setRange(gain, '3');
     setRange(gain, '4.5');
     expect(onChange).not.toHaveBeenCalled();
-    act(() => vi.advanceTimersByTime(AUDIO_EFFECTS_COMMIT_DEBOUNCE_MS));
+    void act(() => vi.advanceTimersByTime(AUDIO_EFFECTS_COMMIT_DEBOUNCE_MS));
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith('a', { eq: [{ ...DEFAULT_EQ_BAND, gainDb: 4.5 }] });
   });

@@ -5,6 +5,7 @@ import {
   MAX_EMBED_FILE_BYTES,
   MAX_UPLOAD_RETRY_ATTEMPTS,
   ContaboStorageManagerClient,
+  createProjectSnapshot,
 } from "./project";
 import { createTestClip } from "./project.test.helpers";
 
@@ -20,7 +21,7 @@ describe("utils/project - serializeProjectWithMedia", () => {
       } as unknown as ContaboStorageManagerClient;
 
       await expect(
-        serializeProjectWithMedia([clip], [], [], [], {
+        serializeProjectWithMedia(createProjectSnapshot({ clips: [clip] }), {
           mediaMode: "remote",
           mediaClient,
           onRemoteUploadError: () => "retry",
@@ -43,7 +44,7 @@ describe("utils/project - serializeProjectWithMedia", () => {
         }),
       } as unknown as ContaboStorageManagerClient;
 
-      const project = await serializeProjectWithMedia([clip], [], [], [], {
+      const project = await serializeProjectWithMedia(createProjectSnapshot({ clips: [clip] }), {
         mediaMode: "remote",
         mediaClient,
         onRemoteUploadError: () => "retry",
@@ -62,7 +63,7 @@ describe("utils/project - serializeProjectWithMedia", () => {
         uploadMedia: vi.fn().mockResolvedValue("https://example.com/clip1.mp4"),
       } as unknown as ContaboStorageManagerClient;
 
-      const project = await serializeProjectWithMedia([clip], [], [], [], {
+      const project = await serializeProjectWithMedia(createProjectSnapshot({ clips: [clip] }), {
         mediaMode: "remote",
         mediaClient,
       });
@@ -91,7 +92,7 @@ describe("utils/project - serializeProjectWithMedia", () => {
       const clip = createTestClip("clip1", 5);
       const onEmbedWarning = vi.fn();
 
-      const project = await serializeProjectWithMedia([clip], [], [], [], {
+      const project = await serializeProjectWithMedia(createProjectSnapshot({ clips: [clip] }), {
         mediaMode: "embed",
         onEmbedWarning,
       });
@@ -105,7 +106,7 @@ describe("utils/project - serializeProjectWithMedia", () => {
       const clip = createLargeClip("clip1");
       const onEmbedWarning = vi.fn();
 
-      const project = await serializeProjectWithMedia([clip], [], [], [], {
+      const project = await serializeProjectWithMedia(createProjectSnapshot({ clips: [clip] }), {
         mediaMode: "embed",
         onEmbedWarning,
       });
@@ -122,7 +123,7 @@ describe("utils/project - serializeProjectWithMedia", () => {
         uploadMedia: vi.fn().mockResolvedValue("https://example.com/clip1.mp4"),
       } as unknown as ContaboStorageManagerClient;
 
-      const project = await serializeProjectWithMedia([clip], [], [], [], {
+      const project = await serializeProjectWithMedia(createProjectSnapshot({ clips: [clip] }), {
         mediaMode: "embed",
         mediaClient,
         onEmbedWarning,
@@ -142,7 +143,7 @@ describe("utils/project - serializeProjectWithMedia", () => {
     it("records mediaMode on the serialized project and clears the unused field", async () => {
       const clip = createTestClip("clip1", 5);
 
-      const embedded = await serializeProjectWithMedia([clip], [], [], [], {
+      const embedded = await serializeProjectWithMedia(createProjectSnapshot({ clips: [clip] }), {
         mediaMode: "embed",
       });
       expect(embedded.mediaMode).toBe("embed");
@@ -152,7 +153,7 @@ describe("utils/project - serializeProjectWithMedia", () => {
       const mediaClient = {
         uploadMedia: vi.fn().mockResolvedValue("https://example.com/clip1.mp4"),
       } as unknown as ContaboStorageManagerClient;
-      const remote = await serializeProjectWithMedia([clip], [], [], [], {
+      const remote = await serializeProjectWithMedia(createProjectSnapshot({ clips: [clip] }), {
         mediaMode: "remote",
         mediaClient,
       });

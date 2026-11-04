@@ -14,7 +14,9 @@ import { TARGET_FPS } from './webcodecs-codec';
 import {
   ColorPipelineExportError,
   HDR10_COLOR_SPACE,
+  exportCanvas2dSettings,
   isColorManagementActive,
+  type OutputColor,
 } from './colorManagement';
 
 export type GpuCompositorKind = 'auto' | 'webgpu' | 'canvas';
@@ -75,11 +77,12 @@ export class DecoderTextOverlayPass {
     private readonly targetWidth: number,
     private readonly targetHeight: number,
     private readonly captions: CaptionPlanOptions = {},
+    outputColor: OutputColor = 'rec709-sdr',
   ) {
     this.exportCanvas = document.createElement('canvas');
     this.exportCanvas.width = targetWidth;
     this.exportCanvas.height = targetHeight;
-    const ctx = this.exportCanvas.getContext('2d');
+    const ctx = this.exportCanvas.getContext('2d', exportCanvas2dSettings(outputColor));
     if (!ctx) throw new Error('Could not create text overlay export canvas');
     this.exportCtx = ctx;
   }

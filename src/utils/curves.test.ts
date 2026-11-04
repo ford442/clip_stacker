@@ -27,7 +27,7 @@ import {
   isFinishingActive,
   normalizeFinishingSettings,
 } from './finishing';
-import { applyProjectData, serializeProject } from './project';
+import { createProjectSnapshot, applyProjectData, serializeProject } from './project';
 import { createTestClip } from './project.test.helpers';
 
 const on = (over: Partial<CurvesSettings> = {}): CurvesSettings => ({
@@ -103,10 +103,10 @@ describe('curves settings', () => {
       levels: { inBlack: 0.05, inWhite: 0.9, gamma: 1.2, outBlack: 0.02, outWhite: 0.98 },
       curves: { ...identityCurves(), master: S_CURVE, blue: CURVE_PRESETS[3].points },
     });
-    const serialized = serializeProject(sourceClips, [], [], [], {
+    const serialized = serializeProject(createProjectSnapshot({ clips: sourceClips, finishing: {
       ...DEFAULT_FINISHING,
       curves,
-    });
+    } }));
     const json = JSON.parse(JSON.stringify(serialized)) as Project;
     const project: Project = {
       clips: [

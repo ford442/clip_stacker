@@ -302,7 +302,7 @@ export function StorageRow({
                   disabled={isRemoteLoading || isRemoteSaving}
                   onClick={(e) => {
                     e.stopPropagation();
-                    handleDelete(p.name);
+                    void handleDelete(p.name);
                   }}
                   title="Delete project"
                 >

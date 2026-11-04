@@ -1,21 +1,14 @@
-import type { MasterBusSettings } from './audioBus';
-import type { ColorManagementSettings } from './colorManagement';
 import type {
-  CaptionEntry,
-  Clip,
-  ClipGroup,
-  ClipTransition,
   ExportSettings,
   Project,
   SerializedClip,
-  TextOverlay,
-  TextOverlayStyle,
-  Track,
 } from '../types';
-import { serializeProject } from './project';
+import { serializeProject } from './project/serialize';
+import type { ProjectSnapshot } from './project/snapshot';
+import { STORAGE_KEYS, safeGet, safeRemove, safeSet } from './storageKeys';
 
 /** localStorage key for the autosaved project JSON payload. */
-export const AUTO_SAVE_STORAGE_KEY = 'clip_stacker_autosave_v1';
+export const AUTO_SAVE_STORAGE_KEY = STORAGE_KEYS.autoSave.key;
 
 /** Target budget for autosave payload (metadata + selective embeds). */
 export const AUTO_SAVE_MAX_TOTAL_BYTES = 4 * 1024 * 1024;
@@ -84,31 +77,28 @@ function countUnrecoverableLocalClips(clips: SerializedClip[]): number {
   ).length;
 }
 
-/** Build a restorable project, preferring metadata + URLs and embedding only small local files. */
+export interface AutoSaveProjectOptions {
+  embedBudgetBytes?: number;
+  maxClipBytes?: number;
+  forceMetadataOnly?: boolean;
+}
+
+/**
+ * Build a restorable project, preferring metadata + URLs and embedding only
+ * small local files. Clips are embedded first, then the master track with
+ * what is left of the budget (a master track that matches a clip by name is
+ * restored from that clip and needs no copy).
+ */
 export async function buildAutoSaveProject(
-  clips: Clip[],
-  transitions: ClipTransition[],
-  textOverlays: TextOverlay[],
-  clipGroups: ClipGroup[],
-  tracks: Track[] = [],
-  options: {
-    embedBudgetBytes?: number;
-    maxClipBytes?: number;
-    forceMetadataOnly?: boolean;
-    colorManagement?: ColorManagementSettings;
-    masterBus?: MasterBusSettings;
-  } = {},
-  captions: CaptionEntry[] = [],
-  captionStyle: Partial<TextOverlayStyle> = {},
+  snapshot: ProjectSnapshot,
+  options: AutoSaveProjectOptions = {},
 ): Promise<Project> {
   const embedBudgetBytes = options.embedBudgetBytes ?? AUTO_SAVE_MAX_TOTAL_BYTES;
   const maxClipBytes = options.maxClipBytes ?? AUTO_SAVE_MAX_CLIP_BYTES;
   const forceMetadataOnly = options.forceMetadataOnly ?? false;
+  const { clips, masterAudio } = snapshot;
 
-  const project = serializeProject(
-    clips, transitions, textOverlays, clipGroups, undefined, tracks,
-    undefined, null, captions, captionStyle, options.colorManagement, options.masterBus,
-  );
+  const project = serializeProject(snapshot);
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));
   let embedBudgetRemaining = embedBudgetBytes;
   let usedEmbed = false;
@@ -154,13 +144,38 @@ export async function buildAutoSaveProject(
     enrichedClips.push(updated);
   }
 
+  let savedMaster = project.masterAudio;
+  if (
+    savedMaster &&
+    masterAudio &&
+    !forceMetadataOnly &&
+    !clips.some((clip) => clip.file.name === masterAudio.fileName) &&
+    masterAudio.file.size <= maxClipBytes &&
+    embedBudgetRemaining >= masterAudio.file.size
+  ) {
+    try {
+      const dataUrl = await readFileAsDataUrl(masterAudio.file);
+      if (estimateDataUrlBytes(dataUrl) <= embedBudgetRemaining) {
+        savedMaster = { ...savedMaster, sourceMediaDataUrl: dataUrl };
+        usedEmbed = true;
+      }
+    } catch {
+      /* metadata-only master track: recovery restores its markers and tempo */
+    }
+  }
+
   const mediaMode: Project['mediaMode'] = usedEmbed
     ? 'embed'
     : usedRemote
       ? 'remote'
       : 'metadata';
 
-  return { ...project, clips: enrichedClips, mediaMode };
+  return {
+    ...project,
+    clips: enrichedClips,
+    ...(savedMaster ? { masterAudio: savedMaster } : {}),
+    mediaMode,
+  };
 }
 
 export function buildAutoSaveSession(
@@ -177,11 +192,16 @@ export function buildAutoSaveSession(
   };
 }
 
+/** Same rule as `projectSnapshotHasContent`, on the saved form. */
 export function sessionHasRecoverableWork(session: AutoSaveSession): boolean {
+  const { project } = session;
   return (
-    session.project.clips.length > 0 ||
-    (session.project.textOverlays?.length ?? 0) > 0 ||
-    (session.project.transitions?.length ?? 0) > 0
+    project.clips.length > 0 ||
+    (project.textOverlays?.length ?? 0) > 0 ||
+    (project.transitions?.length ?? 0) > 0 ||
+    (project.captions?.length ?? 0) > 0 ||
+    project.masterAudio != null ||
+    (project.masterAudioMarkers?.length ?? 0) > 0
   );
 }
 
@@ -200,7 +220,7 @@ export function buildAutoSaveOffer(session: AutoSaveSession): AutoSaveOffer {
 
 export function readAutoSaveSession(): AutoSaveSession | null {
   try {
-    const raw = localStorage.getItem(AUTO_SAVE_STORAGE_KEY);
+    const raw = safeGet('autoSave');
     if (!raw) return null;
     const parsed = JSON.parse(raw) as AutoSaveSession;
     if (parsed?.version !== 1 || !parsed.project || !Array.isArray(parsed.project.clips)) {
@@ -220,50 +240,32 @@ export function readAutoSaveOffer(): AutoSaveOffer | null {
 
 export function writeAutoSaveSession(session: AutoSaveSession): AutoSavePersistResult {
   const payload = JSON.stringify(session);
-  try {
-    localStorage.setItem(AUTO_SAVE_STORAGE_KEY, payload);
-    return {
-      ok: true,
-      mode: session.project.mediaMode ?? 'metadata',
-      bytes: payload.length,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const isQuota =
-      error instanceof DOMException &&
-      (error.name === 'QuotaExceededError' || error.code === 22);
-    return {
-      ok: false,
-      mode: session.project.mediaMode ?? 'metadata',
-      bytes: payload.length,
-      reason: isQuota ? 'quota' : message,
-    };
-  }
+  const result = safeSet('autoSave', payload);
+  return {
+    ok: result.ok,
+    mode: session.project.mediaMode ?? 'metadata',
+    bytes: payload.length,
+    ...(result.ok ? {} : { reason: result.reason === 'quota' ? 'quota' : result.message }),
+  };
 }
 
+/** Best effort: a blocked storage has nothing to clear. Never throws. */
 export function clearAutoSave(): void {
-  localStorage.removeItem(AUTO_SAVE_STORAGE_KEY);
+  safeRemove('autoSave');
 }
 
+/**
+ * What a save would write, as a string to compare against the last save.
+ * Built from the same snapshot as the save itself, so any edit that changes
+ * the saved project (a grade alone included) changes the hash.
+ */
 export function hashAutoSaveState(
-  clips: Clip[],
-  transitions: ClipTransition[],
-  textOverlays: TextOverlay[],
-  clipGroups: ClipGroup[],
+  snapshot: ProjectSnapshot,
   selectedClipId: string | null,
   exportSettings: ExportSettings,
-  tracks: Track[] = [],
-  captions: CaptionEntry[] = [],
-  captionStyle: Partial<TextOverlayStyle> = {},
-  colorManagement?: ColorManagementSettings,
-  masterBus?: MasterBusSettings,
 ): string {
-  const project = serializeProject(
-    clips, transitions, textOverlays, clipGroups, undefined, tracks,
-    undefined, null, captions, captionStyle, colorManagement, masterBus,
-  );
   return JSON.stringify({
-    project,
+    project: serializeProject(snapshot),
     selectedClipId,
     exportSettings,
   });

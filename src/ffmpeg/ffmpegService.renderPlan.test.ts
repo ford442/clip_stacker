@@ -260,7 +260,7 @@ describe("calculateRenderPlan", () => {
         chromaKey: { color: '#00ff00', similarity: 0.4, blend: 0.1 },
       });
       // A keyed clip demotes the canvas estimate to GPU/FFmpeg (see the
-      // 'canvas' branch of estimateEncoderIntent), so 'unsupported' should
+      // canvas branch of selectEncoderPath), so 'unsupported' should
       // never appear on a pre-render estimate — only after the fact, if the
       // caller ignores the estimate and runs canvas anyway.
       const plan = calculateRenderPlan([keyedClip], [], [], DEFAULT_EXPORT_SETTINGS, {

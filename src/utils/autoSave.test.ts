@@ -11,7 +11,7 @@ import {
   sessionHasRecoverableWork,
   writeAutoSaveSession,
 } from './autoSave';
-import { serializeProject } from './project';
+import { createProjectSnapshot, serializeProject } from './project';
 
 function makeClip(id: string, size = 32): Clip {
   const file = new File([new Uint8Array(size)], `${id}.mp4`, { type: 'video/mp4' });
@@ -42,7 +42,7 @@ describe('autoSave', () => {
 
   it('embeds small local clips within the autosave budget', async () => {
     const clips = [makeClip('a', 64)];
-    const project = await buildAutoSaveProject(clips, [], [], []);
+    const project = await buildAutoSaveProject(createProjectSnapshot({ clips }));
 
     expect(project.mediaMode).toBe('embed');
     expect(project.clips[0].sourceMediaDataUrl).toMatch(/^data:video\/mp4;base64,/);
@@ -53,7 +53,7 @@ describe('autoSave', () => {
       ...makeClip('remote'),
       remoteSourceUrl: 'https://example.com/clip.mp4',
     };
-    const project = await buildAutoSaveProject([clip], [], [], []);
+    const project = await buildAutoSaveProject(createProjectSnapshot({ clips: [clip] }));
 
     expect(project.mediaMode).toBe('remote');
     expect(project.clips[0].sourceMediaUrl).toBe('https://example.com/clip.mp4');
@@ -62,7 +62,7 @@ describe('autoSave', () => {
 
   it('falls back to metadata-only when forceMetadataOnly is set', async () => {
     const clips = [makeClip('meta', 64)];
-    const project = await buildAutoSaveProject(clips, [], [], [], [], {
+    const project = await buildAutoSaveProject(createProjectSnapshot({ clips }), {
       forceMetadataOnly: true,
     });
 
@@ -72,7 +72,7 @@ describe('autoSave', () => {
 
   it('writes and reads autosave sessions from localStorage', () => {
     const clips = [makeClip('a')];
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     const session = buildAutoSaveSession(project, 'a', DEFAULT_EXPORT_SETTINGS);
 
     const result = writeAutoSaveSession(session);
@@ -85,7 +85,7 @@ describe('autoSave', () => {
 
   it('builds a recovery offer for non-empty sessions', () => {
     const clips = [makeClip('a'), makeClip('b')];
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     const session = buildAutoSaveSession(project, null, DEFAULT_EXPORT_SETTINGS);
     writeAutoSaveSession(session);
 
@@ -95,7 +95,7 @@ describe('autoSave', () => {
   });
 
   it('clears autosave storage', () => {
-    const session = buildAutoSaveSession(serializeProject([makeClip('a')], [], [], []), null, DEFAULT_EXPORT_SETTINGS);
+    const session = buildAutoSaveSession(serializeProject(createProjectSnapshot({ clips: [makeClip('a')] })), null, DEFAULT_EXPORT_SETTINGS);
     writeAutoSaveSession(session);
     clearAutoSave();
     expect(localStorage.getItem(AUTO_SAVE_STORAGE_KEY)).toBeNull();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MasterAudio } from '../types';
-import { applyProjectData, serializeProject } from './project';
+import { createProjectSnapshot, applyProjectData, serializeProject } from './project';
 import { createTestClip } from './project.test.helpers';
 
 function makeMasterAudio(overrides: Partial<MasterAudio> = {}): MasterAudio {
@@ -23,7 +23,7 @@ describe('project tempo metadata roundtrip', () => {
     clip.bpmConfidence = 0.82;
     clip.bpmOverride = 128;
 
-    const serialized = serializeProject([clip], [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips: [clip] }));
     expect(serialized.clips[0].bpmOverride).toBe(128);
     expect(serialized.clips[0].bpmConfidence).toBe(0.82);
 
@@ -35,7 +35,7 @@ describe('project tempo metadata roundtrip', () => {
   });
 
   it('omits the tempo fields when the clip has none', () => {
-    const serialized = serializeProject([createTestClip('a', 5)], [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips: [createTestClip('a', 5)] }));
     expect(serialized.clips[0]).not.toHaveProperty('bpmOverride');
     expect(serialized.clips[0]).not.toHaveProperty('bpmConfidence');
   });
@@ -49,16 +49,7 @@ describe('project tempo metadata roundtrip', () => {
       startTime: 2,
     });
 
-    const serialized = serializeProject(
-      [clip],
-      [],
-      [],
-      [],
-      undefined,
-      [],
-      undefined,
-      masterAudio,
-    );
+    const serialized = serializeProject(createProjectSnapshot({ clips: [clip], masterAudio }));
     expect(serialized.masterAudio?.beatTimestamps).toEqual([0, 0.5, 1, 1.5]);
     expect(serialized.masterAudio?.bpmEstimate).toBe(120);
 
@@ -73,16 +64,7 @@ describe('project tempo metadata roundtrip', () => {
 
   it('leaves master audio without tempo when the project has none', async () => {
     const clip = createTestClip('a', 5);
-    const serialized = serializeProject(
-      [clip],
-      [],
-      [],
-      [],
-      undefined,
-      [],
-      undefined,
-      makeMasterAudio(),
-    );
+    const serialized = serializeProject(createProjectSnapshot({ clips: [clip], masterAudio: makeMasterAudio() }));
     serialized.masterAudio!.sourceMediaDataUrl = 'data:audio/mpeg;base64,';
     const restored = await applyProjectData(serialized, [clip]);
     expect(restored.masterAudio).not.toBeNull();

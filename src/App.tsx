@@ -91,16 +91,7 @@ export function App() {
     isRecovering,
     handleRecover,
     handleDiscardRecovery,
-  } = useAutoSave({
-    clips,
-    tracks,
-    clipGroups,
-    transitions,
-    textOverlays,
-    selectedClipId,
-    resetHistory,
-    enabled: true, // We don't have isRendering easily here anymore, but AutoSave has its own debounce
-  });
+  } = useAutoSave({ resetHistory });
 
   const toolbarRef = useRef<{ triggerLoadDialog: () => void }>(null!);
   // Speed (and every other clip edit) replaces `clips`. Re-running the

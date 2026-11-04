@@ -17,12 +17,16 @@
 //
 // Until the module is ready, and if it ever fails, the processor passes the
 // summed lanes through dry and says so; the main thread shows the
-// "FX not previewed" badge.
+// "FX not previewed" badge. "Fails" includes a trap inside the module: an
+// exception escaping `process` would raise `processorerror` and silence the
+// node for good, so every call into the module is guarded and a trap
+// retires the instance (its state is undefined afterwards).
 
 const QUANTUM = 128;
 const METER_INTERVAL_FRAMES = 4800;
 /** `MIX_METER_LANE_GR` in audio_mix.h: where the per-lane readouts start. */
 const METER_LANE_BASE = 7;
+const CS_OK = 0;
 const CS_ESTATE = -3;
 
 class BusFxProcessor extends AudioWorkletProcessor {
@@ -45,7 +49,7 @@ class BusFxProcessor extends AudioWorkletProcessor {
     this.port.onmessage = (event) => this.onMessage(event.data);
     const imports = { env: { emscripten_notify_memory_growth() {} } };
     WebAssembly.instantiate(opts.module, imports).then(
-      (instance) => this.onInstance(instance),
+      (instance) => this.guarded('init', () => this.onInstance(instance)),
       (err) => this.fail(`instantiate: ${err && err.message ? err.message : err}`),
     );
   }
@@ -65,8 +69,19 @@ class BusFxProcessor extends AudioWorkletProcessor {
   }
 
   fail(message) {
+    if (this.failed) return;
     this.failed = true;
     this.port.postMessage({ type: 'error', message });
+  }
+
+  /** Run `fn` against the module; a trap fails the processor instead of escaping. */
+  guarded(what, fn) {
+    try {
+      return fn();
+    } catch (err) {
+      this.fail(`${what}: ${err && err.message ? err.message : err}`);
+      return undefined;
+    }
   }
 
   views() {
@@ -99,13 +114,23 @@ class BusFxProcessor extends AudioWorkletProcessor {
   applyLayout(layout) {
     this.layout = layout;
     if (!this.exports || this.failed) return;
+    this.guarded('layout', () => this.applyLayoutUnguarded(layout));
+  }
+
+  applyLayoutUnguarded(layout) {
     const ex = this.exports;
+    // The heap holds exactly `this.lanes` lane blocks (the node's inputs); a
+    // layout naming more would make the graph read past them.
+    const laneCount = layout.buses.length / 2;
+    if (laneCount !== this.lanes) {
+      this.fail(`layout has ${laneCount} lane buses, node has ${this.lanes}`);
+      return;
+    }
     const staged = this.stage(layout);
     if (!staged) {
       this.fail('out of memory');
       return;
     }
-    const laneCount = layout.buses.length / 2;
     const args = [
       staged.effectsPtr,
       staged.effectCount,
@@ -117,7 +142,16 @@ class BusFxProcessor extends AudioWorkletProcessor {
       layout.finalFirst,
       layout.finalCount,
     ];
-    if (this.graph && ex.bus_graph_update(this.graph, ...args) !== CS_ESTATE) return;
+    if (this.graph) {
+      const status = ex.bus_graph_update(this.graph, ...args);
+      if (status === CS_OK) return;
+      // ESTATE = the structure changed: build a new graph below. Anything
+      // else (EINVAL, ERANGE, …) means the preview can no longer match.
+      if (status !== CS_ESTATE) {
+        this.fail(`bus graph rejected the layout update (status ${status})`);
+        return;
+      }
+    }
     const next = ex.bus_graph_create(sampleRate, 2, ...args, layout.flags);
     if (!next) {
       this.fail('bus graph rejected the layout');
@@ -132,10 +166,10 @@ class BusFxProcessor extends AudioWorkletProcessor {
     if (!message || typeof message !== 'object') return;
     if (message.type === 'layout') {
       this.applyLayout(message.layout);
-    } else if (message.type === 'reset' && this.graph) {
-      this.exports.bus_graph_reset(this.graph);
-    } else if (message.type === 'resetMeter' && this.graph) {
-      this.exports.bus_graph_reset_meter(this.graph);
+    } else if (message.type === 'reset' && this.graph && !this.failed) {
+      this.guarded('reset', () => this.exports.bus_graph_reset(this.graph));
+    } else if (message.type === 'resetMeter' && this.graph && !this.failed) {
+      this.guarded('resetMeter', () => this.exports.bus_graph_reset_meter(this.graph));
     }
   }
 
@@ -147,6 +181,14 @@ class BusFxProcessor extends AudioWorkletProcessor {
       passThrough(inputs, output, frames);
       return true;
     }
+    const wet = this.guarded('process', () => this.processWet(inputs, output, frames));
+    // A trap or a refused block: dry this quantum (and every later one).
+    if (wet !== true) passThrough(inputs, output, frames);
+    return true;
+  }
+
+  /** True once `output` holds the graph's output; false when the graph refused the block. */
+  processWet(inputs, output, frames) {
     const heap = this.views();
     const lanes = this.lanes;
     for (let l = 0; l <= lanes; l++) {
@@ -163,7 +205,11 @@ class BusFxProcessor extends AudioWorkletProcessor {
         heap[base + 2 * i + 1] = right[i];
       }
     }
-    this.exports.bus_graph_process(this.graph, this.lanePtr, this.outPtr, frames);
+    const status = this.exports.bus_graph_process(this.graph, this.lanePtr, this.outPtr, frames);
+    if (status !== CS_OK) {
+      this.fail(`bus graph process failed (status ${status})`);
+      return false;
+    }
     const out = this.views();
     const o = this.outPtr >> 2;
     const left = output[0];

@@ -30,12 +30,10 @@ import {
 import { secondaryHasWindowGrades } from "../utils/secondaryColor";
 import { isStabilizationActive } from "../utils/stabilization";
 import { resolveLayerKey } from "../utils/overlayKey";
-import {
-  canUseGpuVideoEncoder,
-  hasActiveTransitions,
-  pictureTransformPlanFields,
-} from "../utils/renderEligibility";
+import { pictureTransformPlanFields } from "../utils/renderEligibility";
 import { clipHasPictureTransform } from "../utils/animatedLayout";
+import { selectEncoderPath } from "../utils/encoderPath";
+import type { OutputColor } from "../utils/colorManagement";
 import {
   isFfmpegLoadFailed,
   isFfmpegLoading,
@@ -103,44 +101,15 @@ export interface RenderPlanContext {
   useCanvasRenderer?: boolean;
   /** Result of `isWebGpuExportAvailable()` — undefined means "not probed yet". */
   webGpuAvailable?: boolean;
+  /** Result of `isWebCodecsAvailable(w, h)` — undefined: assumed iff WebGPU is. */
+  webCodecsAvailable?: boolean;
+  /** MediaRecorder exists — undefined: assumed. */
+  mediaRecorderAvailable?: boolean;
+  /** Export setting "Force re-encode". */
+  forceReencode?: boolean;
+  /** Requested output colour (HDR10 + text is refused, see `hdr10TextRefusal`). */
+  outputColor?: OutputColor;
   captionMode?: 'none' | 'burn' | 'soft';
-}
-
-/**
- * Mirrors the encoder selection in `utils/hybrid-encoder.ts` (`hybridMergeClips`)
- * closely enough to predict, before encoding starts, which path it will pick.
- * Kept intentionally conservative: anything this can't be sure about falls
- * through to `'ffmpeg'`, same as the runtime fallback.
- */
-function estimateEncoderIntent(
-  clips: Clip[],
-  transitions: ClipTransition[],
-  textOverlays: TextOverlay[],
-  context: RenderPlanContext,
-): RenderPlan['encoderIntent'] {
-  const { forceFFmpeg = false, useCanvasRenderer = false, webGpuAvailable, finishing } = context;
-
-  if (useCanvasRenderer) {
-    // Mirrors hybridMergeClips's canvas-compatibility guard: Canvas2D has no
-    // keying, transition, PiP, or finishing pass, so those demote it to the
-    // GPU/FFmpeg estimate below instead of silently dropping them.
-    const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
-    const hasPipClip = clips.some((clip) => (clip.layerIndex ?? 0) > 0 || clipHasPictureTransform(clip));
-    if (!hasKeyedClip && !hasPipClip && !hasActiveTransitions(transitions) && !isFinishingActive(finishing)) {
-      return 'canvas';
-    }
-  }
-
-  if (forceFFmpeg) return 'ffmpeg';
-
-  const gpuEligible = canUseGpuVideoEncoder(clips, transitions, textOverlays, {
-    forceFFmpeg,
-    useCanvas: false,
-    webGpuAvailable,
-    finishing,
-  });
-  if (gpuEligible && webGpuAvailable) return 'webcodecs';
-  return 'ffmpeg';
 }
 
 export function calculateRenderPlan(
@@ -153,7 +122,25 @@ export function calculateRenderPlan(
   const plan = computeRenderPlanPath(clips, transitions, textOverlays, settings);
   const shaderOverlays = textOverlays.filter((o) => o.fill === "shader");
 
-  const encoderIntent = estimateEncoderIntent(clips, transitions, textOverlays, context);
+  // The same decision `hybridMergeClips` makes, minus its runtime probes.
+  const decision = selectEncoderPath({
+    clips,
+    transitions,
+    textOverlays,
+    finishing: context.finishing,
+    forceFFmpeg: context.forceFFmpeg,
+    useCanvas: context.useCanvasRenderer,
+    webGpuAvailable: context.webGpuAvailable,
+    webCodecsAvailable: context.webCodecsAvailable,
+    mediaRecorderAvailable: context.mediaRecorderAvailable,
+    willReencode:
+      plan.willReencode ||
+      context.forceReencode === true ||
+      clipsNeedResolutionNormalization(clips, settings),
+    outputColor: context.outputColor,
+    burnCaptions: context.captionMode === 'burn',
+  });
+  const encoderIntent = decision.path;
   const finishingActive = isFinishingActive(context.finishing);
   const stabilizeActive = clips.some((clip) => isStabilizationActive(clip));
   const hasKeyedClip = clips.some((clip) => resolveLayerKey(clip) !== null);
@@ -192,6 +179,8 @@ export function calculateRenderPlan(
       ? { shaderTextOverlays: shaderOverlays.map((o) => ({ id: o.id, text: o.text })) }
       : {}),
     encoderIntent,
+    encoderReasons: decision.reasons,
+    ...(decision.refusal ? { refusal: decision.refusal } : {}),
     finishingActive,
     stabilizeActive,
     ...(overlayKeying ? { overlayKeying } : {}),

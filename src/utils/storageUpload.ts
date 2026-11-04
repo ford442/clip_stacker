@@ -12,6 +12,8 @@
  * confirmed chunk.
  */
 
+import { STORAGE_KEYS, safeGet, safeSet, storageArea } from './storageKeys';
+
 /** Default chunk size requested from the server (5 MiB). */
 export const DEFAULT_CHUNK_SIZE = 5_242_880;
 
@@ -25,7 +27,7 @@ export const CHUNK_THRESHOLD_BYTES = 10 * 1024 * 1024;
 export const CHUNK_MAX_ATTEMPTS = 3;
 
 /** localStorage key for in-flight upload session metadata. */
-export const UPLOAD_SESSION_STORAGE_KEY = 'clip_stacker_upload_sessions_v1';
+export const UPLOAD_SESSION_STORAGE_KEY = STORAGE_KEYS.uploadSessions.key;
 
 /** Drop persisted sessions older than this (matches server 24 h TTL). */
 export const UPLOAD_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
@@ -84,12 +86,8 @@ interface SessionStore {
 }
 
 function defaultStorage(): UploadSessionStorage | null {
-  try {
-    if (typeof localStorage === 'undefined') return null;
-    return localStorage;
-  } catch {
-    return null;
-  }
+  // Browser storage always has removeItem; only fakes may omit it.
+  return storageArea('local') as UploadSessionStorage | null;
 }
 
 /** Stable fingerprint for resume matching (name + size + lastModified when available). */
@@ -104,7 +102,7 @@ export function loadUploadSessionStore(
 ): SessionStore {
   if (!storage) return { version: 1, sessions: [] };
   try {
-    const raw = storage.getItem(UPLOAD_SESSION_STORAGE_KEY);
+    const raw = safeGet('uploadSessions', { storage });
     if (!raw) return { version: 1, sessions: [] };
     const parsed = JSON.parse(raw) as SessionStore;
     if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.sessions)) {
@@ -125,11 +123,8 @@ function persistSessionStore(
   storage: UploadSessionStorage | null,
 ): void {
   if (!storage) return;
-  try {
-    storage.setItem(UPLOAD_SESSION_STORAGE_KEY, JSON.stringify(store));
-  } catch {
-    // Quota / private mode — resume will be best-effort for this tab only.
-  }
+  // Quota / private mode — resume will be best-effort for this tab only.
+  safeSet('uploadSessions', JSON.stringify(store), { storage });
 }
 
 export function findUploadSession(

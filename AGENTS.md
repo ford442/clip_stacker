@@ -445,10 +445,44 @@ the input unchanged.
 
 The **remote concat** ("GPU stitch", `handleGpuStitch`) sends trimmed clips to
 the HuggingFace space for a resolution-normalize + concat; there is no
-compositor on the other end. It refuses to run (with a status message) when
-the timeline needs one — transitions, overlay lanes, finishing, keys,
-captions, text overlays or lane mute (`remoteConcatDroppedFeatures`) — so it
-only ever handles a plain base-lane concat; use Render for everything else.
+compositor on the other end. Eligibility is an **allow-list**
+(`remoteConcatBlockers` in `renderEligibility.ts`): only plain base-lane
+video clips (no fades, volume, speed, loop, reverse, stabilization, picture
+transform, keyframes, key, opacity, inserts, still image or lane mute), no
+transitions, finishing, captions, text overlays or master audio, and
+`timelineNeedsAudioPremix` false. A new clip feature is refused until it is
+added there on purpose. Anything else
+refuses with a status message naming what it has; use Render for that. A clip
+trimmed at the start is re-encoded (`buildTrimmedClipArgs`), because `-ss`
+before `-i` with `-c copy` snaps to the previous keyframe.
+
+### Encoder routing
+
+`selectEncoderPath` (`src/utils/encoderPath.ts`, pure) is the one decision
+for canvas → WebCodecs → FFmpeg. `calculateRenderPlan` (the estimate) and
+`hybridMergeClips` (the router) both call it; the estimate leaves the runtime
+probes undefined. It returns `reasons` (`RenderPlan.encoderReasons`, Copy
+Debug) and a `refusal` when the file would be wrong (HDR10 with text
+overlays or burned-in captions — the PQ readback precedes the 2D text pass).
+`encoderPath.test.ts` table-tests that the estimate and the router agree; add
+a row there for any new routing rule.
+
+## Persistence (project snapshot, browser storage)
+
+- `selectProjectSnapshot(editor, settings)` (`utils/project/snapshot.ts`) is
+  the one definition of what a project contains (clips, tracks, transitions,
+  text, captions, master audio + markers, master bus, finishing, colour
+  management). Manual save, remote save, autosave and the autosave hash all
+  serialize it with `serializeProject(snapshot, options)`, and recovery
+  restores every field. Add a project field to the snapshot, not to a call
+  site; `projectSnapshotHasContent` decides whether there is anything to keep.
+- `src/utils/storageKeys.ts` owns every `localStorage` / `sessionStorage` key
+  (`clip_stacker.<name>.v1`; renamed keys keep their old name in `legacy`,
+  read once and migrated). Use `safeGet` / `safeSet` / `safeRemove` — they
+  never throw when storage is blocked or full (`safeSet` reports `quota`). A
+  test fails if any other module touches storage directly.
+- `RootErrorBoundary` (`main.tsx`) replaces a crashed tree with Reload /
+  recover-from-autosave, Copy Debug and Try again.
 
 ## Captions / subtitles
 

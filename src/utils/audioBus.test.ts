@@ -13,7 +13,7 @@ import {
   normalizeMasterBus,
   type BusEffect,
 } from './audioBus';
-import { serializeProject, applyProjectData } from './project';
+import { createProjectSnapshot, serializeProject, applyProjectData } from './project';
 import { createTestClip } from './project.test.helpers';
 import type { Track } from '../types';
 
@@ -103,7 +103,7 @@ describe('audioBus: project round-trip', () => {
   it('saves and restores lane FX, ducks and the master bus', async () => {
     const clips = [createTestClip('a', 4, 'A')];
     const masterBus = { fx: [createBusEffect('limiter')], loudness: { targetLufs: -16, truePeakDb: -1.5 } };
-    const project = serializeProject(clips, [], [], [], undefined, tracks(), undefined, null, [], {}, undefined, masterBus);
+    const project = serializeProject(createProjectSnapshot({ clips, tracks: tracks(), masterBus }));
     const restored = await applyProjectData(JSON.parse(JSON.stringify(project)), clips);
     const byId = new Map(restored.tracks.map((t) => [t.id, t]));
     expect(byId.get('v1')!.audioFx).toEqual(tracks()[0]!.audioFx!.map((e) => ({ ...e, id: expect.any(String) })));
@@ -116,7 +116,7 @@ describe('audioBus: project round-trip', () => {
   it('omits every bus field for projects that never used them', async () => {
     const clips = [createTestClip('a', 4, 'A')];
     const plain: Track[] = [{ id: 'v1', kind: 'video', items: [{ clipId: 'a', startTime: 0 }] }];
-    const project = serializeProject(clips, [], [], [], undefined, plain);
+    const project = serializeProject(createProjectSnapshot({ clips, tracks: plain }));
     expect(project).not.toHaveProperty('masterBus');
     expect(project.tracks![0]).not.toHaveProperty('audioFx');
     expect(project.tracks![0]).not.toHaveProperty('duck');
@@ -127,7 +127,7 @@ describe('audioBus: project round-trip', () => {
 
   it('drops malformed bus settings on load instead of failing it', async () => {
     const clips = [createTestClip('a', 4, 'A')];
-    const project = serializeProject(clips, [], [], [], undefined, tracks());
+    const project = serializeProject(createProjectSnapshot({ clips, tracks: tracks() }));
     const hand = JSON.parse(JSON.stringify(project));
     hand.tracks[0].audioFx = [{ kind: 'flanger' }, 42];
     hand.tracks[1].duck = { depthDb: 'deep' };

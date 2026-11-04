@@ -102,6 +102,15 @@ export function generateDebugReport(ctx: DebugReportContext): string {
     lines.push(`- **Description:** ${ctx.renderPlan.description}`);
     lines.push(`- **Reason:** ${ctx.renderPlan.reason}`);
     lines.push(`- **Will re-encode:** ${ctx.renderPlan.willReencode}`);
+    if (ctx.renderPlan.encoderIntent) {
+      lines.push(`- **Encoder:** ${ctx.renderPlan.encoderIntent}`);
+    }
+    if (ctx.renderPlan.encoderReasons?.length) {
+      lines.push(`- **Why:** ${ctx.renderPlan.encoderReasons.join('; ')}`);
+    }
+    if (ctx.renderPlan.refusal) {
+      lines.push(`- **Refused:** ${ctx.renderPlan.refusal}`);
+    }
     lines.push('');
   }
 

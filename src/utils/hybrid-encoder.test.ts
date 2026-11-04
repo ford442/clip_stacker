@@ -64,6 +64,8 @@ describe('utils/hybrid-encoder', () => {
     (isAudioEncoderAvailable as any).mockResolvedValue(false);
     (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
     (prepareStreamingAudioMix as any).mockResolvedValue(false);
+    // A real calculateRenderPlan always returns a plan.
+    (calculateRenderPlan as any).mockReturnValue({});
     // Mock MediaRecorder for canvas tests
     (global as any).MediaRecorder = vi.fn();
   });
@@ -676,7 +678,11 @@ describe('utils/hybrid-encoder', () => {
           useCanvasRenderer: false,
         }),
       );
-      expect(result.renderPlan).toEqual({ ...mockRenderPlan, encoderIntent: 'ffmpeg' });
+      expect(result.renderPlan).toEqual({
+        ...mockRenderPlan,
+        encoderIntent: 'ffmpeg',
+        encoderReasons: ['Nothing to re-encode — FFmpeg stream-copies (lossless concat)'],
+      });
     });
 
     it('should use provided render plan', async () => {
@@ -699,7 +705,11 @@ describe('utils/hybrid-encoder', () => {
         providedRenderPlan as any,
       );
 
-      expect(result.renderPlan).toEqual({ ...providedRenderPlan, encoderIntent: 'ffmpeg' });
+      expect(result.renderPlan).toEqual({
+        ...providedRenderPlan,
+        encoderIntent: 'ffmpeg',
+        encoderReasons: ['Nothing to re-encode — FFmpeg stream-copies (lossless concat)'],
+      });
       expect(calculateRenderPlan).not.toHaveBeenCalled();
     });
 

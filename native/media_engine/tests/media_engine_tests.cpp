@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
@@ -876,6 +877,33 @@ TEST_CASE(compressor_reduces_hot_sine) {
   CHECK(process_insert_chain(quiet.data(), rate, 1, rate, makeup.data(), 1) == 0);
   std::vector<double> quiet_tail(quiet.begin() + rate / 2, quiet.end());
   CHECK_NEAR(20.0 * std::log10(tone_amplitude(quiet_tail, rate / 2, 1000) / 0.01), 3.0, 0.01);
+}
+
+TEST_CASE(compressor_hard_knee_at_threshold_stays_finite) {
+  // Knee 0 with a frame exactly at the threshold used to take neither branch
+  // of the static curve and divide 0 by 0; the NaN then latched in the
+  // envelope for the rest of the session. Threshold 0 dB + full-scale input
+  // hits it on the first sample.
+  const int rate = 48000;
+  std::vector<float> plane(rate);
+  for (int i = 0; i < rate / 2; ++i) plane[i] = (i & 1) ? -1.f : 1.f;
+  for (int i = rate / 2; i < rate; ++i) plane[i] = static_cast<float>(0.1 * std::sin(2 * kPi * 1000.0 * i / rate));
+  const Fx row = compressor_block(0, 4, 0.002, 0.05, 0);
+  CHECK(process_insert_chain(plane.data(), rate, 1, rate, row.data(), 1) == 0);
+  for (float v : plane) CHECK(std::isfinite(v));
+  // At the threshold there is no reduction: the full-scale square passes.
+  CHECK_NEAR(plane[0], 1.f, 1e-6);
+  // Well below the threshold the tail is untouched once the release settles.
+  std::vector<double> tail(plane.begin() + 3 * rate / 4, plane.end());
+  CHECK_NEAR(20.0 * std::log10(tone_amplitude(tail, 3 * rate / 4, 1000) / 0.1), 0.0, 0.01);
+}
+
+TEST_CASE(flush_denormal_also_clears_nan) {
+  CHECK(media_engine::flush_denormal(std::numeric_limits<double>::quiet_NaN()) == 0.0);
+  CHECK(media_engine::flush_denormal(1e-31) == 0.0);
+  CHECK(media_engine::flush_denormal(-1e-31) == 0.0);
+  CHECK(media_engine::flush_denormal(0.5) == 0.5);
+  CHECK(media_engine::flush_denormal(-0.5) == -0.5);
 }
 
 TEST_CASE(insert_chain_blocks_match_one_shot_bitwise) {

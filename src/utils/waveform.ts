@@ -77,6 +77,6 @@ export async function extractWaveformPeaks(
     return peaks;
   } finally {
     // Always close the AudioContext to free resources
-    audioCtx.close();
+    audioCtx.close().catch(() => {});
   }
 }

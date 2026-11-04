@@ -10,6 +10,7 @@
  */
 
 import { clamp } from './math';
+import { STORAGE_KEYS, safeGet, safeSet, storageArea, type StorageLike } from './storageKeys';
 
 export type LayoutDensity = 'compact' | 'comfortable' | 'spacious';
 export type WorkspaceSide = 'library' | 'inspector';
@@ -66,7 +67,7 @@ export const DEFAULT_WORKSPACE_LAYOUT: Readonly<WorkspaceLayout> = Object.freeze
   fullWidth: true,
 });
 
-export const WORKSPACE_LAYOUT_STORAGE_KEY = 'clip_stacker.workspaceLayout.v1';
+export const WORKSPACE_LAYOUT_STORAGE_KEY = STORAGE_KEYS.workspaceLayout.key;
 
 const DENSITIES: readonly LayoutDensity[] = ['compact', 'comfortable', 'spacious'];
 
@@ -225,15 +226,8 @@ export function sanitizeWorkspaceLayout(raw: unknown): WorkspaceLayout {
   };
 }
 
-type StorageLike = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
-
 function defaultStorage(): StorageLike | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-  } catch {
-    // Accessing localStorage throws with blocked site data.
-    return null;
-  }
+  return storageArea('local');
 }
 
 export function loadWorkspaceLayout(
@@ -241,7 +235,7 @@ export function loadWorkspaceLayout(
 ): WorkspaceLayout {
   if (!storage) return { ...DEFAULT_WORKSPACE_LAYOUT };
   try {
-    const raw = storage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY);
+    const raw = safeGet('workspaceLayout', { storage });
     return sanitizeWorkspaceLayout(raw ? JSON.parse(raw) : null);
   } catch {
     return { ...DEFAULT_WORKSPACE_LAYOUT };
@@ -253,12 +247,8 @@ export function saveWorkspaceLayout(
   layout: WorkspaceLayout,
   storage: StorageLike | null = defaultStorage(),
 ): void {
-  if (!storage) return;
-  try {
-    storage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, JSON.stringify(layout));
-  } catch {
-    // Quota / privacy mode — ignore.
-  }
+  // Quota / privacy mode — not remembered, never thrown.
+  safeSet('workspaceLayout', JSON.stringify(layout), { storage });
 }
 
 /**

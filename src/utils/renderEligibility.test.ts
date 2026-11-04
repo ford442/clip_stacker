@@ -6,7 +6,7 @@ import {
   clipNeedsEffects,
   needsMultiLayerComposition,
   needsOverlayPass,
-  remoteConcatDroppedFeatures,
+  remoteConcatBlockers,
   shouldUseTimelineGpuExport,
 } from './renderEligibility';
 import { DEFAULT_FINISHING } from './finishing';
@@ -292,27 +292,73 @@ describe('renderEligibility', () => {
   });
 });
 
-describe('remoteConcatDroppedFeatures', () => {
+describe('remoteConcatBlockers (allow-list)', () => {
+  const plain = {
+    transitions: [],
+    textOverlays: [],
+    finishing: DEFAULT_FINISHING,
+    captionCount: 0,
+    hasMasterAudio: false,
+    needsAudioPremix: false,
+  };
+
   it('allows a plain base-lane concat', () => {
-    expect(remoteConcatDroppedFeatures([makeClip()], [], [], DEFAULT_FINISHING, 0)).toEqual([]);
+    expect(remoteConcatBlockers([makeClip(), makeClip({ id: 'b', trimStart: 1, trimEnd: 3 })], plain)).toEqual([]);
   });
 
   it('refuses when a base clip sits on a muted lane', () => {
     const muted = makeClip({ id: 'm', trackMuted: true });
-    expect(
-      remoteConcatDroppedFeatures([makeClip(), muted], [], [], DEFAULT_FINISHING, 0),
-    ).toEqual(['lane mute']);
+    expect(remoteConcatBlockers([makeClip(), muted], plain)).toEqual(['lane mute']);
   });
 
   it('lists overlays, transitions and captions', () => {
     expect(
-      remoteConcatDroppedFeatures(
-        [makeClip({ layerIndex: 1 })],
-        [{ afterClipIndex: 1, type: 'fade', duration: 1 }],
-        [],
-        DEFAULT_FINISHING,
-        2,
-      ),
+      remoteConcatBlockers([makeClip({ layerIndex: 1 })], {
+        ...plain,
+        transitions: [{ afterClipIndex: 1, type: 'fade', duration: 1 }],
+        captionCount: 2,
+      }),
     ).toEqual(['PiP/overlay lanes', 'transitions', 'captions']);
+  });
+
+  it.each<[string, Partial<Clip>, string]>([
+    ['audio-lane clip', { kind: 'audio' }, 'audio clips / audio lanes'],
+    ['fade', { videoFadeIn: 0.5 }, 'fades'],
+    ['audio fade', { audioFadeOut: 0.5 }, 'fades'],
+    ['volume', { volume: 0.5 }, 'clip volume'],
+    ['pan automation', { automation: { pan: [{ t: 0, value: -1 }] } }, 'volume / pan / speed automation'],
+    [
+      'clip insert',
+      { audioEffects: { compressor: { enabled: true, thresholdDb: -20, ratio: 4, attack: 0.01, release: 0.1, kneeDb: 6, makeupDb: 0 } } } as Partial<Clip>,
+      'clip audio inserts',
+    ],
+    ['constant speed', { playbackRate: 2 }, 'speed changes'],
+    ['speed curve', { automation: { playbackRate: [{ t: 0, value: 1 }, { t: 1, value: 2 }] } }, 'speed changes'],
+    ['reverse', { reversed: true }, 'reversed clips'],
+    ['loop', { loopCount: 2 }, 'loops'],
+    ['stabilize toggle', { stabilize: true }, 'stabilization'],
+    ['rotation', { keyframes: { rotation: [{ t: 0, value: 90 }] } }, 'picture transforms'],
+    ['still image', { stillImage: true }, 'still images'],
+    ['opacity', { opacity: 0.5 }, 'clip opacity'],
+  ])('refuses a clip with %s', (_name, overrides, label) => {
+    expect(remoteConcatBlockers([makeClip(overrides)], plain)).toContain(label);
+  });
+
+  it('refuses master audio, finishing, titles and any audio premix', () => {
+    const blockers = remoteConcatBlockers([makeClip()], {
+      ...plain,
+      textOverlays: [
+        { id: 't', text: 'x', fontsize: 10, fontcolor: 'white', x: 0, y: 0, scrolling: false, scrollSpeed: 0, box: false, boxColor: 'black' },
+      ],
+      finishing: { ...DEFAULT_FINISHING, lut: { enabled: true, lutId: 'x', intensity: 1 } },
+      hasMasterAudio: true,
+      needsAudioPremix: true,
+    });
+    expect(blockers).toEqual([
+      'text overlays',
+      'finishing',
+      'master audio',
+      'the audio mix (automation, inserts, bus FX, loudness or audio lanes)',
+    ]);
   });
 });

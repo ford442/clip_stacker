@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import type { DriveMediaItem } from '../types';
+import { STORAGE_KEYS, safeGet, safeSet } from '../utils/storageKeys';
 
 /**
  * Google Drive files the user imported, kept as references — `{ kind: 'drive',
@@ -9,7 +10,7 @@ import type { DriveMediaItem } from '../types';
  * the OAuth token lives in memory only (`utils/googleDrive.ts`).
  */
 
-export const DRIVE_LIBRARY_STORAGE_KEY = 'clip_stacker.driveLibrary.v1';
+export const DRIVE_LIBRARY_STORAGE_KEY = STORAGE_KEYS.driveLibrary.key;
 
 function isDriveMediaItem(value: unknown): value is DriveMediaItem {
   if (!value || typeof value !== 'object') return false;
@@ -26,7 +27,7 @@ function isDriveMediaItem(value: unknown): value is DriveMediaItem {
 
 function load(): DriveMediaItem[] {
   try {
-    const raw = localStorage.getItem(DRIVE_LIBRARY_STORAGE_KEY);
+    const raw = safeGet('driveLibrary');
     if (!raw) return [];
     const parsed = JSON.parse(raw) as { items?: unknown };
     return Array.isArray(parsed.items) ? parsed.items.filter(isDriveMediaItem) : [];
@@ -36,11 +37,8 @@ function load(): DriveMediaItem[] {
 }
 
 function persist(items: DriveMediaItem[]): void {
-  try {
-    localStorage.setItem(DRIVE_LIBRARY_STORAGE_KEY, JSON.stringify({ version: 1, items }));
-  } catch {
-    // Quota / private mode: the library still works for this tab.
-  }
+  // Quota / private mode: the library still works for this tab.
+  safeSet('driveLibrary', JSON.stringify({ version: 1, items }));
 }
 
 export interface DriveLibraryState {

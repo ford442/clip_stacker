@@ -2,25 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import { audioFxStore, useAudioFxMeters, useAudioFxPreview } from '../../store/audioFxStore';
 import { useEditorMasterBus } from '../../store';
 import { getAudioPlaybackManager } from '../../audio/playbackManager';
+import { safeGet, safeSet } from '../../utils/storageKeys';
 
-const STORAGE_KEY = 'clip_stacker.loudnessMeter.v1';
 /** Bar scale: -36 LUFS (empty) to 0 (full). */
 const FLOOR_LUFS = -36;
 
 function loadOpen(): boolean {
-  try {
-    return localStorage.getItem(STORAGE_KEY) === 'open';
-  } catch {
-    return false;
-  }
+  return safeGet('loudnessMeter') === 'open';
 }
 
 function saveOpen(open: boolean): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, open ? 'open' : 'closed');
-  } catch {
-    // View state only: a private window simply forgets it.
-  }
+  // View state only: a private window simply forgets it.
+  safeSet('loudnessMeter', open ? 'open' : 'closed');
 }
 
 /** Whether the loudness meter is shown (per browser, view state). */

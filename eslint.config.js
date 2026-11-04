@@ -36,6 +36,18 @@ export default defineConfig(
     },
   },
   {
+    // Typed rules (they need the TS program). A promise nobody awaits or
+    // catches turns a failure into an unhandled rejection and a silent bug;
+    // warn so they get found — mark intentional ones with `void`.
+    files: ['src/**/*.{ts,tsx}'],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'warn',
+    },
+  },
+  {
     // Split a module before it passes 700 lines (tests are exempt): files
     // grew past this unnoticed when it was only a convention.
     files: ['src/**/*.{ts,tsx}'],

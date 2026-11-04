@@ -173,9 +173,13 @@ describe('denoise quality tiers (CPU reference of denoise.wgsl)', () => {
     for (const q of ['high', 'nlm'] as const) {
       expect(run(noisy, settings(q, { amount: 0 })).data).toEqual(noisy.data);
       const zero = run(noisy, settings(q, { spatialStrength: 0 })).data;
+      // One assertion over the whole plate (an `expect` per pixel took seconds).
+      expect(zero.length).toBe(noisy.data.length);
+      let maxAbsDiff = 0;
       for (let i = 0; i < zero.length; i++) {
-        expect(zero[i]).toBeCloseTo(noisy.data[i], 6);
+        maxAbsDiff = Math.max(maxAbsDiff, Math.abs(zero[i]! - noisy.data[i]!));
       }
+      expect(maxAbsDiff).toBeLessThan(5e-7);
     }
   });
 });

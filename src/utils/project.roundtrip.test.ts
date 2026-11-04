@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { ClipGroup, ClipTransition } from "../types";
-import { serializeProject, applyProjectData } from "./project";
+import { createProjectSnapshot, serializeProject, applyProjectData } from "./project";
 import { createTestClip } from "./project.test.helpers";
 
 describe("utils/project - Serialize/Apply Roundtrip", () => {
@@ -15,12 +15,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     ];
 
     // Serialize
-    const serialized = serializeProject(
-      originalClips,
-      originalTransitions,
-      [],
-      [],
-    );
+    const serialized = serializeProject(createProjectSnapshot({ clips: originalClips, transitions: originalTransitions }));
 
     // Apply (simulate loading)
     const result = await applyProjectData(serialized, originalClips);
@@ -50,7 +45,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
       },
     };
     const clips = [{ ...createTestClip("a", 5, "Clip A"), audioEffects }, createTestClip("b", 3, "Clip B")];
-    const serialized = serializeProject(clips, [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips }));
     expect(serialized.clips[0].audioEffects).toEqual(audioEffects);
     expect(serialized.clips[1].audioEffects).toBeUndefined();
 
@@ -79,7 +74,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
       },
     ];
 
-    const serialized = serializeProject(clips, transitions, [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips, transitions }));
     expect(serialized.transitions?.[0].customShader).toBe(expression);
 
     const result = await applyProjectData(serialized, clips);
@@ -104,7 +99,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
       createTestClip("b", 3, "Clip B"),
     ];
 
-    const serialized = serializeProject(clips, [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips }));
     expect(serialized.clips[0].keyframes).toEqual(keyframes);
     // An untransformed clip stays exactly as it was: no keyframes key at all.
     expect(serialized.clips[1]).not.toHaveProperty("keyframes");
@@ -119,7 +114,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
       { ...createTestClip("a", 5, "Clip A"), stabilize: true },
       createTestClip("b", 3, "Clip B"),
     ];
-    const serialized = serializeProject(clips, [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips }));
     expect(serialized.clips[0].stabilize).toBe(true);
     expect(serialized.clips[1]).not.toHaveProperty("stabilize");
     // Matrices are derived data — keeping them out is what stops a project
@@ -138,7 +133,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
       { ...createTestClip("a", 5, "Clip A"), proxy },
       createTestClip("b", 3, "Clip B"),
     ];
-    const serialized = serializeProject(clips, [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips }));
     expect(serialized.clips[0].proxy).toEqual(proxy);
     expect(serialized.clips[1]).not.toHaveProperty("proxy");
     expect(JSON.stringify(serialized)).not.toContain("data:");
@@ -150,7 +145,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
 
   it("should drop a malformed proxy record on load", async () => {
     const clips = [createTestClip("a", 5, "Clip A")];
-    const serialized = serializeProject(clips, [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips }));
     serialized.clips[0].proxy = { profile: "h264-960-v1", hash: "not hex!", width: 0, height: 960 };
     const result = await applyProjectData(serialized, clips);
     expect(result.clips[0].proxy).toBeUndefined();
@@ -158,12 +153,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
 
   it("should load pre-custom-shader projects without a shader field", async () => {
     const clips = [createTestClip("a", 5, "Clip A"), createTestClip("b", 3, "Clip B")];
-    const serialized = serializeProject(
-      clips,
-      [{ afterClipIndex: 1, type: "filmBurn", duration: 0.5 }],
-      [],
-      [],
-    );
+    const serialized = serializeProject(createProjectSnapshot({ clips, transitions: [{ afterClipIndex: 1, type: "filmBurn", duration: 0.5 }] }));
     expect(serialized.transitions?.[0]).not.toHaveProperty("customShader");
 
     const result = await applyProjectData(serialized, clips);
@@ -184,7 +174,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     ];
 
     // Serialize
-    const serialized = serializeProject([clipA, clipB], [], [], clipGroups);
+    const serialized = serializeProject(createProjectSnapshot({ clips: [clipA, clipB], clipGroups }));
 
     // Apply
     const result = await applyProjectData(serialized, [clipA, clipB]);
@@ -200,7 +190,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
     logo.overlayBlend = "chroma";
     logo.chromaKey = { color: "#00FF00", similarity: 0.25, blend: 0.05 };
 
-    const serialized = serializeProject([logo], [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips: [logo] }));
     expect(serialized.clips[0].overlayBlend).toBe("chroma");
     expect(serialized.clips[0].chromaKey).toEqual({
       color: "#00FF00",
@@ -218,7 +208,7 @@ describe("utils/project - Serialize/Apply Roundtrip", () => {
   });
 
   it("should omit overlay keying for clips that do not use it", () => {
-    const serialized = serializeProject([createTestClip("a", 5)], [], [], []);
+    const serialized = serializeProject(createProjectSnapshot({ clips: [createTestClip("a", 5)] }));
     expect(serialized.clips[0].overlayBlend).toBeUndefined();
     expect(serialized.clips[0].chromaKey).toBeUndefined();
   });

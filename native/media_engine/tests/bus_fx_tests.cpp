@@ -391,6 +391,41 @@ TEST_CASE(sample_peak_limiting_fails_the_inter_sample_case) {
   CHECK_GE(true_peak_db(x), ceiling + 2.5);
 }
 
+TEST_CASE(hard_knee_compressor_into_limiter_never_goes_nan_or_dc) {
+  // The audit case: a lane compressor at knee 0 / threshold 0 dB fed
+  // full-scale samples latched NaN, and the limiter turned NaN into constant
+  // DC at its ceiling (`std::min(ceiling, NaN)` is the ceiling).
+  std::vector<float> square(static_cast<size_t>(kRate / 2) * 2);
+  for (size_t i = 0; i < square.size(); ++i) square[i] = ((i / 2) & 1) ? -1.f : 1.f;
+  Layout l;
+  l.lanes = {{compressor(0, 4, 0.002, 0.05, 0)}};
+  l.final_stage = {limiter(-1.0)};
+  Graph g(l);
+  const auto y = run_graph(g, {concat({square, silence(0.5)})}, 480);
+  for (float v : y) CHECK(std::isfinite(v));
+  // The last 0.25 s is the silence after the look-ahead drained: exactly 0.
+  for (size_t i = y.size() - static_cast<size_t>(kRate / 4) * 2; i < y.size(); ++i) CHECK(y[i] == 0.f);
+}
+
+TEST_CASE(limiter_silences_a_non_finite_sample_instead_of_emitting_dc) {
+  auto x = tone(0.2, -20);
+  x[1000] = std::numeric_limits<float>::quiet_NaN();
+  x[1001] = std::numeric_limits<float>::infinity();
+  x[4000] = -std::numeric_limits<float>::infinity();
+  x = concat({x, silence(0.2)});
+  Layout l;
+  l.lanes = {{}};
+  l.final_stage = {limiter(-1.0)};
+  Graph g(l);
+  const auto y = run_graph(g, {x}, 256);
+  const float ceiling = static_cast<float>(dbfs_amplitude(-1.0));
+  for (float v : y) {
+    CHECK(std::isfinite(v));
+    CHECK_LE(std::fabs(v), ceiling);
+  }
+  for (size_t i = y.size() - static_cast<size_t>(kRate / 10) * 2; i < y.size(); ++i) CHECK(y[i] == 0.f);
+}
+
 TEST_CASE(limiter_is_transparent_below_the_ceiling) {
   const auto x = programme(2.0, 0.2, 3);
   Layout l;
