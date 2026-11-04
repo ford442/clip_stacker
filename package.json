@@ -7,9 +7,11 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
+    "predev": "node scripts/sync-ffmpeg-core.mjs --if-stale",
     "dev": "vite",
+    "prebuild": "node scripts/sync-ffmpeg-core.mjs --if-stale",
     "build": "vite build && node scripts/check-bundle-size.mjs && node scripts/utf16-dual-encode.mjs",
-    "build:utf16": "node scripts/utf16-dual-encode.mjs",
+    "build:utf16": "node scripts/utf16-dual-encode.mjs --force",
     "sync:ffmpeg-core": "node scripts/sync-ffmpeg-core.mjs",
     "preview": "vite preview",
     "deploy": "npm run build && python3 deploy.py",

@@ -22,3 +22,12 @@ native/whisper/third_party/
 public/wasm/whisper.js
 public/wasm/whisper.wasm
 public/models/
+
+# RIFE Space runtime output (stitched renders, thumbnails).
+huggingface/**/workspace_temp/
+
+# Self-hosted FFmpeg cores: generated from node_modules by
+# `npm run sync:ffmpeg-core` (run by predev / prebuild). 32 MB each, so they
+# stay out of history.
+public/ffmpeg-core/
+public/ffmpeg-core-mt/

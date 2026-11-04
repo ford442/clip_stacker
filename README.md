@@ -147,7 +147,7 @@ The policy lives only in `src/utils/csp.ts`: `cspMetaPlugin` writes the `<meta>`
 
 ### Self-hosted FFmpeg cores
 
-Both FFmpeg cores are served from the app itself — `public/ffmpeg-core/` (single-threaded) and `public/ffmpeg-core-mt/` (multi-threaded, used when the page is cross-origin isolated) — with jsDelivr/unpkg only as fallbacks. They are copied verbatim from the `@ffmpeg/core` / `@ffmpeg/core-mt` devDependencies by `npm run sync:ffmpeg-core`; after bumping either package, run it, update `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts`, and commit `public/`. `npm run sync:ffmpeg-core -- --check` fails when they disagree.
+Both FFmpeg cores are served from the app itself — `public/ffmpeg-core/` (single-threaded) and `public/ffmpeg-core-mt/` (multi-threaded, used when the page is cross-origin isolated) — with jsDelivr/unpkg only as fallbacks. They are generated (and gitignored — 32 MB each would otherwise grow history on every bump): `predev` / `prebuild` copy them verbatim from the `@ffmpeg/core` / `@ffmpeg/core-mt` devDependencies (`npm run sync:ffmpeg-core` does it by hand). After bumping either package, update `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts`; `npm run sync:ffmpeg-core -- --check` (and the build) fails when they disagree.
 
 ### Storage backend hardening
 

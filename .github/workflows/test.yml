@@ -35,8 +35,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Self-hosted FFmpeg cores match node_modules
-        run: npm run sync:ffmpeg-core -- --check
+      - name: Generate self-hosted FFmpeg cores from node_modules
+        run: npm run sync:ffmpeg-core && npm run sync:ffmpeg-core -- --check
 
       - name: Typecheck
         run: npm run typecheck

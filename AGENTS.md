@@ -29,7 +29,7 @@ Use TypeScript with strict checking. Follow the existing style: two-space indent
 
 ## Testing Guidelines
 
-Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `project.test.ts` or `ffmpegService.load.test.ts`. Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Before submitting, run `npm run typecheck`, `npm run lint`, `npm run check:cycles`, `npm test -- --run`, and `npm run build`.
+Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `textOverlay.test.ts`, `project.roundtrip.test.ts` or `ffmpegService.load.test.ts` (a large module's tests split by concern as `<module>.<concern>.test.ts`). Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Before submitting, run `npm run typecheck`, `npm run lint`, `npm run check:cycles`, `npm test -- --run`, and `npm run build`.
 
 ## Commit & Pull Request Guidelines
 
@@ -130,7 +130,7 @@ Format, built-ins and the agent API are documented in
 
 `CurvesGpuPass` (`src/webgpu/curvesPass.ts` + `shaders/curves.wgsl`) is the
 `curves` slot of `FinishingSettings`. Order: noise → primary → **curves** →
-secondary → LUT → sharpen → CA → grain. Primary color is untouched.
+secondary → LUT → sharpen → CA → bloom → grain. Primary color is untouched.
 
 - Model (`src/utils/curves.ts`): per channel, levels (input black / white,
   gamma, output black / white) → master curve → that channel's curve, then
@@ -159,7 +159,8 @@ secondary → LUT → sharpen → CA → grain. Primary color is untouched.
 ## Noise reduction quality tiers (first finishing pass)
 
 `NoiseReductionGpuPass` (`src/webgpu/noiseReductionPass.ts` +
-`shaders/denoise.wgsl`) runs first in the finishing chain. The spatial stage
+`shaders/denoise.wgsl`) runs first in the finishing chain (noise → primary →
+curves → secondary → LUT → sharpen → CA → bloom → grain). The spatial stage
 has three tiers, picked by `NoiseReductionSettings.quality` (uniform slot 10;
 the layout stays 16 floats). Temporal blending and its motion gate are the
 same in every tier, and still reset on seek (`resetTemporal`).
@@ -183,7 +184,7 @@ same in every tier, and still reset on seek (`resetTemporal`).
   chroma error per tier on a seeded plate and pins the shader constants.
   FFmpeg (`hqdn3d`) and Canvas2D are unaffected.
 
-## Sharpen modes (after LUT, before grain)
+## Sharpen modes (after LUT, before CA)
 
 `SharpenGpuPass` (`src/webgpu/sharpenPass.ts` + `shaders/sharpen.wgsl`) has
 three modes, picked by `SharpenSettings.mode` (uniform slot 6; the layout
@@ -211,12 +212,12 @@ in all of them.
   width, texture gain and noise gain per mode and pins the shader constants.
   FFmpeg (`unsharp`) and Canvas2D are unaffected.
 
-## Chromatic aberration (finishing, after sharpen, before grain)
+## Chromatic aberration (finishing, after sharpen, before bloom)
 
 `ChromaticAberrationGpuPass` (`src/webgpu/chromaticAberrationPass.ts` +
 `shaders/chromaticAberration.wgsl`) is the `chromaticAberration` slot of
-`FinishingSettings`. Order: noise → primary → secondary → LUT → sharpen →
-**CA** → grain (grain stays last); in managed colour it runs in the working
+`FinishingSettings`. Order: noise → primary → curves → secondary → LUT →
+sharpen → **CA** → bloom → grain (grain stays last); in managed colour it runs in the working
 space before the output transform (`COLOR_MANAGED_PASS_ORDER`).
 
 - Model (`src/utils/chromaticAberration.ts`): red is sampled at uv − o and
@@ -311,7 +312,7 @@ Adding a font:
 2. Add an entry to `BUNDLED_FONTS` with stable `id`, display `label`, CSS `familyName`, `fileName`, and `virtualName` (the name written to the FFmpeg VFS).
 3. Add a matching `@font-face` in `src/styles/fonts.css` pointing at `/fonts/<fileName>`.
 4. If the virtual name is new, add a URL mapping in `FONT_URL_BY_VIRTUAL` in `core.ts`.
-5. Add or update tests in `textOverlay.test.ts` (filter strings) and `project.test.ts` (round-trip + unknown fallback).
+5. Add or update tests in `textOverlay.test.ts` (filter strings) and `project.roundtrip.test.ts` / `project.applyProjectData.core.test.ts` (round-trip + unknown fallback).
 6. Update docs (README table + this section).
 
 Current small set (license notes):
