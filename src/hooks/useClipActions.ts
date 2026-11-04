@@ -1,3 +1,4 @@
+import { selectTimelineClips } from '../store/selectors';
 import { useCallback } from "react";
 import type { Clip } from "../types";
 import { getMediaInfo, createClipId, isImageFile, MIN_CLIP_DURATION } from "../media/media";
@@ -8,7 +9,6 @@ import {
 } from "../timeline/clipOperations";
 import {
   findClipTrack,
-  getEffectiveTimelineClips,
   isClipLocked,
   replaceClipOnTrackAfterSplit,
 } from "../timeline/trackModel";
@@ -107,7 +107,7 @@ export function useClipActions({
 
     // The playhead is output (timeline) time; the cut is made in source time.
     const placed = resolveClipOutputWindow(
-      getEffectiveTimelineClips(state.tracks, state.clips, state.clipGroups),
+      selectTimelineClips(state),
       state.clipGroups,
       state.transitions,
       selectedClipId,

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useStableObject } from "./hooks/useStableObject";
 import { useProjectSaveLoad } from "./hooks/useProjectSaveLoad";
 import { useEditHistory } from "./hooks/useEditHistory";
 import { useAutoSave } from "./hooks/useAutoSave";
@@ -7,7 +8,8 @@ import { useClipStabilization } from "./hooks/useClipStabilization";
 import { useProxyBuilder } from "./hooks/useProxyBuilder";
 import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
-import { getEffectiveTimelineClips, visibleTextOverlays } from "./timeline/trackModel";
+import { visibleTextOverlays } from "./timeline/trackModel";
+import { selectTimelineClips } from "./store/selectors";
 import { editorStore, playbackStore, setPlayheadTime, uiActions } from "./store";
 import { playheadForSelectedClip, resolveClipOutputWindow } from "./composition/previewComposition";
 import { useClipActions } from "./hooks/useClipActions";
@@ -110,7 +112,7 @@ export function App() {
     }
     const state = editorStore.getState();
     const placed = resolveClipOutputWindow(
-      getEffectiveTimelineClips(state.tracks, state.clips, state.clipGroups),
+      selectTimelineClips(state),
       state.clipGroups,
       state.transitions,
       selectedClipId,
@@ -236,7 +238,7 @@ export function App() {
     useLayoutCommitHandlers(setClips, setTextOverlays);
 
   const timelineClips = useMemo(
-    () => getEffectiveTimelineClips(tracks, clips, clipGroups),
+    () => selectTimelineClips({ tracks, clips, clipGroups }),
     [tracks, clips, clipGroups],
   );
 
@@ -261,67 +263,95 @@ export function App() {
     setStatus: renderJobActions.setStatus,
   });
 
+  const { setRenderFailureMessage } = renderActions;
+  const onDismissRenderFailure = useCallback(
+    () => setRenderFailureMessage(null),
+    [setRenderFailureMessage],
+  );
+
+  const history = useStableObject({ onUndo: handleUndo, onRedo: handleRedo });
+  const project = useStableObject({
+    onSaveProject: handleSaveProject,
+    onLoadProject: handleLoadProject,
+    onSaveRemote: handleSaveRemote,
+    onLoadRemote: handleLoadRemote,
+    onResolveRemoteUploadError: resolveRemoteUploadError,
+    isRemoteSaving,
+    isRemoteLoading,
+    remoteLoadStage,
+    remoteLoadProgress,
+    remoteLoadIndeterminate,
+    remoteUploadItems,
+    pendingRemoteUploadError,
+    recoveryOffer,
+    isRecovering,
+    onRecover: handleRecover,
+    onDiscardRecovery: handleDiscardRecovery,
+  });
+  const render = useStableObject({
+    onMerge: renderActions.handleMerge,
+    onGpuStitch: renderActions.handleGpuStitch,
+    onDebugResetFFmpeg: renderActions.handleDebugResetFFmpeg,
+    onRetryFfmpegLoad: renderActions.handleRetryFfmpegLoad,
+    onCopyDebugInfo: renderActions.handleCopyDebugInfo,
+    onPerformRender: renderActions.performRender,
+    renderFailureMessage: renderActions.renderFailureMessage,
+    onDismissRenderFailure,
+    showMemoryWarning: renderActions.showMemoryWarning,
+    onMemoryWarningConfirm: renderActions.handleMemoryWarningConfirm,
+    onMemoryWarningCancel: renderActions.handleMemoryWarningCancel,
+  });
+  const clipBundle = useStableObject({
+    onAddClips: clipActions.handleAddClips,
+    onAddLibraryClip: clipActions.handleAddLibraryClip,
+    onToggleVariant: clipActions.handleToggleVariant,
+    onDeleteClip: timelineActions.handleDeleteClip,
+    onGenerateIntercut: handleGenerateIntercut,
+    onBatchProcess: batchProcessingActions.handleBatchProcess,
+  });
+  const preview = useStableObject({
+    onClipLayoutCommit: handleClipLayoutCommit,
+    onTextOverlayLayoutCommit: handleTextOverlayLayoutCommit,
+    onPreviewDragStart: textOverlayActions.handlePreviewDragStart,
+  });
+  const inspector = useStableObject({
+    onInspectorChange: inspectorActions.handleInspectorChange,
+    onKeyframesChange: inspectorActions.handleClipKeyframesChange,
+    onAutomationChange: inspectorActions.handleClipAutomationChange,
+    onAudioEffectsChange: inspectorActions.handleClipAudioEffectsChange,
+    onApplyKenBurns: inspectorActions.handleApplyKenBurns,
+    onExtractAudio: inspectorActions.handleExtractAudio,
+    onRife: inspectorActions.handleRife,
+    onStabilizeChange: inspectorActions.handleStabilizeChange,
+    onReverseChange: inspectorActions.handleReverseChange,
+  });
+  const timeline = useStableObject({
+    onMoveUp: timelineActions.handleMoveUp,
+    onMoveDown: timelineActions.handleMoveDown,
+    onReorder: timelineActions.handleReorder,
+    onMoveToTrack: timelineActions.handleMoveToTrack,
+    onTransitionUpdate: transitionActions.handleTransitionUpdate,
+    onCaptionResize: captionActions.handleResizeCaption,
+    morphProcessingIndex: transitionActions.morphProcessingIndex,
+  });
+  const textOverlayBundle = useStableObject({
+    onAddTextOverlay: textOverlayActions.handleAddTextOverlay,
+    onUpdateTextOverlay: textOverlayActions.handleUpdateTextOverlay,
+    onDeleteTextOverlay: textOverlayActions.handleDeleteTextOverlay,
+  });
+
   return (
     <AppShell
       toolbarRef={toolbarRef}
-      morphProcessingIndex={transitionActions.morphProcessingIndex}
-      showMemoryWarning={renderActions.showMemoryWarning}
-      recoveryOffer={recoveryOffer}
-      isRecovering={isRecovering}
-      isRemoteSaving={isRemoteSaving}
-      isRemoteLoading={isRemoteLoading}
-      remoteLoadStage={remoteLoadStage}
-      remoteLoadProgress={remoteLoadProgress}
-      remoteLoadIndeterminate={remoteLoadIndeterminate}
-      remoteUploadItems={remoteUploadItems}
-      pendingRemoteUploadError={pendingRemoteUploadError}
-      renderFailureMessage={renderActions.renderFailureMessage}
-      onAddClips={clipActions.handleAddClips}
-      onMerge={renderActions.handleMerge}
-      onGpuStitch={renderActions.handleGpuStitch}
-      onUndo={handleUndo}
-      onRedo={handleRedo}
-      onSaveProject={handleSaveProject}
-      onLoadProject={handleLoadProject}
-      onDebugResetFFmpeg={renderActions.handleDebugResetFFmpeg}
-      onRetryFfmpegLoad={renderActions.handleRetryFfmpegLoad}
-      onCopyDebugInfo={renderActions.handleCopyDebugInfo}
-      onPerformRender={renderActions.performRender}
-      onDismissRenderFailure={() => renderActions.setRenderFailureMessage(null)}
-      onSaveRemote={handleSaveRemote}
-      onLoadRemote={handleLoadRemote}
-      onResolveRemoteUploadError={resolveRemoteUploadError}
-      onAddLibraryClip={clipActions.handleAddLibraryClip}
-      onToggleVariant={clipActions.handleToggleVariant}
-      onDeleteClip={timelineActions.handleDeleteClip}
-      onGenerateIntercut={handleGenerateIntercut}
-      onBatchProcess={batchProcessingActions.handleBatchProcess}
-      onClipLayoutCommit={handleClipLayoutCommit}
-      onTextOverlayLayoutCommit={handleTextOverlayLayoutCommit}
-      onPreviewDragStart={textOverlayActions.handlePreviewDragStart}
-      onInspectorChange={inspectorActions.handleInspectorChange}
-      onKeyframesChange={inspectorActions.handleClipKeyframesChange}
-      onAutomationChange={inspectorActions.handleClipAutomationChange}
-      onAudioEffectsChange={inspectorActions.handleClipAudioEffectsChange}
-      onApplyKenBurns={inspectorActions.handleApplyKenBurns}
-      onExtractAudio={inspectorActions.handleExtractAudio}
-      onRife={inspectorActions.handleRife}
-      onStabilizeChange={inspectorActions.handleStabilizeChange}
-      onReverseChange={inspectorActions.handleReverseChange}
-      onMoveUp={timelineActions.handleMoveUp}
-      onMoveDown={timelineActions.handleMoveDown}
-      onReorder={timelineActions.handleReorder}
-      onMoveToTrack={timelineActions.handleMoveToTrack}
-      onTransitionUpdate={transitionActions.handleTransitionUpdate}
+      history={history}
+      project={project}
+      render={render}
+      clips={clipBundle}
+      preview={preview}
+      inspector={inspector}
+      timeline={timeline}
       captions={captionPanelProps}
-      onCaptionResize={captionActions.handleResizeCaption}
-      onAddTextOverlay={textOverlayActions.handleAddTextOverlay}
-      onUpdateTextOverlay={textOverlayActions.handleUpdateTextOverlay}
-      onDeleteTextOverlay={textOverlayActions.handleDeleteTextOverlay}
-      onMemoryWarningConfirm={renderActions.handleMemoryWarningConfirm}
-      onMemoryWarningCancel={renderActions.handleMemoryWarningCancel}
-      onRecover={handleRecover}
-      onDiscardRecovery={handleDiscardRecovery}
+      textOverlays={textOverlayBundle}
     />
   );
 }

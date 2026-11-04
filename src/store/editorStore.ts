@@ -18,7 +18,6 @@ import { computeTotalDuration } from '../timeline/transitions';
 import {
   addTrack as addTrackToList,
   createDefaultTracks,
-  getEffectiveTimelineClips,
   removeTrack as removeTrackFromList,
   renameTrack as renameTrackInList,
   setTrackAudioFx as setTrackAudioFxInList,
@@ -48,6 +47,7 @@ import {
   type MasterBusSettings,
 } from '../audio/audioBus';
 import { settingsStore } from './settingsStore';
+import { selectTimelineClips } from './selectors';
 import { registerExportStateSource } from '../export/exportSources';
 
 /**
@@ -471,7 +471,7 @@ export const useEditorMasterAudio = () => useStore(editorStore, (s) => s.masterA
 export const useEditorTimelineClips = () =>
   useStore(
     editorStore,
-    useShallow((s) => getEffectiveTimelineClips(s.tracks, s.clips, s.clipGroups)),
+    useShallow(selectTimelineClips),
   );
 
 /** Undo/redo availability — re-renders only when a stack transitions empty/non-empty. */
@@ -481,10 +481,7 @@ export const useCanRedo = () => useStore(editorStore, (s) => s.redoDepth > 0);
 /** Total timeline duration, accounting for transition overlaps. */
 export const useEditorTotalDuration = () =>
   useStore(editorStore, (s) =>
-    computeTotalDuration(
-      getEffectiveTimelineClips(s.tracks, s.clips, s.clipGroups),
-      s.transitions,
-    ),
+    computeTotalDuration(selectTimelineClips(s), s.transitions),
   );
 
 /** The master bus settings (FX chain + loudness target). */

@@ -1,7 +1,7 @@
+import { selectTimelineClips } from '../store/selectors';
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
 import { editorStore } from "../store/editorStore";
-import { getEffectiveTimelineClips } from "../timeline/trackModel";
 import { resolveTargetResolution } from "../export/resolution";
 import { formatEncoderPathLabel } from "../export/encoderPathLabel";
 import { computeTotalDuration } from "../timeline/transitions";
@@ -66,7 +66,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
 
   /** Clips as the tracks lay them out, carrying the derived placement fields. */
   const effectiveClips = useMemo(
-    () => getEffectiveTimelineClips(tracks, clips, clipGroups),
+    () => selectTimelineClips({ tracks, clips, clipGroups }),
     [tracks, clips, clipGroups],
   );
 

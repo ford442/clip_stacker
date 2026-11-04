@@ -5,7 +5,7 @@ import { formatEncoderPathLabel } from "../export/encoderPathLabel";
 import { uiActions } from "../store";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
-import type { ClipValues } from "./Inspector";
+import type { ClipValues } from "../types";
 import type { PendingRemoteUploadError } from "../hooks/useProjectSaveLoad";
 import type { AutoSaveOffer } from "../project/autoSave";
 import type { MediaLibraryItem, RemoteUploadProgressEvent } from "../project";
@@ -44,17 +44,23 @@ const RenderFailurePanel = lazyNamed(
  * Props are limited to things the panels cannot get for themselves: the
  * imperative toolbar ref, callbacks owned by App's action hooks, and the
  * transient async state those hooks expose (remote transfer progress, recovery
- * offer, render failure). Clip, timeline, selection, settings and render state
- * are read from the Zustand stores by whichever panel renders them, so an edit
- * never re-renders this shell (#144).
+ * offer, render failure), grouped by domain. Each bundle keeps its identity
+ * while its members do (`useStableObject`), so a panel re-renders exactly as
+ * it would with one prop per callback. Clip, timeline, selection, settings
+ * and render state are read from the Zustand stores by whichever panel
+ * renders them, so an edit never re-renders this shell (#144).
  */
-export type AppShellProps = {
-  toolbarRef: RefObject<{ triggerLoadDialog: () => void }>;
-  morphProcessingIndex: number | null;
-  showMemoryWarning: boolean;
-  recoveryOffer: AutoSaveOffer | null;
-  isRecovering: boolean;
-  renderFailureMessage: string | null;
+export interface HistoryBundle {
+  onUndo: () => void;
+  onRedo: () => void;
+}
+
+export interface ProjectBundle {
+  onSaveProject: () => void;
+  onLoadProject: (file: File) => void;
+  onSaveRemote: (endpoint: string, authToken: string, projectName: string) => Promise<void>;
+  onLoadRemote: (endpoint: string, authToken: string, projectName: string) => Promise<void>;
+  onResolveRemoteUploadError: (action: "retry" | "skip" | "abort") => void;
   isRemoteSaving: boolean;
   isRemoteLoading: boolean;
   remoteLoadStage: string;
@@ -62,26 +68,36 @@ export type AppShellProps = {
   remoteLoadIndeterminate: boolean;
   remoteUploadItems: RemoteUploadProgressEvent[];
   pendingRemoteUploadError: PendingRemoteUploadError | null;
-  onAddClips: (files: File[]) => Promise<void>;
+  recoveryOffer: AutoSaveOffer | null;
+  isRecovering: boolean;
+  onRecover: () => void;
+  onDiscardRecovery: () => void;
+}
+
+export interface RenderBundle {
   onMerge: () => Promise<void>;
   onGpuStitch: () => Promise<void>;
-  onUndo: () => void;
-  onRedo: () => void;
-  onSaveProject: () => void;
-  onLoadProject: (file: File) => void;
   onDebugResetFFmpeg: () => Promise<void>;
   onRetryFfmpegLoad: () => Promise<void>;
   onCopyDebugInfo: () => Promise<void>;
   onPerformRender: () => Promise<void>;
+  renderFailureMessage: string | null;
   onDismissRenderFailure: () => void;
-  onSaveRemote: (endpoint: string, authToken: string, projectName: string) => Promise<void>;
-  onLoadRemote: (endpoint: string, authToken: string, projectName: string) => Promise<void>;
-  onResolveRemoteUploadError: (action: "retry" | "skip" | "abort") => void;
+  showMemoryWarning: boolean;
+  onMemoryWarningConfirm: () => void;
+  onMemoryWarningCancel: () => void;
+}
+
+export interface ClipBundle {
+  onAddClips: (files: File[]) => Promise<void>;
   onAddLibraryClip: (item: MediaLibraryItem) => Promise<void>;
   onToggleVariant: (groupId: string, variant: "A" | "B") => void;
   onDeleteClip: (clipId: string) => void;
   onGenerateIntercut: (config: IntercutGeneratorConfig) => Promise<boolean>;
   onBatchProcess: (clipIds: string[], options: BatchProcessingOptions) => Promise<boolean>;
+}
+
+export interface PreviewBundle {
   onClipLayoutCommit: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
   onTextOverlayLayoutCommit: (
     overlayId: string,
@@ -89,6 +105,9 @@ export type AppShellProps = {
     editedKeyframe: boolean,
   ) => void;
   onPreviewDragStart: () => void;
+}
+
+export interface InspectorBundle {
   onInspectorChange: (values: ClipValues) => void;
   onKeyframesChange: (keyframes: Clip["keyframes"]) => void;
   onAutomationChange: (automation: Clip["automation"]) => void;
@@ -98,6 +117,9 @@ export type AppShellProps = {
   onRife: (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => Promise<void>;
   onStabilizeChange: (enabled: boolean) => void;
   onReverseChange: (enabled: boolean) => void;
+}
+
+export interface TimelineBundle {
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onReorder: (fromIndex: number, insertBefore: number) => void;
@@ -108,27 +130,50 @@ export type AppShellProps = {
     snapThresholdSec?: number,
   ) => void;
   onTransitionUpdate: (updated: ClipTransition) => void;
-  /** Caption-track callbacks, forwarded to the Inspector's Captions tab. */
-  captions: CaptionsPanelProps;
   /** Retime one edge of a caption cue from the timeline's CC lane. */
   onCaptionResize: (id: string, edge: "start" | "end", timeSec: number) => void;
+  morphProcessingIndex: number | null;
+}
+
+export interface TextOverlayBundle {
   onAddTextOverlay: () => string;
   onUpdateTextOverlay: (overlay: TextOverlay) => void;
   onDeleteTextOverlay: (id: string) => void;
-  onMemoryWarningConfirm: () => void;
-  onMemoryWarningCancel: () => void;
-  onRecover: () => void;
-  onDiscardRecovery: () => void;
+}
+
+export type AppShellProps = {
+  toolbarRef: RefObject<{ triggerLoadDialog: () => void }>;
+  history: HistoryBundle;
+  project: ProjectBundle;
+  render: RenderBundle;
+  clips: ClipBundle;
+  preview: PreviewBundle;
+  inspector: InspectorBundle;
+  timeline: TimelineBundle;
+  /** Caption-track callbacks, forwarded to the Inspector's Captions tab. */
+  captions: CaptionsPanelProps;
+  textOverlays: TextOverlayBundle;
 };
 
-export function AppShell(props: AppShellProps) {
+export function AppShell({
+  toolbarRef,
+  history,
+  project,
+  render,
+  clips,
+  preview,
+  inspector,
+  timeline,
+  captions,
+  textOverlays,
+}: AppShellProps) {
+  const { onUndo, onRedo } = history;
   const {
-    toolbarRef,
-    renderFailureMessage,
-    morphProcessingIndex,
-    showMemoryWarning,
-    recoveryOffer,
-    isRecovering,
+    onSaveProject,
+    onLoadProject,
+    onSaveRemote,
+    onLoadRemote,
+    onResolveRemoteUploadError,
     isRemoteSaving,
     isRemoteLoading,
     remoteLoadStage,
@@ -136,29 +181,34 @@ export function AppShell(props: AppShellProps) {
     remoteLoadIndeterminate,
     remoteUploadItems,
     pendingRemoteUploadError,
-    onAddClips,
+    recoveryOffer,
+    isRecovering,
+    onRecover,
+    onDiscardRecovery,
+  } = project;
+  const {
     onMerge,
     onGpuStitch,
-    onUndo,
-    onRedo,
-    onSaveProject,
-    onLoadProject,
     onDebugResetFFmpeg,
     onRetryFfmpegLoad,
     onCopyDebugInfo,
     onPerformRender,
+    renderFailureMessage,
     onDismissRenderFailure,
-    onSaveRemote,
-    onLoadRemote,
-    onResolveRemoteUploadError,
+    showMemoryWarning,
+    onMemoryWarningConfirm,
+    onMemoryWarningCancel,
+  } = render;
+  const {
+    onAddClips,
     onAddLibraryClip,
     onToggleVariant,
     onDeleteClip,
     onGenerateIntercut,
     onBatchProcess,
-    onClipLayoutCommit,
-    onTextOverlayLayoutCommit,
-    onPreviewDragStart,
+  } = clips;
+  const { onClipLayoutCommit, onTextOverlayLayoutCommit, onPreviewDragStart } = preview;
+  const {
     onInspectorChange,
     onKeyframesChange,
     onAutomationChange,
@@ -168,21 +218,17 @@ export function AppShell(props: AppShellProps) {
     onRife,
     onStabilizeChange,
     onReverseChange,
+  } = inspector;
+  const {
     onMoveUp,
     onMoveDown,
     onReorder,
     onMoveToTrack,
     onTransitionUpdate,
-    captions,
     onCaptionResize,
-    onAddTextOverlay,
-    onUpdateTextOverlay,
-    onDeleteTextOverlay,
-    onMemoryWarningConfirm,
-    onMemoryWarningCancel,
-    onRecover,
-    onDiscardRecovery,
-  } = props;
+    morphProcessingIndex,
+  } = timeline;
+  const { onAddTextOverlay, onUpdateTextOverlay, onDeleteTextOverlay } = textOverlays;
 
   // Only the three fields this shell itself renders — a progress tick during a
   // render must not re-render every panel below.
