@@ -22,6 +22,7 @@ import {
 import { audioSyncOffsetSec } from '../store/audioSyncStore';
 import { AnalyserLevelReader, ZERO_ANALYSER_LEVELS, type AnalyserLevels } from '../audio/analyserLevels';
 import { applyGainEnvelope, applyPanEnvelope } from '../audio/gainEnvelope';
+import { planEntryCycles, startEntrySource, type ActiveSource } from './entrySources';
 import { planBusGraph, type BusGraphPlan } from '../audio/fxGraph';
 import { PreviewBusRouting } from './busRouting';
 import type { MasterBusSettings } from '../audio/audioBus';
@@ -42,25 +43,6 @@ export interface AudioPlaybackStatus {
 }
 
 type StatusListener = (status: AudioPlaybackStatus) => void;
-
-interface ActiveSource {
-  source: AudioBufferSourceNode;
-  gain: GainNode;
-  panner: StereoPannerNode | null;
-  entry: AudioScheduleEntry;
-  /** AudioContext time when this source was scheduled to start. */
-  when: number;
-  /**
-   * Elapsed time (seconds) since `entry.timelineStart` at schedule start —
-   * spans the WHOLE looped entry, not just this source's own cycle. Fades
-   * and volume/pan automation are authored across the full looped duration
-   * (same domain as the Inspector's automation editor), so they're sampled
-   * from this global position rather than resetting at each loop boundary;
-   * a source's own cycle only bounds `playDuration` (how long it plays).
-   */
-  clipElapsed: number;
-  playDuration: number;
-}
 
 /**
  * Session-scoped Web Audio playback graph for timeline preview.
@@ -567,109 +549,13 @@ export class AudioPlaybackManager {
         return;
       }
 
-      // The decoded/remapped buffer holds exactly ONE cycle; a looped clip
-      // replays it back to back, so schedule one source per remaining cycle
-      // rather than one long source spanning the whole (multiplied) entry.
-      const rate =
-        entry.rateRemap
-          ? 1
-          : Number.isFinite(entry.playbackRate) && entry.playbackRate > 0
-            ? entry.playbackRate
-            : 1;
-      const maxOffset = Math.max(0, buffer.duration - 1e-4);
-
-      for (let cycleIndex = 0; cycleIndex < entry.loopCount; cycleIndex++) {
-        const cycleStart = entry.timelineStart + cycleIndex * entry.cycleDuration;
-        const cycleEnd = cycleStart + entry.cycleDuration;
-        if (cycleEnd <= globalTime + 1e-4) continue;
-
-        // Cycle-local elapsed indexes into the single-cycle decoded buffer.
-        const cycleLocalElapsed = Math.max(0, globalTime - cycleStart);
-        const remainingTimeline = entry.cycleDuration - cycleLocalElapsed;
-        if (remainingTimeline <= 1e-4) continue;
-
-        const bufferOffset = entry.bufferOffset + cycleLocalElapsed * rate;
-        // Clamp to buffer length so we never schedule past the decoded samples.
-        if (bufferOffset >= maxOffset) continue;
-        const remainingSource = maxOffset - bufferOffset;
-        const maxTimelineFromBuffer = remainingSource / rate;
-        const playDuration = Math.min(remainingTimeline, maxTimelineFromBuffer);
-        if (playDuration <= 1e-4) continue;
-        const playDurationSource = playDuration * rate;
-
-        const when =
-          cycleStart > globalTime ? now + (cycleStart - globalTime) : now;
-
-        // Fades and volume/pan automation are authored across the WHOLE
-        // looped span (same domain as the Inspector automation editor), so
-        // sample them from the global (unwrapped) elapsed time — this also
-        // naturally confines fadeIn to the first cycle and fadeOut to the
-        // last, without special-casing interior cycles.
-        const globalClipElapsed = Math.max(0, globalTime - entry.timelineStart);
-
-        const source = ctx.createBufferSource();
-        source.buffer = buffer;
-        source.playbackRate.value = rate;
-
-        const gain = ctx.createGain();
-        const duckedVolume = effectiveEntryVolume(entry, this.schedule);
-        applyGainEnvelope(
-          gain.gain,
-          { ...entry, volume: duckedVolume },
-          when,
-          playDuration,
-          globalClipElapsed,
-          ctx.currentTime,
-        );
-
-        // Its lane's bus input when the bus graph runs, else the master gain.
-        const destination = this.busRouting.destination(entry.trackId, master);
-        let panner: StereoPannerNode | null = null;
-        if (typeof ctx.createStereoPanner === 'function') {
-          panner = ctx.createStereoPanner();
-          applyPanEnvelope(
-            panner.pan,
-            entry.panAutomation,
-            when,
-            playDuration,
-            globalClipElapsed,
-            ctx.currentTime,
-            entry.duration,
-          );
-          source.connect(gain);
-          gain.connect(panner);
-          panner.connect(destination);
-        } else {
-          source.connect(gain);
-          gain.connect(destination);
-        }
-
-        try {
-          source.start(when, bufferOffset, playDurationSource);
-        } catch {
-          continue;
-        }
-
-        const active: ActiveSource = {
-          source,
-          gain,
-          panner,
-          entry,
-          when,
-          clipElapsed: globalClipElapsed,
-          playDuration,
-        };
-        source.onended = () => {
-          this.active = this.active.filter((item) => item !== active);
-          try {
-            source.disconnect();
-            gain.disconnect();
-            panner?.disconnect();
-          } catch {
-            // ignore
-          }
-        };
-        this.active.push(active);
+      const destination = this.busRouting.destination(entry.trackId, master);
+      const volume = effectiveEntryVolume(entry, this.schedule);
+      for (const cycle of planEntryCycles(entry, buffer.duration, globalTime, now)) {
+        const active = startEntrySource(ctx, buffer, entry, cycle, volume, destination, (ended) => {
+          this.active = this.active.filter((item) => item !== ended);
+        });
+        if (active) this.active.push(active);
       }
     }
   }

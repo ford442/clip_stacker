@@ -2,20 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
 import type { Clip, ClipTransition } from '../types';
-import {
-  AAC_FRAME_SAMPLES,
-  assessWebCodecsAudioMix,
-  encodeAudioBufferToAac,
-  encodeScheduleAudioStreaming,
-  extractPlanarFrame,
-  isAudioEncoderAvailable,
-  MAX_OFFLINE_AUDIO_SECONDS,
-  prepareStreamingAudioMix,
-  exportMasterLimiter,
-  renderTimelineAudioMix,
-  timelineHasAudioAutomation,
-  timelineNeedsAudioPremix,
-} from './webcodecsAudio';
+import { AAC_FRAME_SAMPLES, assessWebCodecsAudioMix, isAudioEncoderAvailable, MAX_OFFLINE_AUDIO_SECONDS, prepareStreamingAudioMix, exportMasterLimiter, renderTimelineAudioMix, timelineHasAudioAutomation, timelineNeedsAudioPremix } from './webcodecsAudio';
+import { encodeAudioBufferToAac, encodeScheduleAudioStreaming, extractPlanarFrame } from './aacEncode';
 import { settingsStore } from '../store/settingsStore';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import {

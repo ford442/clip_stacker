@@ -1,12 +1,8 @@
 import type { Clip, ClipGroup, ClipTransition } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { Mp4Writer } from './container';
-import {
-  AAC_CHANNELS,
-  AAC_SAMPLE_RATE,
-  addAacChunksToMuxer,
-  encodeTimelineAudio,
-} from './webcodecsAudio';
+import { AAC_CHANNELS, AAC_SAMPLE_RATE } from './webcodecsAudio';
+import { addAacChunksToMuxer, encodeTimelineAudio } from './aacEncode';
 import type { ResolvedEncoderCodec } from './webcodecsCodec';
 import { WEBCODECS_PROGRESS_STAGES } from './webcodecsCodec';
 

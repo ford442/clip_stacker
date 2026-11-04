@@ -9,20 +9,24 @@ import { normalizeError } from "../ffmpeg/ffmpegCommon";
 import type { RenderProgressUpdate } from "../ffmpeg/ffmpegService";
 import {
   isHighMemoryUsage,
-  getMemoryStatus,
 } from "../utils/memory";
-import { remoteConcatBlockers } from "../export/renderEligibility";
 
 import { settingsStore } from "../store/settingsStore";
+import {
+  copyDebugInfo,
+  loadDebugReport,
+  loadFfmpegService,
+  resetFfmpegForDebug,
+  retryFfmpegLoad,
+  runRemoteConcat,
+  type FfmpegServiceModule,
+} from "../actions/renderJob";
 import { renderJobStore } from '../store/renderJobStore';
 
 // The export pipeline (encoders, FFmpeg, mp4box demux, the GPU export
 // compositor) is most of the app's code and none of it is needed to edit, so
 // it loads on the first render / FFmpeg action instead of with the editor.
 // Repeat calls resolve from the module cache.
-type FfmpegServiceModule = typeof import("../ffmpeg/ffmpegService");
-const loadFfmpegService = (): Promise<FfmpegServiceModule> =>
-  import("../ffmpeg/ffmpegService");
 const loadRenderPipeline = () =>
   Promise.all([
     loadFfmpegService(),
@@ -30,17 +34,6 @@ const loadRenderPipeline = () =>
     import("../ffmpeg/captions"),
     import("../webgpu/exportCompositor"),
   ]);
-
-/**
- * Copy Debug writes to the clipboard, which some browsers only allow while
- * the click's user activation is still live — so the report module is kept
- * once loaded (and warmed after a failed render) to generate synchronously.
- */
-let debugReportModule: typeof import("../actions/debugReport") | null = null;
-async function loadDebugReport() {
-  debugReportModule ??= await import("../actions/debugReport");
-  return debugReportModule;
-}
 
 type RenderActionsDeps = {
   clips: Clip[];
@@ -315,126 +308,15 @@ export function useRenderActions(deps: RenderActionsDeps) {
   // for a plain base-lane concat — an allow-list (`remoteConcatBlockers`):
   // anything else is refused rather than silently dropped.
   // Use the normal Render for those.
-  const handleGpuStitch = useCallback(async () => {
-    const timelineClips = effectiveClips.filter((clip) => clip.kind === "video");
-    if (clips.filter((c) => c.kind === "video").length === 0) {
-      renderJobStore.getState().setStatus("Add at least one video clip before remote concat.");
-      return;
-    }
+  const reportFailure = useCallback((message: string | null, error: unknown) => {
+    setRenderFailureMessage(message);
+    setLastRenderError(error);
+  }, []);
 
-    const { finishing } = settingsStore.getState();
-    const { captions, masterAudio } = editorStore.getState();
-    const { timelineNeedsAudioPremix } = await import("../export/webcodecsAudio");
-    const skippedFeatures = remoteConcatBlockers(effectiveClips, {
-      transitions,
-      textOverlays,
-      finishing,
-      captionCount: captions.length,
-      hasMasterAudio: masterAudio != null,
-      needsAudioPremix: timelineNeedsAudioPremix(effectiveClips),
-    });
-    if (skippedFeatures.length > 0) {
-      renderJobStore.getState().setStatus(
-        `Remote concat only stitches plain clips end to end; this timeline has ${skippedFeatures.join(", ")} — use Render instead.`,
-      );
-      return;
-    }
-
-    let ffmpeg: FfmpegServiceModule | null = null;
-    try {
-      const {
-        exportSettings,
-      } = settingsStore.getState();
-      const {
-        outputUrl,
-        setStatus,
-        setOutputUrl,
-        setEncoderPath,
-        setRenderPlan,
-        setIsRendering,
-        setProgressIndeterminate,
-        setProgressValue,
-        setProgressStage,
-      } = renderJobStore.getState();
-
-      if (outputUrl) URL.revokeObjectURL(outputUrl);
-      setOutputUrl(null);
-      setEncoderPath("");
-      setRenderPlan(null);
-      setRenderFailureMessage(null);
-      setLastRenderError(null);
-      setIsRendering(true);
-      setProgressIndeterminate(true);
-      setProgressValue(null);
-      setProgressStage("Remote concat");
-
-      ffmpeg = await loadFfmpegService();
-      const { extractTrimmedVideoClip, remuxStitchedMp4ForNle } = ffmpeg;
-
-      // Step 1: trim each clip in timeline order (FFmpeg lossless copy).
-      const clipBlobs: Blob[] = [];
-      for (let i = 0; i < timelineClips.length; i++) {
-        setStatus(
-          `Preparing clip ${i + 1}/${timelineClips.length} for remote concat…`,
-        );
-        clipBlobs.push(
-          await extractTrimmedVideoClip(timelineClips[i], setStatus),
-        );
-      }
-
-      // Step 2: upload + stitch at one resolution on the GPU.
-      const { width, height } = resolveTargetResolution(
-        timelineClips,
-        exportSettings,
-      );
-      const resolution = `${width}x${height}`;
-      const { stitchClipsOnGpu } = await import("../remote/huggingface");
-      const { blob } = await stitchClipsOnGpu(
-        clipBlobs,
-        resolution,
-        (event) => setStatus(event.message ?? `Remote concat: ${event.stage}…`),
-      );
-
-      const nleBlob = await remuxStitchedMp4ForNle(blob, setStatus);
-      const url = URL.createObjectURL(nleBlob);
-      setOutputUrl(url);
-      setEncoderPath("gpu-stitch");
-      setStatus(
-        `✅ Remote concat complete at ${resolution}. Download your merged MP4.`,
-      );
-      setProgressStage("Remote concat complete");
-      setProgressValue(1);
-      setProgressIndeterminate(false);
-    } catch (error) {
-      const { setStatus } = renderJobStore.getState();
-      const errMsg = normalizeError(error);
-      console.error("Remote concat error:", error);
-      const recentLogs = ffmpeg?.getLastFfmpegLogs(30).join("\n");
-      if (recentLogs) {
-        console.error("Last captured FFmpeg logs:\n" + recentLogs);
-      }
-      // huggingface.ts still raises its own errors as "GPU stitch failed: …"
-      // (the library predates the button's "Remote concat" rename) — accept
-      // either prefix so this doesn't double up into "Remote concat failed:
-      // GPU stitch failed: …".
-      const message = /^(remote concat|gpu stitch) failed:/i.test(errMsg)
-        ? errMsg
-        : `Remote concat failed: ${errMsg}`;
-      setStatus(message);
-      setRenderFailureMessage(message);
-      setLastRenderError(error);
-    } finally {
-      const { setIsRendering, setProgressIndeterminate } = renderJobStore.getState();
-      setIsRendering(false);
-      setProgressIndeterminate(false);
-      ffmpeg?.aggressiveCleanupFFmpegVFS().catch(() => {});
-    }
-  }, [
-    effectiveClips,
-    clips,
-    transitions,
-    textOverlays,
-  ]);
+  const handleGpuStitch = useCallback(
+    () => runRemoteConcat({ clips, effectiveClips, transitions, textOverlays, onFailure: reportFailure }),
+    [effectiveClips, clips, transitions, textOverlays, reportFailure],
+  );
 
   const handleMemoryWarningConfirm = useCallback(() => {
     setShowMemoryWarning(false);
@@ -450,88 +332,13 @@ export function useRenderActions(deps: RenderActionsDeps) {
     renderJobStore.getState().setStatus("Render cancelled.");
   }, []);
 
-  /** Copy rich diagnostics (status + render plan + last FFmpeg logs + browser info) to clipboard. */
-  const handleCopyDebugInfo = useCallback(async () => {
-    const { exportSettings, colorManagement } = settingsStore.getState();
-    const { status, renderPlan, encoderPath, setStatus } = renderJobStore.getState();
-    let report: typeof import("../actions/debugReport");
-    try {
-      report = debugReportModule ?? (await loadDebugReport());
-    } catch (err) {
-      setStatus(`Could not build the debug report: ${normalizeError(err)}`);
-      return;
-    }
-    const text = report.generateDebugReport({
-      status,
-      renderPlan,
-      encoderPath,
-      clips,
-      clipGroups,
-      transitions,
-      textOverlays,
-      exportSettings,
-      colorManagement,
-      error: lastRenderError ?? undefined,
-    });
-    try {
-      await navigator.clipboard.writeText(text);
-      setStatus("Debug report copied to clipboard (include in bug reports).");
-    } catch {
-      console.log(text);
-      setStatus("Debug report logged to console (clipboard blocked).");
-      window.alert(
-        "Debug report in console. First 800 chars:\n\n" + text.slice(0, 800),
-      );
-    }
-  }, [
-    effectiveClips,
-    clips,
-    clipGroups,
-    transitions,
-    textOverlays,
-    lastRenderError,
-  ]);
+  const handleCopyDebugInfo = useCallback(
+    () => copyDebugInfo({ clips, clipGroups, transitions, textOverlays, error: lastRenderError }),
+    [clips, clipGroups, transitions, textOverlays, lastRenderError],
+  );
 
-  const handleDebugResetFFmpeg = useCallback(async () => {
-    const { setStatus } = renderJobStore.getState();
-    setStatus("Resetting FFmpeg instance (debug action)...");
-    try {
-      const { resetFFmpegInstance } = await loadFfmpegService();
-      await resetFFmpegInstance();
-      const memoryStatus = getMemoryStatus();
-      const message = memoryStatus
-        ? `FFmpeg instance reset. Memory: ${memoryStatus}`
-        : "FFmpeg instance reset.";
-      setStatus(message);
-    } catch (err) {
-      setStatus(`Error resetting FFmpeg: ${(err as Error).message}`);
-    }
-  }, []);
-
-  const handleRetryFfmpegLoad = useCallback(async () => {
-    const { setStatus, setFfmpegFailed, setFfmpegLoading } = renderJobStore.getState();
-    setStatus("Resetting FFmpeg and retrying load...");
-    setFfmpegFailed(false);
-    setFfmpegLoading(true);
-    try {
-      const { resetFFmpegInstance, ensureFfmpeg } = await loadFfmpegService();
-      await resetFFmpegInstance();
-      await ensureFfmpeg(
-        (msg) => renderJobStore.getState().setStatus(msg),
-        (update) => {
-          renderJobStore.getState().setProgressStage(update.stage);
-          renderJobStore.getState().setProgressIndeterminate(update.indeterminate === true);
-        },
-      );
-      setStatus("FFmpeg loaded successfully. Click Render to start.");
-    } catch (err) {
-      const message = (err as Error).message;
-      setStatus(message);
-      setFfmpegFailed(true);
-    } finally {
-      setFfmpegLoading(false);
-    }
-  }, []);
+  const handleDebugResetFFmpeg = useCallback(() => resetFfmpegForDebug(), []);
+  const handleRetryFfmpegLoad = useCallback(() => retryFfmpegLoad(), []);
 
   const handleToggleCanvasRenderer = useCallback((v: boolean) => {
     settingsStore.getState().setUseCanvasRenderer(v);

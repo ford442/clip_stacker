@@ -8,14 +8,8 @@
 import { Mp4Writer } from '../export/container';
 import type { IFfmpegRuntime } from './ffmpegRuntime';
 import type { StatusCallback } from './ffmpegCommon';
-import {
-  AAC_BITRATE,
-  AAC_CHANNELS,
-  AAC_CODEC,
-  AAC_FRAME_SAMPLES,
-  extractPlanarFrame,
-  isAudioEncoderAvailable,
-} from '../export/webcodecsAudio';
+import { AAC_BITRATE, AAC_CHANNELS, AAC_CODEC, AAC_FRAME_SAMPLES, isAudioEncoderAvailable } from '../export/webcodecsAudio';
+import { extractPlanarFrame } from '../export/aacEncode';
 
 /** Virtual filename written into the FFmpeg VFS. */
 export const SILENT_AAC_UNIT_NAME = 'silent_unit.m4a';
