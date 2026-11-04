@@ -102,7 +102,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
 
   const handleClipChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
-    if (files.length > 0) onAddClips(files);
+    if (files.length > 0) void onAddClips(files);
     e.target.value = '';
   };
 
@@ -398,6 +398,11 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
                 Force FFmpeg / Canvas renderer to preserve the shader look.
               </p>
             )}
+          {renderPlan.refusal && (
+            <p className="render-plan-warning" role="alert">
+              ⚠ {renderPlan.refusal}
+            </p>
+          )}
           <RenderPlanAudioNotes plan={renderPlan} />
           {renderPlan.ffmpegFinishingGaps && renderPlan.ffmpegFinishingGaps.length > 0 && (
             <p className="render-plan-warning" role="alert">

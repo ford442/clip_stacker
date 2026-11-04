@@ -22,7 +22,7 @@ import {
   isFinishingActive,
   normalizeFinishingSettings,
 } from './finishing';
-import { applyProjectData, serializeProject } from './project';
+import { createProjectSnapshot, applyProjectData, serializeProject } from './project';
 import { createTestClip } from './project.test.helpers';
 
 const on = (over: Partial<BloomSettings> = {}): BloomSettings => ({
@@ -85,7 +85,7 @@ describe('bloom settings', () => {
   it('round-trips through project save / load', async () => {
     const sourceClips = [createTestClip('source1', 5)];
     const bloom = on({ amount: 0.6, mode: 'lightWrap', radius: 0.3, tint: [1, 0.8, 0.6] });
-    const serialized = serializeProject(sourceClips, [], [], [], { ...DEFAULT_FINISHING, bloom });
+    const serialized = serializeProject(createProjectSnapshot({ clips: sourceClips, finishing: { ...DEFAULT_FINISHING, bloom } }));
     const json = JSON.parse(JSON.stringify(serialized)) as Project;
     const project: Project = {
       clips: [

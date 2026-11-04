@@ -6,6 +6,7 @@ import type {
   RenderPlan,
 } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
+import { STORAGE_KEYS, safeGet, safeRemove, safeSet } from '../utils/storageKeys';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import {
   DEFAULT_COLOR_MANAGEMENT,
@@ -13,15 +14,11 @@ import {
 } from '../utils/colorManagement';
 
 /** localStorage key for the self-hosted transcription endpoint (#auto-caption). */
-export const AUTO_CAPTION_ENDPOINT_KEY = 'clipStacker.autoCaptionEndpoint';
+export const AUTO_CAPTION_ENDPOINT_KEY = STORAGE_KEYS.autoCaptionEndpoint.key;
 
 function readStoredEndpoint(): string {
-  try {
-    return localStorage.getItem(AUTO_CAPTION_ENDPOINT_KEY) ?? '';
-  } catch {
-    // Private windows can throw on access — the endpoint is a convenience.
-    return '';
-  }
+  // A blocked storage reads as unset — the endpoint is a convenience.
+  return safeGet('autoCaptionEndpoint') ?? '';
 }
 
 export interface SettingsState {
@@ -146,12 +143,9 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   setAutoCaptionMerge: (v) => set({ autoCaptionMerge: v }),
   setAutoCaptionEndpoint: (endpoint) => {
     set({ autoCaptionEndpoint: endpoint });
-    try {
-      if (endpoint) localStorage.setItem(AUTO_CAPTION_ENDPOINT_KEY, endpoint);
-      else localStorage.removeItem(AUTO_CAPTION_ENDPOINT_KEY);
-    } catch {
-      // Not persisting is fine; the session still has the value.
-    }
+    // Not persisting is fine; the session still has the value.
+    if (endpoint) safeSet('autoCaptionEndpoint', endpoint);
+    else safeRemove('autoCaptionEndpoint');
   },
 
   setStatus: (status) => set({ status }),

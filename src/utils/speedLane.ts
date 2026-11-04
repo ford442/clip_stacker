@@ -5,12 +5,13 @@
 import type { Clip, SyncMarker } from '../types';
 import { DEFAULT_BEAT_SNAP_THRESHOLD_MS } from './beatSnap';
 import { getClipPlaybackRate } from './playbackRate';
+import { STORAGE_KEYS, safeGet, safeSet } from './storageKeys';
 import {
   clipHasRateAutomation,
   outputLocalAtSourceOffset,
 } from './timeRemap';
 
-export const SPEED_LANE_LAST_SEED_KEY = 'clip-stacker:speed-lane-last-seed-rate';
+export const SPEED_LANE_LAST_SEED_KEY = STORAGE_KEYS.speedLaneSeedRate.key;
 
 /** Default snap threshold for Alt/Option keyframe drag (seconds). */
 export const SPEED_KEYFRAME_SNAP_THRESHOLD_SEC = DEFAULT_BEAT_SNAP_THRESHOLD_MS / 1000;
@@ -40,22 +41,15 @@ export function formatPlaybackRateAria(rate: number): string {
 }
 
 export function getLastSeedRate(): number {
-  try {
-    const raw = localStorage.getItem(SPEED_LANE_LAST_SEED_KEY);
-    if (raw == null) return 1;
-    const value = Number(raw);
-    return Number.isFinite(value) && value > 0 ? value : 1;
-  } catch {
-    return 1;
-  }
+  const raw = safeGet('speedLaneSeedRate');
+  if (raw == null) return 1;
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? value : 1;
 }
 
 export function setLastSeedRate(rate: number): void {
-  try {
-    localStorage.setItem(SPEED_LANE_LAST_SEED_KEY, String(rate));
-  } catch {
-    /* ignore quota / private mode */
-  }
+  // Quota / private mode: the next lane just seeds at 1×.
+  safeSet('speedLaneSeedRate', String(rate));
 }
 
 /** Vertical scale reference rates shown as tick marks in the lane. */

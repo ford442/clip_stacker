@@ -151,6 +151,17 @@ export interface RenderPlan {
    */
   encoderIntent?: 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
   /**
+   * Why `encoderIntent` was chosen, from `selectEncoderPath` (the one routing
+   * decision the estimate and the router share), in decision order.
+   */
+  encoderReasons?: string[];
+  /**
+   * Set when this render must not run because the chosen path would write a
+   * wrong file (e.g. HDR10 with titles / captions, which the HDR10 encoder
+   * cannot include yet). The router throws with this message.
+   */
+  refusal?: string;
+  /**
    * The WebCodecs video encoder a `webcodecs*` render actually configured:
    * the codec string and the acceleration rung the probe accepted
    * (`no-preference` on a machine with no hardware encoder). Resolved plans only.

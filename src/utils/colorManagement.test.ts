@@ -24,7 +24,7 @@ import {
   unpadRgbaRows,
   SCENE_LINEAR_MARKER,
 } from './colorManagement';
-import { serializeProject, applyProjectData } from './project';
+import { createProjectSnapshot, serializeProject, applyProjectData } from './project';
 import type { Clip } from '../types';
 
 function clip(): Clip {
@@ -224,13 +224,10 @@ describe('wide color render plan', () => {
 
 describe('project round-trip', () => {
   it('omits the default and restores a chosen output', async () => {
-    const omitted = serializeProject([clip()], [], [], [], undefined, [], undefined, null, [], {}, undefined);
+    const omitted = serializeProject(createProjectSnapshot({ clips: [clip()] }));
     expect(omitted.colorManagement).toBeUndefined();
 
-    const saved = serializeProject(
-      [clip()], [], [], [], undefined, [], undefined, null, [], {},
-      { outputColor: 'display-p3', workingSpace: 'rec2020-linear' },
-    );
+    const saved = serializeProject(createProjectSnapshot({ clips: [clip()], colorManagement: { outputColor: 'display-p3', workingSpace: 'rec2020-linear' } }));
     expect(saved.colorManagement).toEqual({
       outputColor: 'display-p3',
       workingSpace: 'rec2020-linear',

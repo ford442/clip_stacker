@@ -1,12 +1,12 @@
 import { describe, it, expect } from "vitest";
 import type { ClipGroup, ClipTransition, TextOverlay } from "../types";
-import { serializeProject } from "./project";
+import { createProjectSnapshot, serializeProject } from "./project";
 import { createTestClip } from "./project.test.helpers";
 
 describe("utils/project - serializeProject", () => {
   it("should serialize clips without optional fields", () => {
     const clips = [createTestClip("clip1", 5)];
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     expect(project.clips).toHaveLength(1);
     expect(project.clips[0]).toEqual({
       id: "clip1",
@@ -25,7 +25,7 @@ describe("utils/project - serializeProject", () => {
 
   it("should serialize clips with group info", () => {
     const clips = [createTestClip("clip1", 5, "clip1", "group1", "A")];
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     expect(project.clips[0].groupId).toBe("group1");
     expect(project.clips[0].groupVariant).toBe("A");
   });
@@ -33,35 +33,35 @@ describe("utils/project - serializeProject", () => {
   it("should serialize non-default clip volume", () => {
     const clips = [createTestClip("clip1", 5)];
     clips[0].volume = 0.75;
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     expect(project.clips[0].volume).toBe(0.75);
   });
 
   it("should serialize non-default playbackRate", () => {
     const clips = [createTestClip("clip1", 5)];
     clips[0].playbackRate = 2;
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     expect(project.clips[0].playbackRate).toBe(2);
   });
 
   it("should omit default playbackRate from serialization", () => {
     const clips = [createTestClip("clip1", 5)];
     clips[0].playbackRate = 1;
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     expect(project.clips[0].playbackRate).toBeUndefined();
   });
 
   it("should serialize non-default loopCount", () => {
     const clips = [createTestClip("clip1", 5)];
     clips[0].loopCount = 4;
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     expect(project.clips[0].loopCount).toBe(4);
   });
 
   it("should omit default loopCount from serialization", () => {
     const clips = [createTestClip("clip1", 5)];
     clips[0].loopCount = 1;
-    const project = serializeProject(clips, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips }));
     expect(project.clips[0].loopCount).toBeUndefined();
   });
 
@@ -70,7 +70,7 @@ describe("utils/project - serializeProject", () => {
     const transitions: ClipTransition[] = [
       { afterClipIndex: 1, type: "dissolve", duration: 0.5 },
     ];
-    const project = serializeProject(clips, transitions, [], []);
+    const project = serializeProject(createProjectSnapshot({ clips, transitions }));
     expect(project.transitions).toHaveLength(1);
     expect(project.transitions![0]).toEqual({
       afterClipIndex: 1,
@@ -95,7 +95,7 @@ describe("utils/project - serializeProject", () => {
         boxColor: "black@0.5",
       },
     ];
-    const project = serializeProject(clips, [], textOverlays, []);
+    const project = serializeProject(createProjectSnapshot({ clips, textOverlays }));
     expect(project.textOverlays).toBeDefined();
     expect(project.textOverlays).toHaveLength(1);
   });
@@ -117,7 +117,7 @@ describe("utils/project - serializeProject", () => {
         font: "mono",
       },
     ];
-    const project = serializeProject(clips, [], textOverlays, []);
+    const project = serializeProject(createProjectSnapshot({ clips, textOverlays }));
     expect(project.textOverlays?.[0]?.font).toBe("mono");
   });
 
@@ -130,7 +130,7 @@ describe("utils/project - serializeProject", () => {
         activeVariant: "A",
       },
     ];
-    const project = serializeProject(clips, [], [], clipGroups);
+    const project = serializeProject(createProjectSnapshot({ clips, clipGroups }));
     expect(project.clipGroups).toBeDefined();
     expect(project.clipGroups).toHaveLength(1);
     expect(project.clipGroups![0].id).toBe("group1");
@@ -145,7 +145,7 @@ describe("utils/project - serializeProject", () => {
     clip.width = 300 / 1280;
     clip.height = 400 / 720;
     clip.opacity = 0.8;
-    const project = serializeProject([clip], [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips: [clip] }));
     expect(project.schemaVersion).toBe(2);
     expect(project.clips[0].layerIndex).toBe(1);
     expect(project.clips[0].x).toBeCloseTo(100 / 1280);
@@ -165,7 +165,7 @@ describe("utils/project - serializeProject", () => {
       ],
       opacity: [{ t: 0, value: 1 }],
     };
-    const project = serializeProject([clip], [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips: [clip] }));
     expect(project.clips[0].stillImage).toBe(true);
     expect(project.clips[0].keyframes?.uvScaleX).toHaveLength(2);
     expect(project.clips[0].keyframes?.opacity).toHaveLength(1);
@@ -176,7 +176,7 @@ describe("utils/project - serializeProject", () => {
     clip.stillImage = true;
     clip.lumaHistogram = Array.from({ length: 256 }, (_, i) => i);
     clip.lumaLevels = { black: 8, white: 240, mean: 110 };
-    const project = serializeProject([clip], [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips: [clip] }));
     expect(project.clips[0].lumaHistogram).toHaveLength(256);
     expect(project.clips[0].lumaLevels?.black).toBe(8);
   });
@@ -195,7 +195,7 @@ describe("utils/project - serializeProject", () => {
         { t: 5, value: 1 },
       ],
     };
-    const project = serializeProject([clip], [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips: [clip] }));
     expect(project.clips[0].automation?.volume).toHaveLength(3);
     expect(project.clips[0].automation?.pan?.[0].value).toBe(-1);
     expect(project.clips[0].volume).toBe(0.9);
@@ -204,42 +204,42 @@ describe("utils/project - serializeProject", () => {
   it("should omit empty automation from serialization", () => {
     const clip = createTestClip("clip1", 5);
     clip.automation = { volume: [], pan: [] };
-    const project = serializeProject([clip], [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips: [clip] }));
     expect(project.clips[0].automation).toBeUndefined();
   });
 
   it("should serialize hasAudio when known", () => {
     const silent = createTestClip("clip1", 5);
     silent.hasAudio = false;
-    expect(serializeProject([silent], [], [], []).clips[0].hasAudio).toBe(false);
+    expect(serializeProject(createProjectSnapshot({ clips: [silent] })).clips[0].hasAudio).toBe(false);
 
     const withAudio = createTestClip("clip2", 5);
     withAudio.hasAudio = true;
-    expect(serializeProject([withAudio], [], [], []).clips[0].hasAudio).toBe(true);
+    expect(serializeProject(createProjectSnapshot({ clips: [withAudio] })).clips[0].hasAudio).toBe(true);
 
     const unknown = createTestClip("clip3", 5);
-    expect(serializeProject([unknown], [], [], []).clips[0].hasAudio).toBeUndefined();
+    expect(serializeProject(createProjectSnapshot({ clips: [unknown] })).clips[0].hasAudio).toBeUndefined();
   });
 
   it("should serialize beatTimestamps and bpmEstimate", () => {
     const clip = createTestClip("clip1", 5);
     clip.beatTimestamps = [0.5, 1.0, 1.5];
     clip.bpmEstimate = 120;
-    const project = serializeProject([clip], [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips: [clip] }));
     expect(project.clips[0].beatTimestamps).toEqual([0.5, 1.0, 1.5]);
     expect(project.clips[0].bpmEstimate).toBe(120);
   });
 
   it("should serialize finishing settings", () => {
-    const project = serializeProject([], [], [], [], {
+    const project = serializeProject(createProjectSnapshot({ finishing: {
       lut: { enabled: true, lutId: "film", intensity: 0.75 },
-    });
+    } }));
     expect(project.finishing?.lut?.lutId).toBe("film");
     expect(project.finishing?.lut?.intensity).toBe(0.75);
   });
 
   it("should serialize secondary color finishing settings", () => {
-    const project = serializeProject([], [], [], [], {
+    const project = serializeProject(createProjectSnapshot({ finishing: {
       secondaryColor: {
         enabled: true,
         amount: 0.9,
@@ -264,7 +264,7 @@ describe("utils/project - serializeProject", () => {
           },
         ],
       },
-    });
+    } }));
     expect(project.finishing?.secondaryColor?.enabled).toBe(true);
     expect(project.finishing?.secondaryColor?.grades).toHaveLength(1);
     expect(project.finishing?.secondaryColor?.grades?.[0].maskType).toBe(
@@ -275,7 +275,7 @@ describe("utils/project - serializeProject", () => {
   });
 
   it("should serialize primary color finishing settings", () => {
-    const project = serializeProject([], [], [], [], {
+    const project = serializeProject(createProjectSnapshot({ finishing: {
       primaryColor: {
         enabled: true,
         amount: 1,
@@ -288,7 +288,7 @@ describe("utils/project - serializeProject", () => {
         gamma: [1, 1.05, 1],
         gain: [1.05, 1, 0.98],
       },
-    });
+    } }));
     expect(project.finishing?.primaryColor?.enabled).toBe(true);
     expect(project.finishing?.primaryColor?.exposure).toBe(0.75);
     expect(project.finishing?.primaryColor?.lift).toEqual([0.02, 0, -0.01]);
@@ -296,7 +296,7 @@ describe("utils/project - serializeProject", () => {
   });
 
   it("should serialize noise reduction finishing settings", () => {
-    const project = serializeProject([], [], [], [], {
+    const project = serializeProject(createProjectSnapshot({ finishing: {
       noiseReduction: {
         enabled: true,
         amount: 1,
@@ -308,7 +308,7 @@ describe("utils/project - serializeProject", () => {
         lumaOnly: true,
         draft: false,
       },
-    });
+    } }));
     expect(project.finishing?.noiseReduction?.enabled).toBe(true);
     expect(project.finishing?.noiseReduction?.spatialStrength).toBe(0.55);
     expect(project.finishing?.noiseReduction?.temporal).toBe(true);

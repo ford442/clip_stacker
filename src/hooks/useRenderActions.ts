@@ -13,7 +13,7 @@ import {
   getMemoryStatus,
 } from "../utils/memory";
 import type { FinishingSettings } from "../utils/finishing";
-import { remoteConcatDroppedFeatures } from "../utils/renderEligibility";
+import { remoteConcatBlockers } from "../utils/renderEligibility";
 
 import { settingsStore } from "../store/settingsStore";
 
@@ -165,6 +165,9 @@ export function useRenderActions(deps: RenderActionsDeps) {
           forceFFmpeg,
           useCanvasRenderer,
           webGpuAvailable,
+          forceReencode,
+          outputColor: colorManagement.outputColor,
+          mediaRecorderAvailable: typeof MediaRecorder !== "undefined",
           captionMode: captions.length > 0 ? captionExportMode : undefined,
         },
       );
@@ -305,14 +308,13 @@ export function useRenderActions(deps: RenderActionsDeps) {
   }, [effectiveClips, performRender]);
 
   // Remote concat: offload resolution-normalization + concat to the
-  // HuggingFace space. Each clip is trimmed in-browser (cheap, lossless
-  // copy), then all clips are uploaded and stitched end to end at one
-  // resolution on native FFmpeg. There is no compositor on the other end —
-  // it only sequences base-lane clips — so it refuses to run whenever the
-  // timeline needs one: transitions, PiP/overlay lanes, finishing, chroma/
-  // luma keys, captions, text overlays and lane mute would all be silently
-  // dropped (see `remoteConcatDroppedFeatures`).
-  // Use the normal Render for those; this path is for a plain concat only.
+  // HuggingFace space. Each clip is trimmed in-browser (a stream copy from
+  // the start of the file, a frame-accurate re-encode otherwise), then all
+  // clips are uploaded and stitched end to end at one resolution on native
+  // FFmpeg. There is no compositor or mixer on the other end, so it runs only
+  // for a plain base-lane concat — an allow-list (`remoteConcatBlockers`):
+  // anything else is refused rather than silently dropped.
+  // Use the normal Render for those.
   const handleGpuStitch = useCallback(async () => {
     const timelineClips = effectiveClips.filter((clip) => clip.kind === "video");
     if (clips.filter((c) => c.kind === "video").length === 0) {
@@ -321,17 +323,19 @@ export function useRenderActions(deps: RenderActionsDeps) {
     }
 
     const { finishing } = settingsStore.getState();
-    const { captions } = editorStore.getState();
-    const skippedFeatures = remoteConcatDroppedFeatures(
-      effectiveClips,
+    const { captions, masterAudio } = editorStore.getState();
+    const { timelineNeedsAudioPremix } = await import("../utils/webcodecs-audio");
+    const skippedFeatures = remoteConcatBlockers(effectiveClips, {
       transitions,
       textOverlays,
       finishing,
-      captions.length,
-    );
+      captionCount: captions.length,
+      hasMasterAudio: masterAudio != null,
+      needsAudioPremix: timelineNeedsAudioPremix(effectiveClips),
+    });
     if (skippedFeatures.length > 0) {
       settingsStore.getState().setStatus(
-        `Remote concat ignores the timeline compositor and would drop ${skippedFeatures.join(", ")} — use Render instead.`,
+        `Remote concat only stitches plain clips end to end; this timeline has ${skippedFeatures.join(", ")} — use Render instead.`,
       );
       return;
     }
@@ -433,7 +437,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
   const handleMemoryWarningConfirm = useCallback(() => {
     setShowMemoryWarning(false);
     if (pendingRenderRef.current) {
-      pendingRenderRef.current();
+      void pendingRenderRef.current();
       pendingRenderRef.current = null;
     }
   }, []);

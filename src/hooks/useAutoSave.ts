@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type {
-  Clip,
-  ClipGroup,
-  ClipTransition,
-  ExportSettings,
-  TextOverlay,
-  Track,
-} from '../types';
+import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import { applyProjectData } from '../utils/project';
+import {
+  projectSnapshotHasContent,
+  selectProjectSnapshot,
+  selectProjectSnapshotEditorFields,
+  type ProjectSnapshot,
+} from '../utils/project/snapshot';
 import type { EditSnapshot } from '../utils/editHistory';
 import {
   AUTO_SAVE_DEBOUNCE_MS,
@@ -25,31 +25,24 @@ import {
 
 import { settingsStore } from '../store/settingsStore';
 import { editorStore } from '../store/editorStore';
-import { useStore } from 'zustand';
 
+/**
+ * Autosave and crash recovery. The saved state is the same
+ * {@link ProjectSnapshot} a manual save writes, subscribed field by field, so
+ * any project edit (a grade, the master bus, a caption…) schedules a save.
+ */
 export function useAutoSave({
-  clips,
-  tracks,
-  clipGroups,
-  transitions,
-  textOverlays,
-  selectedClipId,
   resetHistory,
   enabled = true,
 }: {
-  clips: Clip[];
-  tracks: Track[];
-  clipGroups: ClipGroup[];
-  transitions: ClipTransition[];
-  textOverlays: TextOverlay[];
-  selectedClipId: string | null;
   resetHistory: (snapshot: EditSnapshot) => void;
   enabled?: boolean;
 }) {
   const exportSettings = useStore(settingsStore, (s) => s.exportSettings);
-  // Subscribed (not read through the store in `persist`) so a bus edit alone
-  // schedules a save like any other edit.
-  const masterBus = useStore(editorStore, (s) => s.masterBus);
+  const selectedClipId = useStore(editorStore, (s) => s.selectedClipId);
+  const editorFields = useStore(editorStore, useShallow(selectProjectSnapshotEditorFields));
+  const finishing = useStore(settingsStore, (s) => s.finishing);
+  const colorManagement = useStore(settingsStore, (s) => s.colorManagement);
   const [recoveryOffer, setRecoveryOffer] = useState<AutoSaveOffer | null>(() =>
     readAutoSaveOffer(),
   );
@@ -61,26 +54,14 @@ export function useAutoSave({
   const persist = useCallback(async () => {
     if (!enabled || !recoveryResolved || persistInFlightRef.current) return;
 
-    const stateHash = hashAutoSaveState(
-      clips,
-      transitions,
-      textOverlays,
-      clipGroups,
-      selectedClipId,
-      exportSettings,
-      tracks,
-      editorStore.getState().captions,
-      editorStore.getState().captionStyle,
-      settingsStore.getState().colorManagement,
-      masterBus,
-    );
+    const snapshot: ProjectSnapshot = selectProjectSnapshot(editorFields, {
+      finishing,
+      colorManagement,
+    });
+    const stateHash = hashAutoSaveState(snapshot, selectedClipId, exportSettings);
     if (stateHash === lastSavedHashRef.current) return;
 
-    if (
-      clips.length === 0 &&
-      textOverlays.length === 0 &&
-      transitions.length === 0
-    ) {
+    if (!projectSnapshotHasContent(snapshot)) {
       clearAutoSave();
       lastSavedHashRef.current = stateHash;
       return;
@@ -88,34 +69,12 @@ export function useAutoSave({
 
     persistInFlightRef.current = true;
     try {
-      let project = await buildAutoSaveProject(
-        clips,
-        transitions,
-        textOverlays,
-        clipGroups,
-        tracks,
-        { colorManagement: settingsStore.getState().colorManagement, masterBus },
-        editorStore.getState().captions,
-        editorStore.getState().captionStyle,
-      );
+      let project = await buildAutoSaveProject(snapshot);
       let session = buildAutoSaveSession(project, selectedClipId, exportSettings);
       let result = writeAutoSaveSession(session);
 
       if (!result.ok && result.reason === 'quota') {
-        project = await buildAutoSaveProject(
-          clips,
-          transitions,
-          textOverlays,
-          clipGroups,
-          tracks,
-          {
-            forceMetadataOnly: true,
-            colorManagement: settingsStore.getState().colorManagement,
-            masterBus,
-          },
-          editorStore.getState().captions,
-          editorStore.getState().captionStyle,
-        );
+        project = await buildAutoSaveProject(snapshot, { forceMetadataOnly: true });
         session = buildAutoSaveSession(project, selectedClipId, exportSettings);
         result = writeAutoSaveSession(session);
       }
@@ -131,14 +90,11 @@ export function useAutoSave({
   }, [
     enabled,
     recoveryResolved,
-    clips,
-    tracks,
-    transitions,
-    textOverlays,
-    clipGroups,
+    editorFields,
+    finishing,
+    colorManagement,
     selectedClipId,
     exportSettings,
-    masterBus,
   ]);
 
   useEffect(() => {
@@ -186,6 +142,9 @@ export function useAutoSave({
         invalidColorWarnings,
         mediaDownloadWarnings,
         colorManagement: restoredColor,
+        finishing: restoredFinishing,
+        masterAudio: restoredMasterAudio,
+        masterAudioMarkers: restoredMarkers,
         masterBus: restoredMasterBus,
       } = await applyProjectData(session.project, []);
 
@@ -197,8 +156,8 @@ export function useAutoSave({
             ? restoredClips[restoredClips.length - 1].id
             : null;
 
-      settingsStore.getState().setColorManagement(restoredColor);
-      resetHistory({
+      // Restore everything the snapshot holds — the same fields a save wrote.
+      const restored: ProjectSnapshot = {
         clips: restoredClips,
         tracks: restoredTracks,
         clipGroups: restoredGroups,
@@ -206,10 +165,26 @@ export function useAutoSave({
         textOverlays: restoredOverlays,
         captions: restoredCaptions,
         captionStyle: restoredCaptionStyle,
-        masterAudioMarkers: session.project.masterAudioMarkers ?? [],
+        masterAudio: restoredMasterAudio,
+        masterAudioMarkers: restoredMarkers,
+        masterBus: restoredMasterBus,
+        finishing: restoredFinishing,
+        colorManagement: restoredColor,
+      };
+      settingsStore.getState().setColorManagement(restored.colorManagement);
+      settingsStore.getState().setFinishing(restored.finishing);
+      resetHistory({
+        clips: restored.clips,
+        tracks: restored.tracks,
+        clipGroups: restored.clipGroups,
+        transitions: restored.transitions,
+        textOverlays: restored.textOverlays,
+        captions: restored.captions,
+        captionStyle: restored.captionStyle,
+        masterAudioMarkers: restored.masterAudioMarkers,
         selectedClipId: selectedId,
-        masterAudio: null,
-        ...(restoredMasterBus ? { masterBus: restoredMasterBus } : {}),
+        masterAudio: restored.masterAudio,
+        masterBus: restored.masterBus,
       });
       const { setStatus, setExportSettings } = settingsStore.getState();
       if (session.exportSettings) {
@@ -230,17 +205,9 @@ export function useAutoSave({
       setRecoveryOffer(null);
       setRecoveryResolved(true);
       lastSavedHashRef.current = hashAutoSaveState(
-        restoredClips,
-        restoredTransitions,
-        restoredOverlays,
-        restoredGroups,
+        restored,
         selectedId,
         session.exportSettings ?? exportSettings,
-        restoredTracks,
-        restoredCaptions,
-        restoredCaptionStyle,
-        restoredColor,
-        restoredMasterBus,
       );
     } catch (error) {
       settingsStore.getState().setStatus(`Could not recover autosave: ${(error as Error).message}`);

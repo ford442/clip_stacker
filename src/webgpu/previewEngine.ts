@@ -39,6 +39,7 @@ import {
   GPU_TEX_COPY_DST,
   GPU_TEX_TEXTURE_BINDING,
 } from "./previewDeviceResources";
+import { OVERLAY_TEXTURE_PREMULTIPLIED } from "./overlayBlit";
 
 export type {
   LayerDraw,
@@ -335,9 +336,12 @@ export class PreviewEngine {
     if (width <= 0 || height <= 0) return;
 
     this.ensureOverlayTexture(width, height);
+    // The blend is premultiplied source-over, so the texture must hold
+    // premultiplied colour; the default (`false`) un-premultiplies and haloes
+    // every anti-aliased edge (see overlayBlit.ts).
     this.device.queue.copyExternalImageToTexture(
       { source },
-      { texture: this.overlayTexture! },
+      { texture: this.overlayTexture!, premultipliedAlpha: OVERLAY_TEXTURE_PREMULTIPLIED },
       [width, height],
     );
 

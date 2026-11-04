@@ -3,7 +3,6 @@ import type {
   Clip,
   ClipGroup,
   ClipTransition,
-  MasterAudio,
   Project,
   SerializedClip,
   SerializedMasterAudio,
@@ -13,40 +12,49 @@ import type {
   SerializedClipGroup,
   Track,
   SerializedTrack,
+  SyncMarker,
 } from '../../types';
 import { PROJECT_SCHEMA_VERSION } from '../../types';
-import {
-  DEFAULT_FINISHING,
-  isFinishingActive,
-} from '../finishing';
-import type { FinishingSettings } from '../finishing';
-import {
-  isColorManagementActive,
-  type ColorManagementSettings,
-} from '../colorManagement';
+import { isFinishingActive } from '../finishing';
+import { isColorManagementActive } from '../colorManagement';
 import { normalizeClipAutomation } from '../clipAutomation';
 import { normalizeClipAudioEffects } from '../audioEffects';
 import {
   normalizeBusEffects,
   normalizeLaneDuck,
   normalizeMasterBus,
-  type MasterBusSettings,
 } from '../audioBus';
 import { normalizeCaptions } from '../subtitles';
+import type { ProjectSnapshot } from './snapshot';
+
+export interface SerializeProjectOptions {
+  /** Canvas size text overlays were laid out against (`"1920x1080"`). */
+  layoutReferenceResolution?: string;
+}
+
+/**
+ * Serialize a project snapshot to its JSON form (metadata only — media is
+ * added by `serializeProjectWithMedia` / autosave). Build the snapshot with
+ * `selectProjectSnapshot` so every caller saves the same state.
+ */
 export function serializeProject(
-  clips: Clip[],
-  transitions: ClipTransition[] = [],
-  textOverlays: TextOverlay[] = [],
-  clipGroups: ClipGroup[] = [],
-  finishing: FinishingSettings = DEFAULT_FINISHING,
-  tracks: Track[] = [],
-  layoutReferenceResolution?: string,
-  masterAudio: MasterAudio | null = null,
-  captions: CaptionEntry[] = [],
-  captionStyle: Partial<TextOverlayStyle> = {},
-  colorManagement?: ColorManagementSettings,
-  masterBus?: MasterBusSettings,
+  snapshot: ProjectSnapshot,
+  { layoutReferenceResolution }: SerializeProjectOptions = {},
 ): Project {
+  const {
+    clips,
+    transitions,
+    textOverlays,
+    clipGroups,
+    finishing,
+    tracks,
+    masterAudio,
+    masterAudioMarkers,
+    captions,
+    captionStyle,
+    colorManagement,
+    masterBus,
+  } = snapshot;
   const serializedTracks: SerializedTrack[] = tracks.map((track) => {
     // Bypassed effects round-trip too, like clip inserts.
     const audioFx = normalizeBusEffects(track.audioFx);
@@ -195,6 +203,16 @@ export function serializeProject(
     ...(isFinishingActive(finishing) ? { finishing } : {}),
     ...(isColorManagementActive(colorManagement) ? { colorManagement } : {}),
     ...(savedMasterBus ? { masterBus: savedMasterBus } : {}),
+    ...(masterAudioMarkers.length > 0
+      ? {
+          masterAudioMarkers: masterAudioMarkers.map((marker): SyncMarker => ({
+            id: marker.id,
+            time: marker.time,
+            text: marker.text,
+            ...(marker.linkedId ? { linkedId: marker.linkedId } : {}),
+          })),
+        }
+      : {}),
     ...(masterAudio
       ? {
           masterAudio: {

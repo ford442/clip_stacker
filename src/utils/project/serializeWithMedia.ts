@@ -1,38 +1,21 @@
-import type { MasterBusSettings } from '../audioBus';
 import type {
-  CaptionEntry,
   Clip,
-  ClipGroup,
-  ClipTransition,
-  MasterAudio,
   Project,
   SerializedClip,
-  TextOverlay,
-  TextOverlayStyle,
-  Track,
 } from '../../types';
-import type { ColorGradeSettings } from '../lut';
-import type { FinishingSettings } from '../finishing';
-import type { ColorManagementSettings } from '../colorManagement';
-import {
-  DEFAULT_FINISHING,
-  colorGradeToLutPass,
-} from '../finishing';
 import type { ContaboStorageManagerClient } from './contaboClient';
 import {
   MAX_EMBED_FILE_BYTES,
   MAX_UPLOAD_RETRY_ATTEMPTS,
 } from './constants';
 import { serializeProject } from './serialize';
+import type { ProjectSnapshot } from './snapshot';
 import { formatBytes } from './remoteMedia';
 import type { RemoteUploadErrorEvent, RemoteUploadProgressEvent } from './types';
 
-export interface SerializeProjectOptions {
+export interface SerializeProjectWithMediaOptions {
   mediaMode?: 'metadata' | 'embed' | 'remote';
   mediaClient?: ContaboStorageManagerClient;
-  /** @deprecated Prefer `finishing`. */
-  colorGrade?: ColorGradeSettings;
-  finishing?: FinishingSettings;
   onRemoteUploadProgress?: (event: RemoteUploadProgressEvent) => void;
   onRemoteUploadError?: (
     event: RemoteUploadErrorEvent,
@@ -44,14 +27,6 @@ export interface SerializeProjectOptions {
    * `mediaClient` is set) or embedded anyway despite the size.
    */
   onEmbedWarning?: (message: string) => void;
-  /** Caption cues to save alongside the timeline. */
-  captions?: CaptionEntry[];
-  /** Project-wide caption style overrides. */
-  captionStyle?: Partial<TextOverlayStyle>;
-  /** Output color / working space. Omitted from the file when left at the default. */
-  colorManagement?: ColorManagementSettings;
-  /** Master bus FX and loudness target. Omitted from the file when empty. */
-  masterBus?: MasterBusSettings;
 }
 
 function sanitizeUploadFileName(fileName: string): string {
@@ -83,7 +58,7 @@ async function uploadOrReuseClipMedia(
   clip: Clip,
   index: number,
   total: number,
-  options: SerializeProjectOptions,
+  options: SerializeProjectWithMediaOptions,
 ): Promise<string | undefined> {
   if (clip.remoteSourceUrl) {
     options.onRemoteUploadProgress?.({
@@ -104,7 +79,7 @@ async function uploadClipMediaWithRetry(
   clip: Clip,
   index: number,
   total: number,
-  options: SerializeProjectOptions,
+  options: SerializeProjectWithMediaOptions,
 ): Promise<string | undefined> {
   if (!options.mediaClient) throw new Error('Remote save requires a storage endpoint.');
   const uploadName = `${clip.id}-${sanitizeUploadFileName(clip.file.name)}`;
@@ -200,34 +175,12 @@ async function uploadClipMediaWithRetry(
 }
 
 export async function serializeProjectWithMedia(
-  clips: Clip[],
-  transitions: ClipTransition[] = [],
-  textOverlays: TextOverlay[] = [],
-  clipGroups: ClipGroup[] = [],
-  options: SerializeProjectOptions = {},
-  tracks: Track[] = [],
-  masterAudio: MasterAudio | null = null,
+  snapshot: ProjectSnapshot,
+  options: SerializeProjectWithMediaOptions = {},
 ): Promise<Project> {
   const mediaMode = options.mediaMode ?? 'metadata';
-  const finishing =
-    options.finishing ??
-    (options.colorGrade
-      ? { ...DEFAULT_FINISHING, lut: colorGradeToLutPass(options.colorGrade, true) }
-      : DEFAULT_FINISHING);
-  const project = serializeProject(
-    clips,
-    transitions,
-    textOverlays,
-    clipGroups,
-    finishing,
-    tracks,
-    undefined,
-    masterAudio,
-    options.captions ?? [],
-    options.captionStyle ?? {},
-    options.colorManagement,
-    options.masterBus,
-  );
+  const { clips, masterAudio } = snapshot;
+  const project = serializeProject(snapshot);
   if (mediaMode === 'metadata') return project;
 
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));

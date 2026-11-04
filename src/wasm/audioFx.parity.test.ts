@@ -7,7 +7,6 @@
  */
 
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Track } from '../types';
@@ -21,55 +20,24 @@ import {
   type ClipPcm,
   type MediaEngineMixEntry,
 } from './mediaEngine';
+import {
+  WORKLET_QUANTUM as QUANTUM,
+  WORKLET_RATE as RATE,
+  loadFxModule,
+  loadProcessorClass,
+  waitForReady,
+  type Processor,
+  type ProcessorClass,
+} from './audioFxWorklet.test.helpers';
 
 const ROOT = process.cwd();
 const WASM_BASE = pathToFileURL(path.resolve(ROOT, 'public/wasm') + path.sep).href;
-const RATE = 48000;
-const QUANTUM = 128;
-
-interface FakePort {
-  onmessage: ((event: { data: unknown }) => void) | null;
-  posted: unknown[];
-  postMessage(data: unknown): void;
-}
-
-interface Processor {
-  port: FakePort;
-  process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
-}
-
-type ProcessorClass = new (options: unknown) => Processor;
-
-/** Evaluate the worklet script in a stand-in AudioWorkletGlobalScope; returns its processor class. */
-function loadProcessorClass(): ProcessorClass {
-  const source = readFileSync(path.resolve(ROOT, 'public/worklets/audio-fx-processor.js'), 'utf8');
-  class AudioWorkletProcessor {
-    port: FakePort = {
-      onmessage: null,
-      posted: [],
-      postMessage(data: unknown) {
-        this.posted.push(data);
-      },
-    };
-  }
-  let registered: ProcessorClass | null = null;
-  const registerProcessor = (_name: string, cls: ProcessorClass) => {
-    registered = cls;
-  };
-  new Function('AudioWorkletProcessor', 'registerProcessor', 'sampleRate', source)(
-    AudioWorkletProcessor,
-    registerProcessor,
-    RATE,
-  );
-  if (!registered) throw new Error('processor not registered');
-  return registered;
-}
 
 let fxModule: WebAssembly.Module;
 let Processor: ProcessorClass;
 
 beforeAll(async () => {
-  fxModule = await WebAssembly.compile(readFileSync(path.resolve(ROOT, 'public/wasm/media_engine_fx.wasm')));
+  fxModule = await loadFxModule();
   Processor = loadProcessorClass();
 });
 
@@ -82,16 +50,7 @@ async function startProcessor(plan: BusGraphPlan, meter = false): Promise<{ proc
     numberOfInputs: plan.laneTrackIds.length + 1,
     processorOptions: { module: fxModule, layout: busLayoutMessage(plan, meter) },
   });
-  for (let i = 0; i < 200; i++) {
-    const ready = proc.port.posted.find((m) => (m as { type?: string }).type === 'ready') as
-      | { latency: number }
-      | undefined;
-    if (ready) return { proc, latency: ready.latency };
-    const error = proc.port.posted.find((m) => (m as { type?: string }).type === 'error');
-    if (error) throw new Error(JSON.stringify(error));
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-  throw new Error('worklet never became ready');
+  return { proc, latency: await waitForReady(proc) };
 }
 
 /** Run planar stereo lanes through the processor in render quanta; returns planar output. */

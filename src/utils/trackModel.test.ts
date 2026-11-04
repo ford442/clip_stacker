@@ -12,7 +12,7 @@ import {
   OVERLAY_VIDEO_TRACK_ID,
 } from './trackModel';
 import { PROJECT_SCHEMA_VERSION } from '../types';
-import { serializeProject, applyProjectData } from './project';
+import { createProjectSnapshot, serializeProject, applyProjectData } from './project';
 
 function makeClip(
   id: string,
@@ -82,7 +82,7 @@ describe('project migration', () => {
   it('serializeProject emits schemaVersion and tracks', () => {
     const clips = [makeClip('a', 5)];
     const tracks = migrateLegacyClipsToTracks(clips, []);
-    const project = serializeProject(clips, [], [], [], undefined, tracks);
+    const project = serializeProject(createProjectSnapshot({ clips, tracks }));
     expect(project.schemaVersion).toBe(PROJECT_SCHEMA_VERSION);
     expect(project.tracks?.length).toBeGreaterThan(0);
   });
@@ -115,7 +115,7 @@ describe('project migration', () => {
     const clips = [makeClip('a', 5), makeClip('b', 3)];
     const transitions: ClipTransition[] = [];
     const tracks = migrateLegacyClipsToTracks(clips, transitions);
-    const project = serializeProject(clips, transitions, [], [], undefined, tracks);
+    const project = serializeProject(createProjectSnapshot({ clips, transitions, tracks }));
     const result = await applyProjectData(project, clips);
     expect(result.tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID)?.items.map((i) => i.clipId)).toEqual([
       'a',
@@ -135,7 +135,7 @@ describe('project migration', () => {
     tracks = setTrackLocked(tracks, OVERLAY_VIDEO_TRACK_ID, true);
     tracks = setTrackHeight(tracks, OVERLAY_VIDEO_TRACK_ID, 96);
 
-    const project = serializeProject(clips, [], [], [], undefined, tracks);
+    const project = serializeProject(createProjectSnapshot({ clips, tracks }));
     const result = await applyProjectData(project, clips);
 
     expect(result.tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID)?.muted).toBe(true);
@@ -154,7 +154,7 @@ describe('project migration', () => {
     // The flattened view carries them...
     expect(toLegacyTimelineView(tracks, clips)[1]).toHaveProperty('timelineStart');
     // ...but the saved project does not.
-    const project = serializeProject(clips, [], [], [], undefined, tracks);
+    const project = serializeProject(createProjectSnapshot({ clips, tracks }));
     for (const clip of project.clips) {
       expect(clip).not.toHaveProperty('timelineStart');
       expect(clip).not.toHaveProperty('trackMuted');

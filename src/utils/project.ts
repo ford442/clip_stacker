@@ -27,10 +27,19 @@ export {
   sanitizeClipAdjustments,
 } from './project/clipHelpers';
 
-export { serializeProject } from './project/serialize';
+export { serializeProject, type SerializeProjectOptions } from './project/serialize';
+
+export {
+  createProjectSnapshot,
+  projectSnapshotHasContent,
+  selectProjectSnapshot,
+  selectProjectSnapshotEditorFields,
+  type ProjectSnapshot,
+} from './project/snapshot';
 
 export {
   serializeProjectWithMedia,
+  type SerializeProjectWithMediaOptions,
 } from './project/serializeWithMedia';
 
 export { downloadRemoteMedia, formatBytes } from './project/remoteMedia';

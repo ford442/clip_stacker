@@ -207,6 +207,10 @@ function InspectorImpl({
           generatingThumbs.current.delete(clip.id);
           completedThumbs.current.add(clip.id);
           setThumbMap((prev) => ({ ...prev, [clip.id]: thumbs }));
+        }).catch((err: unknown) => {
+          // Leave it out of `completedThumbs` so a later render can retry.
+          generatingThumbs.current.delete(clip.id);
+          console.warn('[inspector] thumbnail extraction failed', err);
         });
       }
     }

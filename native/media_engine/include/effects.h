@@ -11,12 +11,17 @@
 
 #include "resampler.h"
 
+#include <cmath>
 #include <vector>
 
 namespace media_engine {
 
-/** Zero for |v| < 1e-30 (see the note above). */
-inline double flush_denormal(double v) { return (v > -1e-30 && v < 1e-30) ? 0.0 : v; }
+/**
+ * Zero for |v| < 1e-30 (see the note above), and for NaN: `!(|v| >= 1e-30)`
+ * is true for NaN, so recursive state that once went NaN recovers on the next
+ * sample instead of staying NaN for the rest of the session.
+ */
+inline double flush_denormal(double v) { return !(std::fabs(v) >= 1e-30) ? 0.0 : v; }
 
 /** One RBJ Audio EQ Cookbook section, transposed direct form II, f64 state. */
 class Biquad {

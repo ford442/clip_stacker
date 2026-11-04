@@ -19,7 +19,7 @@ import {
   getLastExportAudioReport,
   resetExportAudioReport,
 } from './exportAudioBus';
-import { DEFAULT_FINISHING, isFinishingActive, type FinishingSettings } from '../utils/finishing';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ffmpegService';
 import { encodeClipsWithCanvas } from './canvas-encoder';
@@ -30,19 +30,17 @@ import {
   isAudioEncoderAvailable,
   prepareStreamingAudioMix,
 } from './webcodecs-audio';
+import { pictureTransformPlanFields } from './renderEligibility';
 import {
-  canUseGpuVideoEncoder,
-  hasActiveTransitions,
-  pictureTransformPlanFields,
-} from './renderEligibility';
-import { clipHasPictureTransform } from './animatedLayout';
-import { clipHasLoop } from './playbackRate';
-import { clipIsReversed } from './reverseClip';
-import { clipHasRateAutomation } from './timeRemap';
+  isGpuEncodeCandidate,
+  selectEncoderPath,
+  type EncoderPathInput,
+} from './encoderPath';
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { resolveLayerKey } from './overlayKey';
 import {
+  ColorPipelineExportError,
   DEFAULT_COLOR_MANAGEMENT,
   isColorManagementActive,
   isColorPipelineExportError,
@@ -108,6 +106,8 @@ export async function hybridMergeClips(
       forceFFmpeg,
       useCanvasRenderer: useCanvas,
       webGpuAvailable,
+      forceReencode,
+      outputColor: colorManagement.outputColor,
       captionMode: captionBurnIn && captionBurnIn.captions.length > 0 ? 'burn' : undefined,
     });
 
@@ -127,8 +127,10 @@ export async function hybridMergeClips(
     const keyed: RenderPlan = {
       ...effectiveRenderPlan,
       encoderIntent: path,
+      encoderReasons: [...decision.reasons, ...fallbackReasons],
       ...(hasKeyedClip && overlayKeying ? { overlayKeying } : {}),
     };
+    delete keyed.refusal;
     delete keyed.videoEncoder;
     const encoder = getLastResolvedEncoderCodec();
     if ((path === 'webcodecs' || path === 'webcodecs-av') && encoder) {
@@ -154,30 +156,47 @@ export async function hybridMergeClips(
       : keyed;
   };
 
+  // -- The routing decision ---------------------------------------------------
+  // `selectEncoderPath` is the one decision; the pre-render estimate makes the
+  // same call without these runtime probes, so the two can only disagree
+  // about the machine, never about the timeline.
+  const needsVideoNormalize = clipsNeedResolutionNormalization(clips, settings) || forceReencode;
+  const { width, height } = parseOutputResolution(settings.outputResolution);
+  const burnCaptions =
+    captionBurnIn && captionBurnIn.captions.length > 0
+      ? captionBurnIn
+      : null;
+  const pathInput: EncoderPathInput = {
+    clips,
+    transitions,
+    textOverlays,
+    finishing,
+    forceFFmpeg,
+    useCanvas,
+    webGpuAvailable,
+    mediaRecorderAvailable: typeof MediaRecorder !== 'undefined',
+    willReencode: needsVideoNormalize || effectiveRenderPlan.willReencode === true,
+    outputColor: colorManagement.outputColor,
+    burnCaptions: burnCaptions !== null,
+  };
+  // Probe WebCodecs only when the GPU encoder is actually the candidate.
+  const webCodecsAvailable = isGpuEncodeCandidate(pathInput)
+    ? await isWebCodecsAvailable(width, height)
+    : false;
+  let decision = selectEncoderPath({ ...pathInput, webCodecsAvailable });
+  /** Runtime fallbacks taken after the decision (a failed encoder). */
+  const fallbackReasons: string[] = [];
+  for (const reason of decision.reasons) {
+    if (reason.startsWith('Canvas renderer skipped')) {
+      onStatus(`${reason}; using the GPU/FFmpeg compositor instead.`);
+    }
+  }
+
   // -- Canvas renderer path --------------------------------------------------
   // Canvas2D has no keying, transition, PiP, or finishing-pass step — it just
-  // plays clips back onto a canvas (see `overlayKeying: 'unsupported'` above).
-  // Rather than silently dropping compositing the timeline actually needs,
-  // fall straight through to the GPU/FFmpeg compositor for those cases.
-  const hasPipClip = clips.some(
-    (clip) => (clip.layerIndex ?? 0) > 0 || clipHasPictureTransform(clip),
-  );
-  // Canvas capture is one realtime <video> play. A speed curve or a loop is
-  // not a single playbackRate, so those fall through to the compositor.
-  // A constant rate is applied as video.playbackRate inside the renderer.
-  const canvasCantComposite =
-    hasKeyedClip ||
-    hasPipClip ||
-    hasActiveTransitions(transitions) ||
-    isFinishingActive(finishing) ||
-    clips.some(
-      (clip) => clipHasRateAutomation(clip) || clipHasLoop(clip) || clipIsReversed(clip),
-    );
-  if (useCanvas && canvasCantComposite) {
-    onStatus(
-      'Canvas renderer skipped — the timeline has keys, finishing, transitions, PiP, picture transforms, speed curves, loops, or reversed clips it can\'t composite; using the GPU/FFmpeg compositor instead.',
-    );
-  } else if (useCanvas && typeof MediaRecorder !== 'undefined') {
+  // plays clips back onto a canvas (see `overlayKeying: 'unsupported'`).
+  // `selectEncoderPath` never picks it for a timeline that needs those.
+  if (decision.path === 'canvas') {
     try {
       onStatus('Canvas renderer path selected (audio-reactive compositing)...');
       onProgress?.({ stage: 'Canvas renderer selected', progress: 0, indeterminate: false });
@@ -190,105 +209,103 @@ export async function hybridMergeClips(
     } catch (err) {
       canvasFailure = (err as Error).message;
       onStatus(`Canvas render failed (${canvasFailure}). Trying next encoder...`);
+      fallbackReasons.push(`Canvas render failed: ${canvasFailure}`);
+      // Decide again without the canvas request: the GPU encoder, if eligible.
+      const retryInput = { ...pathInput, useCanvas: false };
+      decision = selectEncoderPath({
+        ...retryInput,
+        webCodecsAvailable: isGpuEncodeCandidate(retryInput)
+          ? await isWebCodecsAvailable(width, height)
+          : false,
+      });
     }
   }
 
+  // Never write a file that silently lacks what the user asked for.
+  if (decision.refusal) {
+    throw new ColorPipelineExportError(decision.refusal);
+  }
+
   // -- GPU WebCodecs path (hardware video + WebCodecs AAC or FFmpeg audio mux) -
-  const gpuEligible = canUseGpuVideoEncoder(clips, transitions, textOverlays, {
-    forceFFmpeg,
-    useCanvas,
-    webGpuAvailable,
-    finishing,
-  });
-  const needsVideoNormalize = clipsNeedResolutionNormalization(clips, settings) || forceReencode;
-  const { width, height } = parseOutputResolution(settings.outputResolution);
+  if (decision.path === 'webcodecs') {
+    const audioEncoderOk = await isAudioEncoderAvailable();
+    // Media-engine streaming mix has no length cap; without it (load failure
+    // or ?no_media_engine) long timelines fall back to FFmpeg audio mux.
+    const streamingMix = audioEncoderOk && (await prepareStreamingAudioMix());
+    const audioMix = assessWebCodecsAudioMix(clips, clipGroups, transitions, { streamingMix });
+    const useWebCodecsAudio = audioEncoderOk && audioMix.supported;
 
-  if (gpuEligible && (needsVideoNormalize || effectiveRenderPlan.willReencode)) {
-    const gpuAvailable = await isWebCodecsAvailable(width, height);
-    if (gpuAvailable) {
-      const audioEncoderOk = await isAudioEncoderAvailable();
-      // Media-engine streaming mix has no length cap; without it (load failure
-      // or ?no_media_engine) long timelines fall back to FFmpeg audio mux.
-      const streamingMix = audioEncoderOk && (await prepareStreamingAudioMix());
-      const audioMix = assessWebCodecsAudioMix(clips, clipGroups, transitions, { streamingMix });
-      const useWebCodecsAudio = audioEncoderOk && audioMix.supported;
+    try {
+      if (useWebCodecsAudio) {
+        onStatus('GPU path selected (hardware video + WebCodecs AAC, no FFmpeg)...');
+      } else if (audioEncoderOk && !audioMix.supported) {
+        onStatus(`WebCodecs audio unavailable (${audioMix.reason}); using FFmpeg audio mux...`);
+      } else {
+        onStatus('GPU path selected (hardware video + FFmpeg audio mux)...');
+      }
+      onProgress?.({ stage: 'GPU encoder selected', progress: 0, indeterminate: false });
 
-      try {
-        if (useWebCodecsAudio) {
-          onStatus('GPU path selected (hardware video + WebCodecs AAC, no FFmpeg)...');
-        } else if (audioEncoderOk && !audioMix.supported) {
-          onStatus(`WebCodecs audio unavailable (${audioMix.reason}); using FFmpeg audio mux...`);
-        } else {
-          onStatus('GPU path selected (hardware video + FFmpeg audio mux)...');
-        }
-        onProgress?.({ stage: 'GPU encoder selected', progress: 0, indeterminate: false });
+      const blob = await encodeVideoWithWebCodecs(
+        clips,
+        settings,
+        onStatus,
+        onProgress,
+        'auto',
+        transitions,
+        textOverlays,
+        clipGroups,
+        finishing,
+        useWebCodecsAudio,
+        burnCaptions ?? {},
+        colorManagement,
+      );
+      const captionsBurnedIn = Boolean(burnCaptions);
 
-        const burnCaptions =
-          captionBurnIn && captionBurnIn.captions.length > 0
-            ? captionBurnIn
-            : null;
-
-        const blob = await encodeVideoWithWebCodecs(
-          clips,
-          settings,
-          onStatus,
-          onProgress,
-          'auto',
-          transitions,
-          textOverlays,
-          clipGroups,
-          finishing,
-          useWebCodecsAudio,
-          burnCaptions ?? {},
-          colorManagement,
-        );
-        const captionsBurnedIn = Boolean(burnCaptions);
-
-        if (useWebCodecsAudio) {
-          return {
-            blob,
-            path: 'webcodecs-av',
-            renderPlan: resolveFinalPlan('webcodecs-av', 'gpu', 'gpu'),
-            captionsBurnedIn,
-          };
-        }
-
-        onStatus('Muxing GPU video with source audio via FFmpeg...');
-        const muxed = await muxVideoWithAudio(
-          blob,
-          clips,
-          settings,
-          onStatus,
-          onProgress,
-          clipGroups,
-          transitions,
-        );
+      if (useWebCodecsAudio) {
         return {
-          blob: muxed,
-          path: 'webcodecs',
-          renderPlan: resolveFinalPlan('webcodecs', 'gpu', 'gpu'),
+          blob,
+          path: 'webcodecs-av',
+          renderPlan: resolveFinalPlan('webcodecs-av', 'gpu', 'gpu'),
           captionsBurnedIn,
         };
-      } catch (err) {
-        if (
-          isColorManagementActive(colorManagement) &&
-          colorManagement.outputColor !== 'rec709-sdr'
-        ) {
-          if (isColorPipelineExportError(err)) throw err;
-          const message = err instanceof Error ? err.message : 'GPU encode failed';
-          throw new Error(
-            `${message} Display P3 / HDR10 was not written as a Rec.709 file.`,
-            { cause: err },
-          );
-        }
-        gpuFailure = (err as Error).message;
-        onStatus(`GPU encode failed (${gpuFailure}). Falling back to FFmpeg...`);
       }
+
+      onStatus('Muxing GPU video with source audio via FFmpeg...');
+      const muxed = await muxVideoWithAudio(
+        blob,
+        clips,
+        settings,
+        onStatus,
+        onProgress,
+        clipGroups,
+        transitions,
+      );
+      return {
+        blob: muxed,
+        path: 'webcodecs',
+        renderPlan: resolveFinalPlan('webcodecs', 'gpu', 'gpu'),
+        captionsBurnedIn,
+      };
+    } catch (err) {
+      if (
+        isColorManagementActive(colorManagement) &&
+        colorManagement.outputColor !== 'rec709-sdr'
+      ) {
+        if (isColorPipelineExportError(err)) throw err;
+        const message = err instanceof Error ? err.message : 'GPU encode failed';
+        throw new Error(
+          `${message} Display P3 / HDR10 was not written as a Rec.709 file.`,
+          { cause: err },
+        );
+      }
+      gpuFailure = (err as Error).message;
+      onStatus(`GPU encode failed (${gpuFailure}). Falling back to FFmpeg...`);
+      fallbackReasons.push(`GPU encode failed: ${gpuFailure}`);
     }
   }
 
   // -- FFmpeg path (default / fallback) -------------------------------------
-  if (!forceFFmpeg && !useCanvas && !gpuEligible) {
+  if (!forceFFmpeg && !useCanvas && decision.path === 'ffmpeg' && !gpuFailure && !canvasFailure) {
     onStatus('FFmpeg path selected for audio-preserving export...');
   } else if (gpuFailure || canvasFailure) {
     onStatus('FFmpeg fallback path selected...');

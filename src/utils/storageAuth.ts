@@ -1,31 +1,37 @@
+import { STORAGE_KEYS, safeGet, safeRemove, safeSet } from './storageKeys';
+
 /** sessionStorage key for the remote storage auth token (tab-scoped). */
-export const STORAGE_AUTH_TOKEN_KEY = 'clip_stacker:storage_auth_token';
+export const STORAGE_AUTH_TOKEN_KEY = STORAGE_KEYS.storageAuthToken.key;
 
 /**
  * Read the storage auth token from sessionStorage, migrating once from legacy
- * localStorage if present.
+ * localStorage if present. Returns '' when storage is blocked.
  */
 export function readStorageAuthToken(): string {
-  const fromSession = sessionStorage.getItem(STORAGE_AUTH_TOKEN_KEY);
+  const fromSession = safeGet('storageAuthToken');
   if (fromSession) return fromSession;
 
-  const legacy = localStorage.getItem(STORAGE_AUTH_TOKEN_KEY);
+  const legacy = safeGet('legacyLocalStorageAuthToken');
   if (legacy) {
-    sessionStorage.setItem(STORAGE_AUTH_TOKEN_KEY, legacy);
-    localStorage.removeItem(STORAGE_AUTH_TOKEN_KEY);
+    safeSet('storageAuthToken', legacy);
+    safeRemove('legacyLocalStorageAuthToken');
     return legacy;
   }
 
   return '';
 }
 
-/** Persist or clear the storage auth token in sessionStorage only. */
+/**
+ * Persist or clear the storage auth token in sessionStorage only. Best
+ * effort: a blocked storage means the token lives for this page only, and
+ * this never throws (callers run it before updating their own state).
+ */
 export function writeStorageAuthToken(value: string): void {
   if (value) {
-    sessionStorage.setItem(STORAGE_AUTH_TOKEN_KEY, value);
+    safeSet('storageAuthToken', value);
   } else {
-    sessionStorage.removeItem(STORAGE_AUTH_TOKEN_KEY);
+    safeRemove('storageAuthToken');
   }
   // Never leave a copy in localStorage.
-  localStorage.removeItem(STORAGE_AUTH_TOKEN_KEY);
+  safeRemove('legacyLocalStorageAuthToken');
 }

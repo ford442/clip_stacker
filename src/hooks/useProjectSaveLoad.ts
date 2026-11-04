@@ -19,6 +19,12 @@ import {
   type RemoteUploadErrorEvent,
 } from "../utils/project";
 import { editorStore } from "../store/editorStore";
+import { selectProjectSnapshot, type ProjectSnapshot } from "../utils/project/snapshot";
+
+/** What a save writes right now: one snapshot for manual, remote and autosave. */
+function currentProjectSnapshot(): ProjectSnapshot {
+  return selectProjectSnapshot(editorStore.getState(), settingsStore.getState());
+}
 
 function formatSkippedClipMessage(names: string[]): string {
   if (names.length === 0) return "";
@@ -81,7 +87,7 @@ export function useProjectSaveLoad({
   );
 
   const handleSaveProject = useCallback(async () => {
-    const { setStatus, finishing } = settingsStore.getState();
+    const { setStatus } = settingsStore.getState();
     const summary = summarizeProjectForSave(clips, transitions, textOverlays);
     if (summary.isEmpty) {
       setStatus(EMPTY_PROJECT_SAVE_MESSAGE);
@@ -91,23 +97,10 @@ export function useProjectSaveLoad({
     try {
       setStatus(describeProjectSaveExportStatus(summary));
       const embedWarnings: string[] = [];
-      const project = await serializeProjectWithMedia(
-        clips,
-        transitions,
-        textOverlays,
-        clipGroups,
-        {
-          mediaMode: "embed",
-          onEmbedWarning: (message) => embedWarnings.push(message),
-          finishing,
-          captions: editorStore.getState().captions,
-          captionStyle: editorStore.getState().captionStyle,
-          colorManagement: settingsStore.getState().colorManagement,
-          masterBus: editorStore.getState().masterBus,
-        },
-        tracks,
-        editorStore.getState().masterAudio,
-      );
+      const project = await serializeProjectWithMedia(currentProjectSnapshot(), {
+        mediaMode: "embed",
+        onEmbedWarning: (message) => embedWarnings.push(message),
+      });
       const payload = JSON.stringify(project, null, 2);
       const blob = new Blob([payload], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -194,7 +187,7 @@ export function useProjectSaveLoad({
 
   const handleSaveRemote = useCallback(
     async (endpoint: string, authToken: string, projectName: string) => {
-      const { setStatus, finishing } = settingsStore.getState();
+      const { setStatus } = settingsStore.getState();
       const summary = summarizeProjectForSave(clips, transitions, textOverlays);
       if (summary.isEmpty) {
         setStatus(EMPTY_PROJECT_SAVE_MESSAGE);
@@ -242,17 +235,9 @@ export function useProjectSaveLoad({
             ? `Uploading clip 1/${clips.length}: ${clips[0].file.name} (0%)`
             : "Saving project to remote storage...",
         );
-        const project = await serializeProjectWithMedia(
-          clips,
-          transitions,
-          textOverlays,
-          clipGroups,
-          {
+        const project = await serializeProjectWithMedia(currentProjectSnapshot(), {
             mediaMode: "remote",
             mediaClient: client,
-            captions: editorStore.getState().captions,
-            captionStyle: editorStore.getState().captionStyle,
-            masterBus: editorStore.getState().masterBus,
             onRemoteUploadProgress: (event) => {
               setRemoteUploadItems((prev) => {
                 const next = [...prev];
@@ -283,11 +268,7 @@ export function useProjectSaveLoad({
                 });
               });
             },
-            finishing,
-            colorManagement: settingsStore.getState().colorManagement,
-          },
-          tracks,
-        );
+        });
         await client.save(projectName, project);
         setStatus(describeRemoteSaveSuccessMessage(projectName, summary));
       } catch (error) {

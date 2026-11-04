@@ -1,5 +1,6 @@
 import type { Clip, ClipTransition, RenderPlan, TextOverlay } from '../types';
 import { clipHasVolumeAdjustment } from './audioVolume';
+import { clipAudioEffectsActive } from './audioEffects';
 import { clipHasLoop, clipHasPlaybackRateAdjustment } from './playbackRate';
 import { clipIsReversed } from './reverseClip';
 import { clipHasRateAutomation } from './timeRemap';
@@ -176,26 +177,63 @@ export function pictureTransformPlanFields(
   };
 }
 
+/** What the remote concat needs to know beyond the clip list. */
+export interface RemoteConcatContext {
+  transitions: ClipTransition[];
+  textOverlays: TextOverlay[];
+  finishing: FinishingSettings;
+  captionCount: number;
+  hasMasterAudio: boolean;
+  /**
+   * `timelineNeedsAudioPremix(...)` for this timeline: automation, clip
+   * inserts, lane / master bus FX, ducks, loudness, the limiter, audio lanes.
+   */
+  needsAudioPremix: boolean;
+}
+
 /**
- * What the remote concat (`handleGpuStitch`) would silently drop for this
- * timeline. It has no compositor — it trims each base clip with its own audio
- * and stitches them end to end — so any of these makes it refuse.
+ * Why the remote concat (`handleGpuStitch`) cannot run this timeline; empty
+ * when it can.
+ *
+ * An **allow-list**: the remote side only trims each base clip with its own
+ * audio and stitches them end to end at one resolution — no compositor, no
+ * mixer. So it accepts exactly a plain base-lane video clip (no fades,
+ * volume, speed, loop, reverse, stabilization, transform, keyframes, key,
+ * still image or muted lane) on a timeline whose audio needs no premix, and
+ * refuses everything else rather than enumerating what it would drop. A new
+ * clip feature is refused until it is added here on purpose.
  */
-export function remoteConcatDroppedFeatures(
-  timelineClips: Clip[],
-  transitions: ClipTransition[],
-  textOverlays: TextOverlay[],
-  finishing: FinishingSettings,
-  captionCount: number,
-): string[] {
-  const dropped: string[] = [];
-  if (timelineClips.some((clip) => (clip.layerIndex ?? 0) > 0)) dropped.push('PiP/overlay lanes');
-  if (hasActiveTransitions(transitions)) dropped.push('transitions');
-  if (textOverlays.length > 0) dropped.push('text overlays');
-  if (isFinishingActive(finishing)) dropped.push('finishing');
-  if (timelineClips.some((clip) => resolveLayerKey(clip) !== null)) dropped.push('chroma/luma keys');
-  if (captionCount > 0) dropped.push('captions');
-  // A muted lane's clips would still be trimmed with their audio.
-  if (timelineClips.some((clip) => clip.kind === 'video' && clip.trackMuted)) dropped.push('lane mute');
-  return dropped;
+export function remoteConcatBlockers(timelineClips: Clip[], context: RemoteConcatContext): string[] {
+  const blockers = new Set<string>();
+  const add = (label: string) => blockers.add(label);
+
+  for (const clip of timelineClips) {
+    if (clip.kind !== 'video') add('audio clips / audio lanes');
+    if ((clip.layerIndex ?? 0) > 0) add('PiP/overlay lanes');
+    if (clip.trackMuted) add('lane mute');
+    if (clip.stillImage) add('still images');
+    if (clip.videoFadeIn > 0 || clip.videoFadeOut > 0 || clip.audioFadeIn > 0 || clip.audioFadeOut > 0) {
+      add('fades');
+    }
+    if (clipHasVolumeAdjustment(clip)) add('clip volume');
+    if (clip.automation && Object.values(clip.automation).some((lane) => (lane?.length ?? 0) > 0)) {
+      add('volume / pan / speed automation');
+    }
+    if (clipAudioEffectsActive(clip.audioEffects)) add('clip audio inserts');
+    if (clipHasPlaybackRateAdjustment(clip) || clipHasRateAutomation(clip)) add('speed changes');
+    if (clipIsReversed(clip)) add('reversed clips');
+    if (clipHasLoop(clip)) add('loops');
+    if (clip.stabilize || isStabilizationActive(clip)) add('stabilization');
+    if (clipHasPictureTransform(clip)) add('picture transforms');
+    if (clipHasKeyframes(clip)) add('clip keyframes');
+    if (resolveLayerKey(clip) !== null) add('chroma/luma keys');
+    if (clip.opacity != null && clip.opacity !== 1) add('clip opacity');
+  }
+  if (hasActiveTransitions(context.transitions)) add('transitions');
+  if (context.textOverlays.length > 0) add('text overlays');
+  if (context.captionCount > 0) add('captions');
+  if (isFinishingActive(context.finishing)) add('finishing');
+  if (context.hasMasterAudio) add('master audio');
+  if (context.needsAudioPremix) add('the audio mix (automation, inserts, bus FX, loudness or audio lanes)');
+  return [...blockers];
 }

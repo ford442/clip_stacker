@@ -4,20 +4,15 @@
  * a project or undo history.
  */
 
-export const SECTION_STATE_STORAGE_KEY = 'clip_stacker.inspectorSections.v1';
+import { STORAGE_KEYS, safeGet, safeSet, storageArea, type StorageLike } from './storageKeys';
+
+export const SECTION_STATE_STORAGE_KEY = STORAGE_KEYS.inspectorSections.key;
 
 /** Section id → open. A missing id means "use the section's default". */
 export type SectionState = Record<string, boolean>;
 
-type StorageLike = Pick<Storage, 'getItem' | 'setItem'>;
-
 function defaultStorage(): StorageLike | null {
-  try {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-  } catch {
-    // Accessing localStorage throws with blocked site data.
-    return null;
-  }
+  return storageArea('local');
 }
 
 /** Keep only boolean entries; anything else in storage is ignored. */
@@ -33,7 +28,7 @@ export function sanitizeSectionState(raw: unknown): SectionState {
 export function loadSectionState(storage: StorageLike | null = defaultStorage()): SectionState {
   if (!storage) return {};
   try {
-    const raw = storage.getItem(SECTION_STATE_STORAGE_KEY);
+    const raw = safeGet('inspectorSections', { storage });
     return raw ? sanitizeSectionState(JSON.parse(raw)) : {};
   } catch {
     return {};
@@ -51,14 +46,9 @@ export function saveSectionOpen(
   storage: StorageLike | null = defaultStorage(),
 ): void {
   if (!storage) return;
-  try {
-    storage.setItem(
-      SECTION_STATE_STORAGE_KEY,
-      JSON.stringify({ ...loadSectionState(storage), [id]: open }),
-    );
-  } catch {
-    // ignore
-  }
+  safeSet('inspectorSections', JSON.stringify({ ...loadSectionState(storage), [id]: open }), {
+    storage,
+  });
 }
 
 type RevealListener = (id: string) => void;

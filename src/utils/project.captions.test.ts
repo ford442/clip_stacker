@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CaptionEntry, Project } from '../types';
-import { serializeProject, applyProjectData } from './project';
+import { createProjectSnapshot, serializeProject, applyProjectData } from './project';
 import { createTestClip } from './project.test.helpers';
 import { parseSrt, serializeSrt } from './subtitles';
 
@@ -13,7 +13,7 @@ const CAPTIONS: CaptionEntry[] = [
 
 describe('project captions round-trip', () => {
   it('serializes and restores cues with their per-cue styles', async () => {
-    const project = serializeProject(CLIPS, [], [], [], undefined, [], undefined, null, CAPTIONS);
+    const project = serializeProject(createProjectSnapshot({ clips: CLIPS, captions: CAPTIONS }));
     const restored = await applyProjectData(project, CLIPS);
 
     expect(restored.captions).toHaveLength(2);
@@ -28,23 +28,19 @@ describe('project captions round-trip', () => {
   });
 
   it('round-trips the project-wide caption style', async () => {
-    const project = serializeProject(
-      CLIPS, [], [], [], undefined, [], undefined, null,
-      CAPTIONS,
-      { fontcolor: '#ffcc00', y: 0.8 },
-    );
+    const project = serializeProject(createProjectSnapshot({ clips: CLIPS, captions: CAPTIONS, captionStyle: { fontcolor: '#ffcc00', y: 0.8 } }));
     const restored = await applyProjectData(project, CLIPS);
     expect(restored.captionStyle).toEqual({ fontcolor: '#ffcc00', y: 0.8 });
   });
 
   it('omits caption fields entirely when there are none', () => {
-    const project = serializeProject(CLIPS, [], [], []);
+    const project = serializeProject(createProjectSnapshot({ clips: CLIPS }));
     expect(project.captions).toBeUndefined();
     expect(project.captionStyle).toBeUndefined();
   });
 
   it('loads a project saved before captions existed as an empty track', async () => {
-    const legacy = serializeProject(CLIPS, [], [], []);
+    const legacy = serializeProject(createProjectSnapshot({ clips: CLIPS }));
     const restored = await applyProjectData(legacy, CLIPS);
     expect(restored.captions).toEqual([]);
     expect(restored.captionStyle).toEqual({});
@@ -52,7 +48,7 @@ describe('project captions round-trip', () => {
 
   it('drops malformed cues instead of failing the whole load', async () => {
     const project: Project = {
-      ...serializeProject(CLIPS, [], [], []),
+      ...serializeProject(createProjectSnapshot({ clips: CLIPS })),
       captions: [
         { id: 'ok', startSec: 1, endSec: 2, text: 'Keep me' },
         { id: 'no-text', startSec: 3, endSec: 4, text: '   ' },
@@ -65,7 +61,7 @@ describe('project captions round-trip', () => {
 
   it('regenerates ids for cues saved without one', async () => {
     const project: Project = {
-      ...serializeProject(CLIPS, [], [], []),
+      ...serializeProject(createProjectSnapshot({ clips: CLIPS })),
       captions: [{ startSec: 1, endSec: 2, text: 'No id' }] as CaptionEntry[],
     };
     const restored = await applyProjectData(project, CLIPS);
@@ -83,9 +79,7 @@ Second
 cue
 `;
     const imported = parseSrt(srt);
-    const project = serializeProject(
-      CLIPS, [], [], [], undefined, [], undefined, null, imported,
-    );
+    const project = serializeProject(createProjectSnapshot({ clips: CLIPS, captions: imported }));
     const restored = await applyProjectData(JSON.parse(JSON.stringify(project)), CLIPS);
     const exported = parseSrt(serializeSrt(restored.captions));
 

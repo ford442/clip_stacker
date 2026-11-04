@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Project } from "../types";
-import { applyProjectData, getClipDuration, serializeProject } from "./project";
+import { createProjectSnapshot, applyProjectData, getClipDuration, serializeProject } from "./project";
 import { createTestClip } from "./project.test.helpers";
 
 describe("utils/project - applyProjectData (advanced)", () => {
@@ -167,7 +167,7 @@ describe("utils/project - applyProjectData (advanced)", () => {
 
     const result = await applyProjectData(project, sourceClips);
     expect(result.clips[0].reversed).toBe(true);
-    const saved = serializeProject(result.clips, [], [], []);
+    const saved = serializeProject(createProjectSnapshot({ clips: result.clips }));
     expect(saved.clips[0].reversed).toBe(true);
 
     const forward = await applyProjectData(
@@ -175,7 +175,7 @@ describe("utils/project - applyProjectData (advanced)", () => {
       sourceClips,
     );
     expect(forward.clips[0].reversed).toBeUndefined();
-    expect(serializeProject(forward.clips, [], [], []).clips[0].reversed).toBeUndefined();
+    expect(serializeProject(createProjectSnapshot({ clips: forward.clips })).clips[0].reversed).toBeUndefined();
   });
 
   it("should restore automation lanes from saved project", async () => {
@@ -306,7 +306,7 @@ describe("utils/project - applyProjectData (advanced)", () => {
         },
       },
     };
-    const serialized = serializeProject(sourceClips, [], [], [], finishing);
+    const serialized = serializeProject(createProjectSnapshot({ clips: sourceClips, finishing }));
     const project: Project = {
       clips: [
         {
@@ -359,7 +359,7 @@ describe("utils/project - applyProjectData (advanced)", () => {
         gain: [1.1, 1, 0.9] as [number, number, number],
       },
     };
-    const serialized = serializeProject(sourceClips, [], [], [], finishing);
+    const serialized = serializeProject(createProjectSnapshot({ clips: sourceClips, finishing }));
     const project: Project = {
       clips: [
         {
@@ -433,7 +433,7 @@ describe("utils/project - applyProjectData (advanced)", () => {
         ],
       },
     };
-    const serialized = serializeProject(sourceClips, [], [], [], finishing);
+    const serialized = serializeProject(createProjectSnapshot({ clips: sourceClips, finishing }));
     const project: Project = {
       clips: [
         {
@@ -526,7 +526,7 @@ describe("utils/project - applyProjectData (advanced)", () => {
         draft: false,
       },
     };
-    const serialized = serializeProject(sourceClips, [], [], [], finishing);
+    const serialized = serializeProject(createProjectSnapshot({ clips: sourceClips, finishing }));
     const project: Project = {
       clips: [
         {

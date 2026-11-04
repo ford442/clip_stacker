@@ -66,6 +66,42 @@ import {
   FFMPEG_LOAD_TIMEOUT_MS,
 } from "./core";
 
+/**
+ * FFmpeg argv that cuts `clip`'s trim window out of its source file.
+ *
+ * `-c copy` cannot start between keyframes: with `-ss` it snaps the cut back
+ * to the keyframe before the in-point, so the clip ran long by up to a GOP
+ * (and the remote concat / RIFE replace got the wrong length). So:
+ *  - from the start of the file (`trimStart` 0) a stream copy is exact —
+ *    it stays instant and lossless;
+ *  - any later in-point re-encodes, where input seeking is frame accurate.
+ *    Quality matches the segment-extract re-encode (x264 CRF 16).
+ */
+export function buildTrimmedClipArgs(
+  clip: Pick<Clip, "trimStart" | "trimEnd">,
+  inputName: string,
+  outputName: string,
+): string[] {
+  const args: string[] = [];
+  const seek = clip.trimStart > 0;
+  if (seek) args.push("-ss", String(clip.trimStart));
+  args.push("-i", inputName);
+  if (Number.isFinite(clip.trimEnd)) {
+    args.push("-t", String(clip.trimEnd - clip.trimStart));
+  }
+  if (!seek) {
+    args.push("-c", "copy", "-avoid_negative_ts", "make_zero", outputName);
+    return args;
+  }
+  args.push(
+    "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+    "-c:a", "aac", "-b:a", "192k",
+    "-movflags", "+faststart",
+    outputName,
+  );
+  return args;
+}
+
 export async function extractTrimmedVideoClip(
   clip: Clip,
   onStatus: StatusCallback,
@@ -115,12 +151,7 @@ export async function extractTrimmedVideoClip(
         ),
       );
     } else {
-      if (clip.trimStart > 0) args.push("-ss", String(clip.trimStart));
-      args.push("-i", inputName);
-      if (Number.isFinite(clip.trimEnd)) {
-        args.push("-t", String(clip.trimEnd - clip.trimStart));
-      }
-      args.push("-c", "copy", "-avoid_negative_ts", "make_zero", outputName);
+      args.push(...buildTrimmedClipArgs(clip, inputName, outputName));
     }
 
     await safeExec(
