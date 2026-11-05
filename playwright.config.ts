@@ -1,7 +1,7 @@
 import { defineConfig, devices } from '@playwright/test';
 
 /**
- * Render regression harness (#365). Runs against the production build
+ * Render regression harness (#346). Runs against the production build
  * (`npm run preview`: CSP-clean, COOP/COEP set) with WebGPU on SwiftShader,
  * so CI needs no GPU. Goldens: `npm run e2e:update-goldens`.
  */

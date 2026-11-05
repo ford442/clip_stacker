@@ -1,5 +1,5 @@
 /**
- * Render regression harness (`?test_harness`, #365): `window.clipStacker.test`.
+ * Render regression harness (`?test_harness`, #346): `window.clipStacker.test`.
  *
  * Same-page only, like `finishingPresetApi.ts`, and never installed on a
  * normal load — `main.tsx` imports this module dynamically only when the

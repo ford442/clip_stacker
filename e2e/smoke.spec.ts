@@ -1,5 +1,5 @@
 /**
- * Smoke flows (#365) through the real UI: toolbar buttons, keyboard
+ * Smoke flows (#346) through the real UI: toolbar buttons, keyboard
  * shortcuts, the Render button, RootErrorBoundary and the recovery modal.
  * The harness API is only used to place the playhead / selection (pixel
  * positions on the ruler are layout-dependent) and to read results.

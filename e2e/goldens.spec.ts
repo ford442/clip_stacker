@@ -1,5 +1,5 @@
 /**
- * Render regression goldens (#365): for each fixture, the preview frame must
+ * Render regression goldens (#346): for each fixture, the preview frame must
  * match the decoded export frame (same compositor, then one H.264 encode) and
  * the committed golden PNG. `npm run e2e:update-goldens` rewrites them.
  */

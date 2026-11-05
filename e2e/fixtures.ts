@@ -1,5 +1,5 @@
 /**
- * Golden render cases (#365). Each fixture is built from the bundled demo
+ * Golden render cases (#346). Each fixture is built from the bundled demo
  * clips (6 s each, 640x360) by `window.clipStacker.test.buildProject` and
  * rendered at 320x180 so SwiftShader stays fast and the PNG goldens small.
  *
