@@ -5,7 +5,7 @@
  * stride here and in the header together.
  */
 
-import { sortKeyframes, type Keyframe } from '../utils/keyframes';
+import { sortKeyframes, type Keyframe } from '../timeline/keyframes';
 import {
   clipAudioEffectsActive,
   masterLimiterActive,
@@ -13,8 +13,8 @@ import {
   type AudioEqBandType,
   type ClipAudioEffects,
   type MasterLimiterSettings,
-} from '../utils/audioEffects';
-import { busEffectActive, type BusEffect, type LaneDuckSettings } from '../utils/audioBus';
+} from '../audio/audioEffects';
+import { busEffectActive, type BusEffect, type LaneDuckSettings } from '../audio/audioBus';
 
 export const MEDIA_ENGINE_CHANNELS = 2;
 /** f64 fields per packed mix entry (`MIX_ENTRY_STRIDE` in audio_mix.h). */

@@ -12,14 +12,15 @@ import {
   renameFinishingPreset,
   saveCurrentFinishingAsPreset,
 } from './finishingPresetStore';
-import { DEFAULT_FINISHING, normalizeFinishingSettings } from '../utils/finishing';
-import { BUILT_IN_FINISHING_PRESETS } from '../utils/finishingPresets';
+import { DEFAULT_FINISHING, normalizeFinishingSettings } from '../finishing/finishing';
+import { BUILT_IN_FINISHING_PRESETS } from '../finishing/finishingPresets';
 import {
   APPLY_FINISHING_PRESET_EVENT,
   FINISHING_PRESET_RESULT_EVENT,
   installFinishingPresetApi,
   type FinishingPresetApi,
-} from '../utils/finishingPresetApi';
+} from '../actions/finishingPresetApi';
+import { renderJobStore } from './renderJobStore';
 
 const finishing = () => settingsStore.getState().finishing;
 
@@ -33,7 +34,8 @@ beforeEach(() => {
   localStorage.clear();
   __reloadFinishingPresetsForTests();
   __resetEditorStoreForTests();
-  settingsStore.setState({ finishing: structuredClone(DEFAULT_FINISHING), status: '' });
+  settingsStore.setState({ finishing: structuredClone(DEFAULT_FINISHING) });
+  renderJobStore.setState({ status: '' });
 });
 
 afterEach(() => {
@@ -132,7 +134,7 @@ describe('applying presets with undo', () => {
     expect(after.grain?.enabled).toBe(true);
     expect(after.sharpen?.enabled).toBe(false); // replace: omitted passes off
     expect(editorStore.getState().undoDepth).toBe(1);
-    expect(settingsStore.getState().status).toMatch(/Applied finishing preset "Film look"/);
+    expect(renderJobStore.getState().status).toMatch(/Applied finishing preset "Film look"/);
 
     editorStore.getState().undo();
     expect(finishing()).toEqual(before);

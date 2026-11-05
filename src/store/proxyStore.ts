@@ -2,7 +2,7 @@ import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 
 /**
- * Runtime state for preview proxies (see `utils/proxyMedia.ts`).
+ * Runtime state for preview proxies (see `media/proxyMedia.ts`).
  *
  * Ready proxies are keyed by store key (`proxyStoreKey(sourceHash, profile)`),
  * not clip id, so a split — two clips over one file — shares one proxy.
@@ -137,4 +137,3 @@ export const proxyActions: Pick<
 > = proxyStore.getState();
 
 export const useProxyState = <T>(selector: (s: ProxyState) => T): T => useStore(proxyStore, selector);
-export const useProxiesEnabled = () => useStore(proxyStore, (s) => s.enabled);

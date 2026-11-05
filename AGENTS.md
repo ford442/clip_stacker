@@ -2,24 +2,64 @@
 
 ## Project Structure & Module Organization
 
-This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 rendering with FFmpeg WebAssembly. Source lives in `src/`: `main.tsx` bootstraps React, `App.tsx` owns app-level state, `components/` contains UI panels, `ffmpeg/` contains FFmpeg WASM orchestration, `utils/` contains media/project/render helpers, `hooks/` contains shared React hooks, and `types/` holds shared TypeScript types. Tests are colocated with source as `*.test.ts` or `*.test.tsx`. Static deployment assets live in `public/`; built output goes to `dist/` and should be treated as generated.
+This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 rendering with FFmpeg WebAssembly. Source lives in `src/`, split by domain:
+
+- `types/` — shared TypeScript types.
+- Domain modules (pure TS, no React / Zustand):
+  - `timeline/` — tracks, edit modes, snapping, keyframes, transitions, time remap.
+  - `export/` — encoder routing, WebCodecs / canvas / MediaRecorder encoders, mux, audio premix glue.
+  - `finishing/` — finishing passes and their CPU references, colour management, presets.
+  - `captions/` — subtitle parse / serialize, auto-caption providers.
+  - `project/` — serialize / load, autosave, remote storage. `project/index.ts` is the barrel.
+  - `composition/` — the preview composition plan, layout, keys, text.
+  - `media/` — decoding, cursors, proxies, stabilization.
+  - `audio/`, `remote/`, `webgpu/`, `wasm/`, `ffmpeg/`, `gpu-chores/` — as named.
+  - `utils/` — the few cross-cutting helpers left (CSP, storage keys, workspace layout, math).
+- `store/` — Zustand stores. `index.ts` re-exports them.
+- `actions/` + `playback/` — store-bound actions with no React.
+- `hooks/` + `context/` — React hooks.
+- `components/` — the UI.
+- `app/` — composition-root helpers (caption-provider bootstrap, the `?test_harness` API).
+- `main.tsx` / `App.tsx` — the entry points.
+
+**Layering** is enforced by `eslint-plugin-boundaries` (`eslint.config.js`):
+
+- Imports flow types → domain → store → actions → hooks → components → app.
+- Domain modules and `types/` never import React or Zustand. `webgpu/` and `wasm/` are domain, so they never reach `store/` or `components/`. Workers live in domain dirs, so they never import React.
+- A domain module that needs live store state reads it through a registry the store fills in, e.g. `export/exportSources.ts`, which `editorStore` / `settingsStore` register into.
+- Test files are exempt.
+
+Tests are colocated with source as `*.test.ts` or `*.test.tsx`. Browser end-to-end tests live in `e2e/` (Playwright). Static deployment assets live in `public/`; built output goes to `dist/` and should be treated as generated. `docs/history/` holds superseded design notes, kept for context only.
+
+Shared state worth knowing:
+
+- `store/renderJobStore.ts` — render-job state: status, progress, output URL, encoder path, render plan, FFmpeg loading / failed, RIFE / intercut busy flags. `settingsStore` keeps only settings.
+- `store/selectors.ts` — `selectTimelineClips`, the single memoized "clips as the tracks lay them out" selector. Use it (or `useEditorTimelineClips`) instead of calling `getEffectiveTimelineClips` per render.
+- `App.tsx` hands `AppShell` ten domain bundles (history, project, render, clips, preview, inspector, timeline, captions, text overlays) kept stable with `useStableObject`. Add a prop to the bundle it belongs to, not to `AppShell` directly.
 
 ## Build, Test, and Development Commands
 
 - `npm install` (or `npm ci` for a clean/CI install): install dependencies for local development.
 - `npm run dev`: start the Vite dev server with the headers needed for FFmpeg WASM.
 - `npm run typecheck`: run `tsc --noEmit`, matching CI behavior. Run this after any TypeScript change.
-- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint + react-hooks). Must report 0 errors; warnings are tolerated debt. Non-test `src/` files over 700 lines are an error (`max-lines`): split the module rather than raising the limit.
-- `npm run check:cycles`: madge import-cycle check over `src/` (type-only imports count). Must report 0 cycles — import `getClipDuration` from `utils/clipTiming` and `DEFAULT_CANVAS_*` from `utils/canvasDefaults`, not the `utils/project` barrel.
+- `npm run typecheck:strict`: the strictness ratchet (`tsconfig.strict.json` adds `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`). It must report 0 errors in the `strictDirs` of `scripts/strict-ratchet.json`, and the count elsewhere may not exceed its `baseline`. Test files are not counted yet. After a cleanup, `-- --update` lowers the baseline; add a directory to `strictDirs` once it is clean.
+- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint, react-hooks, boundaries). Must report 0 errors; warnings are tolerated debt.
+  - Unused imports / variables and floating promises are errors.
+  - So is any import that breaks the layering above.
+  - Non-test `src/` files over 700 lines are an error (`max-lines`): split the module rather than raising the limit.
+- `npm run knip`: dead-code check with an empty baseline. Unused files, exports, types and dependencies fail CI. Delete them, or mark a deliberate extension point `@public` in its JSDoc. `knip.json` lists the entry points Vite cannot see (workers, the AudioWorklet, scripts, e2e).
+- `npm run check:cycles`: madge import-cycle check over `src/` (type-only imports count). Must report 0 cycles — import `getClipDuration` from `timeline/clipTiming` and `DEFAULT_CANVAS_*` from `utils/canvasDefaults`, not the `project` barrel (`src/project/index.ts`).
 - `npm test -- --run`: run the Vitest suite once, matching CI behavior.
-- `npm run test:coverage`: run tests with coverage reporting.
+- `npm run test:coverage`: run tests with coverage reporting (CI runs it with `-- --run`). `vitest.config.ts` sets per-directory floors for the pure domain dirs; raise them as coverage grows, never lower one to land a change.
+- `npm run e2e`: the Playwright render regression harness (see *Render regression harness* below). It builds nothing itself, so run `npm run build` first; it serves `dist/` with `npm run preview`. `npm run e2e:update-goldens` rewrites `e2e/goldens/`.
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
 - `npm run sync:ffmpeg-core`: copy `@ffmpeg/core` / `@ffmpeg/core-mt` ESM dist into `public/ffmpeg-core{,-mt}/` (the self-hosted cores; CDNs are fallbacks). `-- --check` exits non-zero if `public/` or `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts` drifts from `node_modules`.
 - `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, video stabilize, media engine incl. time stretch, and its glue-free bus-FX build `media_engine_fx.wasm`) via the shared CMake toolchain into `public/wasm/`. Requires Emscripten (`emcmake` / `emcc`); use the SDK pinned in `native/emsdk-version` to reproduce the committed bytes.
 - `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF), written to `native/build-debug/wasm/` (never over `public/wasm`). The dev/preview servers serve it at `/wasm-debug/`; open the app with `?wasm_debug`.
-- `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan). No Emscripten needed.
+- `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan + float-cast-overflow). No Emscripten needed. `npm run test:native:pr` runs the `pr` label only (what PR CI runs; the `nightly` label holds the long battery). `npm run fuzz:native` runs the libFuzzer FX target (clang).
+- `npm run gen:true-peak-taps`: regenerate `native/media_engine/src/fx/true_peak_taps.inc` (the limiter's 4x oversampling taps, generated from the resampler's sinc table so they cannot drift).
 - `npm run build:audio-analysis` / `build:video-stabilize` / `build:media-engine`: rebuild one module. `npm run build:whisper`: the opt-in auto-caption module (not committed).
 
 ## Coding Style & Naming Conventions
@@ -28,7 +68,19 @@ Use TypeScript with strict checking. Follow the existing style: two-space indent
 
 ## Testing Guidelines
 
-Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `project.test.ts` or `ffmpegService.load.test.ts`. Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Before submitting, run `npm run typecheck`, `npm run lint`, `npm run check:cycles`, `npm test -- --run`, and `npm run build`.
+Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `textOverlay.test.ts`, `project.roundtrip.test.ts` or `ffmpegService.load.test.ts` (a large module's tests split by concern as `<module>.<concern>.test.ts`). Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Hook tests use `hooks/renderHook.test.helpers.tsx` (the repo has no testing-library). happy-dom enforces no CSP and decodes no media; anything that depends on either belongs in `e2e/`.
+
+Before submitting, run:
+
+- `npm run typecheck`
+- `npm run typecheck:strict`
+- `npm run lint`
+- `npm run check:cycles`
+- `npm run knip`
+- `npm test -- --run`
+- `npm run build`
+
+Also run `npm run e2e` when you touch the compositor, finishing, export, captions or titles.
 
 ## Commit & Pull Request Guidelines
 
@@ -80,15 +132,47 @@ resizes; the layout is per-browser view state (localStorage
   (`min(100%, --ws-preview-max-h × --preview-aspect)`) so it keeps its aspect
   ratio and never widens the page (#305).
 
+## Render regression harness (`e2e/`, `?test_harness`)
+
+Playwright runs against `npm run preview`, on Chromium with WebGPU on SwiftShader, so CI needs no GPU.
+
+**Flags.** Only ANGLE-on-Vulkan accepts frame uploads: `--use-vulkan=swiftshader --use-angle=vulkan --disable-vulkan-surface`. With `--use-angle=swiftshader`, every `importExternalTexture` / `copyExternalImageToTexture` is invalid and frames render black.
+
+**Harness API.** `?test_harness` installs `window.clipStacker.test` (`src/app/testHarness/harness.ts`). It is a separate chunk that `main.tsx` imports only under the parameter, so normal loads never contain it.
+
+- `buildProject(spec)` builds fixtures from the demo clips. `loadProject(json)` loads a saved project.
+- `renderPreviewFrame(t)` draws through the timeline compositor fed by WebCodecs cursors, the preview worker's happy path. The `<video>` fallback renders black under SwiftShader.
+- `renderPqFrame(t)` returns the PQ readback an HDR10 export encodes.
+- `exportProject()` runs the real Render action, bound by `App` through `app/harnessBindings.ts`, and forces a re-encode by default.
+- `decodeFrame(blob, t)` decodes one frame of a file.
+- `compare` returns PSNR + SSIM (`imageMetrics.ts`).
+- `crash()` makes `App` throw, for `RootErrorBoundary`.
+
+**Goldens** (`e2e/goldens.spec.ts`, cases in `e2e/fixtures.ts`). Each case renders at 320x180 and asserts:
+
+- preview ≈ decoded export: PSNR ≥ 24, SSIM ≥ 0.95. Agreeing renders land at 25–41 dB because H.264 softens test-pattern edges; a missing layer or pass drops SSIM far lower.
+- preview ≈ committed golden PNG: ≥ 38 dB. Reruns are bit-identical.
+
+Sample times sit on the 30 fps export grid. A new finishing case needs settings strong enough that the pass missing falls ≤ 30 dB against the golden; edge-aware sharpen on a clean test pattern does not.
+
+HDR10 compares the PQ readback, not the preview: the preview is the SDR monitor view. The export may refuse where no 10-bit encoder exists, as in CI's Chromium.
+
+**Smoke flows** (`e2e/smoke.spec.ts`) go through the real UI: load demo clips → split → ripple delete → undo → render; crash → reload → recovery offer.
+
+**Known bugs** are pinned with `test.fail`, so they flip to an unexpected pass when fixed:
+
+- frame 0 of a managed-colour (P3 / HDR10) export is black;
+- recovering an autosave drops embedded media, because the restore `fetch()`es `data:` URLs that the production `connect-src` blocks.
+
 ## Demo clips, Export-tab sections, encoder badge
 
-- **Demo clips** — `public/demo/demo-clip-{a,b}.mp4` (generated 640x360 H.264/AAC test media, ~300 KB total) and `src/utils/demoClips.ts`. The toolbar's **Load demo clips** fetches them (resolved against `document.baseURI`, so a sub-path deploy works) and feeds them through `handleAddClips`, so they behave like uploads.
+- **Demo clips** — `public/demo/demo-clip-{a,b}.mp4` (generated 640x360 H.264/AAC test media, ~300 KB total) and `src/media/demoClips.ts`. The toolbar's **Load demo clips** fetches them (resolved against `document.baseURI`, so a sub-path deploy works) and feeds them through `handleAddClips`, so they behave like uploads.
 - **Collapsible Inspector sections** — `InspectorSection` (`components/inspector/`) is a `<details>` whose open state is remembered per browser by `utils/sectionState.ts` (`clip_stacker.inspectorSections.v1`, view state — never in a project or undo history). New Export-tab groups should use it with a stable `export.*` id; sections that are long or advanced default closed.
-- **Encoder badge** — `describeEncoderBadge` (`utils/encoderPathLabel.ts`) derives the toolbar badge from probed `BrowserCapabilities` (`⚡ HW H.264` only with a hardware encoder, else `WebCodecs (SW)` / `🖥 CPU`) and flags WebGPU separately.
+- **Encoder badge** — `describeEncoderBadge` (`export/encoderPathLabel.ts`) derives the toolbar badge from probed `BrowserCapabilities` (`⚡ HW H.264` only with a hardware encoder, else `WebCodecs (SW)` / `🖥 CPU`) and flags WebGPU separately.
 
 ## Effects Stack (finishing audition)
 
-`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → curves → secondary → LUT → sharpen → CA → bloom → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `utils/finishingStack.ts` (pure).
+`EffectsStack` (`components/EffectsStack.tsx`) sits under the preview canvas: a chip per finishing pass (noise → primary → curves → secondary → LUT → sharpen → CA → bloom → grain), **Bypass all**, and a *Details* list with a 0–1 amount slider, **Before** and **Edit** per pass. The model is `finishing/finishingStack.ts` (pure).
 
 - Chip / checkbox / amount edits are real `settingsStore.finishing` edits — the same `FinishingSettings` the detailed Export-tab panels edit (the LUT's amount is its `intensity`). Detailed panels and export are unchanged.
 - **Bypass all** and **Before** are preview-only view state (`uiStore.finishingView`, never serialized or exported). `Preview.tsx` feeds the compositor `applyFinishingPreviewView(finishing, view)` (`undefined` for a full bypass, the same object when nothing is hidden); export reads the store's `finishing` directly. The stack says so while a view is active.
@@ -101,7 +185,7 @@ Format, built-ins and the agent API are documented in
 `docs/finishing-presets.md`; the JSON Schema is
 `docs/finishing-preset.schema.json`.
 
-- `src/utils/finishingPresets.ts` — pure: the preset document
+- `src/finishing/finishingPresets.ts` — pure: the preset document
   (`schema`/`version`/`name`/`apply`/`finishing`), strict, all-or-nothing
   validation (path-specific errors, unknown keys rejected) and the generated
   JSON Schema, both driven by one declarative field spec per pass
@@ -119,7 +203,7 @@ Format, built-ins and the agent API are documented in
   redo restore finishing **only** for entries that carry it, so every other
   undo step still leaves finishing alone (finishing slider edits are not
   undoable, as before).
-- `src/utils/finishingPresetApi.ts` — `window.clipStacker.finishing.*` and the
+- `src/actions/finishingPresetApi.ts` — `window.clipStacker.finishing.*` and the
   `clip-stacker:apply-finishing-preset` event (installed in `main.tsx`);
   same-page only, no cross-origin `postMessage`.
 - UI: `FinishingPresetsPanel` (top of Export → Finishing) and the Effects
@@ -129,9 +213,9 @@ Format, built-ins and the agent API are documented in
 
 `CurvesGpuPass` (`src/webgpu/curvesPass.ts` + `shaders/curves.wgsl`) is the
 `curves` slot of `FinishingSettings`. Order: noise → primary → **curves** →
-secondary → LUT → sharpen → CA → grain. Primary color is untouched.
+secondary → LUT → sharpen → CA → bloom → grain. Primary color is untouched.
 
-- Model (`src/utils/curves.ts`): per channel, levels (input black / white,
+- Model (`src/finishing/curves.ts`): per channel, levels (input black / white,
   gamma, output black / white) → master curve → that channel's curve, then
   mixed with the source by `amount`. Curves are ≤ 16 knots, monotone cubic
   (Fritsch–Carlson): through every knot, flat outside the end knots, and no
@@ -158,7 +242,8 @@ secondary → LUT → sharpen → CA → grain. Primary color is untouched.
 ## Noise reduction quality tiers (first finishing pass)
 
 `NoiseReductionGpuPass` (`src/webgpu/noiseReductionPass.ts` +
-`shaders/denoise.wgsl`) runs first in the finishing chain. The spatial stage
+`shaders/denoise.wgsl`) runs first in the finishing chain (noise → primary →
+curves → secondary → LUT → sharpen → CA → bloom → grain). The spatial stage
 has three tiers, picked by `NoiseReductionSettings.quality` (uniform slot 10;
 the layout stays 16 floats). Temporal blending and its motion gate are the
 same in every tier, and still reset on seek (`resetTemporal`).
@@ -177,12 +262,12 @@ same in every tier, and still reset on seek (`resetTemporal`).
   without bleeding across edges) and read exact texels with `textureLoad`;
   with **Luma only** they add just the luma change, keeping source chroma
   exactly.
-- `src/utils/denoiseReference.ts` is the CPU reference driven by the packed
+- `src/finishing/denoiseReference.ts` is the CPU reference driven by the packed
   uniforms; `denoiseReference.test.ts` measures noise / edge / thin-line /
   chroma error per tier on a seeded plate and pins the shader constants.
   FFmpeg (`hqdn3d`) and Canvas2D are unaffected.
 
-## Sharpen modes (after LUT, before grain)
+## Sharpen modes (after LUT, before CA)
 
 `SharpenGpuPass` (`src/webgpu/sharpenPass.ts` + `shaders/sharpen.wgsl`) has
 three modes, picked by `SharpenSettings.mode` (uniform slot 6; the layout
@@ -205,20 +290,20 @@ in all of them.
   blur, 7×7 window) for micro-contrast; midtone detail drives the medium
   band instead of the fine one, so it lifts local contrast without boosting
   noise.
-- `src/utils/sharpenReference.ts` is the CPU reference driven by the packed
+- `src/finishing/sharpenReference.ts` is the CPU reference driven by the packed
   uniforms; `sharpenReference.test.ts` measures halo energy, edge rise
   width, texture gain and noise gain per mode and pins the shader constants.
   FFmpeg (`unsharp`) and Canvas2D are unaffected.
 
-## Chromatic aberration (finishing, after sharpen, before grain)
+## Chromatic aberration (finishing, after sharpen, before bloom)
 
 `ChromaticAberrationGpuPass` (`src/webgpu/chromaticAberrationPass.ts` +
 `shaders/chromaticAberration.wgsl`) is the `chromaticAberration` slot of
-`FinishingSettings`. Order: noise → primary → secondary → LUT → sharpen →
-**CA** → grain (grain stays last); in managed colour it runs in the working
+`FinishingSettings`. Order: noise → primary → curves → secondary → LUT →
+sharpen → **CA** → bloom → grain (grain stays last); in managed colour it runs in the working
 space before the output transform (`COLOR_MANAGED_PASS_ORDER`).
 
-- Model (`src/utils/chromaticAberration.ts`): red is sampled at uv − o and
+- Model (`src/finishing/chromaticAberration.ts`): red is sampled at uv − o and
   blue at uv + o, o(uv) = radialK · (uv − 0.5) + a directional offset.
   `radial` blends lateral lens CA (zero at the centre) with a uniform shift
   along `angle`; `amount` is the fringe width (≤ 0.8 % of frame height).
@@ -244,7 +329,7 @@ LUT → sharpen → CA → **bloom** → grain. It is independent of the grain p
 own halation / bloom, which are unchanged (a chain test compares grain output
 byte-for-byte against `main`).
 
-- Pipeline (`src/utils/bloom.ts`): prefilter (13-tap downsample to half res
+- Pipeline (`src/finishing/bloom.ts`): prefilter (13-tap downsample to half res
   with Karis-weighted groups so a hot pixel cannot flicker the glow, then a
   soft-knee threshold) → 13-tap downsample pyramid in `rgba16float` → 9-tap
   tent upsample added back up (the up pipeline blends one + one; the deepest
@@ -273,7 +358,7 @@ colour), so nothing later softens it. `GrainSettings.quality` picks the model:
 - **`classic`** (omitted = classic) — the original float-hash grain on square
   cells. Its output is byte-identical to before the film mode existed; keep it
   that way so old projects render unchanged.
-- **`film`** — `src/utils/filmGrain.ts` is the reference implementation and
+- **`film`** — `src/finishing/filmGrain.ts` is the reference implementation and
   `filmGrainRgb` in the WGSL mirrors it: PCG4D integer hash on
   (cell, frame, octave), a blue-noise lattice (white minus its 4-neighbour
   mean, so no low-frequency mottling) with quintic interpolation, two octaves,
@@ -298,11 +383,11 @@ Text overlays (`TextOverlay`) carry an optional `font` id (string). When omitted
 
 Bundled fonts live in `public/fonts/` and are registered in one place:
 
-- `src/utils/textOverlay.ts` — `BUNDLED_FONTS`, `getBundledFont(id)`, `resolveFontFileForOverlay`, `buildDrawtextFilter`
+- `src/composition/textOverlay.ts` — `BUNDLED_FONTS`, `getBundledFont(id)`, `resolveFontFileForOverlay`, `buildDrawtextFilter`
 - `src/ffmpeg/core.ts` — `ensureFont` / `ensureFontsForOverlays`, `FONT_URL_BY_VIRTUAL` (virtual name → fetch URL)
-- `src/utils/canvas-renderer.ts` — `drawTextLayer` sets `ctx.font` using the CSS `familyName`
+- `src/export/canvasRenderer.ts` — `drawTextLayer` sets `ctx.font` using the CSS `familyName`
 - `src/styles/fonts.css` — `@font-face` declarations (required for Canvas2D metrics)
-- `src/utils/project.ts` — `applyProjectData` resolves font ids with safe fallback; `serializeProject` round-trips the id as-is
+- `src/project/index.ts` — `applyProjectData` resolves font ids with safe fallback; `serializeProject` round-trips the id as-is
 
 Adding a font:
 
@@ -310,7 +395,7 @@ Adding a font:
 2. Add an entry to `BUNDLED_FONTS` with stable `id`, display `label`, CSS `familyName`, `fileName`, and `virtualName` (the name written to the FFmpeg VFS).
 3. Add a matching `@font-face` in `src/styles/fonts.css` pointing at `/fonts/<fileName>`.
 4. If the virtual name is new, add a URL mapping in `FONT_URL_BY_VIRTUAL` in `core.ts`.
-5. Add or update tests in `textOverlay.test.ts` (filter strings) and `project.test.ts` (round-trip + unknown fallback).
+5. Add or update tests in `textOverlay.test.ts` (filter strings) and `project.roundtrip.test.ts` / `project.applyProjectData.core.test.ts` (round-trip + unknown fallback).
 6. Update docs (README table + this section).
 
 Current small set (license notes):
@@ -326,11 +411,11 @@ Never embed user-supplied custom fonts (out of scope).
 placements on the **output** timeline. Everything else about layout is derived
 from it.
 
-- `src/utils/trackStacking.ts` — the one place that answers "which video sits on
+- `src/timeline/trackStacking.ts` — the one place that answers "which video sits on
   top of which, and when?". `buildVideoStack` walks the video lanes bottom-up;
   `stackFromTracks(tracks, clips, time)` narrows that to the overlays visible at
   a given output time.
-- `src/utils/trackModel.ts` — every pure lane mutation (`addTrack`,
+- `src/timeline/trackModel.ts` — every pure lane mutation (`addTrack`,
   `removeTrack`, `setTrackMuted`, `setTrackLocked`, `setTrackHeight`,
   `renameTrack`, `moveClipBetweenTracks`, `moveClipToVideoLayer`,
   `migrateLegacyClipsToTracks`) plus `toLegacyTimelineView`, the flattening step.
@@ -357,7 +442,7 @@ Two rules that used to be heuristics and are now settled:
 `toLegacyTimelineView` stamps four **derived** fields onto the flattened clip
 list that preview and export consume: `layerIndex`, `timelineStart`,
 `trackMuted` and `trackLocked`. They travel on the clip so the deep export
-paths (`webcodecs-audio.ts`, `ffmpeg/video.ts`) see lane state without every
+paths (`webcodecsAudio.ts`, `ffmpeg/video.ts`) see lane state without every
 call site growing a `tracks` parameter. `serializeProject` never writes them,
 and setting them on a pool clip does nothing — change the track instead. The
 function keeps a small identity cache: stamping necessarily allocates new clip
@@ -388,7 +473,7 @@ column, `TIMELINE_GUTTER_PX`), so one x is one time on every row.
 
 ### Edit modes (overwrite / insert / ripple / roll / slip / slide / snap)
 
-- `src/utils/editModes.ts` — the pure NLE edits (entry point; shared state and
+- `src/timeline/editModes.ts` — the pure NLE edits (entry point; shared state and
   base-lane maths in `editModeCore.ts`, roll / slip / slide / ripple in
   `trimEdits.ts`, overwrite / insert / duplicate in `dropEdits.ts`). Each takes
   `{ tracks, clips, transitions }` and returns a new state or a refusal reason;
@@ -406,7 +491,7 @@ column, `TIMELINE_GUTTER_PX`), so one x is one time on every row.
   `buildClipTimelineSegments` and base xfades are re-keyed to the clip pairs
   they joined (`remapBaseTransitions`), so `TrackItem.startTime` never drifts
   from segment math.
-- `src/utils/timelineSnap.ts` — the magnet: `snapTimelineTime` /
+- `src/timeline/timelineSnap.ts` — the magnet: `snapTimelineTime` /
   `snapClipStart` over playhead, clip edges, markers, caption edges and beats,
   using the beat-snap tolerance (widened to ~8px at low zoom).
 - Tool / drop-mode / snap / link state is view state in `uiStore`;
@@ -426,13 +511,14 @@ Two decisions worth stating, because the type system allows other readings:
   `TextOverlay` id — the holding lane's `kind` selects which pool the id
   resolves against, which is why adding titles lanes needed no schema bump. A
   new text overlay is placed on the first unlocked titles lane at the playhead,
-  so titles participate in lane mute (`visibleTextOverlays`), lock
-  (`isTextOverlayLocked`) and ordering. Overlays with no placement are always
+  so titles participate in lane mute (`visibleTextOverlays`) and ordering. Lock
+  only keeps new overlays off a lane: editing an overlay already on a locked
+  titles lane is not blocked yet. Overlays with no placement are always
   visible, so projects that never made a titles lane are unaffected.
 
 ### Auto-cut to music
 
-`src/utils/autoEdit.ts` rebuilds the main video lane so every cut lands on a
+`src/timeline/autoEdit.ts` rebuilds the main video lane so every cut lands on a
 beat. `autoCutFromReference` takes an `AutoCutReference` — a clip's
 `beatTimestamps` or the master audio lane, both reduced to
 `{ beats, sourceOrigin, outputStart }` — and returns a new arrangement without
@@ -458,7 +544,7 @@ before `-i` with `-c copy` snaps to the previous keyframe.
 
 ### Encoder routing
 
-`selectEncoderPath` (`src/utils/encoderPath.ts`, pure) is the one decision
+`selectEncoderPath` (`src/export/encoderPath.ts`, pure) is the one decision
 for canvas → WebCodecs → FFmpeg. `calculateRenderPlan` (the estimate) and
 `hybridMergeClips` (the router) both call it; the estimate leaves the runtime
 probes undefined. It returns `reasons` (`RenderPlan.encoderReasons`, Copy
@@ -469,7 +555,7 @@ a row there for any new routing rule.
 
 ## Persistence (project snapshot, browser storage)
 
-- `selectProjectSnapshot(editor, settings)` (`utils/project/snapshot.ts`) is
+- `selectProjectSnapshot(editor, settings)` (`project/snapshot.ts`) is
   the one definition of what a project contains (clips, tracks, transitions,
   text, captions, master audio + markers, master bus, finishing, colour
   management). Manual save, remote save, autosave and the autosave hash all
@@ -493,7 +579,7 @@ cues that import/export as `.srt` / `.ass`. Both share `TextOverlayStyle`
 
 Where the pieces live:
 
-- `src/utils/subtitles.ts` — `parseSrt` / `parseAss` / `parseSubtitles`,
+- `src/captions/subtitles.ts` — `parseSrt` / `parseAss` / `parseSubtitles`,
   `serializeSrt`, `buildAssDocument` (burn-in), `normalizeCaptions`,
   `DEFAULT_CAPTION_STYLE`. Pure string ↔ `CaptionEntry`, no FFmpeg or DOM.
 - `src/ffmpeg/captions.ts` — the export passes. `buildBurnCaptionsArgs` /
@@ -502,18 +588,18 @@ Where the pieces live:
 - `src/components/CaptionLane.tsx` — the timeline's **CC** lane.
 - `src/components/CaptionsPanel.tsx` — the Inspector's *Captions* tab.
 - `src/hooks/useCaptionActions.ts` — CRUD, import, `.srt` export.
-- `src/utils/captionProvider.ts` — the auto-caption provider registry.
-- `src/utils/captionSegments.ts` — `TranscriptSegment[]` → `CaptionEntry[]`
+- `src/captions/captionProvider.ts` — the auto-caption provider registry.
+- `src/captions/captionSegments.ts` — `TranscriptSegment[]` → `CaptionEntry[]`
   (offsets, clamps, blank/non-speech filtering) and `mergeCaptions`. Pure; this
   is what the auto-caption unit tests cover.
-- `src/utils/autoCaptionAudio.ts` — renders the audio to transcribe through the
+- `src/captions/autoCaptionAudio.ts` — renders the audio to transcribe through the
   same `buildAudioSchedule` + `renderTimelineAudioMix` path as the export
   premix, so transcription hears trims, mute and automation.
 - `src/wasm/whisperCaptionProvider.ts` + `whisperWorker.ts` + `whisperModule.ts`
   — the in-browser Whisper provider. The WASM build is optional and not
   committed (`npm run build:whisper`, `native/whisper/README.md`); missing =
   feature hidden, never a boot failure.
-- `src/utils/whisperHttpCaptionProvider.ts` — the self-hosted endpoint provider.
+- `src/captions/whisperHttpCaptionProvider.ts` — the self-hosted endpoint provider.
 - `src/hooks/useAutoCaption.ts` — picks a provider, runs it, writes the cues in
   one undo step. Providers are registered in `src/main.tsx` via
   `initCaptionProviders()`, so tests can `__resetCaptionProvidersForTests()`.
@@ -544,11 +630,11 @@ coerces and drops malformed cues rather than throwing.
 
 ## Color pipeline
 
-Default pixels stay Rec.709 SDR. Managed mode (Display P3, HDR10, or scene-linear Rec.2020) is `src/utils/colorManagement.ts` plus the finishing-chain path in `src/webgpu/finishingPassChain.ts` (the managed passes are `ManagedFinishingChain` in `managedFinishing.ts`). Matrices, pass order (output transform, then display-referred grain), and the PQ-file vs SDR-preview split are in `docs/color-pipeline.md`. Force FFmpeg / canvas export sets `RenderPlan.wideColor: 'ignored'` and does not relabel the file. `shader-f16` is optional and never required.
+Default pixels stay Rec.709 SDR. Managed mode (Display P3, HDR10, or scene-linear Rec.2020) is `src/finishing/colorManagement.ts` plus the finishing-chain path in `src/webgpu/finishingPassChain.ts` (the managed passes are `ManagedFinishingChain` in `managedFinishing.ts`). Matrices, pass order (output transform, then display-referred grain), and the PQ-file vs SDR-preview split are in `docs/color-pipeline.md`. Force FFmpeg / canvas export sets `RenderPlan.wideColor: 'ignored'` and does not relabel the file. `shader-f16` is optional and never required.
 
 ## Overlay keying (chroma / luma)
 
-`src/utils/overlayKey.ts` owns the key maths for **every** compositor. Add a
+`src/composition/overlayKey.ts` owns the key maths for **every** compositor. Add a
 blend mode there, not in one backend.
 
 - `keyPixel(r, g, b, key)` — the reference implementation, unit tested in
@@ -586,8 +672,8 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 - `src/wasm/audioReactiveUniforms.ts` — shared `AudioReactive` uniform shape + WGSL snippet docs
 - `src/webgpu/previewEngine.ts` — `setAudioReactive({ bass, mid, treble, beat })`; `packLayerUniforms` (`previewLayerUniforms.ts`) writes them to uniform slots 13–16
 - `src/webgpu/shaders/preview.wgsl` — `Uniforms.bass|mid|treble|beat` + optional warm lift
-- `src/utils/beatMarkers.ts` + Timeline ruler — read-only beat overlay when metadata is present
-- `src/utils/canvas-renderer.ts` — `setWasmBassLevel()` for export parity with the same analysis source
+- `src/timeline/beatMarkers.ts` + Timeline ruler — read-only beat overlay when metadata is present
+- `src/export/canvasRenderer.ts` — `setWasmBassLevel()` for export parity with the same analysis source
 
 ### Adding analysis-driven shader uniforms
 
@@ -602,9 +688,9 @@ Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approv
 
 Three shipped Emscripten modules (plus the glue-free `media_engine_fx` build and the opt-in whisper target) share one flag file. Do not copy-paste `emcc` invocations.
 
-- `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / `-Wall -Wextra` / strict C++17 / `EXPORTED_RUNTIME_METHODS` / `INCOMING_MODULE_JS_API=locateFile,instantiateWasm`; per-module `GZIP_BUDGET`, `THREADS` (pthreads — whisper only) and `EXCEPTIONS` (throw support — whisper only)
+- `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / `-Wall -Wextra` / strict C++17 / `-ffp-contract=off` (no FMA contraction, so host tests and WASM round alike) / `EXPORTED_RUNTIME_METHODS` / `INCOMING_MODULE_JS_API=locateFile,instantiateWasm`; per-module `GZIP_BUDGET`, `THREADS` (pthreads — whisper only), `EXCEPTIONS` (throw support — whisper only) and `MALLOC` (standalone modules; `media_engine_fx` uses emmalloc). It owns the optimisation flags: CMake's per-config `-O3 -DNDEBUG` defaults are cleared
 - `native/CMakeLists.txt` — builds `audio_analysis`, `video_stabilize`, `media_engine` (and `media_engine_fx`) into `public/wasm/`; `-DCLIP_STACKER_WHISPER=ON` adds `native/whisper/` (whisper.cpp via its own CMake, `EXCLUDE_FROM_ALL`)
-- `clip_stacker_standalone_wasm` (toolchain.cmake) — `-sSTANDALONE_WASM --no-entry`: plain `extern "C"` exports, no JS runtime, for realms that cannot load MODULARIZE glue (the AudioWorkletGlobalScope). Its only import is `env.emscripten_notify_memory_growth`; call `_initialize` after instantiating. Keep such modules free of static initializers
+- `clip_stacker_standalone_wasm` (toolchain.cmake) — `-sSTANDALONE_WASM --no-entry`: plain `extern "C"` exports, no JS runtime, for realms that cannot load MODULARIZE glue (the AudioWorkletGlobalScope). Its only import is `env.emscripten_notify_memory_growth`; call `_initialize` after instantiating — emmalloc sets its heap up there, and skipping it makes the first allocation past the initial memory trap. Keep such modules free of static initializers
 - `native/emsdk-version` — the pinned SDK (CI installs it; the committed artifacts come from it). `scripts/emscripten-flags.sh` is the cmake driver: it rejects SDKs < 3.1.64, warns above the tested major, and sends `WASM_DEBUG=1` builds to `native/build-debug/`
 - `native/common/include/` — `cs_status.h` (every `int` entry point returns a `cs_status`; `cs_span_ok` bounds check), `cs_alloc.h` (`cs::Buffer` / `try_reserve` / `can_allocate`: OOM returns `CS_ENOMEM` instead of aborting under `-fno-exceptions`), `cs_math.h` (`cs::kPi`; no `M_PI`)
 - `src/wasm/emscriptenLoader.ts` — the JS side of the boundary: `loadEmscriptenModule(name, factory)` (one instance per realm, transient fetch failures retry with backoff, then a cooldown instead of "disabled until reload"; a trap retires the instance) and `withHeap(mod, (heap) => …)` — **every `_malloc` goes through it**: null-checked, views rebuilt from the current buffer after each call, everything freed when the scope ends; null on OOM so callers fall back. `CS_STATUS` mirrors `cs_status.h`
@@ -614,6 +700,35 @@ Three shipped Emscripten modules (plus the glue-free `media_engine_fx` build and
 - CI `wasm` job installs `native/emsdk-version`, runs `npm run build:wasm` and fails on any `public/wasm` diff or stray file; the `native-host` job runs `scripts/test-native.sh`, which ctests every module (`video_stabilize`'s pure matrix / smoothing helpers live in `stab_math.h`)
 
 Keep WebGPU as the pixel owner. Do not fold video frames into this engine.
+
+## Audio service (one real-time context, one decoder)
+
+- `src/audio/audioService.ts` — the app's only real-time `AudioContext`
+  (`getAudioContext()`): lazy, resumed by the first pointer / key gesture,
+  closed on `pagehide` (suspended for the back/forward cache). Playback,
+  `useMediaVolume` and the legacy canvas export's audio-reactive analyser
+  share it; none of them closes it — they disconnect their nodes.
+  `context.boundary.test.ts` fails if anything else constructs one.
+- **Latency class.** `'interactive'` by default; the playback manager asks for
+  `'balanced'` while the bus-graph worklet is in the graph. A context's hint is
+  fixed at construction, so `applyPreferredLatency(idle)` replaces the context
+  only at an idle Play and only when no media element is bound to it
+  (`noteElementBinding`: a `MediaElementAudioSourceNode` ties its element to
+  its context for good). `onAudioContextReplaced` listeners rebuild their
+  nodes; decoded `AudioBuffer`s are context-free and kept.
+- **Decoding** goes through `decodeAudio(source, { sampleRate })`
+  (`src/audio/decodeAudio.ts`): an `OfflineAudioContext` at 48 kHz by
+  default, so beat times, waveform peaks and export PCM no longer depend on
+  the output device's rate. Whisper decodes at 16 kHz the same way. Nothing
+  else calls `decodeAudioData` (the boundary test checks).
+- **Playhead = what is heard.** `heardContextTime` uses
+  `getOutputTimestamp()` (extrapolated, never ahead of `currentTime`), else
+  `currentTime − outputLatency`; the playback clock then subtracts the bus
+  graph's look-ahead and the user's offset.
+- **A/V offset** (`src/store/audioSyncStore.ts`, ±500 ms in 5 ms steps) is
+  per-browser view state (`clip_stacker.audioSyncOffset.v1`), never in a
+  project. UI: the **A/V ms** field in the preview controls
+  (`AudioSyncOffsetControl`; double-click resets).
 
 ## Media engine (timeline PCM mix)
 
@@ -625,14 +740,15 @@ C++ owns the export premix DSP: polyphase resample, volume/pan automation curves
 - `native/media_engine/tests/` — host ctest suite (THD+N goldens, chunk bit-equality, curve/pan parity, time stretch)
 - `public/wasm/media_engine.{js,wasm}` — committed artifacts (gzip budget 200 KB)
 - `src/wasm/mediaEngine.ts` — `openTimelineMixStream` (chunked; uploads only the source frames each chunk reads, each chunk in one `withHeap` scope, acquires/releases clip PCM lazily), `mixTimelineAudio` (whole buffer); lazy load, graceful disable
-- `src/utils/webcodecs-audio.ts` — `encodeScheduleAudioStreaming` feeds chunks straight to `AudioEncoder` (no length cap); `renderTimelineAudioMix` prefers WASM; OfflineAudioContext fallback (≤ `MAX_OFFLINE_AUDIO_SECONDS`)
+- `src/export/webcodecsAudio.ts` — `encodeScheduleAudioStreaming` feeds chunks straight to `AudioEncoder` (no length cap); `renderTimelineAudioMix` prefers WASM; OfflineAudioContext fallback (≤ `MAX_OFFLINE_AUDIO_SECONDS`)
+- **Export premix runs in a worker.** `src/audio/audioRender.worker.ts` runs `openTimelineMixStream` (and the bus session / meter); `src/audio/audioRenderClient.ts` (`openMixStream`, the `MixStream` shape export uses) posts the schedule, answers the worker's `need-pcm` from the main-thread provider (decoding needs `OfflineAudioContext`, which workers lack) in 4 MB `pcm-part` slices with a yield between them, and keeps one `pull` ahead so the worker mixes the next chunk while main encodes. Protocol: `audioRenderProtocol.ts`. Page parameters (`?media_engine_resampler`, `?wasm_debug`) are resolved on main and passed in; `?no_media_engine` never starts the worker. No Worker (tests) or a failed start → the same stream in this realm; a worker that dies mid-export fails the stream, and export falls back as for any engine failure. Output is bit-identical to the in-realm stream (`audioRenderClient.test.ts`).
 - Kill switch: `?no_media_engine` (curves and everything else go back to OfflineAudioContext). Debug: `?media_engine_resampler=linear`.
 - Keyframe semantics must match `sampleKeyframes` / `applyGainEnvelope` (`src/audio/gainEnvelope.ts`, the TS twin of `fade_gain` / `Curve` / `Panner`) / `StereoPannerNode`; change both sides together. Packed strides in `audio_mix.h` are mirrored in `mediaEngine.ts`.
-- **Insert effects** (`Clip.audioEffects`, `src/utils/audioEffects.ts`): ≤ 4 RBJ biquads then one compressor per clip (`native/media_engine/src/eq.cpp`, `dynamics.cpp`), after resample and before the volume curve; a look-ahead true-peak **bus limiter** from `ExportSettings.masterLimiter` (off by default). They are effect-block rows (`MIX_FX_STRIDE`) plus four fields on an fx entry (`MIX_ENTRY_FX_STRIDE`, `MIX_FLAG_EFFECTS`; the fourth routes it to a lane bus), run through a stateful `mix_fx_session_*` (contiguous calls from frame 0; the bus reads `mix_fx_session_latency` frames ahead). No enabled block, no bus processing and no limiter → the stream stays on `mix_timeline_audio_range`, byte-identical to before (host test pins it).
+- **Insert effects** (`Clip.audioEffects`, `src/audio/audioEffects.ts`): ≤ 4 RBJ biquads then one compressor per clip (`native/media_engine/src/eq.cpp`, `dynamics.cpp`), after resample and before the volume curve; a look-ahead true-peak **bus limiter** from `ExportSettings.masterLimiter` (off by default). They are effect-block rows (`MIX_FX_STRIDE`) plus four fields on an fx entry (`MIX_ENTRY_FX_STRIDE`, `MIX_FLAG_EFFECTS`; the fourth routes it to a lane bus), run through a stateful `mix_fx_session_*` (contiguous calls from frame 0; the bus reads `mix_fx_session_latency` frames ahead). No enabled block, no bus processing and no limiter → the stream stays on `mix_timeline_audio_range`, byte-identical to before (host test pins it).
 - Preview gets inserts from the same C++: `src/audio/processedAudioCache.ts` runs `insert_chain_*` over a copy of the decoded buffer. Never add `BiquadFilterNode` / `DynamicsCompressorNode`; with the media engine off, inserts are bypassed everywhere. The limiter is export-only. FFmpeg paths premix whenever `timelineNeedsAudioPremix` (automation, inserts, limiter, lane buses, loudness, audio lanes).
 - No pthreads until the mix is multi-threaded by design; COOP/COEP is already paid for FFmpeg.
 
-Do not add more DSP inside `canvas-renderer` or FFmpeg `filter_complex` for mix/fade/resample this engine should own.
+Do not add more DSP inside `canvasRenderer` or FFmpeg `filter_complex` for mix/fade/resample this engine should own.
 
 ## Lane buses, master bus and loudness (media engine)
 
@@ -649,7 +765,7 @@ direct (unrouted) input -> delay compensation --------------------+-> sum
 sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
 ```
 
-- **Model** (`src/utils/audioBus.ts`, pure): `Track.audioFx` (ordered
+- **Model** (`src/audio/audioBus.ts`, pure): `Track.audioFx` (ordered
   `BusEffect[]`: EQ ≤ 8 bands incl. low-pass, compressor, gate, de-esser,
   true-peak limiter; ≤ 8 effects), `Track.duck` (absent = the legacy
   `BED_DUCK_LINEAR` step on audio lanes, `'off'`, or a sidechain duck under
@@ -670,18 +786,18 @@ sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
   mixer's own polyphase sinc (`TruePeakDetector`, 32 frames of delay), a
   0.05 dB detection margin (ten times the worst overshoot the host battery
   measures without it), then a sample clamp. Latency = 32 + look-ahead (≥ 32).
-- **Meter** (`src/fx/loudness.cpp`): BS.1770-4 K-weighting at any rate,
+- **Meter** (`native/media_engine/src/fx/loudness.cpp`): BS.1770-4 K-weighting at any rate,
   100 ms grid, momentary / short-term, gated integrated, EBU Tech 3342 LRA,
   true / sample peak. Readings are chunk-invariant. The graph meters its
   delivered output (skipping its own priming frames).
-- **Export** (`src/utils/exportAudioBus.ts`, `webcodecs-audio.ts`): with lane
+- **Export** (`src/export/exportAudioBus.ts`, `webcodecsAudio.ts`): with lane
   FX, ducks, master FX or a loudness target the premix runs the bus graph; a
   target makes it two passes — meter, then `target − measured` as a static
   gain plus a true-peak limiter at the target's ceiling (it replaces
   `ExportSettings.masterLimiter`). `RenderPlan.audioFx` (`engine` /
   `offline-fallback` / `none`) and `RenderPlan.loudness` report what ran.
   OfflineAudioContext fallback mixes dry. Auto-caption audio stays pre-bus.
-- **Preview** (`src/audio/busRouting.ts`, `src/wasm/audioFx.ts`,
+- **Preview** (`src/playback/busRouting.ts`, `src/wasm/audioFx.ts`,
   `public/worklets/audio-fx-processor.js`): each lane sums into one input of
   a bus-graph `AudioWorkletNode` (inputs = lanes + direct, ≤ 32); the main
   thread compiles `media_engine_fx.wasm` and posts the `WebAssembly.Module`.
@@ -694,7 +810,25 @@ sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
   (chain editor, "Duck under", gain-reduction meter); Master row FX + **LUFS**
   meter; Export → **Loudness** target.
 - Every recursive DSP path flushes values below 1e-30 (WASM has no FTZ/DAZ);
-  `silence_after_a_tone_stays_out_of_subnormals` guards it.
+  `silence_after_a_tone_stays_out_of_subnormals` guards it. Between stages
+  `flush_sample` also zeroes NaN / inf, so one bad input cannot poison a
+  graph (the property harness found that).
+- **Real-time safe.** `bus_graph_process` / `update` / `meters` / `reset`
+  never allocate (`rt_safety_tests` counts `operator new`): `BusChain::matches`
+  compares rows in place, loudness gating is a 0.1 dB histogram (−70 … +5
+  LUFS, O(1) memory and read cost — flat over a 4 h programme, within 0.1 LU
+  of exact gating), and gain-reduction meters keep only the minimum linear
+  gain, converted to dB on read. The limiter's true-peak taps are generated
+  data (`true_peak_taps.inc`, `npm run gen:true-peak-taps`), not a table built
+  at create (−525 KB of BSS in `media_engine_fx`). Graph build is a few µs.
+- **Control rate.** Compressor and de-esser compute gain every
+  `kControlFrames` (16) frames and interpolate in between (the compressor's
+  detector still runs per frame; its ramp is extrapolated one block ahead so
+  it does not trail). `control_rate_*` tests bound the deviation from the
+  per-sample reference; goldens were re-baselined with it.
+- Frame positions crossing the JS boundary (`mix_timeline_audio_range`,
+  `mix_fx_session_range`) are `double` (exact integers to 2^53), validated
+  and carried as 64-bit in C++, so a long programme never wraps an `int`.
 - Not built yet: keyframe automation of bus FX parameters, gate / de-esser on
   clip inserts, sends / aux buses.
 
@@ -760,12 +894,12 @@ affine. Enabled per clip with the Inspector's **Stabilize** toggle.
   algorithm and the matrix convention.
 - `public/wasm/video_stabilize.{js,wasm}` — committed build artifacts (~16 KB gzipped)
 - `src/wasm/videoStabilize.ts` — lazy loader + typed bindings (graceful disable on load failure)
-- `src/utils/stabilizePipeline.ts` — decode → downscale → analyse; `computeAnalysisPlan` picks the resolution and sampling rate
-- `src/utils/stabilization.ts` — pure helpers: sampling, pixel-affine conversion, `.trf` serialization
+- `src/media/stabilizePipeline.ts` — decode → downscale → analyse; `computeAnalysisPlan` picks the resolution and sampling rate
+- `src/media/stabilization.ts` — pure helpers: sampling, pixel-affine conversion, `.trf` serialization
 - `src/hooks/useClipStabilization.ts` — runs analysis once per toggled-on clip in the background
 - `src/webgpu/shaders/preview.wgsl` — `applyLayerWarp()` on the source UV (the matrix is composed with the picture transform first — see *Clip picture transform* below)
 - `src/webgpu/transitions/shaderTemplate.ts` — the same warp inside `sampleFrom`/`sampleTo`
-- `src/utils/canvas-renderer-layers.ts` — the Canvas2D equivalent via `ctx.transform`
+- `src/export/canvasRendererLayers.ts` — the Canvas2D equivalent via `ctx.transform`
 
 ### The matrix is an inverse warp in normalized UV
 
@@ -804,7 +938,7 @@ which is why stabilization survives whichever encoder `hybridMergeClips` picks.
 
 ## Clip picture transform (rotation / scale / anchor)
 
-One inverse 2x3 per layer sample. `src/utils/clipTransform.ts` composes the
+One inverse 2x3 per layer sample. `src/composition/clipTransform.ts` composes the
 stabilization matrix with the authored picture transform into a single
 `warpMatrix` in the layer rect's centred UV — the same `[a, b, tx, c, d, ty]`
 convention as stabilization. Preview, GPU export, transitions and Canvas2D all
@@ -882,7 +1016,7 @@ never main's `onGpuDeviceLost`.
 ### Decoder-backed preview (`src/webgpu/`)
 
 - `previewDecoderSource.ts` — worker-side `PreviewDecoderSource`. Main transfers each clip's `File` once (`clip-media`, structured-cloneable by reference — no byte copy); the worker opens one forward-only `DecoderFrameCursor` per **active** layer (`clipId::role::mediaObjectUrl`), exactly like GPU export.
-- `src/utils/decoderCursorPool.ts` — the shared cursor lifecycle: backward jump (> 1/60 s) closes and reopens from the previous sync sample, an exhausted cursor is freed immediately, and live cursors are hard-capped at `DEFAULT_MAX_DECODER_CURSORS` (8), matching `ClipMediaPool`. **Both** `TimelineDecoderFrameProvider` (export) and `PreviewDecoderSource` (preview) use it, so the two paths cannot drift apart again.
+- `src/media/decoderCursorPool.ts` — the shared cursor lifecycle: backward jump (> 1/60 s) closes and reopens from the previous sync sample, an exhausted cursor is freed immediately, and live cursors are hard-capped at `DEFAULT_MAX_DECODER_CURSORS` (8), matching `ClipMediaPool`. **Both** `TimelineDecoderFrameProvider` (export) and `PreviewDecoderSource` (preview) use it, so the two paths cannot drift apart again.
 - Per-layer fallback is per-layer, not global: stills, non-video clips, RIFE morph segments (their own blob URL) and anything mp4box cannot demux (WebM/alpha) come back in `need-frames` and are captured from the `<video>` pool as before. A render whose `fallback` list is empty never round-trips to main at all.
 - `render-complete` carries `frameSources: { decoder, element }`, mirrored into `previewMetrics`. `element > 0` during scrub means some layer still needs `HTMLVideoElement.currentTime`.
 - Feature detection + escape hatch: `previewDecodeFlags.ts`. `?legacy_preview_video` forces the old path (resolved on **main** and passed in `init` — a worker's `location.search` is the worker script's URL, not the page's).
@@ -901,15 +1035,15 @@ never main's `onGpuDeviceLost`.
 A proxy is a 960p H.264 mezzanine that preview reads instead of a big camera
 file. Export never reads it.
 
-- `src/utils/proxyMedia.ts` — `PROXY_PROFILE` (a constant, not a codec panel),
+- `src/media/proxyMedia.ts` — `PROXY_PROFILE` (a constant, not a codec panel),
   `planProxy`, `proxyDimensions`, `ProxyFrameSelector` (caps at 30 fps without
   inventing frames), `proxyStoreKey(sourceHash, profile)`,
   `resolvePreviewMedia` (proxy vs original for one clip). Pure.
-- `src/utils/proxyEncoder.ts` — `encodeProxy`: `ClipFrameDecoder` → canvas
-  blit → `VideoEncoder` → `Mp4Writer` (Mediabunny, `src/utils/container/`).
+- `src/media/proxyEncoder.ts` — `encodeProxy`: `ClipFrameDecoder` → canvas
+  blit → `VideoEncoder` → `Mp4Writer` (Mediabunny, `src/export/container/`).
   Source timestamps are kept, so a proxy cursor opened on a trim window lands
   on the same source times. No FFmpeg.
-- `src/utils/mediaStore.ts` — the async `MediaStore` interface and
+- `src/project/mediaStore.ts` — the async `MediaStore` interface and
   `fingerprintMedia`. **In-memory only until #279** swaps in OPFS/IndexedDB
   (`setMediaStore`); nothing here survives a reload yet.
 - `src/store/proxyStore.ts` — runtime state: the toggle, the build queue,
@@ -941,10 +1075,10 @@ Never hard-code `hardwareAcceleration: 'prefer-hardware'` — Chrome treats it a
 `RenderPlan.videoEncoder` and Copy Debug. HEVC / AV1 codec strings are sized by
 resolution (`hevcCodecString` / `av1CodecString`). Every encode loop closes
 its frames in a `finally` (`encodeAndClose`) and waits on the codec queue with
-`waitForQueueBelow` (`src/utils/codecQueue.ts`), which rejects when the codec
+`waitForQueueBelow` (`src/export/codecQueue.ts`), which rejects when the codec
 closes or stalls instead of hanging.
 
-MP4 muxing goes through `Mp4Writer` (`src/utils/container/`), the only module
+MP4 muxing goes through `Mp4Writer` (`src/export/container/`), the only module
 that imports Mediabunny (it replaced the deprecated `mp4-muxer`). Its `add*`
 calls are synchronous so codec output callbacks can feed it; they queue onto
 Mediabunny's async API in call order, a failed add is held and rethrown by
@@ -954,14 +1088,14 @@ preview proxies all use it.
 
 ## Variable speed remapping (time stretch)
 
-`automation.playbackRate` keyframes (existing `Keyframe` type — output-local seconds) remap timeline time to source time via ∫ rate(τ) dτ (`src/utils/timeRemap.ts`). Preview video samples frames at the remapped `sourceTime`; audio is pitch-preserved with WSOLA in the media engine (not SoundTouch / LGPL).
+`automation.playbackRate` keyframes (existing `Keyframe` type — output-local seconds) remap timeline time to source time via ∫ rate(τ) dτ (`src/timeline/timeRemap.ts`). Preview video samples frames at the remapped `sourceTime`; audio is pitch-preserved with WSOLA in the media engine (not SoundTouch / LGPL).
 
 ### Layout
 
-- `native/media_engine/src/time_stretch.cpp` — `time_stretch_remap`: one f64 source offset per synthesis hop (`TIME_STRETCH_HOP` = 512, `2 * hop` periodic-Hann segments at 50% overlap). Each segment's start may move ±`tolerance` (default `hop / 2`) to where its first half best matches (normalized cross-correlation, coarse-to-fine) the natural continuation of the previous segment, so overlaps add in phase. Fractional starts read through the mixer's polyphase sinc (`sinc_prepare` / `sinc_read`); whole-frame starts copy, so rate 1 is bit-exact. One module, one heap with the mixer
-- `src/wasm/timeStretch.ts` — `wasmRemapPlanar` (via `withHeap`; null when the media engine is unavailable, `?no_media_engine` is set, or the heap is full)
-- `src/utils/remapAudio.ts` + `remappedAudioCache.ts` — curve → remapped `AudioBuffer` for schedule / export premix; f64 offsets (`buildSourceOffsetMap`); a null or a trap from the WASM path falls back to the JS overlap-add in `remapAudio.ts`. There is no live (AudioWorklet) stretch: preview and export both play the remapped buffer
-- `src/utils/remapAudio.ts` + `remappedAudioCache.ts` — curve → remapped `AudioBuffer` for schedule / export premix
+- `native/media_engine/src/time_stretch.cpp` — `time_stretch_session_{create,process,hop,destroy}`: the chunked form — about a second of output per call, from only the window of source it reads (`[min − 2·hop − tol − 64, max + 2·hop + tol + 64)` of that chunk's offsets, else `CS_ERANGE`), so a 10 minute clip at 0.5× peaks at a few MB of WASM heap (under 64 MB is asserted); the carried state is one segment, so chunked output equals `time_stretch_remap` bit for bit. `time_stretch_remap` (one call over the whole input): one f64 source offset per synthesis hop (`TIME_STRETCH_HOP` = 512, `2 * hop` periodic-Hann segments at 50% overlap). Each segment's start may move ±`tolerance` (default `hop / 2`) to where its first half best matches (normalized cross-correlation, coarse-to-fine) the natural continuation of the previous segment, so overlaps add in phase. Fractional starts read through the mixer's polyphase sinc (`sinc_prepare` / `sinc_read`); whole-frame starts copy, so rate 1 is bit-exact. One module, one heap with the mixer
+- `src/wasm/timeStretch.ts` — `wasmRemapPlanar` drives the session chunk by chunk in one `withHeap` scope sized for the largest chunk (null when the media engine is unavailable, `?no_media_engine` is set, or the heap is full)
+- `src/audio/timeStretch.worker.ts` + `timeStretchClient.ts` — `remapPlanarOffThread` runs it in a worker (the planar source is transferred there and back); no Worker or a failed start → this realm; a worker that dies takes the job's source with it, so `remapClipAudioBuffer` rebuilds it for the JS fallback. `RemappedAudioCache` keys are unchanged
+- `src/audio/remapAudio.ts` + `remappedAudioCache.ts` — curve → remapped `AudioBuffer` for schedule / export premix; f64 offsets (`buildSourceOffsetMap`); a null or a trap from the WASM path falls back to the JS overlap-add in `remapAudio.ts`. There is no live (AudioWorklet) stretch: preview and export both play the remapped buffer
 - `src/components/SpeedAutomationLane.tsx` — Cubase-style lane under the selected timeline clip
 - Inspector **Speed (time remap)** `KeyframeMiniEditor` — same lane as volume/pan
 
@@ -969,7 +1103,7 @@ When `playbackRate` automation is present, FFmpeg export uses the premix path (s
 
 ## Intercut generator (local FFmpeg)
 
-Library macro that alternates two or three clips at a configurable (accelerating) cut rate and drops a new MP4 into the library. Planning lives in `src/utils/intercut.ts`.
+Library macro that alternates two or three clips at a configurable (accelerating) cut rate and drops a new MP4 into the library. Planning lives in `src/timeline/intercut.ts`.
 
 `sourceClock`:
 - `freezeHidden` (default) — only the visible source’s `inpoint`/`outpoint` advance; the hidden clip freezes and resumes (keeps offscreen frames).
@@ -985,7 +1119,7 @@ Library macro that alternates two or three clips at a configurable (accelerating
 
 `forceFinalClip` (`A` / `B` / `C` / `auto`) overrides the last swapping-phase slot; `tailDurationSec` holds the landing clip after the last cut when material remains. Beat-sync uses `beatsInTrimWindow()` + stride vs Hz; faster-than-beat strobes fall back to raw Hz.
 
-Rendering (`src/ffmpeg/intercutGenerator.ts` + `src/utils/intercutRender.ts`; the pure argv builders are in `src/ffmpeg/intercutArgs.ts`) does **not** use the concat demuxer. Its `inpoint`/`outpoint` is packet-granular: each cut pulled in the GOP before the inpoint and the AAC frames around it, so the picture ran long and `+genpts` stacked dozens of audio packets on one timestamp at every cut (audibly out of sync, worse as the strobe sped up). Instead:
+Rendering (`src/ffmpeg/intercutGenerator.ts` + `src/timeline/intercutRender.ts`; the pure argv builders are in `src/ffmpeg/intercutArgs.ts`) does **not** use the concat demuxer. Its `inpoint`/`outpoint` is packet-granular: each cut pulled in the GOP before the inpoint and the AAC frames around it, so the picture ran long and `+genpts` stacked dozens of audio packets on one timestamp at every cut (audibly out of sync, worse as the strobe sped up). Instead:
 
 1. `quantizeIntercutSlices` snaps slices (relative to each trim start) to a 30 fps output grid from cumulative time, so rounding never drifts; one source's slices never share a frame.
 2. Picture: one `filter_complex` — per source `fps=30` → `select` (source frame ranges) → `setpts` (output frame numbers) → scale/pad — merged with `interleave`. Mixed resolution / fps / stills are handled in-graph; there is no separate normalize pass.
@@ -996,11 +1130,11 @@ Rendering (`src/ffmpeg/intercutGenerator.ts` + `src/utils/intercutRender.ts`; th
 
 Behaviour and setup are in the README section "Google Drive import and segment extract / replace". Where things live:
 
-- `utils/googleDrive.ts` — in-memory `drive.file` token plus library references. GIS and the Drive Picker both run in `drive-auth.html` (`utils/driveAuthPopup.ts`, protocol in `utils/driveAuth.ts`). The editor is `COOP: same-origin` + `COEP: require-corp`, so `window.opener` is null and the Picker iframe cannot load there. The sign-in document is the only response with `COOP: unsafe-none` and no COEP. It sends the token callback and the picked files over a same-origin `BroadcastChannel` (not `postMessage` to the opener). A closed popup does not reject; only those messages or a 120s timeout do. The token is never stored. `store/driveLibraryStore.ts` keeps `DriveMediaItem` references (localStorage `clip_stacker.driveLibrary.v1`, view state). `utils/segments/driveImport.ts` is the toolbar action.
-- `utils/segments/extractSegment.ts` — `extractSegment()` and the routing rule (`chooseExtractRoute`, pure): small/local → FFmpeg.wasm, large Drive/remote → Contabo job. The browser limits are constants there; Drive files are never pulled into the browser unless small or the user forces it.
-- `utils/segments/processSegment.ts` — "Send to processing" backends (`PROCESSING_BACKENDS`) and the manual Colab import.
-- `utils/segments/segmentReplace.ts` (pure planner) + `replaceSegment.ts` (I/O) — `replaceSegment()`; one `commitEdit`. Never revoke a replaced clip's object URL by hand: edit history owns it.
-- `utils/segments/segmentDeps.ts` wires the stores/FFmpeg/HF into the injectable `ProcessDeps`/`ReplaceDeps`, so the logic is tested without a browser (`segments.test.helpers.ts`).
-- `ContaboStorageManagerClient.createJob/getJob/cancelJob/waitForJob/deleteMedia` (`utils/project/contaboJobs.ts` has the types).
+- `remote/googleDrive.ts` — in-memory `drive.file` token plus library references. GIS and the Drive Picker both run in `drive-auth.html` (`remote/driveAuthPopup.ts`, protocol in `remote/driveAuth.ts`). The editor is `COOP: same-origin` + `COEP: require-corp`, so `window.opener` is null and the Picker iframe cannot load there. The sign-in document is the only response with `COOP: unsafe-none` and no COEP. It sends the token callback and the picked files over a same-origin `BroadcastChannel` (not `postMessage` to the opener). A closed popup does not reject; only those messages or a 120s timeout do. The token is never stored. `store/driveLibraryStore.ts` keeps `DriveMediaItem` references (localStorage `clip_stacker.driveLibrary.v1`, view state). `actions/segments/driveImport.ts` is the toolbar action.
+- `remote/segments/extractSegment.ts` — `extractSegment()` and the routing rule (`chooseExtractRoute`, pure): small/local → FFmpeg.wasm, large Drive/remote → Contabo job. The browser limits are constants there; Drive files are never pulled into the browser unless small or the user forces it.
+- `remote/segments/processSegment.ts` — "Send to processing" backends (`PROCESSING_BACKENDS`) and the manual Colab import.
+- `remote/segments/segmentReplace.ts` (pure planner) + `replaceSegment.ts` (I/O) — `replaceSegment()`; one `commitEdit`. Never revoke a replaced clip's object URL by hand: edit history owns it.
+- `actions/segments/segmentDeps.ts` wires the stores/FFmpeg/HF into the injectable `ProcessDeps`/`ReplaceDeps`, so the logic is tested without a browser (`segments.test.helpers.ts`).
+- `ContaboStorageManagerClient.createJob/getJob/cancelJob/waitForJob/deleteMedia` (`project/contaboJobs.ts` has the types).
 
 Invariants worth keeping: a segment result must match the requested length (`SEGMENT_DURATION_TOLERANCE_SEC`); check a processed *video* before muxing audio under it (the audio would pad a short video to length and hide the mismatch); a `blob:` URL must never become a clip's `remoteSourceUrl`; the Drive token must never reach storage or `job.json`.

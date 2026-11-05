@@ -1,16 +1,14 @@
-import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import { fetchFile } from "@ffmpeg/util";
 import type {
   Clip,
   ExportSettings,
   ClipTransition,
   MasterAudio,
   TextOverlay,
-  RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/clipTiming";
-import { buildTransitionFilterComplex } from "../utils/transitions";
+import { getClipDuration } from "../timeline/clipTiming";
+import { buildTransitionFilterComplex } from "../timeline/transitions";
 import {
   DEFAULT_FINISHING,
   isGrainActive,
@@ -19,72 +17,35 @@ import {
   isSecondaryColorActive,
   isSharpenActive,
   type FinishingSettings,
-} from "../utils/finishing";
-import { buildPrimaryColorFfmpegFilters } from "../utils/primaryColor";
-import { buildNoiseReductionFfmpegFilters } from "../utils/noiseReduction";
-import { buildSecondaryColorFfmpegFilters } from "../utils/secondaryColor";
-import { buildSharpenFfmpegFilters } from "../utils/sharpen";
-import { buildGrainFfmpegFilters } from "../utils/grain";
+} from "../finishing/finishing";
+import { buildPrimaryColorFfmpegFilters } from "../finishing/primaryColor";
+import { buildNoiseReductionFfmpegFilters } from "../finishing/noiseReduction";
+import { buildSecondaryColorFfmpegFilters } from "../finishing/secondaryColor";
+import { buildSharpenFfmpegFilters } from "../finishing/sharpen";
+import { buildGrainFfmpegFilters } from "../finishing/grain";
 import {
   renderTimelineAudioMixWav,
   timelineNeedsAudioPremix,
-} from "../utils/webcodecs-audio";
+} from "../export/webcodecsAudio";
 import {
-  isFfmpegLoadFailed,
-  isFfmpegLoading,
-  recordFfmpegLog,
-  getLastFfmpegLogs,
-  getLastFfmpegError,
   clearFfmpegLogs,
-  buildDetailedError,
-  extractErrorMessage,
-  clampProgress,
   emitProgress,
-  emitLoadStatus,
-  getCdnLabel,
-  getLocalFfmpegCoreBaseURL,
-  getFfmpegCoreSources,
-  buildFfmpegLoadErrorMessage,
-  parseFfmpegTimeSeconds,
   safeExec,
   safeWriteFile,
   safeReadFile,
-  execWithFfmpegProgress,
-  clipNeedsEffects,
   getSafeExtension,
-  buildSingleClipFilter,
-  getFfmpegEnvironmentDiagnostics,
-  toBlobURLWithRetry,
-  toBlobURLWithFallback,
-  withTimeout,
   ensureFfmpeg,
-  ensureFont,
   ensureFontsForOverlays,
   buildDrawtextFilter,
   mergeClipsLossless,
   performTwoPassEncode,
-  processClipPass1,
-  mergeClipsPass2,
   mergeClipsWithTransitions,
   prepareSecondaryColorFfmpeg,
-  DEFAULT_VIDEO_SIZE,
-  OUTPUT_WIDTH,
-  OUTPUT_HEIGHT,
-  PASS1_PROGRESS_START,
-  PASS1_PROGRESS_END,
-  FONT_CDN_URL,
-  FONT_VIRTUAL_NAME,
   StatusCallback,
-  RenderProgressUpdate,
   ProgressCallback,
-  FfmpegLogProgressContext,
-  MAX_LOG_BUFFER,
-  FFMPEG_CORE_CDNS,
-  FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
-  FFMPEG_LOAD_TIMEOUT_MS,
 } from "./core";
 import { mergeClipsWithCompositing } from "./video";
-import { clipHasPictureTransform } from "../utils/animatedLayout";
+import { clipHasPictureTransform } from "../composition/animatedLayout";
 import { calculateRenderPlan } from "./plan";
 import { remuxVideoWithPremixWav, remuxVideoWithMasterAudio } from "./mux";
 
@@ -219,7 +180,6 @@ export async function mergeClips(
   const activeTransitions = transitions.filter(
     (t) => t.type !== "none" && t.duration > 0,
   );
-  const effectClips = workingClips.filter(clipNeedsEffects);
   // A picture transform needs the compositing graph too (its per-clip
   // `scale` + `rotate` lives there), even with no overlay lanes.
   const hasPipClips = workingClips.some(

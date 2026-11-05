@@ -60,18 +60,32 @@ through the JS glue:
 
 ```bash
 npm run test:native                      # configure + build + ctest in native/build-host
+npm run test:native:pr                   # the PR subset (ctest -L pr): skips the long battery
 HOST_SANITIZE=0 npm run test:native      # plain Release build
+npm run fuzz:native                      # libFuzzer over FX rows (clang; FUZZ_SECONDS=60)
 native/build-host/media_engine/tests/media_engine_tests --list
 native/build-host/video_stabilize/video_stabilize_tests translated   # name filter
+native/build-host/media_engine/tests/bus_fx_tests --long             # only the long cases
 ```
+
+Each test binary is registered twice: `<name>` (label `pr`, runs with
+`--fast`, skipping `LONG_TEST_CASE`s) and `<name>_long` (label `nightly`,
+`--long`, only those). PR CI runs `-L pr` under GCC and again under clang
+(which adds a 30 s fuzz run); `.github/workflows/nightly-native.yml` runs
+everything on both compilers plus a 10 minute fuzz. Sanitizers are
+`address,undefined,float-cast-overflow` on both compilers (GCC leaves
+float-cast-overflow out of `undefined`).
 
 | Module | ctest | Covers |
 | --- | --- | --- |
 | `audio_analysis` | `audio_analysis_tests` | a sine lights only its band; silence stays at zero energy / zero beat; `getHopSize` = FFT/2 (and FFT size rounding); a click after silence fires one onset, `resetAnalyzer` clears it. kissfft builds with the same `-ffp-contract=off` host flags. |
 | `video_stabilize` | `video_stabilize_tests` | static frames finalize to identity; a translated frame gives a `tx`/`ty` that follows the content shift (opposite the camera move) in normalized UV; matrices before finalize are identity; invalid `stab_create` is null. `stab_math.h` (similarity fit, smoother, motion → UV corrections) is tested directly on synthetic motion. |
-| `media_engine` | `media_engine_host` | resampler THD+N goldens, chunk bit-equality, curve / pan parity, slice bounds against `pcm_floats`. |
-| `media_engine` | `bus_fx_tests` | lane buses and loudness: EBU Tech 3341 integrated / momentary / short-term / true-peak and Tech 3342 LRA signals (synthesised); duck timing; true-peak limiting of inter-sample peaks; gate, de-esser, delay compensation; chunk / block invariance with every effect; standalone graph == session; inactive layouts byte-identical to the legacy mix; two-pass normalization; no subnormals in silence after a tone. |
-| `media_engine` | `time_stretch_tests` | WSOLA: rate 1 is bit-exact (mono, stereo, offsets a hair off whole frames); 2x and 0.5x keep pitch (zero-crossing) and level; the similarity search keeps a slowed tone's envelope flat where plain OLA (tolerance 0) dips; positions past 2^24 frames stay sub-sample; output past the last offset and reads outside the input are silence; bad args are `CS_EINVAL`. |
+| `media_engine` | `media_engine_tests` | resampler THD+N goldens, chunk bit-equality, curve / pan parity, slice bounds against `pcm_floats`; frame positions past `INT_MAX` do not wrap (the range entry points take a 64-bit-safe `double` start). |
+| `media_engine` | `bus_fx_tests` | lane buses and loudness: EBU Tech 3341 integrated / momentary / short-term / true-peak and Tech 3342 LRA signals (synthesised); duck timing; true-peak limiting of inter-sample peaks; gate, de-esser, delay compensation; chunk / block invariance with every effect; standalone graph == session; inactive layouts byte-identical to the legacy mix; two-pass normalization; no subnormals in silence after a tone. Histogram loudness gating within 0.1 LU of exact gating, and its read cost flat from 1 min to a 4 h programme; true-peak taps (`true_peak_taps.inc`) equal the live sinc table; graph build with limiters well under a render quantum; control-rate compressor / de-esser within a bounded deviation of the per-sample reference. |
+| `media_engine` | `time_stretch_tests` | WSOLA: rate 1 is bit-exact (mono, stereo, offsets a hair off whole frames); 2x and 0.5x keep pitch (zero-crossing) and level; the similarity search keeps a slowed tone's envelope flat where plain OLA (tolerance 0) dips; positions past 2^24 frames stay sub-sample; output past the last offset and reads outside the input are silence; bad args are `CS_EINVAL`. The chunked `time_stretch_session_*` equals the whole-buffer call bit for bit for any chunking, refuses a window short of its reads (`CS_ERANGE`), and each call's window stays a second or so of source however long the clip. |
+| `media_engine` | `rt_safety_tests` | counting `operator new` / `delete`: `bus_graph_process` / `update` / `meters` / `reset` and the loudness meter never allocate after create. |
+| `media_engine` | `fx_property_tests` | seeded random FX rows and signals (SplitMix64; `FX_PROPERTY_SEEDS` for longer soaks): finite output, a structural peak bound, the final limiter's ceiling, no subnormals, whole / 128 / random block invariance and retunes; an inactive insert chain is an identity. |
+| `media_engine` | `fx_fuzz` (clang, `-DCLIP_STACKER_HOST_FUZZ=ON`) | libFuzzer: arbitrary rows and samples into the bus graph, same properties. |
 
 Tests use the tiny runner in `host_test/host_test.h` (no third-party test
 framework). Configuring `native/` with plain `cmake` requires
@@ -96,5 +110,6 @@ at it. Because the database invokes `em++`, start clangd with
 Either configure leaves `native/compile_commands.json` in place:
 `npm run build:wasm` always points it at the WASM tree, and `npm run
 test:native` points it at the host tree unless it already resolves to a WASM
-database. Prefer the WASM one when you have emsdk (it is what actually ships,
+database that covers every source the host build compiles (a WASM database
+configured before a source existed is replaced, with a warning). Prefer the WASM one when you have emsdk (it is what actually ships,
 with em++'s sysroot); the host one is the no-emsdk fallback.

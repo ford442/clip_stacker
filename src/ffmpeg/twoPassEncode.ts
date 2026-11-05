@@ -1,18 +1,18 @@
 import type { Clip, ExportSettings } from "../types";
-import { getClipDuration } from "../utils/clipTiming";
-import { resolveTargetResolution } from "../utils/resolution";
-import { getClipLoopCount } from "../utils/playbackRate";
-import { cycleDurationForClip } from "../utils/timeRemap";
-import type { PrimaryColorSettings } from "../utils/primaryColor";
-import { buildPrimaryColorFfmpegFilters } from "../utils/primaryColor";
-import type { NoiseReductionSettings } from "../utils/noiseReduction";
-import { buildNoiseReductionFfmpegFilters } from "../utils/noiseReduction";
-import type { SecondaryColorSettings } from "../utils/secondaryColor";
-import { buildSecondaryColorFfmpegFilters } from "../utils/secondaryColor";
-import type { SharpenSettings } from "../utils/sharpen";
-import { buildSharpenFfmpegFilters } from "../utils/sharpen";
-import type { GrainSettings } from "../utils/grain";
-import { buildGrainFfmpegFilters } from "../utils/grain";
+import { getClipDuration } from "../timeline/clipTiming";
+import { resolveTargetResolution } from "../export/resolution";
+import { getClipLoopCount } from "../timeline/playbackRate";
+import { cycleDurationForClip } from "../timeline/timeRemap";
+import type { PrimaryColorSettings } from "../finishing/primaryColor";
+import { buildPrimaryColorFfmpegFilters } from "../finishing/primaryColor";
+import type { NoiseReductionSettings } from "../finishing/noiseReduction";
+import { buildNoiseReductionFfmpegFilters } from "../finishing/noiseReduction";
+import type { SecondaryColorSettings } from "../finishing/secondaryColor";
+import { buildSecondaryColorFfmpegFilters } from "../finishing/secondaryColor";
+import type { SharpenSettings } from "../finishing/sharpen";
+import { buildSharpenFfmpegFilters } from "../finishing/sharpen";
+import type { GrainSettings } from "../finishing/grain";
+import { buildGrainFfmpegFilters } from "../finishing/grain";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   emitProgress,

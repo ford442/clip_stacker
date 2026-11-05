@@ -12,9 +12,8 @@ import {
   collectAutomationBreakpoints,
   DEFAULT_CLIP_PAN,
   scheduleAudioParamBreakpoints,
-} from '../utils/clipAutomation';
-import { sampleKeyframes } from '../utils/keyframes';
-import { clampClipVolume } from '../utils/audioVolume';
+} from '../timeline/clipAutomation';
+import { clampClipVolume } from './audioVolume';
 
 /**
  * Apply volume keyframes + per-clip audio fade envelopes relative to the
@@ -141,16 +140,5 @@ export function applyPanEnvelope(
     when,
     clipElapsed,
     earliestTime,
-  );
-}
-
-/** Instantaneous pan at local clip time (for tests / meters). */
-export function samplePanAt(
-  panAutomation: AudioScheduleEntry['panAutomation'],
-  localTime: number,
-): number {
-  return Math.max(
-    -1,
-    Math.min(1, sampleKeyframes(panAutomation, localTime, DEFAULT_CLIP_PAN)),
   );
 }

@@ -8,12 +8,13 @@
  * instead of an auto-caption button.
  */
 
+import { decodeAudio, DECODE_SAMPLE_RATE } from '../audio/decodeAudio';
 import type {
   CaptionProvider,
   CaptionTranscribeOptions,
-} from '../utils/captionProvider';
+} from '../captions/captionProvider';
 import type { CaptionEntry } from '../types';
-import { segmentsToCaptions } from '../utils/captionSegments';
+import { segmentsToCaptions } from '../captions/captionSegments';
 import { hasCachedModel } from './whisperModelCache';
 import { resolveWhisperAssetUrl, WHISPER_GLUE_FILE } from './whisperModule';
 import type { WhisperWorkerRequest, WhisperWorkerResponse } from './whisperWorker';
@@ -70,15 +71,8 @@ async function reachable(url: string): Promise<boolean> {
   }
 }
 
-async function decodeToAudioBuffer(blob: Blob): Promise<AudioBuffer> {
-  const Ctx =
-    typeof OfflineAudioContext !== 'undefined'
-      ? OfflineAudioContext
-      : (globalThis as { webkitOfflineAudioContext?: typeof OfflineAudioContext })
-          .webkitOfflineAudioContext;
-  if (!Ctx) throw new Error('This browser cannot decode audio for transcription.');
-  const ctx = new Ctx(1, 1, 48000);
-  return ctx.decodeAudioData(await blob.arrayBuffer());
+function decodeToAudioBuffer(blob: Blob): Promise<AudioBuffer> {
+  return decodeAudio(blob, { sampleRate: DECODE_SAMPLE_RATE });
 }
 
 /** Spawn the worker and run one transcription on it. */
@@ -185,7 +179,7 @@ export const whisperCaptionProvider: CaptionProvider = {
     if (options?.signal?.aborted) {
       throw new DOMException('Transcription cancelled', 'AbortError');
     }
-    const { toWhisperPcm } = await import('../utils/autoCaptionAudio');
+    const { toWhisperPcm } = await import('../captions/autoCaptionAudio');
     const buffer = audio instanceof Blob ? await decodeToAudioBuffer(audio) : audio;
     const pcm = toWhisperPcm(buffer);
     return runOnWorker(pcm, options, whisperModelUrl());

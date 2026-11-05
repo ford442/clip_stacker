@@ -5,7 +5,7 @@ import { BusFxChainEditor } from './BusFxChainEditor';
 import { LaneDuckPicker } from './LaneDuckPicker';
 import { LoudnessTargetFields } from './LoudnessTargetFields';
 import { RenderPlanAudioNotes } from './RenderPlanAudioNotes';
-import { createBusEffect, type BusEffect, type LaneDuck } from '../../utils/audioBus';
+import { createBusEffect, type BusEffect, type LaneDuck } from '../../audio/audioBus';
 import { editorStore, __resetEditorStoreForTests } from '../../store/editorStore';
 import type { RenderPlan } from '../../types';
 

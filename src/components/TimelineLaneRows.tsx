@@ -5,7 +5,7 @@ import {
   DEFAULT_TRACK_HEIGHT,
   MAIN_VIDEO_TRACK_ID,
   type TrackClipLayout,
-} from '../utils/trackModel';
+} from '../timeline/trackModel';
 import { TrackLaneHeader } from './TrackLaneHeader';
 import { VirtualClipBlock } from './VirtualClipBlock';
 

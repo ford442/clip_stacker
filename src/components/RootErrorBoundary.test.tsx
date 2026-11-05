@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import { RootErrorBoundary } from './RootErrorBoundary';
-import { AUTO_SAVE_STORAGE_KEY } from '../utils/autoSave';
+import { AUTO_SAVE_STORAGE_KEY } from '../project/autoSave';
 
-vi.mock('../utils/debugReport', () => ({
+vi.mock('../actions/debugReport', () => ({
   generateDebugReport: vi.fn((ctx: { error: Error }) => `REPORT: ${ctx.error.message}\n${ctx.error.stack}`),
 }));
 

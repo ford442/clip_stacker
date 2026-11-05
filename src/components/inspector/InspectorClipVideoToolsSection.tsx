@@ -5,15 +5,15 @@ import {
   clipHasKeyframes,
   clipHasPictureTransform,
   setPictureTransformValue,
-} from '../../utils/animatedLayout';
-import { sampleKeyframes } from '../../utils/keyframes';
+} from '../../composition/animatedLayout';
+import { sampleKeyframes } from '../../timeline/keyframes';
 import {
   layoutNormToPixelValue,
   layoutPixelToNormValue,
   type CanvasSize,
-} from '../../utils/overlayCoords';
-import { getClipDuration } from '../../utils/clipTiming';
-import type { PipCorner } from '../../utils/pipPreset';
+} from '../../composition/overlayCoords';
+import { getClipDuration } from '../../timeline/clipTiming';
+import type { PipCorner } from '../../composition/pipPreset';
 import { KeyframeMiniEditor } from '../KeyframeMiniEditor';
 import {
   DEFAULT_LAYOUT_VALUES,

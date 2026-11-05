@@ -24,7 +24,7 @@ import {
   masterBusActive,
   type LaneDuckSettings,
   type MasterBusSettings,
-} from '../utils/audioBus';
+} from './audioBus';
 import {
   MIX_BUS_MAX_LANES,
   MIX_FX_STRIDE,

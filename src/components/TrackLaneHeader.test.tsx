@@ -3,7 +3,7 @@ import { act } from 'react';
 import { createRoot } from 'react-dom/client';
 import { TrackLaneHeader } from './TrackLaneHeader';
 import { editorStore, __resetEditorStoreForTests } from '../store/editorStore';
-import { MAIN_VIDEO_TRACK_ID, OVERLAY_VIDEO_TRACK_ID } from '../utils/trackModel';
+import { MAIN_VIDEO_TRACK_ID, OVERLAY_VIDEO_TRACK_ID } from '../timeline/trackModel';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;

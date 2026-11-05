@@ -2,7 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { audioFxStore, useAudioFxMeters, useLaneGainReduction } from '../../store/audioFxStore';
 import { editorActions, useEditorMasterBus, useEditorTrack, useEditorTracks } from '../../store';
-import { laneDuckActive } from '../../utils/audioBus';
+import { laneDuckActive } from '../../audio/audioBus';
 import { BusFxChainEditor } from './BusFxChainEditor';
 import { LaneDuckPicker } from './LaneDuckPicker';
 import { GainReductionMeter } from './GainReductionMeter';

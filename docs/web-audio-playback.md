@@ -18,18 +18,23 @@ AudioPlaybackManager ── scheduleFrom() ──► AudioBufferSourceNode(s)
     │                    master GainNode ──► AnalyserNode ──► destination
     │
     └── getCurrentTime() ──► Preview rAF playhead / WebGPU frame
-                             (minus the bus graph's look-ahead delay)
+                             (what is heard: output timestamp / outputLatency,
+                              minus the bus graph's look-ahead and the A/V offset)
 ```
 
 ## Modules
 
 | File | Role |
 |------|------|
-| `src/audio/clipAudioCache.ts` | Decode + cache `AudioBuffer` per clip (`decodeAudioData`) |
+| `src/audio/audioService.ts` | The app's one real-time `AudioContext`: lazy, gesture resume, `pagehide` close, latency class, heard-time clock |
+| `src/audio/decodeAudio.ts` | Every decode: `OfflineAudioContext` at 48 kHz (device-independent) |
+| `src/audio/clipAudioCache.ts` | Decode + cache `AudioBuffer` per clip (`decodeAudio`) |
+| `src/store/audioSyncStore.ts`, `src/components/AudioSyncOffsetControl.tsx` | Per-browser A/V offset (view state) and its preview control |
 | `src/audio/schedule.ts` | Timeline placements, bed ducking, structure compare |
 | `src/audio/processedAudioCache.ts` | Clip insert effects (EQ / compressor) baked into a copy of the buffer by the media-engine C++ |
-| `src/audio/playbackManager.ts` | Context lifecycle, play/pause/seek, analyser meter |
-| `src/audio/busRouting.ts` | Lane inputs → bus-graph AudioWorklet (lane / master FX, ducks, loudness meter) |
+| `src/playback/playbackManager.ts` | Master chain on the shared context, play/pause/seek, analyser meter |
+| `src/audio/timeStretch.worker.ts`, `timeStretchClient.ts` | Rate-automation WSOLA in a worker (chunked WASM session) |
+| `src/playback/busRouting.ts` | Lane inputs → bus-graph AudioWorklet (lane / master FX, ducks, loudness meter) |
 | `src/audio/fxGraph.ts` | Tracks + master bus → the engine's packed bus layout (shared with export) |
 | `src/wasm/audioFx.ts`, `public/worklets/audio-fx-processor.js` | Compile `media_engine_fx.wasm`, register the processor, drive the node |
 | `src/hooks/useTimelineAudioPlayback.ts` | Sync schedule + dispose on unmount |
@@ -37,9 +42,21 @@ AudioPlaybackManager ── scheduleFrom() ──► AudioBufferSourceNode(s)
 
 ## Behavior
 
-- **Play** resumes `AudioContext` from a user gesture, schedules every remaining
-  clip at `ctx.currentTime + timeline offset`, and drives the visual playhead
-  from `getCurrentTime()`.
+- **Play** resumes the shared `AudioContext` from a user gesture, schedules
+  every remaining clip at `ctx.currentTime + timeline offset`, and drives the
+  visual playhead from `getCurrentTime()` — the time being *heard*: the
+  browser's `getOutputTimestamp()` when it has one, else `currentTime −
+  outputLatency` (a Bluetooth sink adds 150–250 ms), minus the bus graph's
+  look-ahead and the per-browser **A/V offset** (preview controls; ±500 ms,
+  for a sink that under-reports). Copy Debug lists the output latency, the
+  context's latency class and the offset.
+- **Latency class.** The context starts `'interactive'`; while the bus-graph
+  worklet is in the graph the manager asks for `'balanced'` (more headroom for
+  the WASM render). The hint is fixed per context, so the switch happens at the
+  next idle Play by replacing the context (never while a media element is
+  bound to it); the manager moves its master chain and rebuilds the worklet.
+  `dispose()` disconnects the manager's nodes and never closes the shared
+  context.
 - **Scrub while playing** coalesces seeks to one reschedule per animation frame
   (≈ one video frame @ 60 Hz UI / 30 fps timeline step on the scrubber).
 - **Volume edits** while playing update active `GainNode`s in place when the

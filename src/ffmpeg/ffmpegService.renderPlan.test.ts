@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import type { Clip, ClipStabilization, TextOverlay } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
 import { calculateRenderPlan } from "./ffmpegService";
-import { DEFAULT_FINISHING } from "../utils/finishing";
-import { createSecondaryGrade } from "../utils/secondaryColor";
+import { DEFAULT_FINISHING } from "../finishing/finishing";
+import { createSecondaryGrade } from "../finishing/secondaryColor";
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {

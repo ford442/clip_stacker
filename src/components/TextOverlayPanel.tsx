@@ -9,7 +9,7 @@ import {
   useEditorTotalDuration,
   useSelectedTextOverlayId,
 } from "../store";
-import { isValidFfmpegColor } from "../utils/color";
+import { isValidFfmpegColor } from "../composition/color";
 import {
   layoutNormToPixelValue,
   layoutPixelToNormValue,
@@ -18,17 +18,16 @@ import {
   textOverlayDisplayPixelsToNormalized,
   textOverlayToDisplayPixels,
   type TextAnchor,
-} from "../utils/overlayCoords";
-import { parseCanvasSize } from "../utils/pipPreset";
+} from "../composition/overlayCoords";
+import { parseCanvasSize } from "../composition/pipPreset";
 import {
   BUNDLED_FONTS,
   estimateScrollCrossingSeconds,
-  getBundledFont,
   MIN_SCROLL_SPEED,
   MAX_SCROLL_SPEED,
-} from "../utils/textOverlay";
+} from "../composition/textOverlay";
 import { TEXT_SHADERS, getTextShader, resolveShaderColors, resolveShaderParams } from "../webgpu/text/registry";
-import { textOverlayHasKeyframes } from "../utils/animatedLayout";
+import { textOverlayHasKeyframes } from "../composition/animatedLayout";
 import { KeyframeMiniEditor } from "./KeyframeMiniEditor";
 
 interface Props {

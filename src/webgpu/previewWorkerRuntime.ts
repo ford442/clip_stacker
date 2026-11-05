@@ -19,16 +19,16 @@ import type {
   TextOverlay,
   TextOverlayStyle,
 } from '../types';
-import type { FinishingSettings } from '../utils/finishing';
-import type { ColorManagementSettings } from '../utils/colorManagement';
-import { publishColorDebugSnapshot } from '../utils/colorManagement';
-import { resolveTimelineFinishing } from '../utils/finishing';
-import type { ColorGradeSettings } from '../utils/lut';
+import type { FinishingSettings } from '../finishing/finishing';
+import type { ColorManagementSettings } from '../finishing/colorManagement';
+import { publishColorDebugSnapshot } from '../finishing/colorManagement';
+import { resolveTimelineFinishing } from '../finishing/finishing';
+import type { ColorGradeSettings } from '../finishing/lut';
 import type {
   PreviewCompositionPlan,
   PreviewDeviceState,
-} from '../utils/previewComposition';
-import type { PreviewMediaSource } from '../utils/proxyMedia';
+} from '../composition/previewComposition';
+import type { PreviewMediaSource } from '../media/proxyMedia';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
 import {
   clearPreviewWorkerChoresRunner,
@@ -37,7 +37,6 @@ import {
 } from '../gpu-chores/previewWorkerBridge';
 import {
   PREVIEW_WORKER_INIT_TIMEOUT_MS,
-  SCOPES_OFF,
   toWorkerClip,
   type CapturedFrame,
   type FrameRequest,
@@ -66,23 +65,6 @@ export function isCanvasTransferred(canvas: HTMLCanvasElement): boolean {
   } catch {
     return true;
   }
-}
-
-/**
- * Replace a neutered (transferred) canvas with a fresh element that can host
- * WebGPU (or a labeled layer-budget Canvas2D compositor — not a GPU fallback).
- */
-export function replaceTransferredCanvas(oldCanvas: HTMLCanvasElement): HTMLCanvasElement {
-  const next = document.createElement('canvas');
-  next.className = oldCanvas.className;
-  next.width = oldCanvas.width || 1280;
-  next.height = oldCanvas.height || 720;
-  for (const { name, value } of Array.from(oldCanvas.attributes)) {
-    if (name === 'width' || name === 'height' || name === 'class') continue;
-    next.setAttribute(name, value);
-  }
-  oldCanvas.parentElement?.replaceChild(next, oldCanvas);
-  return next;
 }
 
 export interface RenderTimelineParams {

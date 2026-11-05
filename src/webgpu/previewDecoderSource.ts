@@ -17,19 +17,16 @@
  */
 
 import type { Clip } from '../types';
-import type { PreviewMediaSource } from '../utils/proxyMedia';
-import { DecoderFrameCursor } from '../utils/decoderCursor';
+import type { PreviewMediaSource } from '../media/proxyMedia';
+import { DecoderFrameCursor } from '../media/decoderCursor';
 import {
   DecoderCursorPool,
   DEFAULT_MAX_DECODER_CURSORS,
   type ForwardFrameCursor,
-} from '../utils/decoderCursorPool';
-import { ReverseChunkCache } from '../utils/reverseFrames';
-import { clipIsReversed } from '../utils/reverseClip';
+} from '../media/decoderCursorPool';
+import { ReverseChunkCache } from '../media/reverseFrames';
+import { clipIsReversed } from '../timeline/reverseClip';
 import type { CapturedFrame, FrameRequest, WorkerClip } from './previewWorkerProtocol';
-
-/** Ring-buffer depth per *active* layer (not per library clip). */
-export const PREVIEW_RING_BUFFER_CAPACITY = 12;
 
 export type CursorFactory = (
   blob: Blob,

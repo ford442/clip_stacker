@@ -41,6 +41,14 @@ double sinc_cutoff_for_step(double step);
 const float* sinc_table(double cutoff);
 
 /**
+ * One row of the table `sinc_table(cutoff)` would build (`phase` in
+ * 0..kSincPhases), computed on its own: bit-identical to that row, without
+ * building (or evicting) a cached table. Used to generate and pin the
+ * true-peak taps (`fx/true_peak_taps.inc`).
+ */
+void sinc_row(double cutoff, int phase, float* out);
+
+/**
  * Coefficients (`kSincTaps` floats, 16-byte aligned) for reading at fractional
  * clip frame `pos` from `rows`; returns `floor(pos)`. Every frame at the same
  * fractional phase reuses them, so a run of reads costs one dot product each.

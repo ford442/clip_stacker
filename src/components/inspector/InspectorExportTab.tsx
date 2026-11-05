@@ -1,12 +1,12 @@
-import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, RESOLUTION_PRESETS, type ExportSettings, type ResolutionPreset } from '../../types';
+import { DEFAULT_EXPORT_SETTINGS, EXPORT_PRESETS, type ExportSettings, type ResolutionPreset } from '../../types';
 import { sanitizeFilename } from '../../utils/filename';
-import type { FinishingSettings } from '../../utils/finishing';
+import type { FinishingSettings } from '../../finishing/finishing';
 import { FinishingPanel } from '../FinishingPanel';
 import { OutputColorFields } from './OutputColorFields';
-import type { ColorManagementSettings } from '../../utils/colorManagement';
+import type { ColorManagementSettings } from '../../finishing/colorManagement';
 import { PRESETS } from './helpers';
 import { InspectorSection } from './InspectorSection';
-import { LIMITER_LIMITS, normalizeMasterLimiter, type MasterLimiterSettings } from '../../utils/audioEffects';
+import { LIMITER_LIMITS, normalizeMasterLimiter, type MasterLimiterSettings } from '../../audio/audioEffects';
 import { LoudnessTargetFields } from '../audio/LoudnessTargetFields';
 
 interface InspectorExportTabProps {

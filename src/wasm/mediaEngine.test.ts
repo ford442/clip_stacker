@@ -17,7 +17,7 @@ import {
   type ClipPcm,
   type MediaEngineMixEntry,
 } from './mediaEngine';
-import { EASING_PRESETS, sampleKeyframes } from '../utils/keyframes';
+import { EASING_PRESETS, sampleKeyframes } from '../timeline/keyframes';
 
 const WASM_BASE = pathToFileURL(
   path.resolve(process.cwd(), 'public/wasm') + path.sep,

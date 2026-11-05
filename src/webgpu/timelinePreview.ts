@@ -3,11 +3,11 @@
  */
 
 import type { Clip } from '../types';
-import { DEFAULT_FINISHING } from '../utils/finishing';
-import { resolveTimelineFinishing } from '../utils/finishing';
-import { isColorManagementActive } from '../utils/colorManagement';
-import { grainFrameSeedFromTime } from '../utils/grain';
-import { layerWarpDrawParams, transitionWarpParams } from '../utils/clipTransform';
+import { DEFAULT_FINISHING } from '../finishing/finishing';
+import { resolveTimelineFinishing } from '../finishing/finishing';
+import { isColorManagementActive } from '../finishing/colorManagement';
+import { grainFrameSeedFromTime } from '../finishing/grain';
+import { layerWarpDrawParams, transitionWarpParams } from '../composition/clipTransform';
 import {
   buildPreviewCompositionPlan,
   captionPlanOptions,
@@ -16,9 +16,9 @@ import {
   type PreviewDeviceState,
   type TimelineCompositor,
   type TimelineRenderOptions,
-} from '../utils/previewComposition';
-import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
-import { previewMetrics } from '../utils/previewMetrics';
+} from '../composition/previewComposition';
+import { ClipMediaPool, seekVideoTo } from '../media/clipMediaPool';
+import { previewMetrics } from '../composition/previewMetrics';
 import { PreviewEngine, type LayerDraw } from './previewEngine';
 import { captureStillFrame, captureVideoFrame } from './captureFrame';
 import {
@@ -84,7 +84,6 @@ async function resolveLayerFrame(
   if (!frame) return null;
   return { frame, video: mediaPool.getVideo(clip) };
 }
-
 
 /**
  * WebGPU timeline compositor — renders a composition plan with multiple
@@ -469,7 +468,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
    */
   async compositeShaderTextOverlays(plan: PreviewCompositionPlan): Promise<void> {
     const { getTextFillRenderer } = await import('./text/textFill');
-    const { createSingleOverlayGlyphMask } = await import('../utils/textMask');
+    const { createSingleOverlayGlyphMask } = await import('../composition/textMask');
     const renderer = await getTextFillRenderer();
 
     for (const layer of plan.layers) {
@@ -511,30 +510,4 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     this.mediaPool.destroy();
     this.engine.destroy();
   }
-}
-
-export async function renderTimelinePreviewFrame(
-  engine: TimelinePreviewEngine,
-  clips: Clip[],
-  groups: Parameters<typeof buildPreviewCompositionPlan>[1],
-  transitions: Parameters<typeof buildPreviewCompositionPlan>[2],
-  overlays: Parameters<typeof buildPreviewCompositionPlan>[3],
-  settings: Parameters<typeof buildPreviewCompositionPlan>[4],
-  globalTime: number,
-  options?: TimelineRenderOptions,
-): Promise<PreviewCompositionPlan> {
-  return engine.renderTimelineFrame(
-    clips,
-    groups,
-    transitions,
-    overlays,
-    settings,
-    globalTime,
-    options,
-  );
-}
-
-/** Expose the underlying preview engine for export compositing. */
-export function getTimelinePreviewEngine(engine: TimelinePreviewEngine): PreviewEngine {
-  return (engine as unknown as { engine: PreviewEngine }).engine;
 }

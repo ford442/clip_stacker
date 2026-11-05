@@ -1,6 +1,6 @@
 import type { Clip } from '../types';
 import { proxyActions, useProxyState } from '../store/proxyStore';
-import { planProxy, proxyBadgeFor } from '../utils/proxyMedia';
+import { planProxy, proxyBadgeFor } from '../media/proxyMedia';
 
 /**
  * Library row chip: Original / Building / Proxy, plus a "Build proxy" action

@@ -1,6 +1,6 @@
 import { useRef } from 'react';
-import { DEFAULT_BLOOM, type BloomPass } from '../utils/finishing';
-import { BLOOM_AMOUNT_RECOMMENDED, bloomSpread, type BloomMode } from '../utils/bloom';
+import { DEFAULT_BLOOM, type BloomPass } from '../finishing/finishing';
+import { BLOOM_AMOUNT_RECOMMENDED, bloomSpread, type BloomMode } from '../finishing/bloom';
 
 interface Props {
   settings: BloomPass;

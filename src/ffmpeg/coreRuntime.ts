@@ -1,12 +1,12 @@
 import { fetchFile } from "@ffmpeg/util";
 import type { TextOverlay } from "../types";
-import { assertValidBundledFontBytes } from "../utils/fontBytes";
+import { assertValidBundledFontBytes } from "../media/fontBytes";
 import {
   buildDrawtextFilter,
   getFontPublicUrl,
   getBundledFont,
   resolveFontFileForOverlay,
-} from "../utils/textOverlay";
+} from "../composition/textOverlay";
 import {
   bakeSecondaryColorLut,
   secondaryHasHueGrades,
@@ -14,38 +14,23 @@ import {
   secondaryLutToCubeText,
   SECONDARY_COLOR_LUT_FILENAME,
   type SecondaryColorSettings,
-} from "../utils/secondaryColor";
+} from "../finishing/secondaryColor";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
-  buildFfmpegLoadErrorMessage,
-  clampProgress,
-  emitLoadStatus,
-  emitProgress,
   extractErrorMessage,
-  FFMPEG_CORE_CDNS,
-  FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
-  FFMPEG_LOAD_TIMEOUT_MS,
-  getCdnLabel,
-  getFfmpegCoreSources,
-  getFfmpegEnvironmentDiagnostics,
-  getLocalFfmpegCoreBaseURL,
-  parseFfmpegTimeSeconds,
   toBlobURLWithRetry as toBlobURLWithRetryBase,
   toBlobURLWithFallback as toBlobURLWithFallbackBase,
-  withTimeout,
   type FfmpegLogProgressContext,
   type ProgressCallback,
-  type RenderProgressUpdate,
   type StatusCallback,
 } from "./ffmpegCommon";
 import {
   FfmpegManager,
   getFfmpegManager,
   MAX_LOG_BUFFER,
-  setFfmpegManagerForTesting,
 } from "./ffmpegManager";
 
-export { buildDrawtextFilter } from "../utils/textOverlay";
+export { buildDrawtextFilter } from "../composition/textOverlay";
 export {
   buildSilentAacLoopInputArgs,
   ensureSilentAacUnit,

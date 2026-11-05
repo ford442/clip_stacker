@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { StrictMode, act, type ComponentProps } from 'react';
 import { SpeedAutomationLane } from './SpeedAutomationLane';
 import type { Clip } from '../types';
-import { SPEED_LANE_LAST_SEED_KEY } from '../utils/speedLane';
+import { SPEED_LANE_LAST_SEED_KEY } from '../timeline/speedLane';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {

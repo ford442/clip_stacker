@@ -18,7 +18,7 @@ import { GrainGpuPass } from './grainPass';
 import { ChromaticAberrationGpuPass } from './chromaticAberrationPass';
 import { CurvesGpuPass } from './curvesPass';
 import { BloomGpuPass } from './bloomPass';
-import type { FinishingSettings } from '../utils/finishing';
+import type { FinishingSettings } from '../finishing/finishing';
 import {
   isBloomActive,
   isChromaticAberrationActive,
@@ -31,9 +31,9 @@ import {
   isSecondaryColorActive,
   isSharpenActive,
   lutPassToColorGrade,
-} from '../utils/finishing';
-import { resolveLutData } from '../utils/lut';
-import { isColorManagementActive } from '../utils/colorManagement';
+} from '../finishing/finishing';
+import { resolveLutData } from '../finishing/lut';
+import { isColorManagementActive } from '../finishing/colorManagement';
 import {
   finishingIntermediateTextureDescriptor,
   type FinishingApplyOptions,

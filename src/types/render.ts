@@ -32,7 +32,7 @@ export interface ExportSettings {
    * Look-ahead limiter on the export mix bus (media engine only). Omitted =
    * off, so exports without it keep their exact samples.
    */
-  masterLimiter?: import('../utils/audioEffects').MasterLimiterSettings;
+  masterLimiter?: import('../audio/audioEffects').MasterLimiterSettings;
 }
 
 export type ResolutionPreset = 'original' | '720p' | '1080p' | '1440p' | '4k' | 'custom';
@@ -147,7 +147,7 @@ export interface RenderPlan {
    * plan, overwritten after encoding) to produce this render. Lets the
    * toolbar say up front whether Render will land on the GPU compositor,
    * FFmpeg, or the Canvas/MediaRecorder path — the same shape as
-   * `EncoderPath` in `utils/hybrid-encoder.ts`.
+   * `EncoderPath` in `export/hybridEncoder.ts`.
    */
   encoderIntent?: 'webcodecs-av' | 'webcodecs' | 'ffmpeg' | 'canvas';
   /**

@@ -23,6 +23,48 @@ namespace media_engine {
  */
 inline double flush_denormal(double v) { return !(std::fabs(v) >= 1e-30) ? 0.0 : v; }
 
+/**
+ * The same on a sample between stages: an f32 below 1e-30 (-600 dBFS) is
+ * zeroed, so a filter's decaying tail fed through further cuts cannot reach
+ * the next stage (or the output) as a subnormal; a NaN or an infinity is
+ * zeroed too (the limiter's policy), so it stops here instead of reaching
+ * every stage after it.
+ */
+inline float flush_sample(float v) {
+  const float a = std::fabs(v);
+  return a >= 1e-30f && a <= 3.40282347e+38f ? v : 0.f;
+}
+
+/**
+ * Control period (frames) of the dynamics' gain computers. The compressor
+ * and the de-esser need a log10 (and a pow, or a shelf redesign) per update,
+ * so they update every `kControlFrames` frames on the block's peak and
+ * interpolate linearly in between. Block boundaries are frame counts since
+ * the stage was built or reset, so the output never depends on how the
+ * caller chunked its audio, and preview and export (the same C++) still
+ * null bit for bit.
+ */
+constexpr int kControlFrames = 16;
+
+/**
+ * 20 * log10(x) for x > 0 without a libm transcendental: frexp splits off the
+ * exponent and an atanh series on the mantissa (in [1/sqrt 2, sqrt 2)) gives
+ * ln to ~3e-8, i.e. ~2e-7 dB. Plain arithmetic, so it is cheap enough for a
+ * per-frame detector and gives the same bits under glibc and musl (WASM).
+ */
+inline double amplitude_db(double x) {
+  int e = 0;
+  double m = std::frexp(x, &e);
+  if (m < 0.70710678118654752) {
+    m *= 2.0;
+    --e;
+  }
+  const double z = (m - 1.0) / (m + 1.0);
+  const double z2 = z * z;
+  const double ln_m = 2.0 * z * (1.0 + z2 * (1.0 / 3.0 + z2 * (1.0 / 5.0 + z2 * (1.0 / 7.0 + z2 * (1.0 / 9.0)))));
+  return 8.6858896380650366 * (ln_m + static_cast<double>(e) * 0.69314718055994531);
+}
+
 /** One RBJ Audio EQ Cookbook section, transposed direct form II, f64 state. */
 class Biquad {
  public:
@@ -32,8 +74,26 @@ class Biquad {
    */
   bool design(const double* row, double sample_rate, bool keep_state = false);
 
-  /** Raw coefficients (already divided by a0); used by the K-weighting filter. */
+  /** Raw coefficients (already divided by a0); used by the K-weighting filter. Clears the state. */
   void set(double b0, double b1, double b2, double a1, double a2);
+
+  /** Coefficients as {b0, b1, b2, a1, a2}. */
+  void coefficients(double* out) const {
+    out[0] = b0_;
+    out[1] = b1_;
+    out[2] = b2_;
+    out[3] = a1_;
+    out[4] = a2_;
+  }
+
+  /** Replace the coefficients ({b0, b1, b2, a1, a2}) and keep the filter memory. */
+  void assign(const double* c) {
+    b0_ = c[0];
+    b1_ = c[1];
+    b2_ = c[2];
+    a1_ = c[3];
+    a2_ = c[4];
+  }
 
   void reset() { z1_[0] = z1_[1] = z2_[0] = z2_[1] = 0.0; }
 
@@ -60,22 +120,42 @@ class Biquad {
 /**
  * Feed-forward compressor (Giannoulis, Massberg & Reiss 2012): soft-knee gain
  * computer in dB, smooth branching peak detector on the gain, stereo linked on
- * the louder channel.
+ * the louder channel. The detector and smoother run every frame in dB (with
+ * `amplitude_db`, no libm call); the dB -> linear conversion runs at control
+ * rate (`kControlFrames`), and the linear gain ramps to each new value over
+ * the next block.
  */
 class Compressor {
  public:
   bool design(const double* row, double sample_rate, bool keep_state = false);
 
   /** Gain to apply to the frame whose louder channel has magnitude `peak`. */
-  float gain(float peak);
+  float gain(float peak) {
+    const double x_db = peak > 1e-6f ? amplitude_db(static_cast<double>(peak)) : -120.0;
+    const double target = static_curve(x_db) - x_db;  // <= 0
+    const double coef = target < gain_db_ ? attack_coef_ : release_coef_;
+    gain_db_ = flush_denormal(coef * gain_db_ + (1.0 - coef) * target);
+    if (-gain_db_ > peak_db_) peak_db_ = -gain_db_;
+    if (++pos_ == kControlFrames) {
+      const float g = static_cast<float>(to_);
+      control();
+      return g;
+    }
+    return static_cast<float>(from_ + (to_ - from_) * (static_cast<double>(pos_) * (1.0 / kControlFrames)));
+  }
 
   /** Current gain reduction (dB, >= 0), before make-up. */
   double reduction_db() const { return -gain_db_; }
+  /** Largest gain reduction since the last `restart_peak` (dB, >= 0). */
+  double peak_reduction_db() const { return peak_db_; }
+  void restart_peak() { peak_db_ = -gain_db_; }
 
-  void reset() { gain_db_ = 0.0; }
+  void reset();
 
  private:
   double static_curve(double x_db) const;
+  /** Start the next ramp, towards the gain the smoother is at now. */
+  void control();
 
   double threshold_ = 0;
   double ratio_ = 1;
@@ -84,6 +164,13 @@ class Compressor {
   double attack_coef_ = 0;
   double release_coef_ = 0;
   double gain_db_ = 0;
+  double peak_db_ = 0;
+  /** `gain_db_` at the last control update. */
+  double control_db_ = 0;
+  /** Linear gain (with make-up) at the start and end of the current ramp. */
+  double from_ = 1;
+  double to_ = 1;
+  int pos_ = 0;
 };
 
 /**
@@ -96,8 +183,11 @@ class Gate {
   bool design(const double* row, double sample_rate, bool keep_state = false);
   float gain(float peak);
   double reduction_db() const { return -gain_db_; }
+  double peak_reduction_db() const { return peak_db_; }
+  void restart_peak() { peak_db_ = -gain_db_; }
   void reset() {
     gain_db_ = 0.0;
+    peak_db_ = 0.0;
     hold_left_ = 0;
   }
 
@@ -109,6 +199,10 @@ class Gate {
   double attack_coef_ = 0;
   double release_coef_ = 0;
   double gain_db_ = 0;
+  double peak_db_ = 0;
+  /** `db_to_gain(cached_db_)`: a closed (or open) gate holds its gain, so the pow is skipped. */
+  double cached_db_ = 0;
+  float cached_gain_ = 1.f;
 };
 
 /**
@@ -117,7 +211,9 @@ class Gate {
  * `freq` cuts by `(over) * (1 - 1 / ratio)` dB, at most `range`, smoothed by
  * `attack` / `release`. At 0 dB the shelf's coefficients are exactly the
  * identity, so a de-esser that never fires passes its input bit for bit.
- * Stereo linked.
+ * Stereo linked. The detector filter runs per frame; the gain computer and
+ * the shelf design run at control rate (`kControlFrames`), and the shelf's
+ * coefficients ramp linearly between designs.
  */
 class DeEsser {
  public:
@@ -125,18 +221,25 @@ class DeEsser {
   /** Process one frame in place. */
   void process(float* frame, int channels);
   double reduction_db() const { return reduction_db_; }
-  void reset() {
-    detect_.reset();
-    shelf_.reset();
-    reduction_db_ = 0.0;
-    retune_shelf(0.0);
-  }
+  double peak_reduction_db() const { return peak_db_; }
+  void restart_peak() { peak_db_ = reduction_db_; }
+  void reset();
 
  private:
-  void retune_shelf(double cut_db);
+  /** Design the shelf for `cut_db` into `out` ({b0, b1, b2, a1, a2}). */
+  void shelf_for(double cut_db, double* out) const;
+  /** One control-rate update from the block that just ended. */
+  void control();
 
   Biquad detect_;
   Biquad shelf_;
+  /** Shelf coefficients at the start and end of the current ramp. */
+  double from_[5] = {1, 0, 0, 0, 0};
+  double to_[5] = {1, 0, 0, 0, 0};
+  bool ramping_ = false;
+  double block_peak_ = 0;
+  int pos_ = 0;
+  double peak_db_ = 0;
   double sample_rate_ = 48000;
   double freq_ = 6000;
   double threshold_db_ = 0;
@@ -162,8 +265,11 @@ class Ducker {
   /** Gain for this frame given the key frame's peak. */
   float gain(float key_peak);
   double reduction_db() const { return -gain_db_; }
+  double peak_reduction_db() const { return peak_db_; }
+  void restart_peak() { peak_db_ = -gain_db_; }
   void reset() {
     gain_db_ = 0.0;
+    peak_db_ = 0.0;
     hold_left_ = 0;
   }
 
@@ -175,6 +281,10 @@ class Ducker {
   long long hold_frames_ = 0;
   long long hold_left_ = 0;
   double gain_db_ = 0;
+  double peak_db_ = 0;
+  /** `db_to_gain(cached_db_)`: a held duck skips the pow. */
+  double cached_db_ = 0;
+  float cached_gain_ = 1.f;
 };
 
 /** A clip's chain: up to `MIX_FX_MAX_EQ_BANDS` biquads, then one compressor. */
@@ -199,6 +309,7 @@ class InsertChain {
       const float g = compressor_.gain(peak);
       for (int c = 0; c < planes; ++c) frame[c] *= g;
     }
+    for (int c = 0; c < planes; ++c) frame[c] = flush_sample(frame[c]);
   }
 
  private:
@@ -210,8 +321,9 @@ class InsertChain {
 
 /**
  * ITU-R BS.1770-4 Annex 2 true-peak detection: 4x oversampling with the
- * mixer's own polyphase sinc kernel (`sinc_table`, phases 1/4, 1/2, 3/4 —
- * phase 0 is the sample itself). Interpolating between frames needs the 32
+ * mixer's own polyphase sinc kernel (phases 1/4, 1/2, 3/4 of
+ * `sinc_table(sinc_cutoff_for_step(1))` — phase 0 is the sample itself),
+ * compiled in as data (`fx/true_peak_taps.inc`), so `init` is O(1). Interpolating between frames needs the 32
  * frames after them, so the detector is a `kDelay`-frame delay line that
  * reports the true peak of the frame it releases.
  */
@@ -221,6 +333,9 @@ class TruePeakDetector {
 
   void init(int channels);
   void reset();
+
+  /** Taps for phase `phase + 1` quarters (0..2): `kSincTaps` floats. */
+  static const float* taps(int phase);
 
   /**
    * Push one frame; writes the frame `kDelay` pushes back to `delayed`
@@ -232,9 +347,6 @@ class TruePeakDetector {
  private:
   int channels_ = 2;
   int pos_ = 0;
-  // No alignas: `sinc_dot` loads through memcpy, and these live inside
-  // heap-allocated chains where over-aligned storage buys nothing.
-  float coeff_[3][kSincTaps];
   /** Each channel's last `kSincTaps` samples, stored twice so a window is always contiguous. */
   float ring_[2][2 * kSincTaps];
 };
@@ -283,6 +395,9 @@ class Limiter {
 
   /** Gain applied to the last output frame (1 = untouched). */
   float last_gain() const { return last_gain_; }
+  /** Smallest gain applied since the last `restart_peak` (1 = untouched). */
+  float min_gain() const { return min_gain_; }
+  void restart_peak() { min_gain_ = last_gain_; }
 
  private:
   static int lookahead_for(const double* row, double sample_rate);
@@ -297,6 +412,7 @@ class Limiter {
   double box_sum_ = 0;
   int box_pos_ = 0;
   float last_gain_ = 1.f;
+  float min_gain_ = 1.f;
   TruePeakDetector detector_;
   std::vector<double> box_;
   /** Delay line of `lookahead_ + 1` frames (after the detector's own delay). */

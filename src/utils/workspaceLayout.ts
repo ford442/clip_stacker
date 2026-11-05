@@ -35,8 +35,6 @@ export interface WorkspaceLayout {
   fullWidth: boolean;
 }
 
-export const CENTERED_SHELL_MAX_WIDTH = 1440;
-
 export const WORKSPACE_LIMITS = {
   libraryMin: 200,
   libraryMax: 640,

@@ -4,12 +4,12 @@
  */
 
 import sharpenShader from './shaders/sharpen.wgsl?raw';
-import { shaderForSceneLinear } from '../utils/colorManagement';
-import type { SharpenPass } from '../utils/finishing';
+import { shaderForSceneLinear } from '../finishing/colorManagement';
+import type { SharpenPass } from '../finishing/finishing';
 import {
   SHARPEN_UNIFORM_FLOATS,
   packSharpenUniforms,
-} from '../utils/sharpen';
+} from '../finishing/sharpen';
 
 export class SharpenGpuPass {
   private readonly pipeline: GPURenderPipeline;

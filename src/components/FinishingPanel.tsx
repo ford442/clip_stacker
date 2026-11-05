@@ -1,4 +1,4 @@
-import type { FinishingSettings } from '../utils/finishing';
+import type { FinishingSettings } from '../finishing/finishing';
 import {
   DEFAULT_BLOOM,
   DEFAULT_CHROMATIC_ABERRATION,
@@ -11,7 +11,7 @@ import {
   lutPassToColorGrade,
   withColorGrade,
   withFinishingPass,
-} from '../utils/finishing';
+} from '../finishing/finishing';
 import { BloomPanel } from './BloomPanel';
 import { ChromaticAberrationPanel } from './ChromaticAberrationPanel';
 import { ColorGradePicker } from './ColorGradePicker';

@@ -33,7 +33,7 @@ class BusChain {
   bool build(const double* rows, int count, double sample_rate, int channels, bool limiters_only,
              const double** ducker);
 
-  /** True when `rows` would build the same stage sequence (and latency). */
+  /** True when `rows` would build the same stage sequence (and latency). Never allocates. */
   bool matches(const double* rows, int count, const double** ducker) const;
 
   /** Retune in place; false (nothing changed) when the rows' structure differs. */
@@ -46,8 +46,13 @@ class BusChain {
   /** One frame in place, delayed by `latency()` frames. */
   void process(float* frame);
 
-  /** Sum of the stages' current gain reduction (dB, >= 0). */
-  double reduction_db() const;
+  /**
+   * Sum over the stages of each one's largest gain reduction since the last
+   * `restart_peaks` (dB, >= 0). The stages track their peaks as they run;
+   * this is the only place a limiter's gain is converted to dB.
+   */
+  double peak_reduction_db() const;
+  void restart_peaks();
 
  private:
   enum Kind : int { kBiquad, kCompressor, kGate, kDeEsser, kLimiter };
@@ -55,6 +60,13 @@ class BusChain {
     Kind kind;
     int index;
   };
+  /**
+   * Visit the structure codes (kind, plus a limiter's latency) `rows` would
+   * build, in order, as `visit(stage, code)`, then once more with code -1
+   * after the last; stops (false) when `visit` returns false.
+   */
+  template <typename Visit>
+  bool walk(const double* rows, int count, const double** ducker, Visit&& visit) const;
   /** Kind sequence plus limiter look-aheads: what `retune` must match. */
   bool signature(const double* rows, int count, std::vector<long long>* out, const double** ducker) const;
 
@@ -115,9 +127,9 @@ class BusGraph {
     bool has_duck = false;
     Ducker duck;
     int key = -1;
-    double gr_peak = 0;
   };
   static bool valid_range(int first, int count, int effect_count);
+  void restart_reduction_peaks();
   int validate(const BusLayout& layout) const;
 
   double sample_rate_ = 48000;
@@ -132,7 +144,6 @@ class BusGraph {
   std::vector<float> lane_out_;
   BusChain master_;
   BusChain final_;
-  double master_gr_peak_ = 0;
   LoudnessMeter meter_;
 };
 

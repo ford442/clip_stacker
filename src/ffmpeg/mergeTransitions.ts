@@ -2,23 +2,23 @@ import type { Clip, ClipTransition, ExportSettings, TextOverlay } from "../types
 import {
   appendPrimaryColorFilters,
   type PrimaryColorSettings,
-} from "../utils/primaryColor";
+} from "../finishing/primaryColor";
 import {
   appendNoiseReductionFilters,
   type NoiseReductionSettings,
-} from "../utils/noiseReduction";
+} from "../finishing/noiseReduction";
 import {
   appendSecondaryColorFilters,
   type SecondaryColorSettings,
-} from "../utils/secondaryColor";
+} from "../finishing/secondaryColor";
 import {
   appendSharpenFilters,
   type SharpenSettings,
-} from "../utils/sharpen";
+} from "../finishing/sharpen";
 import {
   appendGrainFilters,
   type GrainSettings,
-} from "../utils/grain";
+} from "../finishing/grain";
 import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   emitProgress,

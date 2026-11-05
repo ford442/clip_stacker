@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState, forwardRef } from 'react';
 import { RenderPlanAudioNotes } from './audio/RenderPlanAudioNotes';
-import type { BrowserCapabilities } from '../utils/feature-detector';
-import { detectCapabilities } from '../utils/feature-detector';
-import { fetchDemoClips } from '../utils/demoClips';
-import { importFromDrive } from '../utils/segments/driveImport';
-import { describeEncoderBadge } from '../utils/encoderPathLabel';
+import type { BrowserCapabilities } from '../export/featureDetector';
+import { detectCapabilities } from '../export/featureDetector';
+import { fetchDemoClips } from '../media/demoClips';
+import { importFromDrive } from '../actions/segments/driveImport';
+import { describeEncoderBadge } from '../export/encoderPathLabel';
 import { ProgressBar } from './ProgressBar';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { settingsActions, settingsStore, useCanRedo, useCanUndo } from '../store';
+import { renderJobStore } from '../store/renderJobStore';
 
 interface Props {
   onAddClips: (files: File[]) => void | Promise<void>;
@@ -37,7 +38,6 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
     onRedo,
     onSaveProject,
     onLoadProject,
-    onTriggerLoadDialog,
     onShowKeyboardShortcuts,
     onDebugResetFFmpeg,
     onRetryFfmpegLoad,
@@ -47,29 +47,30 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
 ) {
   const canUndo = useCanUndo();
   const canRedo = useCanRedo();
+  const { forceFFmpeg, useCanvasRenderer, audioReactive, forceReencode } = useStore(
+    settingsStore,
+    useShallow((s) => ({
+      forceFFmpeg: s.forceFFmpeg,
+      useCanvasRenderer: s.useCanvasRenderer,
+      audioReactive: s.audioReactive,
+      forceReencode: s.forceReencode,
+    })),
+  );
   const {
     ffmpegLoading,
     ffmpegLoadFailed,
     status,
-    forceFFmpeg,
-    useCanvasRenderer,
-    audioReactive,
-    forceReencode,
     progressStage,
     progressValue,
     progressIndeterminate,
     isRendering,
     renderPlan,
   } = useStore(
-    settingsStore,
+    renderJobStore,
     useShallow((s) => ({
       ffmpegLoading: s.ffmpegLoading,
       ffmpegLoadFailed: s.ffmpegFailed,
       status: s.status,
-      forceFFmpeg: s.forceFFmpeg,
-      useCanvasRenderer: s.useCanvasRenderer,
-      audioReactive: s.audioReactive,
-      forceReencode: s.forceReencode,
       progressStage: s.progressStage,
       progressValue: s.progressValue,
       progressIndeterminate: s.progressIndeterminate,
@@ -77,7 +78,6 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
       renderPlan: s.renderPlan,
     })),
   );
-  const onToggleForceFFmpeg = settingsActions.setForceFFmpeg;
   const onToggleCanvasRenderer = settingsActions.setUseCanvasRenderer;
   const onToggleAudioReactive = settingsActions.setAudioReactive;
   const onToggleForceReencode = settingsActions.setForceReencode;
@@ -107,7 +107,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
   };
 
   const handleLoadDemo = async () => {
-    const { setStatus } = settingsStore.getState();
+    const { setStatus } = renderJobStore.getState();
     setStatus('Loading demo clips...');
     try {
       await onAddClips(await fetchDemoClips());
@@ -117,7 +117,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
   };
 
   const handleImportFromDrive = async () => {
-    const { setStatus } = settingsStore.getState();
+    const { setStatus } = renderJobStore.getState();
     setStatus('Opening Google Drive…');
     try {
       setStatus(await importFromDrive());

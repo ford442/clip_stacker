@@ -70,13 +70,13 @@ export class ExportCompositor {
   }
 
   applyFinishing(
-    settings: import('../utils/finishing').FinishingSettings,
-    opts?: { frameIndex?: number; colorManagement?: import('../utils/colorManagement').ColorManagementSettings },
+    settings: import('../finishing/finishing').FinishingSettings,
+    opts?: { frameIndex?: number; colorManagement?: import('../finishing/colorManagement').ColorManagementSettings },
   ): void {
     this.engine.applyFinishing(settings, opts);
   }
 
-  get canvasPresentation(): import('../utils/colorManagement').CanvasPresentation {
+  get canvasPresentation(): import('../finishing/colorManagement').CanvasPresentation {
     return this.engine.canvasPresentation;
   }
 
@@ -85,7 +85,7 @@ export class ExportCompositor {
   }
 
   /** @deprecated Use applyFinishing(). */
-  applyColorGrade(settings: import('../utils/lut').ColorGradeSettings): void {
+  applyColorGrade(settings: import('../finishing/lut').ColorGradeSettings): void {
     this.engine.applyColorGrade(settings);
   }
 

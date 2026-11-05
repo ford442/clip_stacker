@@ -7,7 +7,7 @@
  */
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { Track } from '../types';
-import { createBusEffect } from '../utils/audioBus';
+import { createBusEffect } from '../audio/audioBus';
 import { planBusGraph } from '../audio/fxGraph';
 import { busLayoutMessage } from './audioFx';
 import {

@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
-import { parseOutputResolution } from '../../utils/resolution';
+import { parseOutputResolution } from '../../export/resolution';
 import {
   probeOutputColorSupport,
   resolveEncoderBitrate,
-} from '../../utils/webcodecs-codec';
+} from '../../export/webcodecsCodec';
 import {
   type ColorManagementSettings,
   type OutputColor,
   type WorkingSpace,
-} from '../../utils/colorManagement';
+} from '../../finishing/colorManagement';
 import type { ExportSettings } from '../../types';
 
 interface OutputColorFieldsProps {

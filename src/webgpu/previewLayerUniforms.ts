@@ -5,8 +5,8 @@
  */
 
 import { AUDIO_UNIFORM_OFFSET, type AudioReactiveState } from "../wasm/audioReactiveUniforms";
-import { packWarpUniforms, type Affine2x3 } from "../utils/clipTransform";
-import { packKeyUniforms, type LayerKeyUniforms } from "../utils/overlayKey";
+import { packWarpUniforms, type Affine2x3 } from "../composition/clipTransform";
+import { packKeyUniforms, type LayerKeyUniforms } from "../composition/overlayKey";
 
 /** Must match WGSL Uniforms (36 floats = 144 bytes, 16-byte aligned). */
 export const UNIFORM_FLOATS = 36;
@@ -38,7 +38,7 @@ export interface LayerRenderParams {
   /**
    * The layer warp (stabilization ∘ inverse picture transform) as one inverse
    * 2x3 affine in the dest rect's normalized UV, `[a, b, tx, c, d, ty]` —
-   * see `utils/clipTransform.ts`. Omit (or pass identity) for plain clips.
+   * see `composition/clipTransform.ts`. Omit (or pass identity) for plain clips.
    */
   warpMatrix?: Affine2x3;
   /** Quad to draw when a picture transform can leave `destRect` (masked outside). */

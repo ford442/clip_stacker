@@ -1,36 +1,36 @@
 import type { Clip } from "../types";
-import { getClipDuration } from "../utils/clipTiming";
-import { audioVolumeFilterSegment, clipHasVolumeAdjustment } from "../utils/audioVolume";
+import { getClipDuration } from "../timeline/clipTiming";
+import { audioVolumeFilterSegment, clipHasVolumeAdjustment } from "../audio/audioVolume";
 import {
   audioTempoFilterSegment,
   clipHasLoop,
   clipHasPlaybackRateAdjustment,
   getClipPlaybackRate,
   videoSetptsFilter,
-} from "../utils/playbackRate";
-import { audioReversePrefix, clipIsReversed, videoReversePrefix } from "../utils/reverseClip";
-import { clipHasRateAutomation } from "../utils/timeRemap";
-import { buildVariableSpeedFilter } from "../utils/variableSpeed";
+} from "../timeline/playbackRate";
+import { audioReversePrefix, clipIsReversed, videoReversePrefix } from "../timeline/reverseClip";
+import { clipHasRateAutomation } from "../timeline/timeRemap";
+import { buildVariableSpeedFilter } from "../timeline/variableSpeed";
 import {
   buildPrimaryColorFfmpegFilters,
   type PrimaryColorSettings,
-} from "../utils/primaryColor";
+} from "../finishing/primaryColor";
 import {
   buildNoiseReductionFfmpegFilters,
   type NoiseReductionSettings,
-} from "../utils/noiseReduction";
+} from "../finishing/noiseReduction";
 import {
   buildSecondaryColorFfmpegFilters,
   type SecondaryColorSettings,
-} from "../utils/secondaryColor";
+} from "../finishing/secondaryColor";
 import {
   buildSharpenFfmpegFilters,
   type SharpenSettings,
-} from "../utils/sharpen";
+} from "../finishing/sharpen";
 import {
   buildGrainFfmpegFilters,
   type GrainSettings,
-} from "../utils/grain";
+} from "../finishing/grain";
 import { buildSilentAacLoopInputArgs, SILENT_AAC_UNIT_NAME } from "./silentAudio";
 import { OUTPUT_WIDTH, OUTPUT_HEIGHT } from "./coreConstants";
 

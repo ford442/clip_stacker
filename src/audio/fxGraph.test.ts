@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Track } from '../types';
-import { createBusEffect, type LaneDuckSettings } from '../utils/audioBus';
+import { createBusEffect, type LaneDuckSettings } from './audioBus';
 import { MIX_FX_STRIDE } from '../wasm/mediaEngineLayout';
 import { busGraphNeededForExport, busGraphNeededForPreview, orderLanes, planBusGraph } from './fxGraph';
 

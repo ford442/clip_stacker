@@ -21,9 +21,10 @@ import {
 } from '../store';
 import type { Clip, TextOverlay } from '../types';
 import { sanitizeFilename } from '../utils/filename';
-import { applyFinishingPreviewView } from '../utils/finishingStack';
+import { applyFinishingPreviewView } from '../finishing/finishingStack';
 import { EffectsStack } from './EffectsStack';
 import { TimelineCompositorPreview } from './TimelineCompositorPreview';
+import { renderJobStore } from '../store/renderJobStore';
 
 interface Props {
   onClipLayoutCommit?: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
@@ -57,16 +58,16 @@ function PreviewImpl({
   const selectedClipId = useSelectedClipId();
   const clip = useEditorClip(selectedClipId);
   const selectedTextOverlayId = useSelectedTextOverlayId();
-  const { exportSettings, finishing, colorManagement, outputUrl, showCaptionsInPreview } = useStore(
+  const { exportSettings, finishing, colorManagement, showCaptionsInPreview } = useStore(
     settingsStore,
     useShallow((s) => ({
       exportSettings: s.exportSettings,
       finishing: s.finishing,
       colorManagement: s.colorManagement,
-      outputUrl: s.outputUrl,
       showCaptionsInPreview: s.showCaptionsInPreview,
     })),
   );
+  const outputUrl = useStore(renderJobStore, (s) => s.outputUrl);
   // Bypass / "show before" are preview-only; export reads the store's finishing.
   const finishingView = useFinishingView();
   const previewFinishing = useMemo(

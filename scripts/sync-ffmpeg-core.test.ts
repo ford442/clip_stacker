@@ -63,6 +63,19 @@ describe('sync-ffmpeg-core', () => {
     expect(syncFfmpegCore({ root, check: true, log: () => {} })).toEqual([]);
   });
 
+  it('--if-stale copies only when public/ drifted (predev / prebuild)', () => {
+    fakeRepo('0.12.10', '0.12.10');
+    const logs: string[] = [];
+    syncFfmpegCore({ root, ifStale: true, log: (line: string) => logs.push(line) });
+    expect(logs).toHaveLength(2);
+    syncFfmpegCore({ root, ifStale: true, log: (line: string) => logs.push(line) });
+    expect(logs).toHaveLength(2);
+    write('node_modules/@ffmpeg/core/dist/esm/ffmpeg-core.wasm', 'bumped');
+    syncFfmpegCore({ root, ifStale: true, log: (line: string) => logs.push(line) });
+    expect(logs).toHaveLength(3);
+    expect(syncFfmpegCore({ root, check: true, log: () => {} })).toEqual([]);
+  });
+
   it('flags a CDN fallback version that does not match the installed cores', () => {
     fakeRepo('0.12.10', '0.12.6');
     syncFfmpegCore({ root, log: () => {} });

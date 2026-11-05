@@ -14,7 +14,7 @@ import { ChromaticAberrationGpuPass } from './chromaticAberrationPass';
 import { CurvesGpuPass } from './curvesPass';
 import { BloomGpuPass } from './bloomPass';
 import { ColorManagementGpuPass } from './colorManagementPass';
-import type { FinishingSettings } from '../utils/finishing';
+import type { FinishingSettings } from '../finishing/finishing';
 import {
   isBloomActive,
   isChromaticAberrationActive,
@@ -26,14 +26,14 @@ import {
   isSecondaryColorActive,
   isSharpenActive,
   lutPassToColorGrade,
-} from '../utils/finishing';
-import { resolveLutData } from '../utils/lut';
+} from '../finishing/finishing';
+import { resolveLutData } from '../finishing/lut';
 import {
   ColorXformMode,
   normalizeColorManagement,
   odtModeForOutput,
   presentModeToXform,
-} from '../utils/colorManagement';
+} from '../finishing/colorManagement';
 import {
   finishingIntermediateTextureDescriptor,
   type FinishingApplyOptions,

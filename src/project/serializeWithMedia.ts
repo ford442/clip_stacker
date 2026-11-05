@@ -1,0 +1,249 @@
+import type {
+  Clip,
+  Project,
+  SerializedClip,
+} from '../types';
+import type { ContaboStorageManagerClient } from './contaboClient';
+import {
+  MAX_EMBED_FILE_BYTES,
+  MAX_UPLOAD_RETRY_ATTEMPTS,
+} from './constants';
+import { serializeProject } from './serialize';
+import type { ProjectSnapshot } from './snapshot';
+import { formatBytes } from './remoteMedia';
+import type { RemoteUploadErrorEvent, RemoteUploadProgressEvent } from './types';
+
+export interface SerializeProjectWithMediaOptions {
+  mediaMode?: 'metadata' | 'embed' | 'remote';
+  mediaClient?: ContaboStorageManagerClient;
+  onRemoteUploadProgress?: (event: RemoteUploadProgressEvent) => void;
+  onRemoteUploadError?: (
+    event: RemoteUploadErrorEvent,
+  ) => Promise<'retry' | 'skip' | 'abort'> | 'retry' | 'skip' | 'abort';
+  /**
+   * Called when `mediaMode === 'embed'` and a clip's source file exceeds
+   * `MAX_EMBED_FILE_BYTES`. Receives a human-readable warning describing
+   * whether the clip was uploaded to remote storage instead (if
+   * `mediaClient` is set) or embedded anyway despite the size.
+   */
+  onEmbedWarning?: (message: string) => void;
+}
+
+function sanitizeUploadFileName(fileName: string): string {
+  return fileName.replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+async function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error(`Could not read media file: ${file.name}`));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.onerror = () => reject(new Error(`Could not read media file: ${file.name}`));
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Upload a clip's source media to remote storage, unless it has already been
+ * uploaded (`clip.remoteSourceUrl` is set — either from a prior remote save
+ * or because the clip was added from the media library), in which case the
+ * existing URL is reused as-is.
+ */
+async function uploadOrReuseClipMedia(
+  clip: Clip,
+  index: number,
+  total: number,
+  options: SerializeProjectWithMediaOptions,
+): Promise<string | undefined> {
+  if (clip.remoteSourceUrl) {
+    options.onRemoteUploadProgress?.({
+      clipId: clip.id,
+      fileName: clip.file.name,
+      index,
+      total,
+      progress: 1,
+      status: 'uploaded',
+    });
+    return clip.remoteSourceUrl;
+  }
+  return uploadClipMediaWithRetry(clip, index, total, options);
+}
+
+/** Upload a clip's source media to remote storage, retrying on failure per `options`. */
+async function uploadClipMediaWithRetry(
+  clip: Clip,
+  index: number,
+  total: number,
+  options: SerializeProjectWithMediaOptions,
+): Promise<string | undefined> {
+  if (!options.mediaClient) throw new Error('Remote save requires a storage endpoint.');
+  const uploadName = `${clip.id}-${sanitizeUploadFileName(clip.file.name)}`;
+  let attempt = 0;
+  while (true) {
+    attempt += 1;
+    options.onRemoteUploadProgress?.({
+      clipId: clip.id,
+      fileName: clip.file.name,
+      index,
+      total,
+      progress: 0,
+      status: 'uploading',
+    });
+    try {
+      const url = await options.mediaClient.uploadMedia(
+        uploadName,
+        clip.file,
+        clip.file.type || 'application/octet-stream',
+        (progress, detail) =>
+          options.onRemoteUploadProgress?.({
+            clipId: clip.id,
+            fileName: clip.file.name,
+            index,
+            total,
+            progress,
+            status: 'uploading',
+            ...(detail?.chunkTotal
+              ? {
+                  chunkIndex: detail.chunkIndex,
+                  chunkTotal: detail.chunkTotal,
+                }
+              : {}),
+          }),
+      );
+      options.onRemoteUploadProgress?.({
+        clipId: clip.id,
+        fileName: clip.file.name,
+        index,
+        total,
+        progress: 1,
+        status: 'uploaded',
+      });
+      return url;
+    } catch (error) {
+      const uploadError = error as Error;
+      options.onRemoteUploadProgress?.({
+        clipId: clip.id,
+        fileName: clip.file.name,
+        index,
+        total,
+        progress: 0,
+        status: 'failed',
+        message: uploadError.message,
+      });
+      const action = options.onRemoteUploadError
+        ? await options.onRemoteUploadError({
+            clipId: clip.id,
+            fileName: clip.file.name,
+            index,
+            total,
+            progress: 0,
+            status: 'failed',
+            message: uploadError.message,
+            error: uploadError,
+            attempt,
+          })
+        : 'abort';
+      if (action === 'retry') {
+        if (attempt < MAX_UPLOAD_RETRY_ATTEMPTS) continue;
+        throw new Error(
+          `Upload failed for clip ${index}/${total} after ${attempt} attempts: ${uploadError.message}`,
+          { cause: error },
+        );
+      }
+      if (action === 'skip') {
+        options.onRemoteUploadProgress?.({
+          clipId: clip.id,
+          fileName: clip.file.name,
+          index,
+          total,
+          progress: 0,
+          status: 'skipped',
+          message: uploadError.message,
+        });
+        return undefined;
+      }
+      throw new Error(`Upload aborted at clip ${index}/${total}: ${uploadError.message}`, {
+        cause: error,
+      });
+    }
+  }
+}
+
+export async function serializeProjectWithMedia(
+  snapshot: ProjectSnapshot,
+  options: SerializeProjectWithMediaOptions = {},
+): Promise<Project> {
+  const mediaMode = options.mediaMode ?? 'metadata';
+  const { clips, masterAudio } = snapshot;
+  const project = serializeProject(snapshot);
+  if (mediaMode === 'metadata') return project;
+
+  const clipById = new Map(clips.map((clip) => [clip.id, clip]));
+  const enrichedClips: SerializedClip[] = [];
+  const total = project.clips.length;
+  for (let i = 0; i < project.clips.length; i++) {
+    const serialized = project.clips[i]!;
+    const index = i + 1;
+    const clip = clipById.get(serialized.id);
+    if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
+    const updated: SerializedClip = { ...serialized };
+    // Clear any stale media-source fields from a previous save in a
+    // different mode; the branches below set whichever field applies.
+    delete updated.sourceMediaDataUrl;
+    delete updated.sourceMediaUrl;
+    if (mediaMode === 'embed') {
+      if (clip.file.size > MAX_EMBED_FILE_BYTES) {
+        if (options.mediaClient) {
+          const sourceMediaUrl = await uploadOrReuseClipMedia(clip, index, total, options);
+          if (sourceMediaUrl !== undefined) updated.sourceMediaUrl = sourceMediaUrl;
+          options.onEmbedWarning?.(
+            `"${clip.file.name}" (${formatBytes(clip.file.size)}) is too large to embed directly ` +
+              `and was uploaded to remote storage instead.`,
+          );
+        } else {
+          updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
+          options.onEmbedWarning?.(
+            `"${clip.file.name}" (${formatBytes(clip.file.size)}) is large and may exceed browser ` +
+              `storage limits when embedded in the project file. Consider using remote save instead.`,
+          );
+        }
+      } else {
+        updated.sourceMediaDataUrl = await readFileAsDataUrl(clip.file);
+      }
+    } else if (mediaMode === 'remote') {
+      const sourceMediaUrl = await uploadOrReuseClipMedia(clip, index, total, options);
+      if (sourceMediaUrl !== undefined) updated.sourceMediaUrl = sourceMediaUrl;
+    }
+    enrichedClips.push(updated);
+  }
+
+  let enrichedMaster = project.masterAudio;
+  if (masterAudio && enrichedMaster) {
+    enrichedMaster = { ...enrichedMaster };
+    if (mediaMode === 'embed') {
+      enrichedMaster.sourceMediaDataUrl = await readFileAsDataUrl(masterAudio.file);
+    } else if (mediaMode === 'remote' && options.mediaClient) {
+      try {
+        enrichedMaster.sourceMediaUrl = await options.mediaClient.uploadMedia(
+          `master-${sanitizeUploadFileName(masterAudio.fileName)}`,
+          masterAudio.file,
+          masterAudio.file.type || 'audio/mpeg',
+        );
+      } catch {
+        /* keep metadata-only master audio reference */
+      }
+    }
+  }
+
+  return {
+    ...project,
+    clips: enrichedClips,
+    ...(enrichedMaster ? { masterAudio: enrichedMaster } : {}),
+    mediaMode,
+  };
+}

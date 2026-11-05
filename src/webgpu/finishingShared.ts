@@ -1,6 +1,6 @@
 /** Options and texture helpers shared by `FinishingPassChain` and its managed path. */
 
-import type { CanvasPresentation, ColorManagementSettings } from '../utils/colorManagement';
+import type { CanvasPresentation, ColorManagementSettings } from '../finishing/colorManagement';
 
 export interface FinishingApplyOptions {
   /** Integer frame index for temporal grain seed (export / quantized preview). */

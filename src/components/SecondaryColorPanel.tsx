@@ -3,14 +3,14 @@ import {
   DEFAULT_SECONDARY_COLOR,
   type SecondaryColorPass,
   type SecondaryGrade,
-} from '../utils/finishing';
+} from '../finishing/finishing';
 import {
   MAX_SECONDARY_GRADES,
   SECONDARY_GRADE_PRESETS,
   createSecondaryGrade,
   createSecondaryGradeFromPreset,
   type SecondaryMaskType,
-} from '../utils/secondaryColor';
+} from '../finishing/secondaryColor';
 
 interface Props {
   settings: SecondaryColorPass;

@@ -7,7 +7,7 @@ import { STORAGE_KEYS, safeGet, safeSet } from '../utils/storageKeys';
  * Google Drive files the user imported, kept as references — `{ kind: 'drive',
  * fileId, name, size, mimeType }` — never as bytes. Per-browser view state
  * (localStorage), not part of a project or the undo history. Holds no token:
- * the OAuth token lives in memory only (`utils/googleDrive.ts`).
+ * the OAuth token lives in memory only (`remote/googleDrive.ts`).
  */
 
 export const DRIVE_LIBRARY_STORAGE_KEY = STORAGE_KEYS.driveLibrary.key;

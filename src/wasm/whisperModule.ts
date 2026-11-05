@@ -28,7 +28,6 @@
  */
 
 import {
-  getEmscriptenLoadFailure,
   loadEmscriptenModule,
   resolveWasmAssetUrl,
   type HeapScope,
@@ -60,7 +59,6 @@ export interface WhisperModule {
 }
 
 export const WHISPER_GLUE_FILE = 'whisper.js';
-export const WHISPER_WASM_FILE = 'whisper.wasm';
 const MODULE_NAME = 'whisper';
 
 export function resolveWhisperAssetUrl(fileName: string, baseUrl?: string): string {
@@ -74,11 +72,7 @@ export async function loadWhisperModule(options?: {
   return loadEmscriptenModule<WhisperModule>(MODULE_NAME, 'createWhisperModule', options);
 }
 
-export function getWhisperLoadFailure(): string | null {
-  return getEmscriptenLoadFailure(MODULE_NAME);
-}
-
-export function _resetWhisperLoadStateForTests(): void {
+function _resetWhisperLoadStateForTests(): void {
   _resetEmscriptenModuleForTests(MODULE_NAME);
 }
 

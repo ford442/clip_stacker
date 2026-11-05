@@ -1,17 +1,17 @@
 import { useCallback } from "react";
 import type { Clip, TextOverlay } from "../types";
-import { createClipId } from "../utils/media";
+import { createClipId } from "../media/media";
 import {
   DEFAULT_TEXT_OVERLAY_X,
   DEFAULT_TEXT_OVERLAY_Y,
-} from "../utils/overlayCoords";
-import { DEFAULT_SCROLL_SPEED } from "../utils/textOverlay";
+} from "../composition/overlayCoords";
+import { DEFAULT_SCROLL_SPEED } from "../composition/textOverlay";
 import type { UseEditHistoryResult } from "./useEditHistory";
 import { editorActions, editorStore, playbackStore } from "../store";
 import {
   placeTextOverlayOnTrack,
   removeTextOverlayFromTracks,
-} from "../utils/trackModel";
+} from "../timeline/trackModel";
 
 type TextOverlayActionsDeps = Pick<
   UseEditHistoryResult,

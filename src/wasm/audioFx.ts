@@ -189,6 +189,6 @@ export async function createBusFxNode(
   return new BusFxNode(node, lanes);
 }
 
-export function _resetAudioFxModuleForTests(): void {
+function _resetAudioFxModuleForTests(): void {
   modulePromise = null;
 }

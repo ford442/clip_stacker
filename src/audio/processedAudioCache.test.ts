@@ -9,7 +9,7 @@ import {
   loadMediaEngineModule,
 } from '../wasm/mediaEngine';
 import { applyInsertChainToPcm } from '../wasm/mediaEngineInsertChain';
-import type { ClipAudioEffects } from '../utils/audioEffects';
+import type { ClipAudioEffects } from './audioEffects';
 
 const WASM_BASE = pathToFileURL(path.resolve(process.cwd(), 'public/wasm') + path.sep).href;
 const RATE = 48_000;

@@ -10,7 +10,7 @@ import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Track } from '../types';
-import { createBusEffect, type BusEffect, type MasterBusSettings } from '../utils/audioBus';
+import { createBusEffect, type BusEffect, type MasterBusSettings } from '../audio/audioBus';
 import { planBusGraph, type BusGraphPlan } from '../audio/fxGraph';
 import { busLayoutMessage } from './audioFx';
 import {

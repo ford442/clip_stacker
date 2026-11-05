@@ -1,4 +1,4 @@
-import type { Keyframe } from '../utils/keyframes';
+import type { Keyframe } from '../timeline/keyframes';
 
 /** Animatable properties on text overlays. */
 export type TextAnimatableProp = 'x' | 'y' | 'opacity';
@@ -43,7 +43,7 @@ export interface TextOverlayStyle {
  *
  * Captions are a separate, importable/exportable track rather than a pile of
  * individually timed {@link TextOverlay}s: they round-trip through `.srt` /
- * `.ass` files (`src/utils/subtitles.ts`) and can be exported burned-in, as a
+ * `.ass` files (`src/captions/subtitles.ts`) and can be exported burned-in, as a
  * soft `mov_text` track, or as a sidecar `.srt` (`src/ffmpeg/captions.ts`).
  *
  * Times are seconds on the **output** timeline (after trims, speed and

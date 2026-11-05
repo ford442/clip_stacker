@@ -12,13 +12,14 @@ import { useStore } from 'zustand';
 import type { CaptionEntry } from '../types';
 import { editorStore } from '../store/editorStore';
 import { settingsStore } from '../store/settingsStore';
+import { renderJobStore } from '../store/renderJobStore';
 import { uiActions } from '../store/uiStore';
 import {
   getCaptionProvider,
   listAvailableCaptionProviders,
   type CaptionProvider,
-} from '../utils/captionProvider';
-import { mergeCaptions } from '../utils/captionSegments';
+} from '../captions/captionProvider';
+import { mergeCaptions } from '../captions/captionSegments';
 import { getWhisperUnavailableReason } from '../wasm/whisperCaptionProvider';
 
 export interface AutoCaptionProviderOption {
@@ -84,7 +85,7 @@ export function useAutoCaption(): UseAutoCaptionResult {
   const run = useCallback(async () => {
     if (abortRef.current) return;
     const settings = settingsStore.getState();
-    const { setStatus } = settings;
+    const { setStatus } = renderJobStore.getState();
 
     const provider: CaptionProvider | undefined = settings.autoCaptionProviderId
       ? getCaptionProvider(settings.autoCaptionProviderId)
@@ -103,7 +104,7 @@ export function useAutoCaption(): UseAutoCaptionResult {
     try {
       // The timeline mixer (media engine, WebCodecs audio) is only needed
       // once a transcription actually runs.
-      const { renderAutoCaptionAudio } = await import('../utils/autoCaptionAudio');
+      const { renderAutoCaptionAudio } = await import('../captions/autoCaptionAudio');
       const editor = editorStore.getState();
       const { audio, timeOffsetSec, durationSec } = await renderAutoCaptionAudio({
         clips: editor.clips,

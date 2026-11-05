@@ -2,8 +2,8 @@ import { useRef } from 'react';
 import {
   DEFAULT_CHROMATIC_ABERRATION,
   type ChromaticAberrationPass,
-} from '../utils/finishing';
-import { CA_AMOUNT_RECOMMENDED, CA_MAX_SHIFT } from '../utils/chromaticAberration';
+} from '../finishing/finishing';
+import { CA_AMOUNT_RECOMMENDED, CA_MAX_SHIFT } from '../finishing/chromaticAberration';
 
 interface Props {
   settings: ChromaticAberrationPass;

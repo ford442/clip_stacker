@@ -8,7 +8,7 @@ Managed mode turns on when **Output color** is Display P3 or HDR10, or **Working
 
 Scene-linear Rec.2020, D65. Diffuse white is `1.0`, which the PQ output transform maps to **100 nits** (`PQ_REFERENCE_WHITE_NITS`). Values above 1 are highlights.
 
-Matrices live in `src/utils/colorManagement.ts` (row-major) and are packed into the WGSL uniform. They are the CSS Color 4 / BT.2020 D65 RGB→XYZ matrices and their products:
+Matrices live in `src/finishing/colorManagement.ts` (row-major) and are packed into the WGSL uniform. They are the CSS Color 4 / BT.2020 D65 RGB→XYZ matrices and their products:
 
 - Rec.709 linear → Rec.2020 linear: `REC709_TO_REC2020`
 - Rec.2020 linear → Rec.709 linear: `REC2020_TO_REC709`

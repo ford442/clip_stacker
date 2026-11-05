@@ -5,7 +5,7 @@ import {
   projectActions,
   projectStore,
 } from './projectStore';
-import { STORAGE_AUTH_TOKEN_KEY } from '../utils/storageAuth';
+import { STORAGE_AUTH_TOKEN_KEY } from '../project/storageAuth';
 
 describe('projectStore', () => {
   beforeEach(() => {

@@ -7,8 +7,9 @@ import {
   createCaptionId,
   MIN_CAPTION_DURATION_SEC,
   parseSubtitles,
-} from "../utils/subtitles";
+} from "../captions/subtitles";
 import type { UseEditHistoryResult } from "./useEditHistory";
+import { renderJobStore } from '../store/renderJobStore';
 
 /** Length of a cue added with the `C` shortcut / "Add caption" button. */
 export const NEW_CAPTION_DURATION_SEC = 2;
@@ -125,7 +126,7 @@ export function useCaptionActions({
    */
   const handleImportCaptions = useCallback(
     async (file: File) => {
-      const { setStatus } = settingsStore.getState();
+      const { setStatus } = renderJobStore.getState();
       try {
         const imported = parseSubtitles(await file.text(), file.name);
         if (imported.length === 0) {
@@ -149,7 +150,8 @@ export function useCaptionActions({
 
   /** Download the caption track as a `.srt` sidecar. No re-encode involved. */
   const handleExportCaptionsSrt = useCallback(async () => {
-    const { setStatus, exportSettings } = settingsStore.getState();
+    const { exportSettings } = settingsStore.getState();
+    const { setStatus } = renderJobStore.getState();
     const captions = editorStore.getState().captions;
     if (captions.length === 0) {
       setStatus("Add or import captions before exporting an .srt file.");

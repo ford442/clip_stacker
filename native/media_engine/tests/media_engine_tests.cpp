@@ -8,6 +8,7 @@
 
 #include "audio_mix.h"
 #include "effects.h"
+#include "host_test.h"
 #include "resampler.h"
 
 #include <algorithm>
@@ -21,48 +22,6 @@
 #include <vector>
 
 namespace {
-
-// ---------------------------------------------------------------------------
-// Tiny assert runner (no Catch2 / GoogleTest dependency).
-
-struct TestCase {
-  const char* name;
-  void (*fn)();
-};
-
-std::vector<TestCase>& registry() {
-  static std::vector<TestCase> cases;
-  return cases;
-}
-
-struct Registrar {
-  Registrar(const char* name, void (*fn)()) { registry().push_back({name, fn}); }
-};
-
-int g_failures = 0;
-
-void report(bool ok, const char* expr, const char* file, int line) {
-  if (ok) return;
-  ++g_failures;
-  std::fprintf(stderr, "    %s:%d: CHECK(%s) failed\n", file, line, expr);
-}
-
-void report_cmp(bool ok, double a, double b, const char* expr, const char* file, int line) {
-  if (ok) return;
-  ++g_failures;
-  std::fprintf(stderr, "    %s:%d: CHECK(%s) failed (%.9g vs %.9g)\n", file, line, expr, a, b);
-}
-
-#define TEST_CASE(name)                                   \
-  void name();                                            \
-  const Registrar registrar_##name(#name, name);          \
-  void name()
-
-#define CHECK(cond) report((cond), #cond, __FILE__, __LINE__)
-#define CHECK_LE(a, b) report_cmp((a) <= (b), (a), (b), #a " <= " #b, __FILE__, __LINE__)
-#define CHECK_GE(a, b) report_cmp((a) >= (b), (a), (b), #a " >= " #b, __FILE__, __LINE__)
-#define CHECK_NEAR(a, b, tol) \
-  report_cmp(std::fabs((a) - (b)) <= (tol), (a), (b), #a " ~= " #b, __FILE__, __LINE__)
 
 // ---------------------------------------------------------------------------
 // Fixtures: schedule model + packing that mirrors src/wasm/mediaEngine.ts.
@@ -736,6 +695,40 @@ TEST_CASE(no_effect_mix_matches_pinned_bytes) {
   CHECK(whole == 0xc29f9bbc2dbc69efull);
 }
 
+TEST_CASE(frame_positions_past_int_max_do_not_wrap) {
+  // 3e9 frames is ~17.4 h at 48 kHz, past INT_MAX: a clip placed there mixes
+  // exactly as the same clip at 0 does, and non-integral or negative
+  // positions are rejected rather than truncated.
+  constexpr int kFrames = 4800;
+  std::vector<float> pcm(static_cast<size_t>(kFrames) * 2);
+  for (int i = 0; i < kFrames; ++i) {
+    pcm[i] = static_cast<float>(std::sin(i * 0.03));
+    pcm[kFrames + i] = static_cast<float>(std::cos(i * 0.05));
+  }
+  const int meta[MIX_SLICE_STRIDE] = {0, kFrames, 2, 48000, 0, kFrames};
+  const double far = 3e9;
+  double near_row[MIX_ENTRY_STRIDE] = {0, 0, 0.1, 0, 0.8, 0, 0, 1, 0, 0, 0, 0};
+  double far_row[MIX_ENTRY_STRIDE] = {0, far / 48000.0, 0.1, 0, 0.8, 0, 0, 1, 0, 0, 0, 0};
+  std::vector<float> at_zero(static_cast<size_t>(kFrames) * 2);
+  std::vector<float> at_far(static_cast<size_t>(kFrames) * 2);
+  CHECK(mix_timeline_audio_range(at_zero.data(), kFrames, 0, 48000, 2, pcm.data(), static_cast<int>(pcm.size()), meta,
+                                 1, near_row, 1, nullptr, 0, 0) == CS_OK);
+  CHECK(mix_timeline_audio_range(at_far.data(), kFrames, far, 48000, 2, pcm.data(), static_cast<int>(pcm.size()), meta,
+                                 1, far_row, 1, nullptr, 0, 0) == CS_OK);
+  CHECK(at_zero == at_far);
+  CHECK(at_zero[100] != 0.f);
+  float out[8] = {};
+  CHECK(mix_timeline_audio_range(out, 4, 10.5, 48000, 2, pcm.data(), 4, meta, 1, near_row, 1, nullptr, 0, 0) ==
+        CS_EINVAL);
+  CHECK(mix_timeline_audio_range(out, 4, std::nan(""), 48000, 2, pcm.data(), 4, meta, 1, near_row, 1, nullptr, 0, 0) ==
+        CS_EINVAL);
+  MixFxSession* session = mix_fx_session_create(48000, 2, 1, nullptr, 0, 0, 0);
+  CHECK(session != nullptr);
+  CHECK(mix_fx_session_range(session, out, 4, -1.0, pcm.data(), 4, meta, 1, near_row, 1, nullptr, 0, 0) == CS_EINVAL);
+  CHECK(mix_fx_session_range(session, out, 4, far, pcm.data(), 4, meta, 1, near_row, 1, nullptr, 0, 0) == CS_ESTATE);
+  mix_fx_session_destroy(session);
+}
+
 TEST_CASE(rejects_malformed_arguments) {
   float out[8] = {};
   const float pcm[4] = {};
@@ -1104,26 +1097,3 @@ TEST_CASE(fx_session_rejects_malformed_calls) {
 }
 
 }  // namespace
-
-int main(int argc, char** argv) {
-  if (argc > 1 && std::strcmp(argv[1], "--list") == 0) {
-    for (const TestCase& t : registry()) std::printf("%s\n", t.name);
-    return 0;
-  }
-  int ran = 0;
-  int failed_cases = 0;
-  for (const TestCase& t : registry()) {
-    bool selected = argc <= 1;
-    for (int i = 1; i < argc && !selected; ++i) selected = std::strstr(t.name, argv[i]) != nullptr;
-    if (!selected) continue;
-    ++ran;
-    const int before = g_failures;
-    std::printf("[ RUN  ] %s\n", t.name);
-    t.fn();
-    const bool ok = g_failures == before;
-    if (!ok) ++failed_cases;
-    std::printf("[ %s ] %s\n", ok ? " OK " : "FAIL", t.name);
-  }
-  std::printf("%d case(s), %d failed\n", ran, failed_cases);
-  return ran == 0 || failed_cases > 0 ? 1 : 0;
-}

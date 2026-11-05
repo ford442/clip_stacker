@@ -9,7 +9,7 @@ import {
   COLOR_XFORM_UNIFORM_FLOATS,
   type ColorXformModeId,
   packColorXformUniforms,
-} from '../utils/colorManagement';
+} from '../finishing/colorManagement';
 
 const APPLY_MATRIX_F32 = `fn applyMatrix(row0: vec4<f32>, row1: vec4<f32>, row2: vec4<f32>, c: vec3<f32>) -> vec3<f32> {
   return vec3<f32>(dot(row0.xyz, c), dot(row1.xyz, c), dot(row2.xyz, c));

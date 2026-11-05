@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import {
   DEFAULT_SHARPEN,
   type SharpenPass,
-} from '../utils/finishing';
+} from '../finishing/finishing';
 import {
   SHARPEN_AMOUNT_RECOMMENDED,
   SHARPEN_AMOUNT_SOFT_CAP,
@@ -10,7 +10,7 @@ import {
   SHARPEN_RADIUS_MIN,
   SHARPEN_MODE_OPTIONS,
   type SharpenMode,
-} from '../utils/sharpen';
+} from '../finishing/sharpen';
 
 interface Props {
   settings: SharpenPass;

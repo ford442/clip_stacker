@@ -1,0 +1,11 @@
+{
+  "strictDirs": [
+    "src/export",
+    "src/timeline",
+    "src/finishing",
+    "src/captions",
+    "src/project",
+    "src/app"
+  ],
+  "baseline": 419
+}

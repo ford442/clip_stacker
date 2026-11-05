@@ -1,14 +1,10 @@
 /**
- * Centralized `AudioContext` construction.
+ * `AudioContext` construction: the options every real-time context gets.
  *
- * Every AudioContext in the app (playback graph, waveform peak extraction,
- * legacy canvas-renderer clip analysis, per-clip volume routing) previously
- * called `new AudioContext()` independently with no options, leaving the
- * browser's default sample rate (commonly 44.1kHz) in effect even though
- * export premixes audio at 48kHz AAC — forcing extra resamples and fighting
- * the time-stretch worklet. This is the one place that decides the options
- * for every AudioContext the app creates, so they all agree on a sample
- * rate instead of drifting independently.
+ * Only `audioService.ts` calls `createAudioContext` — the app has one
+ * real-time context (`getAudioContext()`), and decoding goes through
+ * `decodeAudio` on an `OfflineAudioContext`. `context.boundary.test.ts`
+ * fails if anything else constructs one.
  */
 
 /** Matches the 48kHz AAC premix used by WebCodecs/FFmpeg export. */
@@ -51,45 +47,8 @@ export function createAudioContext(options: CreateAudioContextOptions = {}): Aud
   }
 }
 
-let sharedContext: AudioContext | null = null;
-let gestureListenerInstalled = false;
-
 /** Resume `ctx` if the autoplay policy left it suspended. Never throws. */
 export function resumeAudioContext(ctx: AudioContext): void {
   if (ctx.state !== 'suspended') return;
   ctx.resume().catch(() => undefined);
-}
-
-/**
- * The one AudioContext shared by element-routed preview audio (per-clip volume
- * on `<audio>` / `<video>`). Created lazily; never closed, because a
- * `MediaElementAudioSourceNode` binds its element to its context for good —
- * closing it would silence the element for the rest of its life.
- *
- * Browsers create it suspended until a user gesture, so the first call also
- * installs a one-shot pointer/key listener that resumes it.
- */
-export function getSharedAudioContext(): AudioContext {
-  if (sharedContext && sharedContext.state !== 'closed') return sharedContext;
-  sharedContext = createAudioContext();
-  if (!gestureListenerInstalled && typeof window !== 'undefined' && window.addEventListener) {
-    gestureListenerInstalled = true;
-    const onGesture = () => {
-      if (sharedContext) resumeAudioContext(sharedContext);
-      if (sharedContext?.state !== 'suspended') {
-        window.removeEventListener('pointerdown', onGesture, true);
-        window.removeEventListener('keydown', onGesture, true);
-        gestureListenerInstalled = false;
-      }
-    };
-    window.addEventListener('pointerdown', onGesture, true);
-    window.addEventListener('keydown', onGesture, true);
-  }
-  return sharedContext;
-}
-
-/** Test-only: forget the shared context. */
-export function __resetSharedAudioContextForTests(): void {
-  sharedContext = null;
-  gestureListenerInstalled = false;
 }

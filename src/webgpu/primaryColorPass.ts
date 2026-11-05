@@ -4,11 +4,11 @@
  */
 
 import primaryColorShader from './shaders/primaryColor.wgsl?raw';
-import type { PrimaryColorPass } from '../utils/finishing';
+import type { PrimaryColorPass } from '../finishing/finishing';
 import {
   PRIMARY_COLOR_UNIFORM_FLOATS,
   packPrimaryColorUniforms,
-} from '../utils/primaryColor';
+} from '../finishing/primaryColor';
 
 export class PrimaryColorGpuPass {
   private readonly pipeline: GPURenderPipeline;

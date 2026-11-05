@@ -1,5 +1,5 @@
 /**
- * Segment extract / replace workflow (see `utils/segments/`).
+ * Segment extract / replace workflow (see `remote/segments/`).
  *
  * A *segment* is a window `[startSec, endSec]` of one source file. It is cut
  * out, optionally processed (RIFE, a manual Colab round trip, …) and swapped

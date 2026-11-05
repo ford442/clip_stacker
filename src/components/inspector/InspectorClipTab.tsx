@@ -5,11 +5,11 @@ import type {
   ClipKeyframes,
   VideoOutputFormat,
 } from '../../types';
-import type { CanvasSize } from '../../utils/overlayCoords';
-import type { PipCorner } from '../../utils/pipPreset';
+import type { CanvasSize } from '../../composition/overlayCoords';
+import type { PipCorner } from '../../composition/pipPreset';
 import { InspectorClipAudioEffectsSection } from './InspectorClipAudioEffectsSection';
 import { InspectorClipAudioSpeedSection } from './InspectorClipAudioSpeedSection';
-import type { ClipAudioEffects } from '../../utils/audioEffects';
+import type { ClipAudioEffects } from '../../audio/audioEffects';
 import { InspectorClipTrimSection } from './InspectorClipTrimSection';
 import { InspectorClipVideoToolsSection } from './InspectorClipVideoToolsSection';
 import { InspectorSegmentSection } from './InspectorSegmentSection';

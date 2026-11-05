@@ -10,7 +10,7 @@
 import { memo, useEffect, useRef } from 'react';
 import { useStore } from 'zustand';
 import type { CaptionEntry, TextOverlayStyle } from '../types';
-import type { AutoCaptionScope } from '../utils/autoCaptionAudio';
+import type { AutoCaptionScope } from '../captions/autoCaptionAudio';
 import {
   settingsStore,
   uiActions,
@@ -21,13 +21,13 @@ import {
 } from '../store';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
 import { useAutoCaption } from '../hooks/useAutoCaption';
-import { isValidFfmpegColor } from '../utils/color';
-import { BUNDLED_FONTS } from '../utils/textOverlay';
+import { isValidFfmpegColor } from '../composition/color';
+import { BUNDLED_FONTS } from '../composition/textOverlay';
 import {
   DEFAULT_CAPTION_STYLE,
   formatSrtTimestamp,
   resolveCaptionStyle,
-} from '../utils/subtitles';
+} from '../captions/subtitles';
 import {
   CAPTION_EXPORT_MODE_LABELS,
   type CaptionExportMode,

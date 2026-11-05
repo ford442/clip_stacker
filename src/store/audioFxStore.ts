@@ -4,7 +4,7 @@ import type { AudioFxPreviewState } from '../wasm/audioFx';
 import type { MixMeterReading } from '../wasm/mediaEngineSession';
 
 /**
- * Live state of the preview's bus graph (`audio/busRouting.ts`): whether
+ * Live state of the preview's bus graph (`playback/busRouting.ts`): whether
  * lane / master FX are being previewed, and the latest meter readout. View
  * state only — never in a project or undo history.
  */

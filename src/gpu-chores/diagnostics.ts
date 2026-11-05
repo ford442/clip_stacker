@@ -41,10 +41,6 @@ export function recordGpuChoreBreadcrumb(entry: GpuChoreBreadcrumb): void {
   lastBreadcrumb = entry;
 }
 
-export function getLastGpuChoreBreadcrumb(): GpuChoreBreadcrumb | null {
-  return lastBreadcrumb;
-}
-
 export function formatGpuChoreDiagnostics(): string {
   const avail = gpuComputeAvailable();
   const last = lastBreadcrumb;

@@ -14,7 +14,7 @@ import {
   type MediaEngineMixEntry,
 } from './mediaEngine';
 import { applyInsertChainToPcm } from './mediaEngineInsertChain';
-import type { ClipAudioEffects, MasterLimiterSettings } from '../utils/audioEffects';
+import type { ClipAudioEffects, MasterLimiterSettings } from '../audio/audioEffects';
 
 const WASM_BASE = pathToFileURL(path.resolve(process.cwd(), 'public/wasm') + path.sep).href;
 const SAMPLE_RATE = 48000;

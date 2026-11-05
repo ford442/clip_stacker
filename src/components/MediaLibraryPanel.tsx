@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { ContaboStorageManagerClient, type MediaLibraryItem } from "../utils/project";
+import { ContaboStorageManagerClient, type MediaLibraryItem } from "../project";
 import { formatBytes } from "../utils/memory";
 import { useStorageAuthToken, useStorageEndpoint } from "../store";
 import { DriveLibrarySection } from "./segments/DriveLibrarySection";

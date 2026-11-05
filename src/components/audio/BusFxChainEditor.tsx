@@ -6,7 +6,7 @@ import {
   LIMITER_LIMITS,
   type AudioEqBand,
   type AudioEqBandType,
-} from '../../utils/audioEffects';
+} from '../../audio/audioEffects';
 import {
   BUS_EFFECT_LABELS,
   createBusEffect,
@@ -16,7 +16,7 @@ import {
   MAX_BUS_EQ_BANDS,
   type BusEffect,
   type BusEffectKind,
-} from '../../utils/audioBus';
+} from '../../audio/audioBus';
 import { FxNumberField } from './FxNumberField';
 
 /**

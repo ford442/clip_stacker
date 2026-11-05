@@ -24,15 +24,15 @@ export interface Track {
   /** Row height in pixels for the timeline UI. */
   height?: number;
   /**
-   * The lane bus's insert chain (`utils/audioBus.ts`), run by the media
+   * The lane bus's insert chain (`audio/audioBus.ts`), run by the media
    * engine on the lane's summed audio in preview and export. Omitted = dry.
    */
-  audioFx?: import('../utils/audioBus').BusEffect[];
+  audioFx?: import('../audio/audioBus').BusEffect[];
   /**
    * Sidechain duck under another lane, `'off'`, or omitted for the legacy
    * step (audio lanes only) — see `LaneDuck`.
    */
-  duck?: import('../utils/audioBus').LaneDuck;
+  duck?: import('../audio/audioBus').LaneDuck;
 }
 
 export interface SerializedTrack {
@@ -43,6 +43,6 @@ export interface SerializedTrack {
   muted?: boolean;
   locked?: boolean;
   height?: number;
-  audioFx?: import('../utils/audioBus').BusEffect[];
-  duck?: import('../utils/audioBus').LaneDuck;
+  audioFx?: import('../audio/audioBus').BusEffect[];
+  duck?: import('../audio/audioBus').LaneDuck;
 }

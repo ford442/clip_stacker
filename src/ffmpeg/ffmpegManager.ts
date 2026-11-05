@@ -7,7 +7,6 @@ import {
   emitLoadStatus,
   emitProgress,
   extractErrorMessage,
-  FFMPEG_CORE_CDNS,
   FFMPEG_LOAD_TIMEOUT_MS,
   getFfmpegEnvironmentDiagnostics,
   loadMtCoreSources,
@@ -17,7 +16,7 @@ import {
   toBlobURLWithFallback,
   withTimeout,
 } from './ffmpegCommon';
-import { resolveFfmpegCoreVariant } from '../utils/feature-detector';
+import { resolveFfmpegCoreVariant } from '../export/featureDetector';
 import { WorkerFfmpegRuntime } from './workerFfmpegRuntime';
 
 export const MAX_LOG_BUFFER = 300;
@@ -483,4 +482,4 @@ export function resetFfmpegManagerForTesting(): void {
   defaultManager = null;
 }
 
-export { FFMPEG_CORE_CDNS };
+;

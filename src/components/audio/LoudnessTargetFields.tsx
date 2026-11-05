@@ -4,7 +4,7 @@ import {
   LOUDNESS_LIMITS,
   LOUDNESS_PRESETS,
   type LoudnessTarget,
-} from '../../utils/audioBus';
+} from '../../audio/audioBus';
 import { FxNumberField } from './FxNumberField';
 
 const OFF = 'off';

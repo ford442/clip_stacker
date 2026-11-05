@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import type { AudioPlaybackManager } from '../audio/playbackManager';
+import type { AudioPlaybackManager } from '../playback/playbackManager';
 import {
   ZERO_ANALYSER_LEVELS,
   type AnalyserLevels,
-} from '../audio/playbackManager';
+} from '../playback/playbackManager';
 
 /**
  * Polls the playback AnalyserNode while the timeline is playing so meters /

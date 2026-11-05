@@ -9,16 +9,16 @@ import {
   useIsClipSelected,
 } from '../store';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
-import { resolveClipLocalTimeAtGlobal } from '../utils/previewComposition';
+import { resolveClipLocalTimeAtGlobal } from '../composition/previewComposition';
 import { WaveformCanvas } from './WaveformCanvas';
 import { SpeedAutomationLane } from './SpeedAutomationLane';
 import { SpeedCurveOverlay } from './SpeedCurveOverlay';
 import SyncMarkerLane from './SyncMarkerLane';
-import type { VirtualClipLayout } from './timelineClipTypes';
-import { normalizeClipAutomation } from '../utils/clipAutomation';
-import { remapWaveformPeaks } from '../utils/automation';
-import { clipHasRateAutomation, sampleRemapCurve } from '../utils/timeRemap';
-import { clipHasLoop, getClipLoopCount } from '../utils/playbackRate';
+import type { VirtualClipLayout } from '../timeline/timelineClipTypes';
+import { normalizeClipAutomation } from '../timeline/clipAutomation';
+import { remapWaveformPeaks } from '../timeline/automation';
+import { clipHasRateAutomation, sampleRemapCurve } from '../timeline/timeRemap';
+import { clipHasLoop, getClipLoopCount } from '../timeline/playbackRate';
 
 const TRANSITION_COLORS: Record<string, string> = {
   none: 'var(--border)',
