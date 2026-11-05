@@ -57,8 +57,8 @@ jobs:
         # deliberate extension point `@public` in its JSDoc instead.
         run: npm run knip
 
-      - name: Run tests
-        run: npm test -- --run
+      - name: Run tests (with coverage floors for the domain dirs)
+        run: npm run test:coverage -- --run
 
       - name: Build project
         run: npm run build
