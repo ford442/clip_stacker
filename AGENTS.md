@@ -2,17 +2,56 @@
 
 ## Project Structure & Module Organization
 
-This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 rendering with FFmpeg WebAssembly. Source lives in `src/`: `main.tsx` bootstraps React, `App.tsx` owns app-level state, `components/` contains UI panels, `ffmpeg/` contains FFmpeg WASM orchestration, `utils/` contains media/project/render helpers, `hooks/` contains shared React hooks, and `types/` holds shared TypeScript types. Tests are colocated with source as `*.test.ts` or `*.test.tsx`. Static deployment assets live in `public/`; built output goes to `dist/` and should be treated as generated.
+This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 rendering with FFmpeg WebAssembly. Source lives in `src/`, split by domain:
+
+- `types/` — shared TypeScript types.
+- Domain modules (pure TS, no React / Zustand):
+  - `timeline/` — tracks, edit modes, snapping, keyframes, transitions, time remap.
+  - `export/` — encoder routing, WebCodecs / canvas / MediaRecorder encoders, mux, audio premix glue.
+  - `finishing/` — finishing passes and their CPU references, colour management, presets.
+  - `captions/` — subtitle parse / serialize, auto-caption providers.
+  - `project/` — serialize / load, autosave, remote storage. `project/index.ts` is the barrel.
+  - `composition/` — the preview composition plan, layout, keys, text.
+  - `media/` — decoding, cursors, proxies, stabilization.
+  - `audio/`, `remote/`, `webgpu/`, `wasm/`, `ffmpeg/`, `gpu-chores/` — as named.
+  - `utils/` — the few cross-cutting helpers left (CSP, storage keys, workspace layout, math).
+- `store/` — Zustand stores. `index.ts` re-exports them.
+- `actions/` + `playback/` — store-bound actions with no React.
+- `hooks/` + `context/` — React hooks.
+- `components/` — the UI.
+- `app/` — composition-root helpers (caption-provider bootstrap, the `?test_harness` API).
+- `main.tsx` / `App.tsx` — the entry points.
+
+**Layering** is enforced by `eslint-plugin-boundaries` (`eslint.config.js`):
+
+- Imports flow types → domain → store → actions → hooks → components → app.
+- Domain modules and `types/` never import React or Zustand. `webgpu/` and `wasm/` are domain, so they never reach `store/` or `components/`. Workers live in domain dirs, so they never import React.
+- A domain module that needs live store state reads it through a registry the store fills in, e.g. `export/exportSources.ts`, which `editorStore` / `settingsStore` register into.
+- Test files are exempt.
+
+Tests are colocated with source as `*.test.ts` or `*.test.tsx`. Browser end-to-end tests live in `e2e/` (Playwright). Static deployment assets live in `public/`; built output goes to `dist/` and should be treated as generated. `docs/history/` holds superseded design notes, kept for context only.
+
+Shared state worth knowing:
+
+- `store/renderJobStore.ts` — render-job state: status, progress, output URL, encoder path, render plan, FFmpeg loading / failed, RIFE / intercut busy flags. `settingsStore` keeps only settings.
+- `store/selectors.ts` — `selectTimelineClips`, the single memoized "clips as the tracks lay them out" selector. Use it (or `useEditorTimelineClips`) instead of calling `getEffectiveTimelineClips` per render.
+- `App.tsx` hands `AppShell` ten domain bundles (history, project, render, clips, preview, inspector, timeline, captions, text overlays) kept stable with `useStableObject`. Add a prop to the bundle it belongs to, not to `AppShell` directly.
 
 ## Build, Test, and Development Commands
 
 - `npm install` (or `npm ci` for a clean/CI install): install dependencies for local development.
 - `npm run dev`: start the Vite dev server with the headers needed for FFmpeg WASM.
 - `npm run typecheck`: run `tsc --noEmit`, matching CI behavior. Run this after any TypeScript change.
-- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint + react-hooks). Must report 0 errors; warnings are tolerated debt. Non-test `src/` files over 700 lines are an error (`max-lines`): split the module rather than raising the limit.
+- `npm run typecheck:strict`: the strictness ratchet (`tsconfig.strict.json` adds `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`). It must report 0 errors in the `strictDirs` of `scripts/strict-ratchet.json`, and the count elsewhere may not exceed its `baseline`. Test files are not counted yet. After a cleanup, `-- --update` lowers the baseline; add a directory to `strictDirs` once it is clean.
+- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint, react-hooks, boundaries). Must report 0 errors; warnings are tolerated debt.
+  - Unused imports / variables and floating promises are errors.
+  - So is any import that breaks the layering above.
+  - Non-test `src/` files over 700 lines are an error (`max-lines`): split the module rather than raising the limit.
+- `npm run knip`: dead-code check with an empty baseline. Unused files, exports, types and dependencies fail CI. Delete them, or mark a deliberate extension point `@public` in its JSDoc. `knip.json` lists the entry points Vite cannot see (workers, the AudioWorklet, scripts, e2e).
 - `npm run check:cycles`: madge import-cycle check over `src/` (type-only imports count). Must report 0 cycles — import `getClipDuration` from `timeline/clipTiming` and `DEFAULT_CANVAS_*` from `utils/canvasDefaults`, not the `project` barrel (`src/project/index.ts`).
 - `npm test -- --run`: run the Vitest suite once, matching CI behavior.
-- `npm run test:coverage`: run tests with coverage reporting.
+- `npm run test:coverage`: run tests with coverage reporting (CI runs it with `-- --run`). `vitest.config.ts` sets per-directory floors for the pure domain dirs; raise them as coverage grows, never lower one to land a change.
+- `npm run e2e`: the Playwright render regression harness (see *Render regression harness* below). It builds nothing itself, so run `npm run build` first; it serves `dist/` with `npm run preview`. `npm run e2e:update-goldens` rewrites `e2e/goldens/`.
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
@@ -29,7 +68,19 @@ Use TypeScript with strict checking. Follow the existing style: two-space indent
 
 ## Testing Guidelines
 
-Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `textOverlay.test.ts`, `project.roundtrip.test.ts` or `ffmpegService.load.test.ts` (a large module's tests split by concern as `<module>.<concern>.test.ts`). Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Before submitting, run `npm run typecheck`, `npm run lint`, `npm run check:cycles`, `npm test -- --run`, and `npm run build`.
+Vitest runs in the `happy-dom` environment and includes `src/**/*.test.ts` and `src/**/*.test.tsx`. Add tests beside the module being changed, using names like `textOverlay.test.ts`, `project.roundtrip.test.ts` or `ffmpegService.load.test.ts` (a large module's tests split by concern as `<module>.<concern>.test.ts`). Cover render-plan decisions, project serialization, transition logic, and failure paths when editing shared utilities. Hook tests use `hooks/renderHook.test.helpers.tsx` (the repo has no testing-library). happy-dom enforces no CSP and decodes no media; anything that depends on either belongs in `e2e/`.
+
+Before submitting, run:
+
+- `npm run typecheck`
+- `npm run typecheck:strict`
+- `npm run lint`
+- `npm run check:cycles`
+- `npm run knip`
+- `npm test -- --run`
+- `npm run build`
+
+Also run `npm run e2e` when you touch the compositor, finishing, export, captions or titles.
 
 ## Commit & Pull Request Guidelines
 
@@ -80,6 +131,38 @@ resizes; the layout is per-browser view state (localStorage
 - The preview canvas is capped by width
   (`min(100%, --ws-preview-max-h × --preview-aspect)`) so it keeps its aspect
   ratio and never widens the page (#305).
+
+## Render regression harness (`e2e/`, `?test_harness`)
+
+Playwright runs against `npm run preview`, on Chromium with WebGPU on SwiftShader, so CI needs no GPU.
+
+**Flags.** Only ANGLE-on-Vulkan accepts frame uploads: `--use-vulkan=swiftshader --use-angle=vulkan --disable-vulkan-surface`. With `--use-angle=swiftshader`, every `importExternalTexture` / `copyExternalImageToTexture` is invalid and frames render black.
+
+**Harness API.** `?test_harness` installs `window.clipStacker.test` (`src/app/testHarness/harness.ts`). It is a separate chunk that `main.tsx` imports only under the parameter, so normal loads never contain it.
+
+- `buildProject(spec)` builds fixtures from the demo clips. `loadProject(json)` loads a saved project.
+- `renderPreviewFrame(t)` draws through the timeline compositor fed by WebCodecs cursors, the preview worker's happy path. The `<video>` fallback renders black under SwiftShader.
+- `renderPqFrame(t)` returns the PQ readback an HDR10 export encodes.
+- `exportProject()` runs the real Render action, bound by `App` through `app/harnessBindings.ts`, and forces a re-encode by default.
+- `decodeFrame(blob, t)` decodes one frame of a file.
+- `compare` returns PSNR + SSIM (`imageMetrics.ts`).
+- `crash()` makes `App` throw, for `RootErrorBoundary`.
+
+**Goldens** (`e2e/goldens.spec.ts`, cases in `e2e/fixtures.ts`). Each case renders at 320x180 and asserts:
+
+- preview ≈ decoded export: PSNR ≥ 24, SSIM ≥ 0.95. Agreeing renders land at 25–41 dB because H.264 softens test-pattern edges; a missing layer or pass drops SSIM far lower.
+- preview ≈ committed golden PNG: ≥ 38 dB. Reruns are bit-identical.
+
+Sample times sit on the 30 fps export grid. A new finishing case needs settings strong enough that the pass missing falls ≤ 30 dB against the golden; edge-aware sharpen on a clean test pattern does not.
+
+HDR10 compares the PQ readback, not the preview: the preview is the SDR monitor view. The export may refuse where no 10-bit encoder exists, as in CI's Chromium.
+
+**Smoke flows** (`e2e/smoke.spec.ts`) go through the real UI: load demo clips → split → ripple delete → undo → render; crash → reload → recovery offer.
+
+**Known bugs** are pinned with `test.fail`, so they flip to an unexpected pass when fixed:
+
+- frame 0 of a managed-colour (P3 / HDR10) export is black;
+- recovering an autosave drops embedded media, because the restore `fetch()`es `data:` URLs that the production `connect-src` blocks.
 
 ## Demo clips, Export-tab sections, encoder badge
 
@@ -703,7 +786,7 @@ sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
   mixer's own polyphase sinc (`TruePeakDetector`, 32 frames of delay), a
   0.05 dB detection margin (ten times the worst overshoot the host battery
   measures without it), then a sample clamp. Latency = 32 + look-ahead (≥ 32).
-- **Meter** (`src/fx/loudness.cpp`): BS.1770-4 K-weighting at any rate,
+- **Meter** (`native/media_engine/src/fx/loudness.cpp`): BS.1770-4 K-weighting at any rate,
   100 ms grid, momentary / short-term, gated integrated, EBU Tech 3342 LRA,
   true / sample peak. Readings are chunk-invariant. The graph meters its
   delivered output (skipping its own priming frames).

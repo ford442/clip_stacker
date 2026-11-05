@@ -114,13 +114,16 @@ npm run preview
 ## Type Checking & Tests
 
 ```bash
-npm run typecheck   # tsc --noEmit, matches the CI gate
-npm run lint        # ESLint: 0 errors required, warnings allowed
-npm run check:cycles  # madge: 0 import cycles in src/
-npm test -- --run   # Vitest suite
+npm run typecheck          # tsc --noEmit, matches the CI gate
+npm run typecheck:strict   # strictness ratchet (noUncheckedIndexedAccess, exactOptionalPropertyTypes)
+npm run lint               # ESLint incl. layering: 0 errors required, warnings allowed
+npm run check:cycles       # madge: 0 import cycles in src/
+npm run knip               # dead code: unused files / exports / dependencies fail
+npm test -- --run          # Vitest suite (npm run test:coverage -- --run adds coverage floors)
+npm run build && npm run e2e   # Playwright render regression harness (WebGPU on SwiftShader)
 ```
 
-CI (`.github/workflows/test.yml`) runs `npm ci`, `npm run typecheck`, `npm test -- --run`, and `npm run build` on every push/PR.
+CI (`.github/workflows/test.yml`) runs `npm ci` and all of the above on every push/PR; the Playwright harness runs as its own `e2e` job. `npm run e2e:update-goldens` rewrites the committed goldens in `e2e/goldens/` after an intended visual change.
 
 ## Deploy
 
