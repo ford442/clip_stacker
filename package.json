@@ -31,6 +31,8 @@
     "test:coverage": "vitest --coverage",
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "node scripts/check-strict.mjs",
+    "e2e": "playwright test",
+    "e2e:update-goldens": "UPDATE_GOLDENS=1 playwright test e2e/goldens.spec.ts",
     "lint": "eslint .",
     "check:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src"
   },

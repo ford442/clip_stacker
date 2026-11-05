@@ -31,3 +31,7 @@ huggingface/**/workspace_temp/
 # stay out of history.
 public/ffmpeg-core/
 public/ffmpeg-core-mt/
+
+# Playwright (e2e/)
+test-results/
+playwright-report/

@@ -4,7 +4,8 @@
     "src/timeline",
     "src/finishing",
     "src/captions",
-    "src/project"
+    "src/project",
+    "src/app"
   ],
   "baseline": 419
 }
