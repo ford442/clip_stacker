@@ -25,9 +25,6 @@ export const DEFAULT_COLOR_MANAGEMENT: ColorManagementSettings = {
   workingSpace: 'rec709',
 };
 
-/** Untagged imports are treated as Rec.709. Not a user setting. */
-export const IMPORT_COLOR_ASSUMPTION = 'rec709' as const;
-
 /**
  * Scene-linear 1.0 maps to this many nits in the PQ output transform
  * (diffuse white). 10,000 nits is the PQ peak, not the grade white.
@@ -49,9 +46,6 @@ export const COLOR_MANAGED_PASS_ORDER = [
   'grain',
   'present',
 ] as const;
-
-export const WIDE_COLOR_GPU_ONLY_WARNING =
-  'Display P3 and HDR10 are GPU-only. This encode is Rec.709 SDR — turn off Force FFmpeg and the Canvas renderer to keep the chosen output.';
 
 const HDR10_UNAVAILABLE_REASON =
   'HEVC Main10 and AV1 10-bit are not available in this browser.';
@@ -163,24 +157,6 @@ export const REC2020_TO_REC709: Mat3 = mulMat3(XYZ_TO_REC709, REC2020_TO_XYZ);
 export const REC2020_TO_DISPLAY_P3: Mat3 = mulMat3(XYZ_TO_DISPLAY_P3, REC2020_TO_XYZ);
 export const DISPLAY_P3_TO_REC709: Mat3 = mulMat3(XYZ_TO_REC709, DISPLAY_P3_TO_XYZ);
 
-/** Piecewise sRGB / IEC 61966-2-1, matching `srgbToLinear` in primaryColor.wgsl. */
-export function srgbToLinearChannel(c: number): number {
-  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-}
-
-export function linearToSrgbChannel(c: number): number {
-  const x = Math.max(c, 0);
-  return x <= 0.0031308 ? x * 12.92 : 1.055 * x ** (1 / 2.4) - 0.055;
-}
-
-export function srgbToLinear(rgb: readonly [number, number, number]): [number, number, number] {
-  return [srgbToLinearChannel(rgb[0]), srgbToLinearChannel(rgb[1]), srgbToLinearChannel(rgb[2])];
-}
-
-export function linearToSrgb(rgb: readonly [number, number, number]): [number, number, number] {
-  return [linearToSrgbChannel(rgb[0]), linearToSrgbChannel(rgb[1]), linearToSrgbChannel(rgb[2])];
-}
-
 /** ST 2084 constants (ITU-R BT.2100). */
 const PQ_M1 = 2610 / 16384;
 const PQ_M2 = (2523 / 4096) * 128;
@@ -231,12 +207,6 @@ export function isColorManagementActive(
 ): boolean {
   if (!settings) return false;
   return settings.outputColor !== 'rec709-sdr' || settings.workingSpace !== 'rec709';
-}
-
-export function isDefaultColorManagement(
-  settings: ColorManagementSettings | undefined | null,
-): boolean {
-  return !isColorManagementActive(settings);
 }
 
 export function normalizeColorManagement(raw: unknown): ColorManagementSettings {
@@ -538,6 +508,6 @@ export function getColorDebugSnapshot(): ColorDebugSnapshot {
   return { ...colorDebugSnapshot };
 }
 
-export function __resetColorDebugForTests(): void {
+function __resetColorDebugForTests(): void {
   colorDebugSnapshot = { ...DEFAULT_COLOR_DEBUG };
 }

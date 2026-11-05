@@ -57,7 +57,7 @@ import { encodeVideoFrames } from './webcodecsClipEncode';
 import { encodeTimelineComposite } from './webcodecsTimelineExport';
 
 export type { GpuCompositorKind } from './webcodecsCompositor';
-export type { ExportVideoCodec, ResolvedEncoderCodec, VideoEncoderConfigWithColorSpace } from './webcodecsCodec';
+;
 export {
   EXPORT_BITRATE_MODE,
   REC709_COLOR_SPACE,
@@ -68,8 +68,8 @@ export {
   buildVideoEncoderConfig,
   codecCandidates,
   crfToBitsPerPixel,
-  getLastEncoderColorSpace,
-  getLastResolvedEncoderCodec,
+  
+  
   h264CodecString,
   isWebCodecsAvailable,
   resolveEncoderBitrate,
@@ -225,15 +225,4 @@ export async function encodeVideoWithWebCodecs(
   } finally {
     compositor.gpuCompositor?.destroy();
   }
-}
-
-/** @deprecated Use encodeVideoWithWebCodecs + muxVideoWithAudio instead. */
-export async function encodeClipsWithWebCodecs(
-  clips: Clip[],
-  settings: ExportSettings,
-  onStatus: StatusCallback,
-  onProgress?: ProgressCallback,
-  transitions: ClipTransition[] = [],
-): Promise<Blob> {
-  return encodeVideoWithWebCodecs(clips, settings, onStatus, onProgress, 'auto', transitions);
 }

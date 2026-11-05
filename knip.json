@@ -1,0 +1,13 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/**/*.worker.ts",
+    "src/wasm/*Worker.ts",
+    "public/worklets/*.js",
+    "scripts/*.mjs",
+    "e2e/**/*.spec.ts"
+  ],
+  "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs", "e2e/**/*.ts"],
+  "ignoreExportsUsedInFile": true,
+  "ignoreDependencies": ["@ffmpeg/core", "@ffmpeg/core-mt"]
+}

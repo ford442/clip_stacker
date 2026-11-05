@@ -6,7 +6,6 @@ import { getTimelineClips } from './timelineClips';
 import { buildVideoStack, withPlacement } from './trackStacking';
 import { computeTotalDuration } from './transitions';
 import {
-  audioTracks,
   clipById,
   cloneTrack,
   cloneTracks,
@@ -28,13 +27,13 @@ import { acceptsClipKind, addTrack } from './trackLanes';
 // stays the one import for track edits.
 export {
   audioTracks,
-  clipById,
+  
   cloneTracks,
   createDefaultTracks,
   DEFAULT_TRACK_HEIGHT,
   findClipTrack,
-  getTrackClips,
-  MAIN_AUDIO_TRACK_ID,
+  
+  
   MAIN_VIDEO_TRACK_ID,
   MAX_TRACK_HEIGHT,
   MIN_TRACK_HEIGHT,
@@ -54,13 +53,13 @@ export {
   setTrackHeight,
   setTrackLocked,
   setTrackMuted,
-  trackForClip,
+  
 } from './trackLanes';
 export {
-  isTextOverlayLocked,
+  
   placeTextOverlayOnTrack,
   removeTextOverlayFromTracks,
-  textTrackOverlayIds,
+  
   visibleTextOverlays,
 } from './titleTracks';
 
@@ -284,37 +283,6 @@ export function appendClipToTracks(
   return next;
 }
 
-/**
- * Splice a clip into the lane right after another clip's out-point.
- *
- * This is a plain splice — it neither covers overlapping items nor shifts later
- * ones. The NLE overwrite / insert edits live in `editModes.ts`.
- */
-export function insertClipOnTrackAfter(
-  tracks: Track[],
-  afterClipId: string,
-  newClip: Clip,
-  allClips: Clip[],
-): Track[] {
-  const located = findClipTrack(tracks, afterClipId);
-  if (!located) {
-    return appendClipToTracks(tracks, newClip, [...allClips, newClip]);
-  }
-
-  const next = cloneTracks(tracks);
-  const track = next[located.trackIndex]!;
-  const afterItem = track.items[located.itemIndex]!;
-  const afterClip = clipById(allClips, afterClipId);
-  const insertTime = afterItem.startTime + (afterClip ? getClipDuration(afterClip) : 0);
-
-  track.items.splice(located.itemIndex + 1, 0, {
-    clipId: newClip.id,
-    startTime: insertTime,
-  });
-
-  return next;
-}
-
 /** Remove a clip from all tracks. */
 export function removeClipFromTracks(tracks: Track[], clipId: string): Track[] {
   return tracks.map((track) => ({
@@ -480,13 +448,6 @@ export function computeTracksDuration(
     const trackEnd = computeTrackEnd(track, clips);
     return Math.max(max, trackEnd);
   }, 0);
-}
-
-/** Collect concurrent audio-bed entries from dedicated audio tracks. */
-export function getConcurrentAudioTrackItems(
-  tracks: Track[],
-): TrackItem[] {
-  return audioTracks(tracks).flatMap((t) => t.items);
 }
 
 /**

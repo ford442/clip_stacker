@@ -30,16 +30,6 @@ export function getTransitionXfadeName(type: string): string {
   return getXfadeName(type);
 }
 
-/** @deprecated Use getTransitionXfadeName — kept for existing imports. */
-export const XFADE_MAP: Record<string, string> = new Proxy(
-  {},
-  {
-    get(_target, prop: string) {
-      return getXfadeName(prop);
-    },
-  },
-);
-
 // ---------------------------------------------------------------------------
 // Timeline math
 // ---------------------------------------------------------------------------

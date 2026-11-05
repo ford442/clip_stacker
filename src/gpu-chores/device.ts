@@ -10,10 +10,6 @@ export function adoptGpuDevice(device: GPUDevice): void {
   adopted = device;
 }
 
-export function releaseAdoptedGpuDevice(device?: GPUDevice): void {
-  if (!device || adopted === device) adopted = null;
-}
-
 export function peekChoresGpuDevice(): GPUDevice | null {
   return adopted ?? peekGpuDevice();
 }

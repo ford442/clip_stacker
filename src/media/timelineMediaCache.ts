@@ -22,15 +22,6 @@ export function getCachedWaveform(clipId: string): Float32Array | undefined {
   return waveformCache.get(clipId);
 }
 
-export function clearTimelineMediaCache(): void {
-  thumbnailCache.clear();
-  waveformCache.clear();
-  for (const controller of thumbControllers.values()) controller.abort();
-  for (const controller of waveControllers.values()) controller.abort();
-  thumbControllers.clear();
-  waveControllers.clear();
-}
-
 export function cancelTimelineMediaForClip(clipId: string): void {
   thumbControllers.get(clipId)?.abort();
   thumbControllers.delete(clipId);

@@ -28,9 +28,6 @@ import { ReverseChunkCache } from '../media/reverseFrames';
 import { clipIsReversed } from '../timeline/reverseClip';
 import type { CapturedFrame, FrameRequest, WorkerClip } from './previewWorkerProtocol';
 
-/** Ring-buffer depth per *active* layer (not per library clip). */
-export const PREVIEW_RING_BUFFER_CAPACITY = 12;
-
 export type CursorFactory = (
   blob: Blob,
   trimStart: number,

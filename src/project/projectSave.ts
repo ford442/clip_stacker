@@ -59,13 +59,6 @@ export function describeProjectSaveSuccessMessage(summary: ProjectSaveSummary): 
   return 'Project JSON exported.';
 }
 
-export function describeRemoteSaveStartStatus(summary: ProjectSaveSummary): string {
-  if (summary.clipCount > 0) {
-    return `Uploading clip 1/${summary.clipCount}...`;
-  }
-  return 'Saving project manifest to remote storage...';
-}
-
 export function describeRemoteSaveSuccessMessage(
   projectName: string,
   summary: ProjectSaveSummary,

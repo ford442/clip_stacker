@@ -239,7 +239,7 @@ export function getLastEncoderColorSpace(): OutputVideoColorSpace | null {
   return lastEncoderColorSpace;
 }
 
-export function __setLastResolvedEncoderCodecForTests(codec: ResolvedEncoderCodec | null): void {
+function __setLastResolvedEncoderCodecForTests(codec: ResolvedEncoderCodec | null): void {
   lastResolvedCodec = codec;
 }
 

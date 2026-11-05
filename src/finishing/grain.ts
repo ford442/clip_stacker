@@ -29,9 +29,6 @@ export type GrainQuality = 'classic' | 'film';
 /** Recommended grain amount when enabling the pass. */
 export const GRAIN_AMOUNT_RECOMMENDED = 0.35;
 
-export const GRAIN_SIZE_MIN = 0;
-export const GRAIN_SIZE_MAX = 1;
-
 export interface GrainVignetteSettings {
   enabled: boolean;
   /** Falloff strength 0 … 1. */
@@ -202,12 +199,6 @@ export function grainWantsOpticalBlur(pass: GrainSettings | undefined): boolean 
   const halationOn =
     Boolean(pass.halation?.enabled) && finiteOr(pass.halation?.amount, 0) > 1e-6;
   return bloom > 1e-6 || halationOn;
-}
-
-/** Matches WGSL: `max(halationRadius, 4)` when optical bloom is active. */
-export function grainOpticalBlurRadiusPx(pass: GrainSettings): number {
-  const radius = clamp(finiteOr(pass.halation?.radius, DEFAULT_GRAIN_HALATION.radius), 0.5, 32);
-  return Math.max(radius, 4);
 }
 
 /** Matches WGSL `sampleBlurred`: `sigma = max(radius * 0.4, 0.5)`. */

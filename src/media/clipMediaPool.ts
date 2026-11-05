@@ -11,8 +11,6 @@
 import type { Clip } from '../types';
 import { seekToFrame } from './videoFrameCapture';
 
-export const SEEK_TOLERANCE_SECONDS = 0.04;
-
 /** Max wait for a `<video>` seek before giving up on that layer. */
 export const SEEK_TIMEOUT_MS = 2500;
 

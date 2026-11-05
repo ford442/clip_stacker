@@ -34,15 +34,6 @@ export function morphClipId(afterClipIndex: number): string {
   return `__morph_${afterClipIndex}`;
 }
 
-export function createPendingMorphSegment(duration: number): MorphTransitionSegment {
-  return {
-    objectUrl: '',
-    fileName: '',
-    duration,
-    status: 'pending',
-  };
-}
-
 export function createGeneratingMorphSegment(
   duration: number,
   previous?: MorphTransitionSegment,

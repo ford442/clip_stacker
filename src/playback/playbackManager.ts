@@ -31,7 +31,7 @@ import { audioFxStore } from '../store/audioFxStore';
 // Analyser meter levels and the gain / pan envelope maths live in sibling
 // modules; re-exported for existing importers.
 export { ZERO_ANALYSER_LEVELS, type AnalyserLevels } from '../audio/analyserLevels';
-export { applyGainEnvelope, applyPanEnvelope, samplePanAt } from '../audio/gainEnvelope';
+export { applyGainEnvelope, applyPanEnvelope,  } from '../audio/gainEnvelope';
 
 export type PlaybackState = 'stopped' | 'playing' | 'paused';
 

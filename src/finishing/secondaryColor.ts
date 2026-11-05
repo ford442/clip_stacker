@@ -80,10 +80,6 @@ export const DEFAULT_SECONDARY_GRADE: SecondaryGrade = {
   invertMask: false,
 };
 
-export const DEFAULT_SECONDARY_COLOR_PARAMS = {
-  grades: [] as SecondaryGrade[],
-};
-
 export interface SecondaryGradePreset {
   id: string;
   label: string;

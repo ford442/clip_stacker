@@ -44,7 +44,7 @@ import { OVERLAY_TEXTURE_PREMULTIPLIED } from "./overlayBlit";
 export type {
   LayerDraw,
   LayerRenderParams,
-  NormalizedDestRect,
+  
 } from "./previewLayerUniforms";
 
 /**

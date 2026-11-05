@@ -45,17 +45,3 @@ export function downsample2d(
   }
   return out;
 }
-
-/** Mean absolute error per channel (0–255) between two RGBA buffers. */
-export function rgbaMeanAbsError(
-  a: Uint8Array | Uint8ClampedArray,
-  b: Uint8Array | Uint8ClampedArray,
-): number {
-  const n = Math.min(a.length, b.length);
-  if (n === 0) return 0;
-  let sum = 0;
-  for (let i = 0; i < n; i++) {
-    sum += Math.abs((a[i] ?? 0) - (b[i] ?? 0));
-  }
-  return sum / n;
-}

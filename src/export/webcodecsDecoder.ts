@@ -370,19 +370,3 @@ export class ClipFrameDecoder {
     }
   }
 }
-
-/**
- * Cheap probe: can this clip be served by the VideoDecoder path?
- * Returns false (never throws) when demux or decode support is missing.
- */
-export async function canDecodeClipWithWebCodecs(source: Blob): Promise<boolean> {
-  if (typeof VideoDecoder === 'undefined' || typeof EncodedVideoChunk === 'undefined') {
-    return false;
-  }
-  try {
-    const demuxed = await demuxClip(source);
-    return (await resolveDecoderConfig(demuxed.config)) !== null;
-  } catch {
-    return false;
-  }
-}

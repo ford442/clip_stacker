@@ -19,9 +19,6 @@ import { STAB_MATRIX_FLOATS, IDENTITY_STAB_MATRIX, type StabMatrix } from '../wa
 export { STAB_MATRIX_FLOATS, IDENTITY_STAB_MATRIX };
 export type { StabMatrix };
 
-/** Default moving-average half-width, in analysis frames (~1 s at 24 fps). */
-export const DEFAULT_STABILIZE_SMOOTH_RADIUS = 24;
-
 /** Analysis sampling rate. Shake is high-frequency, so this stays near source fps. */
 export const DEFAULT_STABILIZE_ANALYSIS_FPS = 24;
 

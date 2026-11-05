@@ -6,15 +6,12 @@ import type {
 } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { registerExportStateSource } from '../export/exportSources';
-import { STORAGE_KEYS, safeGet, safeRemove, safeSet } from '../utils/storageKeys';
+import { safeGet, safeRemove, safeSet } from '../utils/storageKeys';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
 import {
   DEFAULT_COLOR_MANAGEMENT,
   type ColorManagementSettings,
 } from '../finishing/colorManagement';
-
-/** localStorage key for the self-hosted transcription endpoint (#auto-caption). */
-export const AUTO_CAPTION_ENDPOINT_KEY = STORAGE_KEYS.autoCaptionEndpoint.key;
 
 function readStoredEndpoint(): string {
   // A blocked storage reads as unset — the endpoint is a convenience.

@@ -131,11 +131,6 @@ export function audioContextLatency(): AudioLatencyClass {
   return contextLatency;
 }
 
-/** The latency class the next context will be created with. */
-export function preferredAudioLatency(): AudioLatencyClass {
-  return preferredLatency;
-}
-
 /** Ask for a latency class; applied when a context is (re)created. */
 export function preferAudioLatency(latency: AudioLatencyClass): void {
   preferredLatency = latency;

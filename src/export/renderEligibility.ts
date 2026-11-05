@@ -38,11 +38,6 @@ export function hasShaderTextOverlays(textOverlays: TextOverlay[]): boolean {
   return textOverlays.some((overlay) => overlay.fill === 'shader');
 }
 
-/** True when any overlay uses Canvas2D solid fill (not a GPU shader fill). */
-export function hasSolidTextOverlays(textOverlays: TextOverlay[]): boolean {
-  return textOverlays.some((overlay) => overlay.fill !== 'shader');
-}
-
 /**
  * Shader-only overlays with no boxes can be blitted onto the WebGPU canvas
  * and captured directly, skipping the extra 2D video copy.

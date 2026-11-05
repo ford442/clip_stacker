@@ -374,7 +374,7 @@ export function getTextFillRenderer(): Promise<TextFillRenderer> {
 }
 
 /** Test-only: forget the cached renderer and device subscriptions. */
-export function __resetTextFillRendererForTests(): void {
+function __resetTextFillRendererForTests(): void {
   cached = null;
   watchingDevice = false;
 }

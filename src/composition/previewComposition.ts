@@ -34,13 +34,13 @@ import { buildCaptionLayers, buildTextLayers } from './previewCompositionOverlay
 import type { CaptionPlanOptions, PreviewCompositionPlan } from './previewCompositionTypes';
 
 export type {
-  PreviewLayerKind,
-  PreviewPipRect,
-  PreviewTransitionCrossfade,
+  
+  
+  
   PreviewClipLayer,
   PreviewTextLayer,
   PreviewCaptionLayer,
-  PreviewCompositionLayer,
+  
   LayerFrameProvider,
   TimelineRenderOptions,
   CaptionPlanOptions,
@@ -50,7 +50,7 @@ export type {
 } from './previewCompositionTypes';
 export { captionPlanOptions } from './previewCompositionTypes';
 
-export type { CanvasSizeOptions } from './previewCompositionSegments';
+;
 export { buildClipTimelineSegments, filterBaseLayerTransitions } from './previewCompositionSegments';
 
 /**

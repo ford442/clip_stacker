@@ -52,6 +52,11 @@ jobs:
       - name: Check import cycles
         run: npm run check:cycles
 
+      - name: Dead code (knip, empty baseline)
+        # Unused files, exports, types and dependencies fail the build. Mark a
+        # deliberate extension point `@public` in its JSDoc instead.
+        run: npm run knip
+
       - name: Run tests
         run: npm test -- --run
 

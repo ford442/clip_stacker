@@ -1,6 +1,4 @@
 import { probeWebGpu, publishWebGpuProbe } from '../webgpu/webgpuProbe';
-import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
-import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
 import { probeH264EncoderAcceleration } from './webcodecsCodec';
 
 export interface BrowserCapabilities {
@@ -148,25 +146,4 @@ export function isCanvas2dAvailable(): boolean {
   } catch {
     return false;
   }
-}
-
-/** Return a human-readable summary of detected capabilities. */
-export function formatCapabilities(caps: BrowserCapabilities): string {
-  const lines: string[] = [];
-  lines.push(`WebCodecs: ${caps.webcodecs ? "✓" : "✗"}`);
-  lines.push(`Hardware H.264: ${caps.hardwareH264 ? "✓" : "✗"}`);
-  if (!caps.hardwareH264) {
-    lines.push(
-      `Software H.264: ${caps.h264EncoderAcceleration ? "✓" : "✗"}`,
-    );
-  }
-  lines.push(`WebGPU: ${caps.webgpu ? "✓" : "✗"}`);
-  lines.push(formatGpuChoreDiagnostics());
-  lines.push(formatMediaEngineDiagnostics());
-  lines.push(`OffscreenCanvas: ${caps.offscreenCanvas ? "✓" : "✗"}`);
-  lines.push(`MediaRecorder MP4: ${caps.mediaRecorderMp4 ? "✓" : "✗"}`);
-  lines.push(`SharedArrayBuffer: ${caps.sharedArrayBuffer ? "✓" : "✗"}`);
-  lines.push(`CrossOriginIsolated: ${caps.crossOriginIsolated ? "✓" : "✗"}`);
-  lines.push(`FFmpeg: ${caps.sharedArrayBuffer && caps.crossOriginIsolated ? "multi-threaded" : "single-threaded"}`);
-  return lines.join(" · ");
 }

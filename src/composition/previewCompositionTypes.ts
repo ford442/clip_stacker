@@ -18,8 +18,6 @@ import type {
 import type { Affine2x3 } from './clipTransform';
 import type { LayerKeyUniforms } from './overlayKey';
 
-export type PreviewLayerKind = 'base' | 'pip' | 'text' | 'caption';
-
 export interface PreviewPipRect {
   x: number;
   y: number;

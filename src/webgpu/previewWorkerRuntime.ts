@@ -67,23 +67,6 @@ export function isCanvasTransferred(canvas: HTMLCanvasElement): boolean {
   }
 }
 
-/**
- * Replace a neutered (transferred) canvas with a fresh element that can host
- * WebGPU (or a labeled layer-budget Canvas2D compositor — not a GPU fallback).
- */
-export function replaceTransferredCanvas(oldCanvas: HTMLCanvasElement): HTMLCanvasElement {
-  const next = document.createElement('canvas');
-  next.className = oldCanvas.className;
-  next.width = oldCanvas.width || 1280;
-  next.height = oldCanvas.height || 720;
-  for (const { name, value } of Array.from(oldCanvas.attributes)) {
-    if (name === 'width' || name === 'height' || name === 'class') continue;
-    next.setAttribute(name, value);
-  }
-  oldCanvas.parentElement?.replaceChild(next, oldCanvas);
-  return next;
-}
-
 export interface RenderTimelineParams {
   clips: WorkerClip[];
   clipGroups: ClipGroup[];

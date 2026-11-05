@@ -1,20 +1,6 @@
 import type { Track } from '../types';
 import { cloneTracks } from './trackBasics';
 
-// ─── Text / titles tracks (Phase C) ─────────────────────────────────────────
-
-/**
- * Ids of the text-overlay placements on `text` lanes, in lane order.
- *
- * A `text` lane's `TrackItem.clipId` holds a {@link TextOverlay} id (see the
- * type docs) so titles participate in lane mute / lock / reorder without a
- * second timeline schema. Time-coded captions stay on their own caption track —
- * see AGENTS.md.
- */
-export function textTrackOverlayIds(tracks: Track[]): string[] {
-  return tracks.filter((t) => t.kind === 'text').flatMap((t) => t.items.map((i) => i.clipId));
-}
-
 /**
  * Text overlays that should be drawn: every overlay not placed on a muted text
  * lane. Overlays with no lane placement are always visible, so projects that
@@ -31,13 +17,6 @@ export function visibleTextOverlays<T extends { id: string }>(
   );
   if (hidden.size === 0) return overlays;
   return overlays.filter((overlay) => !hidden.has(overlay.id));
-}
-
-/** Whether a text overlay sits on a locked titles lane. */
-export function isTextOverlayLocked(tracks: Track[], overlayId: string): boolean {
-  return tracks.some(
-    (t) => t.kind === 'text' && t.locked && t.items.some((i) => i.clipId === overlayId),
-  );
 }
 
 /** Place a text overlay on a titles lane at an output time. */

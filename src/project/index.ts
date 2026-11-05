@@ -11,12 +11,12 @@
  */
 
 export {
-  DEFAULT_CANVAS_HEIGHT,
-  DEFAULT_CANVAS_WIDTH,
+  
+  
   CHUNK_THRESHOLD_BYTES,
   MAX_UPLOAD_RETRY_ATTEMPTS,
   MAX_EMBED_FILE_BYTES,
-  MAX_MEDIA_DOWNLOAD_ATTEMPTS,
+  
 } from './constants';
 
 export { getClipDuration } from '../timeline/clipTiming';
@@ -27,41 +27,34 @@ export {
   sanitizeClipAdjustments,
 } from './clipHelpers';
 
-export { serializeProject, type SerializeProjectOptions } from './serialize';
+export { serializeProject,  } from './serialize';
 
 export {
   createProjectSnapshot,
-  projectSnapshotHasContent,
-  selectProjectSnapshot,
-  selectProjectSnapshotEditorFields,
-  type ProjectSnapshot,
+  
+  
+  
+  
 } from './snapshot';
 
 export {
   serializeProjectWithMedia,
-  type SerializeProjectWithMediaOptions,
+  
 } from './serializeWithMedia';
 
-export { downloadRemoteMedia, formatBytes } from './remoteMedia';
+export { downloadRemoteMedia,  } from './remoteMedia';
 
 export { applyProjectData } from './applyProjectData';
 
 export { loadRemoteProject } from './loadRemoteProject';
 
 export { ContaboStorageManagerClient } from './contaboClient';
-export type {
-  ContaboJob,
-  ContaboJobRequest,
-  ContaboJobResult,
-  ContaboJobSource,
-  ContaboJobStatus,
-  ContaboJobType,
-} from './contaboJobs';
+;
 
 export type {
   RemoteUploadProgressEvent,
   RemoteUploadErrorEvent,
-  AppliedProjectData,
+  
   RemoteProjectLoadProgressEvent,
   MediaLibraryItem,
 } from './types';

@@ -8,22 +8,22 @@
  */
 
 // Types
-export type { RendererOptions, RenderProgress, ProgressCallback, FrameSource } from "./canvasRendererTypes";
+export type {    FrameSource } from "./canvasRendererTypes";
 
 // Audio helpers
 export { bassLevelFromAnalyserBytes, bassLevelFromWasmBands } from "./canvasRendererAudio";
 
 // Canvas helpers
-export { calculateLetterboxRect, computeFadeAlpha, clampOpacity, waitForSeeked } from "./canvasRendererHelpers";
+;
 
 // Layer drawing
-export { drawClipLayer, drawTextLayer } from "./canvasRendererLayers";
+;
 
 // Compositing functions
 export {
   compositeFrame,
   drawTextOverlays,
-  renderTextOverlayCanvas,
+  
   renderTextOverlaysAsync,
 } from "./canvasRendererCompositor";
 
@@ -31,4 +31,4 @@ export {
 export { CanvasRenderer } from "./canvasRendererClip";
 
 // Timeline renderer
-export { TimelineCanvas2DRenderer } from "./canvasRendererTimeline";
+;

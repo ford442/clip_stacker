@@ -267,13 +267,3 @@ export function resolveAnimatedTextLayout(
     opacity,
   };
 }
-
-export function projectHasKeyframeAnimation(
-  clips: Clip[],
-  overlays: TextOverlay[],
-): boolean {
-  return (
-    clips.some(clipHasKeyframes) ||
-    overlays.some(textOverlayHasKeyframes)
-  );
-}

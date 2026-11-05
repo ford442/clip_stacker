@@ -1,7 +1,6 @@
 import { useCallback } from 'react';
 import type { ProcessingBackendId, SegmentOperation, SegmentRequest } from '../types';
 import { segmentActions, segmentStore, useSegmentSession, type SegmentSession } from '../store/segmentStore';
-import { editorStore } from '../store/editorStore';
 import { projectStore } from '../store/projectStore';
 import { ContaboStorageManagerClient } from '../project';
 import {
@@ -190,14 +189,4 @@ export function useSegmentWorkflow() {
   }, []);
 
   return { session, extract, sendToProcessing, importResult, replace, cancel, discard };
-}
-
-/** Selected clip's trim window, the default segment. */
-export function defaultSegmentRange(clipId: string): SegmentRange | null {
-  const clip = editorStore.getState().clips.find((c) => c.id === clipId);
-  if (!clip) return null;
-  return {
-    startSec: clip.trimStart,
-    endSec: Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration,
-  };
 }

@@ -558,4 +558,4 @@ function InspectorImpl({
  */
 export const Inspector = memo(InspectorImpl);
 
-export type { ClipValues };
+;

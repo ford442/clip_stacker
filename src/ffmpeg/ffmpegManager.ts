@@ -7,7 +7,6 @@ import {
   emitLoadStatus,
   emitProgress,
   extractErrorMessage,
-  FFMPEG_CORE_CDNS,
   FFMPEG_LOAD_TIMEOUT_MS,
   getFfmpegEnvironmentDiagnostics,
   loadMtCoreSources,
@@ -483,4 +482,4 @@ export function resetFfmpegManagerForTesting(): void {
   defaultManager = null;
 }
 
-export { FFMPEG_CORE_CDNS };
+;

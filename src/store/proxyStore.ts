@@ -137,4 +137,3 @@ export const proxyActions: Pick<
 > = proxyStore.getState();
 
 export const useProxyState = <T>(selector: (s: ProxyState) => T): T => useStore(proxyStore, selector);
-export const useProxiesEnabled = () => useStore(proxyStore, (s) => s.enabled);

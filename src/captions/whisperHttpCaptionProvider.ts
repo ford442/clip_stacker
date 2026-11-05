@@ -30,10 +30,6 @@ export function configureWhisperHttpProvider(url: string | null | undefined): vo
   endpoint = trimmed.length > 0 ? trimmed : null;
 }
 
-export function getWhisperHttpEndpoint(): string | null {
-  return endpoint;
-}
-
 /** Only `https:` (and same-origin / blob) endpoints — the app's CSP allows no other. */
 function isAllowedEndpoint(url: string): boolean {
   try {

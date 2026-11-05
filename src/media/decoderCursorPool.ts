@@ -1,23 +1,4 @@
-/**
- * Keyed pool of forward-only `DecoderFrameCursor`s.
- *
- * Extracted from `TimelineDecoderFrameProvider` so GPU export and the preview
- * worker share one implementation of the three rules that make a forward-only
- * decoder usable as a random-access frame source:
- *
- *  1. A request that goes meaningfully *backward* is a real discontinuity
- *     (loop, scrub, jog) — close the cursor and reopen from the previous sync
- *     sample rather than trying to advance a forward cursor backwards.
- *  2. A cursor that runs past its last frame is freed immediately; the next
- *     request for that key opens fresh.
- *  3. Live cursors are hard-capped like `ClipMediaPool`'s `<video>` budget, so
- *     a 200-clip timeline holds decoders for the *active* layers only.
- *
- * Cursor construction is injectable so tests (and the worker, which owns the
- * clip blobs itself) can supply their own opener.
- */
 
-import { DecoderFrameCursor } from './decoderCursor';
 
 /** Matches ClipMediaPool's <video> element budget so export and preview scale similarly. */
 export const DEFAULT_MAX_DECODER_CURSORS = 8;
@@ -133,15 +114,4 @@ export class DecoderCursorPool {
     this.cursors.clear();
     this.unsupported.clear();
   }
-}
-
-/** Default opener: a real `DecoderFrameCursor` over a clip blob and trim window. */
-export function blobCursorOpener(
-  resolve: (key: string) => { blob: Blob; trimStart: number; trimEnd: number } | null,
-): CursorOpener {
-  return async (key) => {
-    const media = resolve(key);
-    if (!media) throw new Error(`no media registered for ${key}`);
-    return DecoderFrameCursor.open(media.blob, media.trimStart, media.trimEnd);
-  };
 }

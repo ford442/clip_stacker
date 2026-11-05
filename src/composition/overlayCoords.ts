@@ -54,10 +54,6 @@ export function parseLayoutReferenceResolution(
   return { width, height };
 }
 
-export function formatLayoutReferenceResolution(canvas: CanvasSize): string {
-  return `${canvas.width}x${canvas.height}`;
-}
-
 export function normToPixelX(value: number, canvasWidth: number): number {
   return value * canvasWidth;
 }
@@ -252,17 +248,6 @@ export function textAnchorToNormalized(
   }
 
   return { x, y };
-}
-
-/** Rough text size in normalized output space (for anchors before measurement). */
-export function estimateTextSizeNormalized(
-  overlay: Pick<TextOverlay, 'text' | 'fontsize'>,
-  canvas: CanvasSize,
-): { width: number; height: number } {
-  const charWidth = overlay.fontsize * 0.55;
-  const width = Math.min(1, (overlay.text.length * charWidth) / canvas.width);
-  const height = overlay.fontsize / canvas.height;
-  return { width, height };
 }
 
 export interface PixelRect {

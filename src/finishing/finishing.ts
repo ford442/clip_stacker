@@ -76,14 +76,14 @@ export type { PrimaryColorSettings } from './primaryColor';
 export type { NoiseReductionSettings } from './noiseReduction';
 export type { SharpenSettings } from './sharpen';
 export type { ChromaticAberrationSettings } from './chromaticAberration';
-export type { BloomSettings, BloomMode } from './bloom';
-export type { CurvesSettings, CurvePoint, CurveChannel, LevelsSettings } from './curves';
-export type { SecondaryColorSettings, SecondaryGrade, SecondaryMaskType } from './secondaryColor';
+export type { BloomSettings,  } from './bloom';
+export type { CurvesSettings,    } from './curves';
+export type { SecondaryColorSettings, SecondaryGrade,  } from './secondaryColor';
 export type {
   GrainSettings,
-  GrainVignetteSettings,
-  GrainHalationSettings,
-  GrainPresetId,
+  
+  
+  
 } from './grain';
 
 export interface FinishingPassBase {

@@ -56,6 +56,6 @@ export function initCaptionProviders(): () => void {
   });
 }
 
-export function __resetCaptionProviderBootstrapForTests(): void {
+function __resetCaptionProviderBootstrapForTests(): void {
   registered = false;
 }

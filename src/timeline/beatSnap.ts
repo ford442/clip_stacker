@@ -44,33 +44,3 @@ export function snapSplitTimeToBeat(
   const snapped = snapTimeToBeat(splitTimeSec, beats, thresholdMs);
   return snapped ?? splitTimeSec;
 }
-
-/**
- * Snap a transition edge (output-timeline seconds) to the nearest beat from
- * any clip with beat metadata. Returns the snapped time or the original.
- */
-export function snapTransitionEdgeToBeat(
-  outputTimeSec: number,
-  clips: Clip[],
-  clipOutputStarts: Map<string, number>,
-  thresholdMs = DEFAULT_BEAT_SNAP_THRESHOLD_MS,
-): number {
-  let best: number | null = null;
-  let bestDist = thresholdMs / 1000;
-
-  for (const clip of clips) {
-    const beats = beatsInTrimWindow(clip);
-    if (!beats.length) continue;
-    const clipStart = clipOutputStarts.get(clip.id) ?? 0;
-    for (const beat of beats) {
-      const outputBeat = clipStart + (beat - clip.trimStart);
-      const dist = Math.abs(outputBeat - outputTimeSec);
-      if (dist <= bestDist) {
-        bestDist = dist;
-        best = outputBeat;
-      }
-    }
-  }
-
-  return best ?? outputTimeSec;
-}

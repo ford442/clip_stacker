@@ -31,6 +31,7 @@
     "test:coverage": "vitest --coverage",
     "typecheck": "tsc --noEmit",
     "typecheck:strict": "node scripts/check-strict.mjs",
+    "knip": "knip",
     "e2e": "playwright test",
     "e2e:update-goldens": "UPDATE_GOLDENS=1 playwright test e2e/goldens.spec.ts",
     "lint": "eslint .",

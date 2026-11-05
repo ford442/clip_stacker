@@ -85,7 +85,6 @@ async function resolveLayerFrame(
   return { frame, video: mediaPool.getVideo(clip) };
 }
 
-
 /**
  * WebGPU timeline compositor — renders a composition plan with multiple
  * video layers (base cuts, GPU transitions, PiP overlays).
@@ -511,30 +510,4 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     this.mediaPool.destroy();
     this.engine.destroy();
   }
-}
-
-export async function renderTimelinePreviewFrame(
-  engine: TimelinePreviewEngine,
-  clips: Clip[],
-  groups: Parameters<typeof buildPreviewCompositionPlan>[1],
-  transitions: Parameters<typeof buildPreviewCompositionPlan>[2],
-  overlays: Parameters<typeof buildPreviewCompositionPlan>[3],
-  settings: Parameters<typeof buildPreviewCompositionPlan>[4],
-  globalTime: number,
-  options?: TimelineRenderOptions,
-): Promise<PreviewCompositionPlan> {
-  return engine.renderTimelineFrame(
-    clips,
-    groups,
-    transitions,
-    overlays,
-    settings,
-    globalTime,
-    options,
-  );
-}
-
-/** Expose the underlying preview engine for export compositing. */
-export function getTimelinePreviewEngine(engine: TimelinePreviewEngine): PreviewEngine {
-  return (engine as unknown as { engine: PreviewEngine }).engine;
 }

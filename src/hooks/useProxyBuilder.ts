@@ -217,8 +217,3 @@ export function useProxyBuilder(
   );
 }
 
-/** Whether "Build proxy" should be offered for a clip. */
-export function canBuildProxy(clip: Clip): boolean {
-  return planProxy(clip).ok;
-}
-

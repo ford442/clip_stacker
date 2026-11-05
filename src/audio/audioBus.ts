@@ -383,8 +383,3 @@ export function masterBusActive(master: MasterBusSettings | undefined): boolean 
 export function activeBusEffectCount(fx: BusEffect[] | undefined): number {
   return (fx ?? []).filter(busEffectActive).length;
 }
-
-/** Short label for a loudness target (`-14 LUFS · -1 dBTP`). */
-export function describeLoudnessTarget(target: LoudnessTarget): string {
-  return `${target.targetLufs} LUFS · ${target.truePeakDb} dBTP`;
-}

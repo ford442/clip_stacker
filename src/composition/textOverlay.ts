@@ -17,9 +17,6 @@ import {
 } from '../utils/canvasDefaults';
 import { resolvePublicAssetUrl } from '../utils/publicAssetUrl';
 
-/** Virtual font filename written to the FFmpeg VFS before rendering. */
-export const DRAWTEXT_FONT_FILE = 'roboto.ttf';
-
 /** Default scroll speed: ~5 seconds to cross the screen. */
 export const DEFAULT_SCROLL_SPEED = 20;
 export const MIN_SCROLL_SPEED = 1;

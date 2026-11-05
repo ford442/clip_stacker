@@ -428,8 +428,9 @@ Two decisions worth stating, because the type system allows other readings:
   `TextOverlay` id — the holding lane's `kind` selects which pool the id
   resolves against, which is why adding titles lanes needed no schema bump. A
   new text overlay is placed on the first unlocked titles lane at the playhead,
-  so titles participate in lane mute (`visibleTextOverlays`), lock
-  (`isTextOverlayLocked`) and ordering. Overlays with no placement are always
+  so titles participate in lane mute (`visibleTextOverlays`) and ordering. Lock
+  only keeps new overlays off a lane: editing an overlay already on a locked
+  titles lane is not blocked yet. Overlays with no placement are always
   visible, so projects that never made a titles lane are unaffected.
 
 ### Auto-cut to music

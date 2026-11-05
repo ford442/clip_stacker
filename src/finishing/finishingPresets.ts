@@ -39,7 +39,7 @@ import { FINISHING_PASS_KEYS, FINISHING_PASS_SPECS, type FieldSpec } from './fin
 export {
   FINISHING_PASS_KEYS,
   FINISHING_PASS_SPECS,
-  FINISHING_PRESET_CUBE_MAX_CHARS,
+  
 } from './finishingPresetSpecs';
 
 export const FINISHING_PRESET_SCHEMA_ID = 'clip_stacker.finishing-preset';

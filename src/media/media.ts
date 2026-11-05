@@ -148,10 +148,6 @@ export function getMediaInfo(file: File): Promise<MediaInfo> {
   return loadMediaInfo(file, true);
 }
 
-export function getMediaDuration(file: File): Promise<number> {
-  return loadMediaInfo(file, false);
-}
-
 export function createClipId(): string {
   return (
     globalThis.crypto?.randomUUID?.() ??

@@ -48,7 +48,10 @@ export function getMediaStore(): MediaStore {
   return activeStore;
 }
 
-/** Swap the backing store (tests, and the #279 OPFS store at boot). */
+/**
+ * Swap the backing store (tests, and the #279 OPFS store at boot).
+ * @public — the seam #279 plugs into; nothing calls it yet.
+ */
 export function setMediaStore(store: MediaStore): void {
   activeStore = store;
 }

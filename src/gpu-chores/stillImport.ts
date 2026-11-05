@@ -27,12 +27,6 @@ export interface StillImportChoreResult {
 
 export { bitmapDimensions, rasterizeBitmapToRgba };
 
-export async function pixelsFromBitmap(
-  bitmap: StillBitmapSource,
-): Promise<{ pixels: Uint8ClampedArray; width: number; height: number }> {
-  return rasterizeBitmapToRgba(bitmap);
-}
-
 export async function decodeStillBitmap(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
   if (typeof createImageBitmap === 'function') {
     return createImageBitmap(file);

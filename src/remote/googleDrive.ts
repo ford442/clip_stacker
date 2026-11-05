@@ -3,8 +3,6 @@ import {
   buildDriveAuthUrl,
   DRIVE_AUTH_CHANNEL,
   DRIVE_AUTH_TIMEOUT_MS,
-  DRIVE_FILE_SCOPE,
-  GAPI_SCRIPT_URL,
   GIS_SCRIPT_URL,
   parseDriveAuthMessage,
   type DriveAuthMode,
@@ -27,7 +25,7 @@ import {
  * BroadcastChannel. A closed popup is not a failure; see `driveAuth.ts`.
  */
 
-export { DRIVE_FILE_SCOPE, GAPI_SCRIPT_URL, GIS_SCRIPT_URL };
+export {   GIS_SCRIPT_URL };
 
 /** Token lifetime is ~1h; renew a minute early so a job never starts with one about to lapse. */
 const TOKEN_EXPIRY_MARGIN_MS = 60_000;
@@ -98,10 +96,6 @@ function rememberToken(token: string, expiresIn: number): void {
 
 export function getCachedDriveToken(now = Date.now()): string | null {
   return cachedToken && cachedToken.expiresAt - TOKEN_EXPIRY_MARGIN_MS > now ? cachedToken.value : null;
-}
-
-export function clearDriveToken(): void {
-  cachedToken = null;
 }
 
 function openDriveWindow(config: GoogleDriveConfig, mode: 'token'): Promise<string>;

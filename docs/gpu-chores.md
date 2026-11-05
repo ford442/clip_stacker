@@ -43,4 +43,3 @@ Below 256², skip the Worker too (postMessage overhead). Kill switch: `?no_gpu_c
 
 - `gpuComputeAvailable()` → `{ available, reason }`
 - Inspector **Levels** crumb + **Copy Debug** `## gpu-chores` section
-- Last job: `getLastGpuChoreBreadcrumb()`

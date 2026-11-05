@@ -68,13 +68,6 @@ export function clipById(clips: Clip[], clipId: string): Clip | undefined {
   return clips.find((c) => c.id === clipId);
 }
 
-/** Return clips placed on a track in item order (not startTime order). */
-export function getTrackClips(track: Track, clips: Clip[]): Clip[] {
-  return track.items
-    .map((item) => clipById(clips, item.clipId))
-    .filter((c): c is Clip => c != null);
-}
-
 /** Find which track holds a clip (first match). */
 export function findClipTrack(
   tracks: Track[],

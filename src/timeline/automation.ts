@@ -7,11 +7,10 @@ import type { Clip } from '../types';
 import {
   integrateRateToSourceOffset,
   remappedClipDuration,
-  sampleRemapCurve,
 } from './timeRemap';
 import { getClipPlaybackRate } from './playbackRate';
 
-export { integrateRateToSourceOffset, sampleRemapCurve };
+export { integrateRateToSourceOffset,  };
 
 /**
  * Remap source-time waveform peaks to output-time buckets so the drawn

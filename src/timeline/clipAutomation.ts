@@ -8,16 +8,12 @@ import type { Keyframe } from './keyframes';
 import { sampleKeyframes, sortKeyframes } from './keyframes';
 import {
   clampClipVolume,
-  DEFAULT_CLIP_VOLUME,
   MAX_CLIP_VOLUME,
   MIN_CLIP_VOLUME,
 } from '../audio/audioVolume';
 import {
   clampClipPlaybackRate,
-  DEFAULT_CLIP_PLAYBACK_RATE,
   getClipPlaybackRate,
-  MAX_CLIP_PLAYBACK_RATE,
-  MIN_CLIP_PLAYBACK_RATE,
 } from './playbackRate';
 
 export const MIN_CLIP_PAN = -1;
@@ -25,9 +21,9 @@ export const MAX_CLIP_PAN = 1;
 export const DEFAULT_CLIP_PAN = 0;
 
 export {
-  DEFAULT_CLIP_PLAYBACK_RATE,
-  MIN_CLIP_PLAYBACK_RATE,
-  MAX_CLIP_PLAYBACK_RATE,
+  
+  
+  
   clampClipPlaybackRate,
 };
 
@@ -77,17 +73,6 @@ export function sampleAutomation(
   const track = clip.automation?.[prop];
   const fallback = defaultAutomationValue(clip, prop);
   return clampAutomationValue(prop, sampleKeyframes(track, localT, fallback));
-}
-
-/** True when the clip has at least one non-empty automation lane. */
-export function clipHasAutomation(
-  clip: Pick<Clip, 'automation'> | null | undefined,
-): boolean {
-  const automation = clip?.automation;
-  if (!automation) return false;
-  return (Object.keys(automation) as ClipAutomationProp[]).some(
-    (prop) => (automation[prop]?.length ?? 0) > 0,
-  );
 }
 
 /**
@@ -317,4 +302,4 @@ export function audioBufferToWav(buffer: AudioBuffer): ArrayBuffer {
   return out;
 }
 
-export { DEFAULT_CLIP_VOLUME };
+;

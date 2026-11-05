@@ -47,10 +47,10 @@ export type {
 } from './editModeCore';
 export {
   baseLaneOrder,
-  isBaseLane,
+  
   normalizeBaseLane,
   remapBaseTransitions,
-  shiftClipTrim,
+  
 } from './editModeCore';
 export { rippleDelete, rippleTrim, rollEdit, slideClip, slipClip } from './trimEdits';
 export { dropEdit, duplicateItem, insertEdit, overwriteEdit } from './dropEdits';
