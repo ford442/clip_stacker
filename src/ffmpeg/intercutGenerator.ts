@@ -22,7 +22,7 @@ import {
   type IntercutSlot,
   type IntercutSlice,
   type IntercutSourceClock,
-} from '../utils/intercut';
+} from '../timeline/intercut';
 import {
   assembleIntercutAudio,
   buildIntercutVideoFilterGraph,
@@ -37,9 +37,9 @@ import {
   toStereo,
   type IntercutFramePlan,
   type IntercutFrameSlice,
-} from '../utils/intercutRender';
-import { beatsInTrimWindow } from '../utils/beatMarkers';
-import { resolveTargetResolution } from '../utils/resolution';
+} from '../timeline/intercutRender';
+import { beatsInTrimWindow } from '../timeline/beatMarkers';
+import { resolveTargetResolution } from '../export/resolution';
 import type { IFfmpegRuntime } from './ffmpegRuntime';
 import {
   buildIntercutAudioExtractArgs,

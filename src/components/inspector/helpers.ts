@@ -1,6 +1,6 @@
 import { EXPORT_PRESETS, type Clip, type ClipAnimatableProp, type ExportSettings } from '../../types';
 import type { ClipValues } from './types';
-import type { PictureTransformProp } from '../../utils/animatedLayout';
+import type { PictureTransformProp } from '../../composition/animatedLayout';
 
 export const PIP_KEYFRAME_PROPS: Array<{
   prop: ClipAnimatableProp;
@@ -44,7 +44,7 @@ export const KEN_BURNS_PROPS: Array<{
 ];
 
 /**
- * Picture-transform lanes (`utils/clipTransform.ts`). Keyframe-only: an
+ * Picture-transform lanes (`composition/clipTransform.ts`). Keyframe-only: an
  * omitted lane is identity, so these default to the identity values.
  */
 export const TRANSFORM_KEYFRAME_PROPS: Array<{

@@ -5,12 +5,12 @@
  */
 
 import chromaticAberrationShader from './shaders/chromaticAberration.wgsl?raw';
-import type { ChromaticAberrationPass } from '../utils/finishing';
+import type { ChromaticAberrationPass } from '../finishing/finishing';
 import {
   CHROMATIC_ABERRATION_UNIFORM_FLOATS,
   isChromaticAberrationNeutral,
   packChromaticAberrationUniforms,
-} from '../utils/chromaticAberration';
+} from '../finishing/chromaticAberration';
 
 export class ChromaticAberrationGpuPass {
   private readonly pipeline: GPURenderPipeline;

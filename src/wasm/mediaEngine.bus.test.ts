@@ -10,7 +10,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type { Track } from '../types';
-import { createBusEffect, type MasterBusSettings } from '../utils/audioBus';
+import { createBusEffect, type MasterBusSettings } from '../audio/audioBus';
 import { planBusGraph, type BusGraphPlan } from '../audio/fxGraph';
 import {
   engineReport,
@@ -20,7 +20,7 @@ import {
   measuringExportPass,
   type ExportAudioBus,
   type ExportMixPass,
-} from '../utils/exportAudioBus';
+} from '../export/exportAudioBus';
 import {
   _resetMediaEngineLoadStateForTests,
   openTimelineMixStream,
@@ -48,6 +48,9 @@ beforeAll(async () => {
   const module = await WebAssembly.compile(readFileSync(path.resolve(ROOT, 'public/wasm/media_engine_fx.wasm')));
   const instance = await WebAssembly.instantiate(module, { env: { emscripten_notify_memory_growth() {} } });
   meterExports = instance.exports as unknown as MeterExports;
+  // Standalone module contract: run the static initializers (emmalloc's heap
+  // setup among them) before the first call.
+  (instance.exports as { _initialize?: () => void })._initialize?.();
 });
 
 beforeEach(() => {

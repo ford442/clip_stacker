@@ -17,15 +17,15 @@
  */
 
 import type { Clip } from '../types';
-import type { FinishingSettings } from '../utils/finishing';
-import type { ColorManagementSettings } from '../utils/colorManagement';
-import { getColorDebugSnapshot } from '../utils/colorManagement';
-import { resolveTimelineFinishing } from '../utils/finishing';
+import type { FinishingSettings } from '../finishing/finishing';
+import type { ColorManagementSettings } from '../finishing/colorManagement';
+import { getColorDebugSnapshot } from '../finishing/colorManagement';
+import { resolveTimelineFinishing } from '../finishing/finishing';
 import {
   buildPreviewCompositionPlan,
   type PreviewClipLayer,
   type PreviewCompositionPlan,
-} from '../utils/previewComposition';
+} from '../composition/previewComposition';
 import {
   onGpuDeviceLost,
   onGpuDeviceRecovered,
@@ -52,7 +52,7 @@ import type {
   WorkerClip,
 } from './previewWorkerProtocol';
 import { SCOPES_OFF } from './previewWorkerProtocol';
-import type { PreviewMediaSource } from '../utils/proxyMedia';
+import type { PreviewMediaSource } from '../media/proxyMedia';
 
 let renderer: WorkerTimelineRenderer | null = null;
 let decoderSource: PreviewDecoderSource | null = null;

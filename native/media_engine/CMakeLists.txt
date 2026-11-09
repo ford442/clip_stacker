@@ -19,6 +19,10 @@ if(CLIP_STACKER_HOST_TESTS)
   add_library(media_engine_dsp STATIC ${MEDIA_ENGINE_DSP_SOURCES})
   target_include_directories(media_engine_dsp PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/include")
   clip_stacker_host_target(media_engine_dsp)
+  # Writes src/fx/true_peak_taps.inc (scripts/gen-true-peak-taps.sh).
+  add_executable(gen_true_peak_taps tools/gen_true_peak_taps.cpp)
+  target_link_libraries(gen_true_peak_taps PRIVATE media_engine_dsp)
+  clip_stacker_host_target(gen_true_peak_taps)
   add_subdirectory(tests)
   return()
 endif()
@@ -46,6 +50,10 @@ clip_stacker_wasm_module(media_engine
     _insert_chain_process
     _insert_chain_destroy
     _time_stretch_remap
+    _time_stretch_session_create
+    _time_stretch_session_process
+    _time_stretch_session_hop
+    _time_stretch_session_destroy
 )
 
 # AudioWorkletGlobalScope has no fetch / importScripts, so the worklet gets a
@@ -56,7 +64,10 @@ target_include_directories(media_engine_fx PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
+# emmalloc: the worklet allocates only when a graph is built (never per
+# quantum: rt_safety_tests), so dlmalloc's speed buys nothing over a smaller module.
 clip_stacker_standalone_wasm(media_engine_fx
+  MALLOC emmalloc
   INITIAL_MEMORY 1048576
   MAXIMUM_MEMORY 33554432
   EXPORTED_FUNCTIONS

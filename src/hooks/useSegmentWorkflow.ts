@@ -1,23 +1,22 @@
 import { useCallback } from 'react';
 import type { ProcessingBackendId, SegmentOperation, SegmentRequest } from '../types';
 import { segmentActions, segmentStore, useSegmentSession, type SegmentSession } from '../store/segmentStore';
-import { settingsStore } from '../store/settingsStore';
-import { editorStore } from '../store/editorStore';
 import { projectStore } from '../store/projectStore';
-import { ContaboStorageManagerClient } from '../utils/project';
+import { ContaboStorageManagerClient } from '../project';
 import {
   extractSegment,
   type ExtractedSegment,
   type ExtractOptions,
-} from '../utils/segments/extractSegment';
+} from '../remote/segments/extractSegment';
 import {
   backendInfo,
   importProcessedSegment,
   OPERATION_LABELS,
   processSegment,
-} from '../utils/segments/processSegment';
-import { replaceSegment } from '../utils/segments/replaceSegment';
-import { createReplaceDeps, createSegmentDeps } from '../utils/segments/segmentDeps';
+} from '../remote/segments/processSegment';
+import { replaceSegment } from '../remote/segments/replaceSegment';
+import { createReplaceDeps, createSegmentDeps } from '../actions/segments/segmentDeps';
+import { renderJobStore } from '../store/renderJobStore';
 
 let controller: AbortController | null = null;
 
@@ -75,7 +74,7 @@ async function start({ request, backend, operation, working, run, afterResult }:
   } catch (error) {
     if (isAbort(error)) {
       segmentActions.setSession(null);
-      settingsStore.getState().setStatus('Segment job cancelled.');
+      renderJobStore.getState().setStatus('Segment job cancelled.');
     } else {
       segmentActions.patchSession({ phase: 'error', message: messageOf(error), progress: undefined });
     }
@@ -168,7 +167,7 @@ export function useSegmentWorkflow() {
     const current = segmentStore.getState().session;
     if (!current?.result || current.request.source.kind !== 'local') return;
     const { clipId } = current.request.source;
-    const { setStatus, setOutputUrl } = settingsStore.getState();
+    const { setStatus, setOutputUrl } = renderJobStore.getState();
     segmentActions.patchSession({ phase: 'working', message: 'Replacing the segment…' });
     const outcome = await replaceSegment(clipId, current.request, current.result, createReplaceDeps());
     if (outcome.ok) {
@@ -190,14 +189,4 @@ export function useSegmentWorkflow() {
   }, []);
 
   return { session, extract, sendToProcessing, importResult, replace, cancel, discard };
-}
-
-/** Selected clip's trim window, the default segment. */
-export function defaultSegmentRange(clipId: string): SegmentRange | null {
-  const clip = editorStore.getState().clips.find((c) => c.id === clipId);
-  if (!clip) return null;
-  return {
-    startSec: clip.trimStart,
-    endSec: Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration,
-  };
 }

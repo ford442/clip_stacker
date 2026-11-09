@@ -1,4 +1,4 @@
-export type TextFillMode = 'solid' | 'shader';
+
 
 export interface TextShaderParamDef {
   key: string;

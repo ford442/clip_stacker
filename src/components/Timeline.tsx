@@ -4,12 +4,11 @@ import type { ClipTransition } from '../types';
 import { useEditorCaptions, useEditorClips, useEditorClipGroups, useEditorMasterAudio, useEditorMasterAudioMarkers, useEditorTimelineClips, useEditorTracks, useEditorTextOverlays, useEditorTransitions, useSelectedCaptionId, useSelectedTextOverlayId, editorActions, uiActions } from '../store';
 import {
   clampPixelsPerSecond,
-  clipPixelWidth,
   DEFAULT_PIXELS_PER_SECOND,
   MIN_CLIP_PIXEL_WIDTH,
   timelineContentWidth,
-} from '../utils/timelineLayout';
-import { buildBeatMarkerLayouts } from '../utils/beatMarkers';
+} from '../timeline/timelineLayout';
+import { buildBeatMarkerLayouts } from '../timeline/beatMarkers';
 import {
   cancelTimelineMediaForClip,
   getCachedThumbnails,
@@ -17,19 +16,19 @@ import {
   orphanTransitionIndices,
   requestTimelineThumbnails,
   requestTimelineWaveform,
-} from '../utils/timelineMediaCache';
-import { computeTotalDuration } from '../utils/transitions';
+} from '../media/timelineMediaCache';
+import { computeTotalDuration } from '../timeline/transitions';
 import {
   buildTrackClipLayouts,
   computeTracksDuration,
   MAIN_VIDEO_TRACK_ID,
-} from '../utils/trackModel';
+} from '../timeline/trackModel';
 import { TrackLaneHeader } from './TrackLaneHeader';
-import type { VirtualClipLayout } from './timelineClipTypes';
+import type { VirtualClipLayout } from '../timeline/timelineClipTypes';
 import { TransitionEditor } from './TransitionEditor';
 import { VirtualClipBlock } from './VirtualClipBlock';
 import { MasterAudioTrack } from './MasterAudioTrack';
-import { clipHasRateAutomation } from '../utils/timeRemap';
+import { clipHasRateAutomation } from '../timeline/timeRemap';
 import SyncMarkerLane from './SyncMarkerLane';
 import { CaptionLane } from './CaptionLane';
 import MarkerConnectionCanvas from './MarkerConnectionCanvas';
@@ -61,10 +60,6 @@ interface Props {
   morphProcessingIndex?: number | null;
 }
 
-function effectiveDur(clip: { trimStart: number; trimEnd: number; duration: number }): number {
-  const end = Number.isNaN(clip.trimEnd) ? clip.duration : clip.trimEnd;
-  return Math.max(0.1, end - clip.trimStart);
-}
 
 const TRANSITION_COLORS: Record<string, string> = {
   none: 'var(--border)',
@@ -361,7 +356,7 @@ function TimelineImpl({
           masterMarkers={masterAudioMarkers}
           pixelsPerSecond={pixelsPerSecond}
           masterAudioLaneY={24} // Based on TimelineRuler height usually
-          getTrackY={(clipId) => {
+          getTrackY={() => {
             // Rough estimation for prototype, assumes MAIN_VIDEO_TRACK_ID
             return 48; // Space under ruler + audio lane
           }}

@@ -3,8 +3,8 @@ import {
   computeFadePreviewAlpha,
   getFadePreviewTiming,
   type FadeDirection,
-} from '../utils/fadePreview';
-import { seekToFrame } from '../utils/videoFrameCapture';
+} from '../composition/fadePreview';
+import { seekToFrame } from '../media/videoFrameCapture';
 
 const PREVIEW_WIDTH = 88;
 const PREVIEW_HEIGHT = 72;

@@ -30,3 +30,44 @@ export function bandEnergy(frequencyDb: Float32Array, start: number, end: number
   }
   return Math.min(1, sum / (end - start));
 }
+
+/** Reads an AnalyserNode into `AnalyserLevels`, reusing its sample buffers. */
+export class AnalyserLevelReader {
+  private timeDomain: Float32Array<ArrayBuffer> | null = null;
+  private frequency: Float32Array<ArrayBuffer> | null = null;
+
+  read(analyser: AnalyserNode): AnalyserLevels {
+    const binCount = analyser.frequencyBinCount;
+    if (!this.timeDomain || this.timeDomain.length !== analyser.fftSize) {
+      this.timeDomain = new Float32Array(analyser.fftSize);
+    }
+    if (!this.frequency || this.frequency.length !== binCount) {
+      this.frequency = new Float32Array(binCount);
+    }
+    const timeDomain = this.timeDomain;
+    const frequency = this.frequency;
+    analyser.getFloatTimeDomainData(timeDomain);
+    analyser.getFloatFrequencyData(frequency);
+
+    let sumSq = 0;
+    let peak = 0;
+    for (let i = 0; i < timeDomain.length; i++) {
+      const s = timeDomain[i];
+      sumSq += s * s;
+      const abs = Math.abs(s);
+      if (abs > peak) peak = abs;
+    }
+    const rms = Math.sqrt(sumSq / Math.max(1, timeDomain.length));
+
+    // Frequency data is in dB (−∞…0). Map bands to 0–1 loosely.
+    const bassEnd = Math.floor(binCount * 0.08);
+    const midEnd = Math.floor(binCount * 0.4);
+    return {
+      rms,
+      peak,
+      bass: bandEnergy(frequency, 0, bassEnd),
+      mid: bandEnergy(frequency, bassEnd, midEnd),
+      treble: bandEnergy(frequency, midEnd, binCount),
+    };
+  }
+}

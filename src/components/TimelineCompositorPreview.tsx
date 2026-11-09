@@ -14,9 +14,9 @@ import type {
   TextOverlayStyle,
   Track,
 } from '../types';
-import type { FinishingSettings } from '../utils/finishing';
-import type { ColorManagementSettings } from '../utils/colorManagement';
-import { computeTotalDuration } from '../utils/transitions';
+import type { FinishingSettings } from '../finishing/finishing';
+import type { ColorManagementSettings } from '../finishing/colorManagement';
+import { computeTotalDuration } from '../timeline/transitions';
 import { useTimelineAudioPlayback } from '../hooks/useTimelineAudioPlayback';
 import { usePlaybackAnalyserLevels } from '../hooks/usePlaybackAnalyserLevels';
 import {
@@ -34,22 +34,23 @@ import { PreviewScopes } from './PreviewScopes';
 import {
   renderTextOverlayCanvas,
   renderTextOverlaysAsync,
-} from '../utils/canvas-renderer-compositor';
-import type { TimelineCompositor } from '../utils/previewComposition';
+} from '../export/canvasRendererCompositor';
+import type { TimelineCompositor } from '../composition/previewComposition';
 import {
   detectCapabilities,
   isCanvas2dAvailable,
   previewBackendLabel,
   selectPreviewBackend,
   type PreviewBackend,
-} from '../utils/feature-detector';
-import { evaluatePreviewBudget } from '../utils/previewBudget';
-import { shouldResetFinishingTemporal } from '../utils/noiseReduction';
-import { previewMetrics } from '../utils/previewMetrics';
-import { useProxyState } from '../store/proxyStore';
-import { parseOutputResolution } from '../utils/resolution';
-import { createRenderScheduler } from '../utils/seekCoalescer';
+} from '../export/featureDetector';
+import { evaluatePreviewBudget } from '../composition/previewBudget';
+import { shouldResetFinishingTemporal } from '../finishing/noiseReduction';
+import { previewMetrics } from '../composition/previewMetrics';
+import { proxyStore, useProxyState } from '../store/proxyStore';
+import { parseOutputResolution } from '../export/resolution';
+import { createRenderScheduler } from '../composition/seekCoalescer';
 import { PreviewOverlayManipulator } from './PreviewOverlayManipulator';
+import { AudioSyncOffsetControl } from './AudioSyncOffsetControl';
 import { displayedWebGpuProbe, WebGpuHardFailBanner } from './previewWebGpuFail';
 
 export interface TimelinePreviewProps {
@@ -276,7 +277,7 @@ export function TimelineCompositorPreview({
           // remounts via canvasGeneration and uses main-thread WebGPU only when
           // the worker probe already succeeded.
           if (!skipPreviewWorkerRef.current && caps.offscreenCanvas) {
-            engine = await PreviewWorkerAdapter.create(canvas, timelineClips);
+            engine = await PreviewWorkerAdapter.create(canvas, timelineClips, () => proxyStore.getState());
           }
           if (!engine) {
             if (isCanvasTransferred(canvas)) {
@@ -302,7 +303,7 @@ export function TimelineCompositorPreview({
             }
           }
         } else if (chosen === 'canvas2d') {
-          const { TimelineCanvas2DRenderer } = await import('../utils/canvas-renderer-timeline');
+          const { TimelineCanvas2DRenderer } = await import('../export/canvasRendererTimeline');
           if (!alive) return;
           engine = TimelineCanvas2DRenderer.create(canvas, timelineClips);
         }
@@ -624,6 +625,7 @@ export function TimelineCompositorPreview({
               }}
             />
           </label>
+          {audioClockActive && <AudioSyncOffsetControl />}
           <span
             className="preview-gpu-badge"
             title={

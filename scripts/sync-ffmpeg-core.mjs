@@ -8,6 +8,9 @@
  *
  * Usage:
  *   node scripts/sync-ffmpeg-core.mjs           copy (npm run sync:ffmpeg-core)
+ *   node scripts/sync-ffmpeg-core.mjs --if-stale  copy only when public/ differs
+ *                                               (predev / prebuild; the cores are
+ *                                               gitignored, never committed)
  *   node scripts/sync-ffmpeg-core.mjs --check   exit 1 if public/ differs from
  *                                               node_modules, or the CDN fallback
  *                                               version in ffmpegCommon.ts does not
@@ -103,7 +106,7 @@ function readInstalled(root, pkg) {
  * @param {{ root?: string, check?: boolean, log?: (line: string) => void }} [options]
  * @returns {string[]} problems found (check mode) or left after copying
  */
-export function syncFfmpegCore({ root = ROOT, check = false, log = console.log } = {}) {
+export function syncFfmpegCore({ root = ROOT, check = false, ifStale = false, log = console.log } = {}) {
   const problems = [];
   const versions = new Set();
   for (const { pkg, dest } of FFMPEG_CORE_TARGETS) {
@@ -114,6 +117,8 @@ export function syncFfmpegCore({ root = ROOT, check = false, log = console.log }
       problems.push(
         ...diffDirs(distDir, destDir).map((line) => line.split(`${root}${path.sep}`).join('')),
       );
+    } else if (ifStale && diffDirs(distDir, destDir).length === 0) {
+      // predev / prebuild: already a verbatim copy, skip 64 MB of writes.
     } else {
       const files = syncDir(distDir, destDir);
       log(`[sync-ffmpeg-core] ${pkg}@${version} → ${dest}/ (${files.join(', ')})`);
@@ -142,11 +147,12 @@ const isMain =
 
 if (isMain) {
   const check = process.argv.includes('--check');
+  const ifStale = process.argv.includes('--if-stale');
   try {
-    const problems = syncFfmpegCore({ check });
+    const problems = syncFfmpegCore({ check, ifStale });
     if (problems.length > 0) {
       for (const line of problems) console.error(`[sync-ffmpeg-core] ${line}`);
-      if (check) console.error('[sync-ffmpeg-core] run `npm run sync:ffmpeg-core` and commit public/.');
+      if (check) console.error('[sync-ffmpeg-core] run `npm run sync:ffmpeg-core` (public/ffmpeg-core{,-mt} are generated, not committed).');
       process.exit(1);
     }
     if (check) console.log('[sync-ffmpeg-core] public/ffmpeg-core{,-mt} match node_modules.');

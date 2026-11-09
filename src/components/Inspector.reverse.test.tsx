@@ -3,7 +3,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import { Inspector } from './Inspector';
 import { editorStore, __resetEditorStoreForTests } from '../store/editorStore';
-import { createTestClip } from '../utils/project.test.helpers';
+import { createTestClip } from '../project/project.test.helpers';
 import type { Clip } from '../types';
 
 const NOOP_CAPTIONS = {

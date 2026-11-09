@@ -1,5 +1,3 @@
-import { FFmpeg } from "@ffmpeg/ffmpeg";
-import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import type {
   Clip,
   ExportSettings,
@@ -8,17 +6,15 @@ import type {
   RenderPlan,
 } from "../types";
 import { DEFAULT_EXPORT_SETTINGS } from "../types";
-import { getClipDuration } from "../utils/clipTiming";
-import { clipHasLoop, getClipLoopCount } from "../utils/playbackRate";
-import { clipIsReversed } from "../utils/reverseClip";
-import { buildTransitionFilterComplex } from "../utils/transitions";
+import { clipHasLoop, getClipLoopCount } from "../timeline/playbackRate";
+import { clipIsReversed } from "../timeline/reverseClip";
 import {
   allVideoClipsMatchOutputResolution,
   clipsHaveMixedVideoDimensions,
   clipsNeedResolutionNormalization,
   formatOutputResolution,
   usesFixedOutputResolution,
-} from "../utils/resolution";
+} from "../export/resolution";
 import {
   isFinishingActive,
   isBloomActive,
@@ -26,66 +22,17 @@ import {
   isCurvesActive,
   isLutFinishingPassActive,
   type FinishingSettings,
-} from "../utils/finishing";
-import { secondaryHasWindowGrades } from "../utils/secondaryColor";
-import { isStabilizationActive } from "../utils/stabilization";
-import { resolveLayerKey } from "../utils/overlayKey";
-import { pictureTransformPlanFields } from "../utils/renderEligibility";
-import { clipHasPictureTransform } from "../utils/animatedLayout";
-import { selectEncoderPath } from "../utils/encoderPath";
-import type { OutputColor } from "../utils/colorManagement";
+} from "../finishing/finishing";
+import { secondaryHasWindowGrades } from "../finishing/secondaryColor";
+import { isStabilizationActive } from "../media/stabilization";
+import { resolveLayerKey } from "../composition/overlayKey";
+import { pictureTransformPlanFields } from "../export/renderEligibility";
+import { clipHasPictureTransform } from "../composition/animatedLayout";
+import { selectEncoderPath } from "../export/encoderPath";
+import type { OutputColor } from "../finishing/colorManagement";
 import {
-  isFfmpegLoadFailed,
-  isFfmpegLoading,
-  recordFfmpegLog,
-  getLastFfmpegLogs,
-  getLastFfmpegError,
-  clearFfmpegLogs,
-  buildDetailedError,
-  extractErrorMessage,
-  clampProgress,
-  emitProgress,
-  emitLoadStatus,
-  getCdnLabel,
-  getLocalFfmpegCoreBaseURL,
-  getFfmpegCoreSources,
-  buildFfmpegLoadErrorMessage,
-  parseFfmpegTimeSeconds,
-  safeExec,
-  safeWriteFile,
-  safeReadFile,
-  execWithFfmpegProgress,
   clipNeedsEffects,
-  getSafeExtension,
   isStillImageClip,
-  buildSingleClipFilter,
-  getFfmpegEnvironmentDiagnostics,
-  toBlobURLWithRetry,
-  toBlobURLWithFallback,
-  withTimeout,
-  ensureFfmpeg,
-  ensureFont,
-  buildDrawtextFilter,
-  mergeClipsLossless,
-  performTwoPassEncode,
-  processClipPass1,
-  mergeClipsPass2,
-  mergeClipsWithTransitions,
-  DEFAULT_VIDEO_SIZE,
-  OUTPUT_WIDTH,
-  OUTPUT_HEIGHT,
-  PASS1_PROGRESS_START,
-  PASS1_PROGRESS_END,
-  FONT_CDN_URL,
-  FONT_VIRTUAL_NAME,
-  StatusCallback,
-  RenderProgressUpdate,
-  ProgressCallback,
-  FfmpegLogProgressContext,
-  MAX_LOG_BUFFER,
-  FFMPEG_CORE_CDNS,
-  FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
-  FFMPEG_LOAD_TIMEOUT_MS,
 } from "./core";
 
 /**

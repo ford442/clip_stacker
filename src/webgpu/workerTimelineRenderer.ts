@@ -1,11 +1,11 @@
-import { DEFAULT_FINISHING, type FinishingSettings } from '../utils/finishing';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
 import {
   isColorManagementActive,
   type ColorManagementSettings,
-} from '../utils/colorManagement';
-import { grainFrameSeedFromTime } from '../utils/grain';
-import { layerWarpDrawParams, transitionWarpParams } from '../utils/clipTransform';
-import type { PreviewClipLayer, PreviewCompositionPlan } from '../utils/previewComposition';
+} from '../finishing/colorManagement';
+import { grainFrameSeedFromTime } from '../finishing/grain';
+import { layerWarpDrawParams, transitionWarpParams } from '../composition/clipTransform';
+import type { PreviewClipLayer, PreviewCompositionPlan } from '../composition/previewComposition';
 import { PreviewEngine, type LayerDraw } from './previewEngine';
 import type { TransitionRenderParams } from './transitions/types';
 import {
@@ -222,13 +222,13 @@ export class WorkerTimelineRenderer {
     }
   }
 
-  private getClipFadeIn(layer: PreviewClipLayer): number {
+  private getClipFadeIn(_layer: PreviewClipLayer): number {
     // Fade values are baked into layer.opacity by the composition planner;
     // pass 0 to avoid double-fading in the shader.
     return 0;
   }
 
-  private getClipFadeOut(layer: PreviewClipLayer): number {
+  private getClipFadeOut(_layer: PreviewClipLayer): number {
     return 0;
   }
 

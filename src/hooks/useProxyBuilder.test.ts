@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Clip } from '../types';
 import { buildClipProxy, ProxyReconciler, type ProxyBuildDeps } from './useProxyBuilder';
-import { createMemoryMediaStore } from '../utils/mediaStore';
-import { makeClipProxy, proxyStoreKey } from '../utils/proxyMedia';
-import { ProxyBuildCancelled } from '../utils/proxyEncoder';
+import { createMemoryMediaStore } from '../project/mediaStore';
+import { makeClipProxy, proxyStoreKey } from '../media/proxyMedia';
+import { ProxyBuildCancelled } from '../media/proxyEncoder';
 import { proxyStore } from '../store/proxyStore';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {

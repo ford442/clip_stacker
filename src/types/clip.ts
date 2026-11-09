@@ -1,4 +1,4 @@
-import type { Keyframe } from '../utils/keyframes';
+import type { Keyframe } from '../timeline/keyframes';
 
 export type ClipKind = 'video' | 'audio';
 
@@ -29,7 +29,7 @@ export interface ChromaKeySettings {
 
 /**
  * Animatable scalar properties on clips: PiP layout, Ken Burns UV, and the
- * picture transform (`src/utils/clipTransform.ts`).
+ * picture transform (`src/composition/clipTransform.ts`).
  *
  * `x` / `y` / `width` / `height` stay the rect letterboxing and PiP use. The
  * transform props move the picture *within* that rect and are keyframe-only —
@@ -161,7 +161,7 @@ export interface Clip {
   /** Stacking order: 0 = base layer (sequential), 1+ = overlay on top of base. */
   layerIndex?: number;
   // ---------------------------------------------------------------------------
-  // Derived track placement (see `utils/trackStacking.ts`)
+  // Derived track placement (see `timeline/trackStacking.ts`)
   //
   // These are stamped onto the flattened timeline view by `toLegacyTimelineView`
   // from the clip's `TrackItem` and its holding `Track`. They are *derived*, not
@@ -223,7 +223,7 @@ export interface Clip {
    * Insert effects (EQ bands → compressor), constant over the clip. Run in
    * the media-engine C++ on both the export premix and the preview buffers.
    */
-  audioEffects?: import('../utils/audioEffects').ClipAudioEffects;
+  audioEffects?: import('../audio/audioEffects').ClipAudioEffects;
   /** Optional per-property keyframe animation (local clip time in seconds). */
   keyframes?: ClipKeyframes;
   /** True when the source is a still image (Ken Burns / UV keyframes). */
@@ -262,7 +262,7 @@ export interface Clip {
   /** Why analysis could not run for this clip (WASM disabled, undecodable, …). */
   stabilizeError?: string;
   // ---------------------------------------------------------------------------
-  // Preview proxy (see `utils/proxyMedia.ts`)
+  // Preview proxy (see `media/proxyMedia.ts`)
   // ---------------------------------------------------------------------------
   /**
    * The preview proxy built for this clip's source. Only the record travels;
@@ -329,7 +329,7 @@ export interface SerializedClip {
   loopCount?: number;
   automation?: ClipAutomation;
   /** Insert effects; omitted when the clip has none (old projects load dry). */
-  audioEffects?: import('../utils/audioEffects').ClipAudioEffects;
+  audioEffects?: import('../audio/audioEffects').ClipAudioEffects;
   keyframes?: ClipKeyframes;
   stillImage?: boolean;
   /** Beat onset times in seconds (source media), from audio analysis. */

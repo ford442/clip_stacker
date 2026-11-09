@@ -5,17 +5,16 @@ import type {
   ExportSettings,
   TextOverlay,
 } from '../types';
-import { resolveTimelineFinishing } from '../utils/finishing';
+import { resolveTimelineFinishing } from '../finishing/finishing';
 import type {
   PreviewCompositionPlan,
   PreviewDeviceState,
   TimelineCompositor,
   TimelineRenderOptions,
-} from '../utils/previewComposition';
-import { ClipMediaPool, seekVideoTo } from '../utils/clipMediaPool';
-import { previewMetrics } from '../utils/previewMetrics';
-import { resolvePreviewMedia, type PreviewMediaSource } from '../utils/proxyMedia';
-import { proxyStore } from '../store/proxyStore';
+} from '../composition/previewComposition';
+import { ClipMediaPool, seekVideoTo } from '../media/clipMediaPool';
+import { previewMetrics } from '../composition/previewMetrics';
+import { resolvePreviewMedia, type PreviewMediaSource, type ProxyLookup } from '../media/proxyMedia';
 import {
   groupFrameRequestsByMedia,
   toWorkerClip,
@@ -49,10 +48,13 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
    * the worker drops that clip's cursors and reopens on the new bytes.
    */
   private readonly sentMedia = new Map<string, Blob>();
+  /** The proxy state, read when media is resolved (the store lives above this layer). */
+  private readonly proxyLookup: () => ProxyLookup;
 
-  private constructor(runtime: PreviewWorkerRuntime, pool: ClipMediaPool) {
+  private constructor(runtime: PreviewWorkerRuntime, pool: ClipMediaPool, proxyLookup: () => ProxyLookup) {
     this.runtime = runtime;
     this.pool = pool;
+    this.proxyLookup = proxyLookup;
   }
 
   /**
@@ -63,10 +65,11 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   static async create(
     canvas: HTMLCanvasElement,
     clips: Clip[],
+    proxyLookup: () => ProxyLookup,
   ): Promise<PreviewWorkerAdapter | null> {
     const runtime = await PreviewWorkerRuntime.create(canvas);
     if (!runtime) return null;
-    const adapter = new PreviewWorkerAdapter(runtime, new ClipMediaPool());
+    const adapter = new PreviewWorkerAdapter(runtime, new ClipMediaPool(), proxyLookup);
     adapter.sendClipMedia(clips);
     return adapter;
   }
@@ -92,7 +95,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
    * the bytes.
    */
   private sendClipMedia(clips: Clip[]): void {
-    const lookup = proxyStore.getState();
+    const lookup = this.proxyLookup();
     const media: Array<{ clipId: string; blob: Blob; source: PreviewMediaSource }> = [];
     for (const clip of clips) {
       if (clip.kind !== 'video' || clip.stillImage || !clip.file) continue;
@@ -160,7 +163,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
       if (clip.kind !== 'video') return null;
 
       // The <video> fallback reads the same bytes the worker decoder would.
-      const media = resolvePreviewMedia(clip, proxyStore.getState());
+      const media = resolvePreviewMedia(clip, this.proxyLookup());
       const fromProxy = media.source === 'proxy' && Boolean(media.objectUrl);
       const video = this.pool.getVideoForUrl(clip.id, fromProxy ? media.objectUrl : clip.objectUrl);
       const seekStart = performance.now();

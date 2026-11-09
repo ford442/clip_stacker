@@ -18,8 +18,8 @@ import {
   buildAssDocument,
   resolveCaptionStyle,
   serializeSrt,
-} from '../utils/subtitles';
-import { getBundledFont } from '../utils/textOverlay';
+} from '../captions/subtitles';
+import { getBundledFont } from '../composition/textOverlay';
 import {
   ensureFfmpeg,
   ensureFont,

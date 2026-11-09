@@ -5,7 +5,7 @@ import {
   TRANSITION_UNIFORM_FLOATS,
   WARP_MASK_UNIFORM_OFFSET,
 } from './shaderTemplate';
-import { packWarpUniforms } from '../../utils/clipTransform';
+import { packWarpUniforms } from '../../composition/clipTransform';
 import {
   getTransitionDef,
   resolveCustomUniforms,

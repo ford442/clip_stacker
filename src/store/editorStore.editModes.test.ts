@@ -12,17 +12,17 @@ import {
   slipClip,
   type EditResult,
   type EditState,
-} from '../utils/editModes';
+} from '../timeline/editModes';
 import {
   createDefaultTracks,
   MAIN_VIDEO_TRACK_ID,
   OVERLAY_VIDEO_TRACK_ID,
-} from '../utils/trackModel';
-import { duplicateClip } from '../utils/clipOperations';
+} from '../timeline/trackModel';
+import { duplicateClip } from '../timeline/clipOperations';
 import { uiStore } from './uiStore';
-import { settingsStore } from './settingsStore';
 import { setPlayheadTime } from './playbackStore';
 import { useClipActions } from '../hooks/useClipActions';
+import { renderJobStore } from './renderJobStore';
 
 function trimmed(id: string, trimStart: number, len: number): Clip {
   return {
@@ -302,7 +302,7 @@ describe('duplicateItem', () => {
       mountActions().handleDuplicateClip();
       expect(editorStore.getState().clips).toHaveLength(3);
       expect(editorStore.getState().undoDepth).toBe(0);
-      expect(settingsStore.getState().status).toMatch(/locked/);
+      expect(renderJobStore.getState().status).toMatch(/locked/);
     });
   });
 });

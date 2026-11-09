@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
-import { TIMELINE_GUTTER_PX, timelineContentWidth } from '../utils/timelineLayout';
+import { TIMELINE_GUTTER_PX, timelineContentWidth } from '../timeline/timelineLayout';
 
 interface Props {
   totalDuration: number;

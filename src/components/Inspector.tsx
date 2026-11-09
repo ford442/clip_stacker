@@ -1,7 +1,7 @@
 import { memo, useEffect, useRef, useState, useMemo } from 'react';
 import type { ClipAnimatableProp, ExportSettings } from '../types';
 import { RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
-import { resolveClipLocalTimeAtGlobal } from '../utils/previewComposition';
+import { resolveClipLocalTimeAtGlobal } from '../composition/previewComposition';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
@@ -15,21 +15,21 @@ import {
   useEditorTransitions,
   useSelectedClipId,
 } from '../store';
-import { extractThumbnails, MIN_CLIP_DURATION } from '../utils/media';
-import { isOverlayOffCanvas } from '../utils/project';
+import { extractThumbnails, MIN_CLIP_DURATION } from '../media/media';
+import { isOverlayOffCanvas } from '../project';
 import {
   clipLayoutToDisplayPixels,
   layoutPixelToNormValue,
-} from '../utils/overlayCoords';
-import { clipHasExtractableAudio, extractWaveformPeaks } from '../utils/waveform';
-import { clampClipVolume } from '../utils/audioVolume';
+} from '../composition/overlayCoords';
+import { clipHasExtractableAudio, extractWaveformPeaks } from '../media/waveform';
+import { clampClipVolume } from '../audio/audioVolume';
 import {
   clampClipLoopCount,
   clampClipPlaybackRate,
   DEFAULT_CLIP_PLAYBACK_RATE,
   getTrimmedSourceDuration,
   outputDurationForRate,
-} from '../utils/playbackRate';
+} from '../timeline/playbackRate';
 import {
   buildPipRect,
   buildLogoRect,
@@ -37,8 +37,8 @@ import {
   nextOverlayLayerIndex,
   parseCanvasSize,
   type PipCorner,
-} from '../utils/pipPreset';
-import { DEFAULT_CHROMA_KEY } from '../utils/overlayBlend';
+} from '../composition/pipPreset';
+import { DEFAULT_CHROMA_KEY } from '../composition/overlayBlend';
 import { InspectorClipTab } from './inspector/InspectorClipTab';
 import { clamp } from '../utils/math';
 import { LazyBoundary, lazyNamed } from './LazyBoundary';
@@ -53,6 +53,7 @@ import {
   SECONDS_PER_INSPECTOR_THUMBNAIL,
 } from './inspector/helpers';
 import type { ClipValues, InspectorProps, InspectorTab } from './inspector/types';
+import { renderJobStore } from '../store/renderJobStore';
 
 // The Clip tab is the default view; Captions (subtitle tooling, auto-caption,
 // FFmpeg caption modes) and Export (finishing / colour panels) load the first
@@ -75,15 +76,15 @@ function InspectorImpl({
   onReverseChange,
   captions,
 }: InspectorProps) {
-  const { exportSettings, finishing, colorManagement, rifeProcessing } = useStore(
+  const { exportSettings, finishing, colorManagement } = useStore(
     settingsStore,
     useShallow((s) => ({
       exportSettings: s.exportSettings,
       finishing: s.finishing,
       colorManagement: s.colorManagement,
-      rifeProcessing: s.rifeProcessingClipId !== null,
     })),
   );
+  const rifeProcessing = useStore(renderJobStore, (s) => s.rifeProcessingClipId !== null);
   const onExportSettingsChange = settingsActions.setExportSettings;
   const onFinishingChange = settingsActions.setFinishing;
   const onColorManagementChange = settingsActions.setColorManagement;
@@ -557,4 +558,4 @@ function InspectorImpl({
  */
 export const Inspector = memo(InspectorImpl);
 
-export type { ClipValues };
+;

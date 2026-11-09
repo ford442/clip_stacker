@@ -3,7 +3,7 @@
  * Runs analysis hops via the WASM module; suitable for clip load-time metadata.
  */
 
-import { clusterIoiBpm } from '../utils/tempo';
+import { clusterIoiBpm } from '../timeline/tempo';
 import {
   createAudioAnalyzer,
   type AudioAnalyzerHandle,

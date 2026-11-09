@@ -10,7 +10,7 @@ import {
   DEV_CONTENT_SECURITY_POLICY,
   cspMetaPlugin,
 } from './src/utils/csp.js';
-import { APP_COOP, DRIVE_AUTH_COOP, isDriveAuthDocument } from './src/utils/driveAuth.js';
+import { APP_COOP, DRIVE_AUTH_COOP, isDriveAuthDocument } from './src/remote/driveAuth.js';
 
 /**
  * Serve .1ijs (UTF-16LE dual-encoded JS) with an explicit charset so browsers

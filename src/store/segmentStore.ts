@@ -1,7 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
 import type { ProcessingBackendId, SegmentOperation, SegmentRequest } from '../types';
-import type { ExtractedSegment } from '../utils/segments/extractSegment';
+import type { ExtractedSegment } from '../remote/segments/extractSegment';
 
 /**
  * The one segment extract / process / replace in flight (or waiting to be

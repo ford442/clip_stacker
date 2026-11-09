@@ -1,10 +1,10 @@
 import { useCallback, useState } from "react";
 import type { ClipTransition } from "../types";
-import { getTimelineClips } from "../utils/timelineClips";
+import { getTimelineClips } from "../timeline/timelineClips";
 import {
   isMorphTransition,
   shouldRegenerateMorph,
-} from "../utils/morphTransition";
+} from "../remote/morphTransition";
 import type { UseEditHistoryResult } from "./useEditHistory";
 
 type TransitionActionsDeps = Pick<
@@ -12,7 +12,7 @@ type TransitionActionsDeps = Pick<
   "clips" | "clipGroups" | "setTransitions" | "pushHistoryDebounced"
 > & {};
 
-import { settingsStore } from "../store/settingsStore";
+import { renderJobStore } from '../store/renderJobStore';
 
 export function useTransitionActions({
   clips,
@@ -49,11 +49,11 @@ export function useTransitionActions({
         setMorphProcessingIndex(updated.afterClipIndex);
         const clipsForMorph = getTimelineClips(clips, clipGroups);
         void (async () => {
-          const { requestMorphSegment } = await import("../utils/morphGeneration");
+          const { requestMorphSegment } = await import("../remote/morphGeneration");
           await requestMorphSegment(
             updated,
             clipsForMorph,
-            settingsStore.getState().setStatus,
+            renderJobStore.getState().setStatus,
             (next) => {
               setTransitions((prev) =>
                 prev.map((t) =>

@@ -4,7 +4,7 @@
  * `WorkerTimelineRenderer` (preview worker, `workerTimelineRenderer.ts`).
  */
 
-import type { PreviewClipLayer, PreviewCompositionPlan } from '../utils/previewComposition';
+import type { PreviewClipLayer, PreviewCompositionPlan } from '../composition/previewComposition';
 import {
   combineLetterboxWithLayerUv,
   computeLetterboxUv,

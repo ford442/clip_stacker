@@ -3,30 +3,30 @@ import type {
   Clip,
   ClipKeyframes,
   ClipAutomation,
-  ExportSettings,
   OverlayBlendMode,
   VideoOutputFormat,
 } from "../types";
-import { sanitizeClipAdjustments, ContaboStorageManagerClient } from "../utils/project";
-import { getClipDuration } from "../utils/clipTiming";
-import { clampClipVolume } from "../utils/audioVolume";
-import { clampClipLoopCount, clampClipPlaybackRate } from "../utils/playbackRate";
-import { normalizeClipAutomation } from "../utils/clipAutomation";
-import { normalizeClipAudioEffects, type ClipAudioEffects } from "../utils/audioEffects";
-import { clipDisplayPixelsToNormalized } from "../utils/overlayCoords";
-import { parseCanvasSize } from "../utils/pipPreset";
-import { createKenBurnsKeyframes } from "../utils/animatedLayout";
-import { getMediaInfo } from "../utils/media";
-import type { ClipValues } from "../components/Inspector";
-import { DEFAULT_CHROMA_KEY } from "../utils/overlayBlend";
+import { sanitizeClipAdjustments, ContaboStorageManagerClient } from "../project";
+import { getClipDuration } from "../timeline/clipTiming";
+import { clampClipVolume } from "../audio/audioVolume";
+import { clampClipLoopCount, clampClipPlaybackRate } from "../timeline/playbackRate";
+import { normalizeClipAutomation } from "../timeline/clipAutomation";
+import { normalizeClipAudioEffects, type ClipAudioEffects } from "../audio/audioEffects";
+import { clipDisplayPixelsToNormalized } from "../composition/overlayCoords";
+import { parseCanvasSize } from "../composition/pipPreset";
+import { createKenBurnsKeyframes } from "../composition/animatedLayout";
+import { getMediaInfo } from "../media/media";
+import type { ClipValues } from "../types";
+import { DEFAULT_CHROMA_KEY } from "../composition/overlayBlend";
 import type { UseEditHistoryResult } from "./useEditHistory";
 import { setClipStabilize } from "./useClipStabilization";
 
 import { settingsStore } from "../store/settingsStore";
 import { editorActions, editorStore } from "../store/editorStore";
-import { isClipLocked, moveClipToVideoLayer } from "../utils/trackModel";
+import { isClipLocked, moveClipToVideoLayer } from "../timeline/trackModel";
 import { useStorageAuthToken, useStorageEndpoint } from "../store";
 import { clamp01Finite } from "../utils/math";
+import { renderJobStore } from '../store/renderJobStore';
 
 // FFmpeg is only needed once a clip action runs; see useRenderActions.
 const loadFfmpegService = () => import("../ffmpeg/ffmpegService");
@@ -92,7 +92,7 @@ export function useInspectorActions({
 
     let ffmpeg: Awaited<ReturnType<typeof loadFfmpegService>> | null = null;
     try {
-      const { setStatus } = settingsStore.getState();
+      const { setStatus } = renderJobStore.getState();
       ffmpeg = await loadFfmpegService();
       const wavBlob = await ffmpeg.extractAudioToWav(selectedClip, setStatus);
 
@@ -147,7 +147,7 @@ export function useInspectorActions({
       const recentLogs = ffmpeg?.getLastFfmpegLogs(20).join("\n");
       if (recentLogs)
         console.error("Last FFmpeg logs for extract:\n" + recentLogs);
-      settingsStore.getState().setStatus(`Audio extraction failed: ${err.message}`);
+      renderJobStore.getState().setStatus(`Audio extraction failed: ${err.message}`);
     }
   }, [selectedClip, storageEndpoint, storageAuthToken, setClips]);
 
@@ -277,7 +277,7 @@ export function useInspectorActions({
         };
       }),
     );
-    settingsStore.getState().setStatus("Ken Burns keyframes applied.");
+    renderJobStore.getState().setStatus("Ken Burns keyframes applied.");
   }, [selectedClipId, pushHistory, setClips]);
 
   const handleStabilizeChange = useCallback(
@@ -289,7 +289,7 @@ export function useInspectorActions({
           clip.id === selectedClipId ? setClipStabilize(clip, enabled) : clip,
         ),
       );
-      settingsStore
+      renderJobStore
         .getState()
         .setStatus(
           enabled
@@ -313,7 +313,7 @@ export function useInspectorActions({
           return next;
         }),
       );
-      settingsStore
+      renderJobStore
         .getState()
         .setStatus(enabled ? "Clip plays backward." : "Clip plays forward.");
     },
@@ -327,7 +327,7 @@ export function useInspectorActions({
       outputFormat: VideoOutputFormat = "mp4",
     ) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
-      const { rifeProcessingClipId, setRifeProcessingClipId, setStatus } = settingsStore.getState();
+      const { rifeProcessingClipId, setRifeProcessingClipId, setStatus } = renderJobStore.getState();
       if (rifeProcessingClipId) return; // Already processing
 
       // Capture the clip's current state (including originalFps if already set)
@@ -350,7 +350,7 @@ export function useInspectorActions({
         );
 
         // Step 2: Dynamically import to keep initial bundle lean
-        const { processClipWithRIFE } = await import("../utils/huggingface");
+        const { processClipWithRIFE } = await import("../remote/huggingface");
 
         setStatus("Sending trimmed clip to RIFE (HuggingFace)…");
         const { blob } = await processClipWithRIFE(
@@ -409,10 +409,10 @@ export function useInspectorActions({
         setStatus(`✨ RIFE ${modeDisplay} applied to "${clipSnapshot.title}".`);
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
-        settingsStore.getState().setStatus(`RIFE failed: ${message}`);
+        renderJobStore.getState().setStatus(`RIFE failed: ${message}`);
         console.error("RIFE processing error:", err);
       } finally {
-        settingsStore.getState().setRifeProcessingClipId(null);
+        renderJobStore.getState().setRifeProcessingClipId(null);
       }
     },
     [

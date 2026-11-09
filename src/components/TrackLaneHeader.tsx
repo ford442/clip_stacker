@@ -6,9 +6,9 @@ import {
   DEFAULT_TRACK_HEIGHT,
   MAX_TRACK_HEIGHT,
   MIN_TRACK_HEIGHT,
-} from '../utils/trackModel';
+} from '../timeline/trackModel';
 import { editorStore } from '../store/editorStore';
-import { activeBusEffectCount, laneDuckActive } from '../utils/audioBus';
+import { activeBusEffectCount, laneDuckActive } from '../audio/audioBus';
 import { LaneFxDialog } from './audio/BusFxDialog';
 
 /**
@@ -18,7 +18,7 @@ import { LaneFxDialog } from './audio/BusFxDialog';
  * owns the lane's name, its **M**(ute) / **L**(ock) toggles, its **FX** (the
  * lane bus: insert chain and ducking), the remove button and the
  * drag-to-resize handle. Everything routes through `editorActions`,
- * which delegates to the pure helpers in `utils/trackModel.ts` — this component
+ * which delegates to the pure helpers in `timeline/trackModel.ts` — this component
  * never mutates a `Track` itself.
  */
 

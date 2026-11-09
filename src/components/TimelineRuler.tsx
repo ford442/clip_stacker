@@ -6,7 +6,7 @@ import {
   rulerTickInterval,
   timelineContentWidth,
   timelineTimeAtOffset,
-} from '../utils/timelineLayout';
+} from '../timeline/timelineLayout';
 
 interface RulerProps {
   totalDuration: number;

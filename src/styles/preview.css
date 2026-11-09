@@ -196,6 +196,24 @@ audio {
   accent-color: var(--gold);
 }
 
+.preview-audio-offset {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.preview-audio-offset input[type="number"] {
+  width: 4.2rem;
+  font: inherit;
+  color: inherit;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-active);
+  border-radius: var(--radius-sm);
+  padding: 0.1rem 0.3rem;
+}
+
 .preview-webgpu-hard-fail {
   position: absolute;
   inset: 0;

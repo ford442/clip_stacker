@@ -33,14 +33,14 @@ import type {
   TextOverlay,
   TextOverlayStyle,
 } from '../types';
-import type { FinishingSettings } from '../utils/finishing';
-import type { ColorDebugSnapshot, ColorManagementSettings } from '../utils/colorManagement';
-import type { ColorGradeSettings } from '../utils/lut';
-import type { PreviewCompositionPlan } from '../utils/previewComposition';
+import type { FinishingSettings } from '../finishing/finishing';
+import type { ColorDebugSnapshot, ColorManagementSettings } from '../finishing/colorManagement';
+import type { ColorGradeSettings } from '../finishing/lut';
+import type { PreviewCompositionPlan } from '../composition/previewComposition';
 import type { GpuChoreJobSpec, GpuChoreResult } from '../gpu-chores/types';
 import type { WebGpuProbeResult } from './webgpuProbe';
 import type { GpuErrorLogEntry } from './gpuDevice';
-import type { PreviewMediaSource } from '../utils/proxyMedia';
+import type { PreviewMediaSource } from '../media/proxyMedia';
 
 /**
  * Clip descriptor sent to the worker — identical to Clip but without the

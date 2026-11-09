@@ -1,8 +1,8 @@
+import { selectTimelineClips } from '../store/selectors';
 import { useEffect, useRef, type RefObject } from 'react';
 import type { useVirtualizer } from '@tanstack/react-virtual';
 import { useSelectedClipId } from '../store';
 import { editorStore } from '../store/editorStore';
-import { getEffectiveTimelineClips } from '../utils/trackModel';
 
 /** Scrolls the virtualizer when selection changes without re-rendering the timeline track. */
 export function TimelineSelectionScroll({
@@ -21,8 +21,7 @@ export function TimelineSelectionScroll({
     if (scrolledForRef.current === selectedClipId) return;
     scrolledForRef.current = selectedClipId;
 
-    const { tracks, clips, clipGroups } = editorStore.getState();
-    const timelineClips = getEffectiveTimelineClips(tracks, clips, clipGroups);
+    const timelineClips = selectTimelineClips(editorStore.getState());
     const selectedIndex = timelineClips.findIndex((clip) => clip.id === selectedClipId);
     if (selectedIndex < 0) return;
     virtualizerRef.current?.scrollToIndex(selectedIndex, { align: 'auto' });

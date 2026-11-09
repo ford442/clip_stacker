@@ -7,5 +7,3 @@ export interface IFfmpegRuntime {
   listDir(path: string): Promise<{ name: string; isDir: boolean }[]>;
   terminate(): void;
 }
-
-export type FfmpegRuntimeFactory = () => IFfmpegRuntime;

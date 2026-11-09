@@ -35,11 +35,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Self-hosted FFmpeg cores match node_modules
-        run: npm run sync:ffmpeg-core -- --check
+      - name: Generate self-hosted FFmpeg cores from node_modules
+        run: npm run sync:ffmpeg-core && npm run sync:ffmpeg-core -- --check
 
       - name: Typecheck
         run: npm run typecheck
+
+      - name: Strict typecheck ratchet
+        # noUncheckedIndexedAccess + exactOptionalPropertyTypes: zero errors in
+        # scripts/strict-ratchet.json's strictDirs, and no growth elsewhere.
+        run: npm run typecheck:strict
 
       - name: Lint
         run: npm run lint
@@ -47,11 +52,53 @@ jobs:
       - name: Check import cycles
         run: npm run check:cycles
 
-      - name: Run tests
-        run: npm test -- --run
+      - name: Dead code (knip, empty baseline)
+        # Unused files, exports, types and dependencies fail the build. Mark a
+        # deliberate extension point `@public` in its JSDoc instead.
+        run: npm run knip
+
+      - name: Run tests (with coverage floors for the domain dirs)
+        run: npm run test:coverage -- --run
 
       - name: Build project
         run: npm run build
+
+  e2e:
+    name: Render regression harness (Playwright, SwiftShader WebGPU)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Build project
+        # prebuild generates the self-hosted FFmpeg cores from node_modules.
+        run: npm run build
+
+      - name: Goldens and smoke flows
+        # webServer in playwright.config.ts runs `npm run preview`.
+        run: npm run e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
 
   wasm:
     name: Build WASM modules
@@ -88,14 +135,40 @@ jobs:
           test -z "$(git ls-files --others --exclude-standard -- public/wasm)"
 
   native-host:
-    name: Native DSP host tests
+    name: Native DSP host tests (GCC)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       # Every shipped DSP module (audio_analysis, video_stabilize, media_engine
-      # incl. the WSOLA time stretch) built with the host compiler (no
-      # Emscripten) under -Werror, ASan + UBSan, run through ctest. Includes
-      # the THD+N goldens.
-      - name: Build and run ctest
+      # incl. the WSOLA time stretch and the bus graph) built with the host
+      # compiler (no Emscripten) under -Werror, ASan + UBSan +
+      # float-cast-overflow, run through ctest. Includes the THD+N goldens,
+      # the allocation-counting real-time checks and the FX property subset.
+      # `-L pr` skips the LONG_TEST_CASE battery, which nightly-native.yml runs.
+      - name: Build and run ctest (PR subset)
+        env:
+          HOST_CTEST_ARGS: -L pr
         run: bash scripts/test-native.sh
+
+  native-host-clang:
+    name: Native DSP host tests (clang) + fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The same suite under clang's sanitizers (clang's UBSan differs from
+      # GCC's; both run float-cast-overflow), then a short libFuzzer run of the
+      # effect rows.
+      - name: Build and run ctest (PR subset)
+        env:
+          CC: clang
+          CXX: clang++
+          HOST_BUILD_DIR: native/build-host-clang
+          HOST_CTEST_ARGS: -L pr
+        run: bash scripts/test-native.sh
+
+      - name: Fuzz the effect rows (30 s)
+        env:
+          FUZZ_SECONDS: 30
+        run: bash scripts/fuzz-native.sh

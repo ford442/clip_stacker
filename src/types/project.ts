@@ -66,14 +66,14 @@ export interface Project {
    */
   layoutReferenceResolution?: string;
   /** Final-stage 3D LUT color grade applied on the WebGPU export path. @deprecated Use `finishing.lut`. */
-  colorGrade?: import('../utils/lut').ColorGradeSettings;
+  colorGrade?: import('../finishing/lut').ColorGradeSettings;
   /** Ordered finishing pass chain (noise → primary → secondary → LUT → sharpen → grain). */
-  finishing?: import('../utils/finishing').FinishingSettings;
+  finishing?: import('../finishing/finishing').FinishingSettings;
   /**
    * Output color and working space. Omitted when both are the Rec.709 SDR
    * default, so older projects load unchanged.
    */
-  colorManagement?: import('../utils/colorManagement').ColorManagementSettings;
+  colorManagement?: import('../finishing/colorManagement').ColorManagementSettings;
   /**
    * How source media was stored when this project was saved. Used on load
    * to pick between `sourceMediaDataUrl` and `sourceMediaUrl` authoritatively,
@@ -86,7 +86,7 @@ export interface Project {
    * Master bus: FX after the lanes are summed, and the export loudness
    * target. Omitted on projects without either (they mix as before).
    */
-  masterBus?: import('../utils/audioBus').MasterBusSettings;
+  masterBus?: import('../audio/audioBus').MasterBusSettings;
   /** External music reference for lip-sync (visual anchor + export scratch track). */
   masterAudio?: SerializedMasterAudio;
   /** Global anchor points for text-based sync */

@@ -24,8 +24,8 @@ import {
   withHeap,
   _resetEmscriptenModuleForTests,
 } from './emscriptenLoader';
-import type { Keyframe } from '../utils/keyframes';
-import type { ClipAudioEffects, MasterLimiterSettings } from '../utils/audioEffects';
+import type { Keyframe } from '../timeline/keyframes';
+import type { ClipAudioEffects, MasterLimiterSettings } from '../audio/audioEffects';
 import type { BusGraphPlan } from '../audio/fxGraph';
 import {
   createBusSession,
@@ -52,20 +52,20 @@ import {
   sanitizedRate,
 } from './mediaEngineLayout';
 
-export { decodeMeterReading, type MixMeterReading } from './mediaEngineSession';
+export {  type MixMeterReading } from './mediaEngineSession';
 export {
-  MEDIA_ENGINE_CHANNELS,
-  MIX_BUS_FLAG_METER,
-  MIX_BUS_STRIDE,
-  MIX_METER,
-  MIX_ENTRY_FX_STRIDE,
+  
+  
+  
+  
+  
   MIX_ENTRY_STRIDE,
-  MIX_FLAG_EFFECTS,
-  MIX_FLAG_LINEAR_RESAMPLE,
+  
+  
   MIX_FX_STRIDE,
-  MIX_KEY_STRIDE,
-  MIX_SLICE_STRIDE,
-  MIX_SOURCE_MARGIN_FRAMES,
+  
+  
+  
   packAudioEffectRows,
   packLimiterRow,
 } from './mediaEngineLayout';

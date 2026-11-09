@@ -10,7 +10,7 @@ import {
   setPassAmount,
   setPassEnabled,
   type FinishingPassKey,
-} from '../utils/finishingStack';
+} from '../finishing/finishingStack';
 import { loadSectionState, revealSection, saveSectionOpen, isSectionOpen } from '../utils/sectionState';
 import {
   applyFinishingPresetDocument,

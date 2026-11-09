@@ -2,7 +2,6 @@
 
 #include "loudness.h"
 
-#include "cs_alloc.h"
 #include "cs_math.h"
 
 #include <algorithm>
@@ -32,6 +31,80 @@ double energy_to_lufs(double z) { return z > kSilenceEnergy ? kOffset + 10.0 * s
 double peak_db(float peak) { return peak > 0.f ? 20.0 * std::log10(static_cast<double>(peak)) : kNegInf; }
 
 }  // namespace
+
+// ---------------------------------------------------------------------------
+// LoudnessHistogram
+
+namespace {
+
+/** Bin of a block's energy; blocks louder than +5 LUFS share the top bin. */
+int bin_of(double energy) {
+  const double lufs = kOffset + 10.0 * std::log10(energy);
+  const double pos = std::floor((lufs - LoudnessHistogram::kMinLufs) * LoudnessHistogram::kBinsPerLu);
+  if (!(pos >= 0.0)) return 0;
+  return pos >= LoudnessHistogram::kBins ? LoudnessHistogram::kBins - 1 : static_cast<int>(pos);
+}
+
+}  // namespace
+
+void LoudnessHistogram::clear() {
+  std::fill(std::begin(energy_), std::end(energy_), 0.0);
+  std::fill(std::begin(count_), std::end(count_), 0LL);
+}
+
+void LoudnessHistogram::add(double energy) {
+  const int b = bin_of(energy);
+  energy_[b] += energy;
+  ++count_[b];
+}
+
+int LoudnessHistogram::first_bin(double gate, bool inclusive) const {
+  // Bins above the gate's own bin pass whole and bins below it fail whole;
+  // the gate's bin passes when its mean does.
+  const int b = bin_of(gate);
+  if (count_[b] == 0) return b + 1;
+  const double mean = energy_[b] / static_cast<double>(count_[b]);
+  return (inclusive ? mean >= gate : mean > gate) ? b : b + 1;
+}
+
+double LoudnessHistogram::gated_mean(double gate) const {
+  double sum = 0.0;
+  long long count = 0;
+  for (int b = first_bin(gate, false); b < kBins; ++b) {
+    sum += energy_[b];
+    count += count_[b];
+  }
+  return count > 0 ? sum / static_cast<double>(count) : 0.0;
+}
+
+double LoudnessHistogram::range(double gate) const {
+  const int first = first_bin(gate, true);
+  long long n = 0;
+  for (int b = first; b < kBins; ++b) n += count_[b];
+  if (n <= 0) return 0.0;
+  // The 10th and 95th percentiles of the sorted values (MATLAB rounding),
+  // each read as the mean of the bin that holds it.
+  const long long low = std::llround(static_cast<double>(n - 1) * 0.10);
+  const long long high = std::llround(static_cast<double>(n - 1) * 0.95);
+  double low_energy = 0.0;
+  double high_energy = 0.0;
+  long long seen = 0;
+  for (int b = first; b < kBins; ++b) {
+    if (count_[b] == 0) continue;
+    const long long next = seen + count_[b];
+    const double mean = energy_[b] / static_cast<double>(count_[b]);
+    if (low >= seen && low < next) low_energy = mean;
+    if (high >= seen && high < next) {
+      high_energy = mean;
+      break;
+    }
+    seen = next;
+  }
+  return low_energy > 0.0 && high_energy > 0.0 ? 10.0 * std::log10(high_energy / low_energy) : 0.0;
+}
+
+// ---------------------------------------------------------------------------
+// LoudnessMeter
 
 bool LoudnessMeter::init(double sample_rate, int channels) {
   if (!(sample_rate >= 8000.0) || !std::isfinite(sample_rate)) return false;
@@ -76,13 +149,13 @@ void LoudnessMeter::reset() {
   sub_pos_ = 0;
   sub_total_ = 0;
   blocks_.clear();
+  block_gated_sum_ = 0.0;
+  block_gated_count_ = 0;
   short_.clear();
-  short_sorted_ = 0;
   short_gated_sum_ = 0.0;
   short_gated_count_ = 0;
   true_peak_max_ = 0.f;
   sample_peak_max_ = 0.f;
-  full_ = false;
 }
 
 double LoudnessMeter::window_energy(int sub_blocks) const {
@@ -93,7 +166,12 @@ double LoudnessMeter::window_energy(int sub_blocks) const {
   return sum / (static_cast<double>(sub_blocks) * hop_);
 }
 
-bool LoudnessMeter::push(const float* frame) {
+void LoudnessMeter::push(const float* in) {
+  // A non-finite sample measures as silence: one inf would otherwise make
+  // the K-filter state, the histogram sums and both peaks inf (and the
+  // readings NaN) for the rest of the measurement.
+  float frame[2] = {0.f, 0.f};
+  for (int c = 0; c < channels_; ++c) frame[c] = std::isfinite(in[c]) ? in[c] : 0.f;
   float delayed[2];
   true_peak_max_ = std::max(true_peak_max_, true_peak_.push(frame, delayed));
   for (int c = 0; c < channels_; ++c) {
@@ -101,30 +179,32 @@ bool LoudnessMeter::push(const float* frame) {
     const double y = rlb_.process_d(c, pre_.process_d(c, frame[c]));
     hop_sum_ += y * y;
   }
-  if (++hop_pos_ < hop_) return !full_;
-
-  sub_[sub_pos_] = hop_sum_;
-  sub_pos_ = (sub_pos_ + 1) % kShortSubBlocks;
-  ++sub_total_;
+  if (++hop_pos_ < hop_) return;
+  push_sub_block(hop_sum_);
   hop_sum_ = 0.0;
   hop_pos_ = 0;
-  if (full_) return false;
-  if (sub_total_ >= kMomentarySubBlocks && !cs::try_push_back(blocks_, window_energy(kMomentarySubBlocks))) {
-    full_ = true;
-    return false;
+}
+
+void LoudnessMeter::push_sub_block(double sum) {
+  sub_[sub_pos_] = sum;
+  sub_pos_ = (sub_pos_ + 1) % kShortSubBlocks;
+  ++sub_total_;
+  if (sub_total_ >= kMomentarySubBlocks) {
+    const double z = window_energy(kMomentarySubBlocks);
+    if (z > kAbsoluteGateEnergy) {
+      blocks_.add(z);
+      block_gated_sum_ += z;
+      ++block_gated_count_;
+    }
   }
   if (sub_total_ >= kShortSubBlocks) {
     const double z = window_energy(kShortSubBlocks);
-    if (!cs::try_push_back(short_, z)) {
-      full_ = true;
-      return false;
-    }
     if (z >= kAbsoluteGateEnergy) {
+      short_.add(z);
       short_gated_sum_ += z;
       ++short_gated_count_;
     }
   }
-  return true;
 }
 
 double LoudnessMeter::momentary() const {
@@ -138,45 +218,19 @@ double LoudnessMeter::short_term() const {
 double LoudnessMeter::integrated() const {
   // BS.1770-4: blocks above the absolute gate set a relative gate 10 LU below
   // their mean; the loudness is the mean of the blocks above both.
-  double sum = 0.0;
-  long long count = 0;
-  for (double z : blocks_) {
-    if (z > kAbsoluteGateEnergy) {
-      sum += z;
-      ++count;
-    }
-  }
-  if (count == 0) return kNegInf;
-  const double relative = std::max(kAbsoluteGateEnergy, sum / static_cast<double>(count) / 10.0);
-  double gated = 0.0;
-  long long gated_count = 0;
-  for (double z : blocks_) {
-    if (z > relative) {
-      gated += z;
-      ++gated_count;
-    }
-  }
-  return gated_count > 0 ? energy_to_lufs(gated / static_cast<double>(gated_count)) : kNegInf;
+  if (block_gated_count_ == 0) return kNegInf;
+  const double mean = block_gated_sum_ / static_cast<double>(block_gated_count_);
+  const double relative = std::max(kAbsoluteGateEnergy, mean / 10.0);
+  const double gated = blocks_.gated_mean(relative);
+  return gated > 0.0 ? energy_to_lufs(gated) : kNegInf;
 }
 
 double LoudnessMeter::range() const {
-  if (short_gated_count_ == 0) return 0.0;
-  if (short_sorted_ < short_.size()) {
-    const auto mid = short_.begin() + static_cast<std::ptrdiff_t>(short_sorted_);
-    std::sort(mid, short_.end());
-    std::inplace_merge(short_.begin(), mid, short_.end());
-    short_sorted_ = short_.size();
-  }
   // EBU Tech 3342: absolute gate -70 LUFS, relative gate 20 LU below the
-  // absolute-gated mean, then the 10th to 95th percentile (MATLAB rounding).
+  // absolute-gated mean, then the 10th to 95th percentile.
+  if (short_gated_count_ == 0) return 0.0;
   const double mean = short_gated_sum_ / static_cast<double>(short_gated_count_);
-  const double gate = std::max(kAbsoluteGateEnergy, mean / 100.0);
-  const auto first = std::lower_bound(short_.begin(), short_.end(), gate);
-  const long long n = short_.end() - first;
-  if (n <= 0) return 0.0;
-  const long long low = std::llround(static_cast<double>(n - 1) * 0.10);
-  const long long high = std::llround(static_cast<double>(n - 1) * 0.95);
-  return 10.0 * std::log10(first[high] / first[low]);
+  return short_.range(std::max(kAbsoluteGateEnergy, mean / 100.0));
 }
 
 double LoudnessMeter::true_peak_db() const { return peak_db(true_peak_max_); }

@@ -1,5 +1,5 @@
 import { createStore } from 'zustand/vanilla';
-import { normalizeFinishingSettings, type FinishingSettings } from '../utils/finishing';
+import { normalizeFinishingSettings, type FinishingSettings } from '../finishing/finishing';
 import {
   BUILT_IN_FINISHING_PRESETS,
   FINISHING_PRESET_NAME_MAX,
@@ -13,10 +13,11 @@ import {
   type FinishingPresetApplyMode,
   type FinishingPresetDocument,
   type FinishingPresetStack,
-} from '../utils/finishingPresets';
+} from '../finishing/finishingPresets';
 import { editorStore } from './editorStore';
 import { settingsStore } from './settingsStore';
 import { STORAGE_KEYS, safeGet, safeSet } from '../utils/storageKeys';
+import { renderJobStore } from './renderJobStore';
 
 /**
  * User finishing presets — per browser, across projects (localStorage), never
@@ -200,7 +201,7 @@ export function deleteFinishingPreset(id: string): void {
 export function applyFinishingPresetDocument(doc: FinishingPresetDocument): FinishingSettings {
   const next = resolvePresetFinishing(doc, settingsStore.getState().finishing);
   editorStore.getState().applyFinishing(next);
-  settingsStore
+  renderJobStore
     .getState()
     .setStatus(`Applied finishing preset "${doc.name}" (${summarizePreset(doc)}). Undo restores the previous stack.`);
   return next;

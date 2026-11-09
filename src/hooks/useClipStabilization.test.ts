@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { setClipStabilize } from './useClipStabilization';
-import { createTestClip } from '../utils/project.test.helpers';
+import { createTestClip } from '../project/project.test.helpers';
 import type { ClipStabilization } from '../types';
 
 const STABILIZATION: ClipStabilization = {

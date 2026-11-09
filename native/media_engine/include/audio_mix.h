@@ -209,6 +209,8 @@ enum {
 
 /**
  * Mix output frames `[start_frame, start_frame + out_frames)` of the timeline
+ * (`start_frame` is a whole, non-negative f64 so hours-long programmes do not
+ * overflow an int; CS_EINVAL otherwise)
  * into interleaved f32 `out` (`out_frames * out_channels`, 1 or 2 channels).
  *
  * Every output frame is a pure function of its absolute index, so any chunking
@@ -225,7 +227,7 @@ enum {
 int mix_timeline_audio_range(
     float* out,
     int out_frames,
-    int start_frame,
+    double start_frame,
     int out_sample_rate,
     int out_channels,
     const float* pcm_blob,
@@ -335,7 +337,7 @@ int mix_fx_session_range(
     MixFxSession* session,
     float* out,
     int out_frames,
-    int start_frame,
+    double start_frame,
     const float* pcm_blob,
     int pcm_floats,
     const int* slices,
@@ -426,7 +428,7 @@ typedef struct LoudnessMeterHandle LoudnessMeterHandle;
 
 LoudnessMeterHandle* loudness_meter_create(int sample_rate, int channels);
 
-/** Feed `frames` interleaved frames. CS_ENOMEM if the block history cannot grow. */
+/** Feed `frames` interleaved frames. Never allocates (the history is a fixed histogram). */
 int loudness_meter_process(LoudnessMeterHandle* meter, const float* interleaved, int frames);
 
 /** Writes up to `capacity` doubles (`MIX_METER_MOMENTARY` .. `MIX_METER_SAMPLE_PEAK`); returns the count. */

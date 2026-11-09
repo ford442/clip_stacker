@@ -6,8 +6,12 @@
  * original UTF-8 .js files and rewrites the entry HTML to a tiny boot switcher
  * that loads .1ijs when the page is opened with ?utf16=1.
  *
+ * Opt-in: it doubles dist/assets, so `npm run build` runs it only with
+ * BUILD_UTF16=1 (or use `npm run build:utf16` / `--force` on an existing dist).
+ *
  * Usage (after vite build):
- *   node scripts/utf16-dual-encode.mjs [distDir]
+ *   BUILD_UTF16=1 node scripts/utf16-dual-encode.mjs [distDir]
+ *   node scripts/utf16-dual-encode.mjs --force [distDir]
  */
 
 import fs from 'node:fs';
@@ -263,7 +267,13 @@ main();
 }
 
 function main() {
-  const distDir = path.resolve(process.argv[2] || 'dist');
+  const args = process.argv.slice(2);
+  const force = args.includes('--force');
+  if (!force && process.env.BUILD_UTF16 !== '1') {
+    console.log('[utf16-dual] skipped (set BUILD_UTF16=1 to write .1ijs copies)');
+    return;
+  }
+  const distDir = path.resolve(args.find((a) => !a.startsWith('--')) || 'dist');
   console.log(`[utf16-dual] encoding assets in ${distDir} …`);
   const result = dualEncodeDist(distDir);
   console.log(

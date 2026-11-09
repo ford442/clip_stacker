@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { EffectsStack } from './EffectsStack';
 import { settingsStore, uiStore } from '../store';
 import { __resetUiStoreForTests } from '../store/uiStore';
-import { DEFAULT_FINISHING } from '../utils/finishing';
+import { DEFAULT_FINISHING } from '../finishing/finishing';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;

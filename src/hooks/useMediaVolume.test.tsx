@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useRef } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
-import { __resetSharedAudioContextForTests } from '../audio/context';
+import { __resetAudioServiceForTests as __resetSharedAudioContextForTests } from '../audio/audioService';
 import { useMediaVolume } from './useMediaVolume';
 
 function fakeAudioContext() {

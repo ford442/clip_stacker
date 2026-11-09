@@ -19,19 +19,18 @@ import {
   type PreviewClipLayer,
   type PreviewCompositionPlan,
   type PreviewTextLayer,
-} from '../utils/previewComposition';
-import { parseCanvasSize } from '../utils/pipPreset';
+} from '../composition/previewComposition';
+import { parseCanvasSize } from '../composition/pipPreset';
 import {
   applyClipLayoutAtPlayhead,
   applyTextOverlayPositionAtPlayhead,
-} from '../utils/overlayPositionEdit';
+} from '../composition/overlayPositionEdit';
 import {
   clipAspectRatio,
-} from '../utils/pipPreset';
+} from '../composition/pipPreset';
 import {
   clampPixelRectToCanvas,
   DEFAULT_SNAP_THRESHOLD_PX,
-  estimateTextSizeNormalized,
   hitTestResizeHandle,
   pointInRect,
   resizePixelRect,
@@ -39,10 +38,10 @@ import {
   type PixelRect,
   type ResizeHandle,
   type SnapGuide,
-} from '../utils/overlayCoords';
-import { textOverlayHasKeyframes } from '../utils/animatedLayout';
-import { clipHasKeyframes, setPictureTransformValue } from '../utils/animatedLayout';
-import { sampleKeyframes } from '../utils/keyframes';
+} from '../composition/overlayCoords';
+import { textOverlayHasKeyframes } from '../composition/animatedLayout';
+import { clipHasKeyframes, setPictureTransformValue } from '../composition/animatedLayout';
+import { sampleKeyframes } from '../timeline/keyframes';
 
 type ManipulableTarget =
   | { kind: 'pip'; clipId: string; rect: PixelRect; zIndex: number }

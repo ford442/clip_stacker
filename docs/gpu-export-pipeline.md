@@ -23,7 +23,7 @@ fallback and explicit override only.
 
 ## Stages
 
-1. **Decode** — `src/utils/webcodecs-decoder.ts`. Each clip is demuxed with
+1. **Decode** — `src/export/webcodecsDecoder.ts`. Each clip is demuxed with
    mp4box and decoded with a hardware `VideoDecoder`. Frames flow through a
    small ring buffer (`FRAME_RING_BUFFER_CAPACITY`) so decode overlaps
    composite + encode. Seeking is exact: decode starts at the last sync sample
@@ -35,14 +35,14 @@ fallback and explicit override only.
    export, not just the single-clip path:
    - `src/webgpu/exportCompositor.ts` (single-clip letterbox + fades + LUT)
      always used the `VideoDecoder` path above via `encodeVideoFramesFromDecoder`
-     (`src/utils/webcodecs.ts`).
+     (`src/export/webcodecs.ts`).
    - `src/webgpu/timelinePreview.ts` (transitions, PiP layers, keyframes,
      text overlays) is shared with the live preview, where scrubbing is
      genuine random access and a `<video>` element seek
-     (`src/utils/clipMediaPool.ts`) is the right tool. Export instead injects
+     (`src/media/clipMediaPool.ts`) is the right tool. Export instead injects
      a `LayerFrameProvider` (`TimelineDecoderFrameProvider`, in
-     `src/utils/decoderFrameProvider.ts`) via `TimelineRenderOptions.frameProvider`
-     — see `src/utils/decoderCursor.ts` — because export walks every layer's
+     `src/media/decoderFrameProvider.ts`) via `TimelineRenderOptions.frameProvider`
+     — see `src/media/decoderCursor.ts` — because export walks every layer's
      source time strictly forward and a sequential decoder is far cheaper
      than a seek per frame. Each timeline occurrence of a video layer (a base
      cut, a PiP layer, or one side of a crossfade) gets its own forward-only
@@ -52,7 +52,7 @@ fallback and explicit override only.
      render with the same WGSL shaders as the live preview, so export stays
      WYSIWYG regardless of frame source.
 3. **Encode (video)** — hardware `VideoEncoder` via `resolveEncoderCodec()`
-   (`src/utils/webcodecs.ts`). `ExportSettings.videoCodec` selects
+   (`src/export/webcodecs.ts`). `ExportSettings.videoCodec` selects
    `h264` (default) / `hevc` / `av1`; HEVC and AV1 are probed with
    `VideoEncoder.isConfigSupported` and silently fall back to hardware H.264.
    The H.264 level is chosen from the output resolution. Bitrate comes from
@@ -63,16 +63,16 @@ fallback and explicit override only.
    (`src/audio/schedule.ts`) places trimmed clips with volume and fades
    (including dissolve overlaps and PiP overlays). `OfflineAudioContext`
    renders the mix; `AudioEncoder` produces AAC-LC chunks
-   (`src/utils/webcodecs-audio.ts`).
-5. **Mux** — a single `Mp4Writer` session (`src/utils/container/`, backed by
+   (`src/export/webcodecsAudio.ts`).
+5. **Mux** — a single `Mp4Writer` session (`src/export/container/`, backed by
    Mediabunny) writes both video and audio tracks when the WebCodecs A/V path
    is selected (`webcodecs-av`). Otherwise it writes video-only and
    `muxVideoWithAudio` (`src/ffmpeg/mux.ts`) adds source audio via FFmpeg.
 
 ## Path selection
 
-`hybridMergeClips` (`src/utils/hybrid-encoder.ts`) consults
-`canUseGpuVideoEncoder` (`src/utils/renderEligibility.ts`). With WebGPU
+`hybridMergeClips` (`src/export/hybridEncoder.ts`) consults
+`canUseGpuVideoEncoder` (`src/export/renderEligibility.ts`). With WebGPU
 available, transitions, PiP/multi-layer stacks, keyframe animation, still
 images, color grades, and text overlays (solid and shader) all stay on the GPU
 path via the timeline compositor.
@@ -95,7 +95,7 @@ FFmpeg WASM is used only for:
 - audio extraction / WAV generation,
 - muxing source audio when WebCodecs AAC is unavailable (`webcodecs` path),
 - the explicit "Force FFmpeg" override,
-- full fallback when WebCodecs is unavailable (`feature-detector` reports
+- full fallback when WebCodecs is unavailable (`featureDetector` reports
   `webcodecs: false`) or a GPU encode attempt fails.
 
 ## Audio tolerance vs FFmpeg mux

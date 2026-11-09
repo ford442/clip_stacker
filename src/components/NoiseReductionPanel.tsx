@@ -2,12 +2,12 @@ import { useRef } from 'react';
 import {
   DEFAULT_NOISE_REDUCTION,
   type NoiseReductionPass,
-} from '../utils/finishing';
+} from '../finishing/finishing';
 import {
   NOISE_REDUCTION_MAX_RADIUS,
   NOISE_REDUCTION_QUALITY_OPTIONS,
   type NoiseReductionQuality,
-} from '../utils/noiseReduction';
+} from '../finishing/noiseReduction';
 
 interface Props {
   settings: NoiseReductionPass;

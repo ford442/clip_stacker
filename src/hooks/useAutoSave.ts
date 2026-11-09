@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
-import { applyProjectData } from '../utils/project';
+import { applyProjectData } from '../project';
 import {
   projectSnapshotHasContent,
   selectProjectSnapshot,
   selectProjectSnapshotEditorFields,
   type ProjectSnapshot,
-} from '../utils/project/snapshot';
-import type { EditSnapshot } from '../utils/editHistory';
+} from '../project/snapshot';
+import type { EditSnapshot } from '../timeline/editHistory';
 import {
   AUTO_SAVE_DEBOUNCE_MS,
   AUTO_SAVE_INTERVAL_MS,
@@ -21,10 +21,11 @@ import {
   sessionHasRecoverableWork,
   writeAutoSaveSession,
   type AutoSaveOffer,
-} from '../utils/autoSave';
+} from '../project/autoSave';
 
 import { settingsStore } from '../store/settingsStore';
 import { editorStore } from '../store/editorStore';
+import { renderJobStore } from '../store/renderJobStore';
 
 /**
  * Autosave and crash recovery. The saved state is the same
@@ -117,7 +118,7 @@ export function useAutoSave({
     clearAutoSave();
     setRecoveryOffer(null);
     setRecoveryResolved(true);
-    settingsStore.getState().setStatus('Autosave discarded. Starting with an empty project.');
+    renderJobStore.getState().setStatus('Autosave discarded. Starting with an empty project.');
   }, []);
 
   const handleRecover = useCallback(async () => {
@@ -186,7 +187,8 @@ export function useAutoSave({
         masterAudio: restored.masterAudio,
         masterBus: restored.masterBus,
       });
-      const { setStatus, setExportSettings } = settingsStore.getState();
+      const { setExportSettings } = settingsStore.getState();
+      const { setStatus } = renderJobStore.getState();
       if (session.exportSettings) {
         setExportSettings(session.exportSettings);
       }
@@ -210,7 +212,7 @@ export function useAutoSave({
         session.exportSettings ?? exportSettings,
       );
     } catch (error) {
-      settingsStore.getState().setStatus(`Could not recover autosave: ${(error as Error).message}`);
+      renderJobStore.getState().setStatus(`Could not recover autosave: ${(error as Error).message}`);
       handleDiscardRecovery();
     } finally {
       setIsRecovering(false);

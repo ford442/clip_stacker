@@ -1,4 +1,4 @@
-import { DEFAULT_LANE_DUCK, DUCK_LIMITS, type LaneDuck, type LaneDuckSettings } from '../../utils/audioBus';
+import { DEFAULT_LANE_DUCK, DUCK_LIMITS, type LaneDuck, type LaneDuckSettings } from '../../audio/audioBus';
 import { FxNumberField } from './FxNumberField';
 
 export interface DuckCandidate {

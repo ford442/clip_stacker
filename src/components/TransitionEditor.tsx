@@ -3,7 +3,7 @@ import type { ClipTransition } from "../types";
 import {
   MIN_TRANSITION_DURATION,
   MAX_TRANSITION_DURATION,
-} from "../utils/transitions";
+} from "../timeline/transitions";
 import {
   listTransitionOptions,
   getTransitionDef,
@@ -17,7 +17,7 @@ import {
   validateCustomExpression,
 } from "../webgpu/transitions/customShader";
 import { peekGpuDevice } from "../webgpu/gpuDevice";
-import { MORPH_TRANSITION_TYPE } from "../utils/morphTransition";
+import { MORPH_TRANSITION_TYPE } from "../remote/morphTransition";
 
 interface Props {
   transition: ClipTransition;

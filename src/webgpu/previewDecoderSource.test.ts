@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PreviewDecoderSource, decoderLayerKey } from './previewDecoderSource';
 import type { FrameRequest, WorkerClip } from './previewWorkerProtocol';
-import type { ForwardFrameCursor } from '../utils/decoderCursorPool';
+import type { ForwardFrameCursor } from '../media/decoderCursorPool';
 
 function videoClip(id: string, over: Partial<WorkerClip> = {}): WorkerClip {
   return {

@@ -5,7 +5,7 @@ import {
   AUDIO_EFFECTS_COMMIT_DEBOUNCE_MS,
   InspectorClipAudioEffectsSection,
 } from './InspectorClipAudioEffectsSection';
-import { DEFAULT_EQ_BAND, type ClipAudioEffects } from '../../utils/audioEffects';
+import { DEFAULT_EQ_BAND, type ClipAudioEffects } from '../../audio/audioEffects';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;

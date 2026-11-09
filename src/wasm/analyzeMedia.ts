@@ -2,15 +2,17 @@
  * Shared "object URL → offline beat analysis" path.
  *
  * Both the clip analysis hook and the master-audio analysis hook decode the
- * media with Web Audio, mix it to mono and push the PCM through the WASM
+ * media, mix it to mono and push the PCM through the WASM
  * analyzer — preferring a worker so a long song does not stall the UI thread,
  * falling back to main-thread analysis when Workers are unavailable.
  *
- * A single {@link MediaBeatAnalyzer} owns one AudioContext and one worker, so
- * repeated analyses reuse both instead of respawning per file.
+ * Decoding goes through `decodeAudio` at 48 kHz, so beat timestamps are the
+ * same on every machine (they used to follow the output device's rate). A
+ * single {@link MediaBeatAnalyzer} owns one worker, so repeated analyses
+ * reuse it instead of respawning per file.
  */
 
-import { decodeAudioBuffer } from '../utils/waveform';
+import { decodeAudio, DECODE_SAMPLE_RATE } from '../audio/decodeAudio';
 import { AudioAnalysisWorkerClient } from './audioAnalysisClient';
 import { analyzeAudioBuffer, type OfflineAnalysisResult } from './offlineAnalysis';
 
@@ -40,17 +42,7 @@ function unavailable(reason: string): OfflineAnalysisResult {
   };
 }
 
-function audioContextCtor(): typeof AudioContext | undefined {
-  if (typeof window === 'undefined') return undefined;
-  return (
-    window.AudioContext ||
-    (window as unknown as { webkitAudioContext?: typeof AudioContext })
-      .webkitAudioContext
-  );
-}
-
 export class MediaBeatAnalyzer {
-  private ctx: AudioContext | null = null;
   private client: AudioAnalysisWorkerClient | null = null;
   private clientTried = false;
 
@@ -60,19 +52,14 @@ export class MediaBeatAnalyzer {
    */
   async analyze(objectUrl: string): Promise<OfflineAnalysisResult> {
     if (!objectUrl) return unavailable('No media URL');
-
-    const Ctx = audioContextCtor();
-    if (!Ctx) return unavailable('Web Audio unavailable');
-
-    if (!this.ctx) {
-      try {
-        this.ctx = new Ctx();
-      } catch (err) {
-        return unavailable((err as Error)?.message || 'AudioContext failed');
-      }
+    if (
+      typeof OfflineAudioContext === 'undefined' &&
+      !(globalThis as { webkitOfflineAudioContext?: unknown }).webkitOfflineAudioContext
+    ) {
+      return unavailable('Web Audio unavailable');
     }
 
-    const buffer = await decodeAudioBuffer(objectUrl, this.ctx);
+    const buffer = await decodeAudio(objectUrl, { sampleRate: DECODE_SAMPLE_RATE });
 
     if (!this.clientTried) {
       this.clientTried = true;
@@ -91,12 +78,5 @@ export class MediaBeatAnalyzer {
     this.client?.destroy();
     this.client = null;
     this.clientTried = false;
-    const ctx = this.ctx;
-    this.ctx = null;
-    if (ctx) {
-      void ctx.close().catch(() => {
-        /* already closed */
-      });
-    }
   }
 }

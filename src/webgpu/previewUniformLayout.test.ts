@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import previewShader from './shaders/preview.wgsl?raw';
 import { AUDIO_UNIFORM_OFFSET } from '../wasm/audioReactiveUniforms';
-import { KEY_UNIFORM_FLOATS } from '../utils/overlayKey';
+import { KEY_UNIFORM_FLOATS } from '../composition/overlayKey';
 
 /**
  * `previewLayerUniforms.ts` packs `Uniforms` by hand from flat float offsets, so a

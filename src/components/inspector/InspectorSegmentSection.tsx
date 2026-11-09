@@ -2,9 +2,9 @@ import { useMemo, useState } from 'react';
 import type { Clip, ProcessingBackendId, SegmentOperation } from '../../types';
 import { useStorageEndpoint } from '../../store';
 import { useSegmentWorkflow } from '../../hooks/useSegmentWorkflow';
-import { chooseExtractRoute, SegmentError } from '../../utils/segments/extractSegment';
-import { backendInfo, OPERATION_LABELS, PROCESSING_BACKENDS } from '../../utils/segments/processSegment';
-import { MIN_CLIP_DURATION } from '../../utils/media';
+import { chooseExtractRoute, SegmentError } from '../../remote/segments/extractSegment';
+import { backendInfo, OPERATION_LABELS, PROCESSING_BACKENDS } from '../../remote/segments/processSegment';
+import { MIN_CLIP_DURATION } from '../../media/media';
 import { SegmentSessionView } from '../segments/SegmentSessionView';
 import { InspectorSection } from './InspectorSection';
 

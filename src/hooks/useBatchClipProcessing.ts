@@ -2,8 +2,9 @@ import { useCallback } from 'react';
 import type { Clip } from '../types';
 import { editorStore } from '../store/editorStore';
 import { settingsStore } from '../store/settingsStore';
-import type { BatchProcessingOptions } from '../utils/batchClipProcessing';
+import type { BatchProcessingOptions } from '../remote/batchClipProcessing';
 import type { UseEditHistoryResult } from './useEditHistory';
+import { renderJobStore } from '../store/renderJobStore';
 
 type BatchClipProcessingDeps = Pick<
   UseEditHistoryResult,
@@ -26,11 +27,11 @@ export function useBatchClipProcessing({
         (clip) => selectedIds.has(clip.id) && clip.kind === 'video',
       );
       if (selectedClips.length === 0) {
-        settingsStore.getState().setStatus('Select at least one video clip to process.');
+        renderJobStore.getState().setStatus('Select at least one video clip to process.');
         return false;
       }
 
-      const state = settingsStore.getState();
+      const state = renderJobStore.getState();
       if (state.rifeProcessingClipId || state.isRendering || state.intercutProcessing) return false;
       if (
         options.backend === 'browser-ffmpeg' &&
@@ -54,11 +55,11 @@ export function useBatchClipProcessing({
       try {
         const [ffmpeg, batchProcessing, media] = await Promise.all([
           import('../ffmpeg/ffmpegService'),
-          import('../utils/batchClipProcessing'),
-          import('../utils/media'),
+          import('../remote/batchClipProcessing'),
+          import('../media/media'),
         ]);
         const rife = options.backend === 'hf-rife'
-          ? await import('../utils/huggingface')
+          ? await import('../remote/huggingface')
           : null;
         const results = await batchProcessing.processClipBatch(
           selectedClips,
@@ -70,7 +71,7 @@ export function useBatchClipProcessing({
             muxProcessedVideoWithSourceAudio: ffmpeg.muxProcessedVideoWithSourceAudio,
             finalizeRenderedVideo: ffmpeg.finalizeRenderedVideo,
             getMediaInfo: media.getMediaInfo,
-            onStatus: (message) => settingsStore.getState().setStatus(message),
+            onStatus: (message) => renderJobStore.getState().setStatus(message),
           },
         );
 
@@ -109,19 +110,19 @@ export function useBatchClipProcessing({
           }),
         );
         committed = true;
-        settingsStore.getState().setStatus(
+        renderJobStore.getState().setStatus(
           `Processed ${results.length} clips. Results are in the library and ready to download.`,
         );
         return true;
       } catch (error) {
         if (!committed) objectUrls.forEach((url) => URL.revokeObjectURL(url));
         const message = error instanceof Error ? error.message : String(error);
-        settingsStore.getState().setStatus(`Batch processing failed: ${message}`);
+        renderJobStore.getState().setStatus(`Batch processing failed: ${message}`);
         console.error('Batch clip processing error:', error);
         return false;
       } finally {
-        if (settingsStore.getState().rifeProcessingClipId === BATCH_PROCESSING_ID) {
-          settingsStore.getState().setRifeProcessingClipId(null);
+        if (renderJobStore.getState().rifeProcessingClipId === BATCH_PROCESSING_ID) {
+          renderJobStore.getState().setRifeProcessingClipId(null);
         }
       }
     },

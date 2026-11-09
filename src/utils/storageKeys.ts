@@ -28,13 +28,13 @@ export interface StorageKeySpec {
 }
 
 export const STORAGE_KEYS = {
-  /** Autosaved project session (`utils/autoSave.ts`). */
+  /** Autosaved project session (`project/autoSave.ts`). */
   autoSave: {
     key: 'clip_stacker.autosave.v1',
     legacy: ['clip_stacker_autosave_v1'],
     area: 'local',
   },
-  /** In-flight chunked upload sessions (`utils/storageUpload.ts`). */
+  /** In-flight chunked upload sessions (`project/storageUpload.ts`). */
   uploadSessions: {
     key: 'clip_stacker.uploadSessions.v1',
     legacy: ['clip_stacker_upload_sessions_v1'],
@@ -49,6 +49,12 @@ export const STORAGE_KEYS = {
   /** Inspector section open state (`utils/sectionState.ts`). View state. */
   inspectorSections: {
     key: 'clip_stacker.inspectorSections.v1',
+    legacy: [],
+    area: 'local',
+  },
+  /** Per-browser A/V offset calibration in ms (`store/audioSyncStore.ts`). View state. */
+  audioSyncOffset: {
+    key: 'clip_stacker.audioSyncOffset.v1',
     legacy: [],
     area: 'local',
   },
@@ -76,7 +82,7 @@ export const STORAGE_KEYS = {
     legacy: ['clipStacker.autoCaptionEndpoint'],
     area: 'local',
   },
-  /** Last rate the speed lane was seeded with (`utils/speedLane.ts`). */
+  /** Last rate the speed lane was seeded with (`timeline/speedLane.ts`). */
   speedLaneSeedRate: {
     key: 'clip_stacker.speedLaneSeedRate.v1',
     legacy: ['clip-stacker:speed-lane-last-seed-rate'],

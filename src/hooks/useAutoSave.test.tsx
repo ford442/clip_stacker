@@ -2,17 +2,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
 import type { CaptionEntry, Clip, MasterAudio, SyncMarker } from '../types';
-import { DEFAULT_FINISHING, DEFAULT_SHARPEN, type FinishingSettings } from '../utils/finishing';
-import { DEFAULT_COLOR_MANAGEMENT, type ColorManagementSettings } from '../utils/colorManagement';
-import type { MasterBusSettings } from '../utils/audioBus';
-import { AUTO_SAVE_DEBOUNCE_MS, AUTO_SAVE_STORAGE_KEY, readAutoSaveSession } from '../utils/autoSave';
+import { DEFAULT_FINISHING, DEFAULT_SHARPEN, type FinishingSettings } from '../finishing/finishing';
+import { DEFAULT_COLOR_MANAGEMENT, type ColorManagementSettings } from '../finishing/colorManagement';
+import type { MasterBusSettings } from '../audio/audioBus';
+import { AUTO_SAVE_DEBOUNCE_MS, AUTO_SAVE_STORAGE_KEY, readAutoSaveSession } from '../project/autoSave';
 import { editorStore, __resetEditorStoreForTests } from '../store/editorStore';
 import { settingsStore } from '../store/settingsStore';
 import { useAutoSave } from './useAutoSave';
+import { renderJobStore } from '../store/renderJobStore';
 
 // happy-dom cannot decode media; recovery only needs a duration back.
-vi.mock('../utils/media', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../utils/media')>()),
+vi.mock('../media/media', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../media/media')>()),
   getMediaInfo: vi.fn(async (file: File) => ({
     duration: 2,
     objectUrl: URL.createObjectURL(file),
@@ -57,7 +58,7 @@ function resetStores(): void {
   __resetEditorStoreForTests();
   settingsStore.getState().setFinishing(DEFAULT_FINISHING);
   settingsStore.getState().setColorManagement(DEFAULT_COLOR_MANAGEMENT);
-  settingsStore.getState().setStatus('');
+  renderJobStore.getState().setStatus('');
 }
 
 describe('useAutoSave', () => {

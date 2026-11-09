@@ -3,7 +3,7 @@ import {
   BUNDLED_LUT_PRESETS,
   COLOR_LUT_NONE,
   type ColorGradeSettings,
-} from '../utils/lut';
+} from '../finishing/lut';
 
 interface Props {
   settings: ColorGradeSettings;

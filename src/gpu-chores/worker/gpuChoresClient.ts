@@ -109,7 +109,7 @@ export async function runWorkerAnalyzeStill(
   });
 }
 
-export function __resetChoresWorkerForTests(): void {
+function __resetChoresWorkerForTests(): void {
   worker?.terminate();
   worker = null;
   failed = false;

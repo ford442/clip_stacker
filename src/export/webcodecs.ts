@@ -1,0 +1,228 @@
+/**
+ * WebCodecs-based encoder for GPU-accelerated video export.
+ *
+ * Architecture (Holy Grail path):
+ *  - Decode: VideoDecoder (mp4box demux + ring buffer; see webcodecsDecoder.ts)
+ *  - Composite: WebGPU exportCompositor / timelinePreview (VideoFrame → shaders)
+ *  - Encode: VideoEncoder (hardware H.264/HEVC/AV1) ← canvas after GPU flush
+ *  - Mux: Mp4Writer (`container/`, Mediabunny) — video + optional WebCodecs AAC;
+ *    FFmpeg only for audio mux fallback via muxVideoWithAudio when the
+ *    AudioEncoder path is unavailable
+ *  - Decode fallback: HTMLVideoElement → requestVideoFrameCallback when a clip
+ *    cannot be demuxed/decoded with WebCodecs
+ *
+ * When transitions are active and WebGPU is available, the timeline compositor
+ * renders identical WGSL transition frames as preview (WYSIWYG export).
+ *
+ * Falls back gracefully; callers should wrap in try/catch and fall back to FFmpeg.
+ *
+ * Implementation is split by responsibility:
+ *  - webcodecsCodec.ts — codec probe, bitrate, progress stages
+ *  - webcodecsMux.ts — Mp4Writer session + optional AAC mix-in
+ *  - webcodecsCompositor.ts — canvas/WebGPU draw + overlay pass
+ *  - webcodecsClipEncode.ts — sequential per-clip encode
+ *  - webcodecsTimelineExport.ts — timeline compositor encode
+ */
+
+import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
+import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
+import { getClipDuration } from '../project';
+import { parseOutputResolution } from './resolution';
+import {
+  needsOverlayPass,
+  shouldUseTimelineGpuExport,
+} from './renderEligibility';
+import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
+import {
+  DEFAULT_COLOR_MANAGEMENT,
+  type ColorManagementSettings,
+} from '../finishing/colorManagement';
+import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
+import {
+  TARGET_FPS,
+  buildVideoEncoderConfig,
+  resolveEncoderBitrate,
+  resolveEncoderCodec,
+  webCodecsEncodeProgress,
+  WEBCODECS_PROGRESS_STAGES,
+} from './webcodecsCodec';
+import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecsMux';
+import type { CaptionPlanOptions } from '../composition/previewComposition';
+import {
+  DecoderTextOverlayPass,
+  resolveCompositor,
+  type GpuCompositorKind,
+} from './webcodecsCompositor';
+import { encodeVideoFrames } from './webcodecsClipEncode';
+import { encodeTimelineComposite } from './webcodecsTimelineExport';
+
+export type { GpuCompositorKind } from './webcodecsCompositor';
+;
+export {
+  EXPORT_BITRATE_MODE,
+  REC709_COLOR_SPACE,
+  VIDEO_ENCODER_LATENCY_MODE,
+  WEBCODECS_PROGRESS_STAGES,
+  AV1_10BIT_CODEC,
+  HEVC_MAIN10_CODEC,
+  buildVideoEncoderConfig,
+  codecCandidates,
+  crfToBitsPerPixel,
+  
+  
+  h264CodecString,
+  isWebCodecsAvailable,
+  resolveEncoderBitrate,
+  resolveEncoderCodec,
+} from './webcodecsCodec';
+
+/**
+ * Encode timeline video with hardware H.264. When `includeWebCodecsAudio` is
+ * true, timeline audio is mixed and encoded with `AudioEncoder` into the same
+ * MP4 writer session (no FFmpeg on the happy path).
+ */
+export async function encodeVideoWithWebCodecs(
+  clips: Clip[],
+  settings: ExportSettings,
+  onStatus: StatusCallback,
+  onProgress?: ProgressCallback,
+  compositorPreference: GpuCompositorKind = 'auto',
+  transitions: ClipTransition[] = [],
+  textOverlays: TextOverlay[] = [],
+  clipGroups: ClipGroup[] = [],
+  finishing: FinishingSettings = DEFAULT_FINISHING,
+  includeWebCodecsAudio = false,
+  /**
+   * Caption cues to burn into the composite. Pass these only when the caller
+   * wants burn-in — a soft subtitle mux must leave them out so the cues stay
+   * a separate stream (see `ffmpeg/captions.ts`).
+   */
+  captionBurnIn: CaptionPlanOptions = {},
+  colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
+): Promise<Blob> {
+  const { width, height } = parseOutputResolution(settings.outputResolution);
+
+  if (shouldUseTimelineGpuExport(clips, transitions, textOverlays, finishing)) {
+    const webGpuOk = await isWebGpuExportAvailable();
+    if (!webGpuOk) {
+      throw new Error('WebGPU required for GPU timeline compositor export');
+    }
+    return encodeTimelineComposite(
+      clips,
+      clipGroups,
+      transitions,
+      textOverlays,
+      settings,
+      width,
+      height,
+      onStatus,
+      onProgress,
+      finishing,
+      includeWebCodecsAudio,
+      captionBurnIn,
+      colorManagement,
+    );
+  }
+
+  onStatus(
+    compositorPreference === 'webgpu'
+      ? 'Initializing WebGPU + hardware encoder...'
+      : 'Initializing GPU hardware encoder...',
+  );
+  onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.init, progress: 0, indeterminate: false });
+
+  const compositor = await resolveCompositor(width, height, compositorPreference);
+  onStatus(
+    compositor.kind === 'webgpu'
+      ? `WebGPU compositor active (${width}x${height})`
+      : `Canvas compositor active (${width}x${height})`,
+  );
+
+  const bitrate = resolveEncoderBitrate(settings, width, height);
+  const outputColor = colorManagement.outputColor;
+  const encoderCodec = await resolveEncoderCodec(
+    settings.videoCodec,
+    width,
+    height,
+    bitrate,
+    outputColor,
+  );
+  const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
+
+  let videoError: Error | null = null;
+  const videoEncoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => { videoError = e; },
+  });
+
+  videoEncoder.configure(
+    buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TARGET_FPS, outputColor),
+  );
+  compositor.colorManagement = colorManagement;
+
+  let videoTimeUs = 0;
+  const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);
+  let elapsedDuration = 0;
+  const hasCaptionBurnIn = (captionBurnIn.captions?.length ?? 0) > 0;
+  const overlayPass =
+    needsOverlayPass(textOverlays, finishing) || hasCaptionBurnIn
+      ? new DecoderTextOverlayPass(
+          clips,
+          clipGroups,
+          transitions,
+          textOverlays,
+          settings,
+          width,
+          height,
+          captionBurnIn,
+          outputColor,
+        )
+      : null;
+
+  try {
+    for (let i = 0; i < clips.length; i++) {
+      const clip = clips[i]!;
+      onStatus(`GPU encode [${i + 1}/${clips.length}]: "${clip.title}"...`);
+      onProgress?.(webCodecsEncodeProgress(elapsedDuration, totalDuration));
+
+      videoTimeUs = await encodeVideoFrames(
+        videoEncoder,
+        compositor,
+        clip,
+        videoTimeUs,
+        width,
+        height,
+        finishing,
+        elapsedDuration,
+        overlayPass,
+      );
+      if (videoError) throw videoError;
+      muxer.throwIfFailed();
+
+      elapsedDuration += getClipDuration(clip);
+      onProgress?.(webCodecsEncodeProgress(elapsedDuration, totalDuration));
+    }
+
+    onStatus('Flushing GPU encoder...');
+    onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.flush, progress: 0.9, indeterminate: false });
+    await videoEncoder.flush();
+    if (videoError) throw videoError;
+
+    await muxTimelineAudioIfRequested(
+      muxer,
+      clips,
+      clipGroups,
+      transitions,
+      includeWebCodecsAudio,
+      onStatus,
+      onProgress,
+    );
+
+    const buffer = await muxer.finalize();
+    onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.finalize, progress: 0.92, indeterminate: false });
+
+    return new Blob([buffer], { type: 'video/mp4' });
+  } finally {
+    compositor.gpuCompositor?.destroy();
+  }
+}

@@ -1,4 +1,4 @@
-import { decodeAudioBuffer } from '../utils/waveform';
+import { decodeAudioBuffer } from '../media/waveform';
 
 interface CacheEntry {
   objectUrl: string;
@@ -13,12 +13,12 @@ export class ClipAudioCache {
   private readonly entries = new Map<string, CacheEntry>();
   private readonly inflight = new Map<string, Promise<AudioBuffer | null>>();
 
-  /** Return a cached buffer or decode one. Null when decode fails. */
-  async get(
-    clipId: string,
-    objectUrl: string,
-    audioCtx: BaseAudioContext,
-  ): Promise<AudioBuffer | null> {
+  /**
+   * Return a cached buffer or decode one (48 kHz, `decodeAudio`). Null when
+   * decode fails. An AudioBuffer is not tied to a context, so preview and
+   * export share these.
+   */
+  async get(clipId: string, objectUrl: string): Promise<AudioBuffer | null> {
     const existing = this.entries.get(clipId);
     if (existing && existing.objectUrl === objectUrl) {
       return existing.buffer;
@@ -30,7 +30,7 @@ export class ClipAudioCache {
 
     const decodePromise = (async (): Promise<AudioBuffer | null> => {
       try {
-        const buffer = await decodeAudioBuffer(objectUrl, audioCtx);
+        const buffer = await decodeAudioBuffer(objectUrl);
         this.entries.set(clipId, { objectUrl, buffer });
         return buffer;
       } catch {

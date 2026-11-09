@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
 import { SyncMarker } from '../types';
 import { editorActions } from '../store';
-import { useEditorClips } from '../store';
 
 interface DragState {
   sourceMarker: SyncMarker;
@@ -27,7 +26,6 @@ export const useSyncDrag = () => {
 
 export const SyncDragProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [activeDrag, setActiveDrag] = useState<DragState | null>(null);
-  const clips = useEditorClips();
 
   const startConnectionDrag = useCallback((marker: SyncMarker, sourceClipId: string | null, startX: number, startY: number) => {
     setActiveDrag({ sourceMarker: marker, sourceClipId, startX, startY });

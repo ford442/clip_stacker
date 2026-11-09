@@ -106,12 +106,6 @@ export function getPublishedWebGpuProbe(): WindowWebGpuProbe {
   return published;
 }
 
-export function sessionWebGpuAvailable(): boolean {
-  const worker = published.worker;
-  if (worker) return worker.ok;
-  return published.main?.ok === true;
-}
-
 export function __resetWebGpuProbeForTests(): void {
   published = {};
   if (typeof window !== 'undefined') {

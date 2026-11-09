@@ -1,14 +1,13 @@
 import { useCallback } from "react";
-import { getTimelineClips } from "../utils/timelineClips";
-import { reindexTransitions } from "../utils/transitions";
+import { getTimelineClips } from "../timeline/timelineClips";
+import { reindexTransitions } from "../timeline/transitions";
 import {
   isClipLocked,
   removeClipFromTracks,
   reorderMainTrackClips,
   MAIN_VIDEO_TRACK_ID,
-} from "../utils/trackModel";
+} from "../timeline/trackModel";
 import { editorStore } from "../store/editorStore";
-import { settingsStore } from "../store/settingsStore";
 import { uiStore } from "../store/uiStore";
 import { playbackStore } from "../store/playbackStore";
 import {
@@ -17,9 +16,9 @@ import {
   rippleDelete,
   type EditResult,
   type EditState,
-} from "../utils/editModes";
-import { collectSnapTargets, snapClipStart } from "../utils/timelineSnap";
-import { getClipDuration } from "../utils/clipTiming";
+} from "../timeline/editModes";
+import { collectSnapTargets, snapClipStart } from "../timeline/timelineSnap";
+import { getClipDuration } from "../timeline/clipTiming";
 
 /**
  * Guard every clip edit that a locked lane must reject (#168 Phase A).
@@ -30,16 +29,16 @@ import { getClipDuration } from "../utils/clipTiming";
 function mainTrackLocked(): boolean {
   const main = editorStore.getState().tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID);
   if (!main?.locked) return false;
-  settingsStore.getState().setStatus("Track is locked — unlock the lane to reorder clips.");
+  renderJobStore.getState().setStatus("Track is locked — unlock the lane to reorder clips.");
   return true;
 }
 
 function refuseWhenLocked(clipId: string, what: string): boolean {
   if (!isClipLocked(editorStore.getState().tracks, clipId)) return false;
-  settingsStore.getState().setStatus(`Track is locked — unlock the lane to ${what}.`);
+  renderJobStore.getState().setStatus(`Track is locked — unlock the lane to ${what}.`);
   return true;
 }
-import { reindexAfterSwap } from "../app/helpers";
+import { reindexAfterSwap } from "../timeline/reorderTransitions";
 
 function currentEditState(): EditState {
   const { tracks, clips, transitions } = editorStore.getState();
@@ -53,17 +52,18 @@ function currentEditState(): EditState {
  */
 function commitOrReport(result: EditResult, success?: string): boolean {
   if (!result.ok) {
-    settingsStore.getState().setStatus(result.reason);
+    renderJobStore.getState().setStatus(result.reason);
     return false;
   }
   editorStore.getState().commitEdit(result.state);
-  if (success) settingsStore.getState().setStatus(success);
+  if (success) renderJobStore.getState().setStatus(success);
   return true;
 }
 
 /** Nudge step for the edit tools: one frame at 30 fps. */
 export const EDIT_NUDGE_FRAME_SEC = 1 / 30;
 import type { UseEditHistoryResult } from "./useEditHistory";
+import { renderJobStore } from '../store/renderJobStore';
 
 type TimelineActionsDeps = Pick<
   UseEditHistoryResult,
@@ -131,7 +131,7 @@ export function useTimelineActions({
         .getState()
         .tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID);
       if (mainTrack?.locked) {
-        settingsStore.getState().setStatus("Track is locked — unlock the lane to reorder clips.");
+        renderJobStore.getState().setStatus("Track is locked — unlock the lane to reorder clips.");
         return;
       }
       pushHistory();
@@ -174,7 +174,7 @@ export function useTimelineActions({
       const clip = state.clips.find((c) => c.id === clipId);
       if (!target || !clip) return;
       if (target.locked) {
-        settingsStore.getState().setStatus("Target track is locked.");
+        renderJobStore.getState().setStatus("Target track is locked.");
         return;
       }
 
@@ -208,7 +208,7 @@ export function useTimelineActions({
   const handleEditNudge = useCallback((deltaSec: number) => {
     const { selectedClipId: clipId } = editorStore.getState();
     if (!clipId) {
-      settingsStore.getState().setStatus("Select a clip to nudge its edit.");
+      renderJobStore.getState().setStatus("Select a clip to nudge its edit.");
       return;
     }
     if (refuseWhenLocked(clipId, "edit this clip")) return;
@@ -284,7 +284,7 @@ export function useTimelineActions({
         setTransitions((prev) => reindexTransitions(prev, timelineIndex));
       }
 
-      settingsStore.getState().setStatus(`Deleted "${clipTitle}".`);
+      renderJobStore.getState().setStatus(`Deleted "${clipTitle}".`);
     },
     [
       clips,

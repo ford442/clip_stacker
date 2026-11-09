@@ -1,6 +1,6 @@
 import { createStore } from 'zustand/vanilla';
 import { useStore } from 'zustand';
-import { readStorageAuthToken, writeStorageAuthToken } from '../utils/storageAuth';
+import { readStorageAuthToken, writeStorageAuthToken } from '../project/storageAuth';
 
 /** Remote storage endpoint used when no project-specific one has been set. */
 export const DEFAULT_STORAGE_ENDPOINT =

@@ -7,7 +7,7 @@ import { settingsStore } from '../store';
 import { __resetEditorStoreForTests, editorStore } from '../store/editorStore';
 import { __resetUiStoreForTests } from '../store/uiStore';
 import { __reloadFinishingPresetsForTests, finishingPresetStore } from '../store/finishingPresetStore';
-import { DEFAULT_FINISHING } from '../utils/finishing';
+import { DEFAULT_FINISHING } from '../finishing/finishing';
 
 let container: HTMLDivElement;
 let root: ReturnType<typeof createRoot>;

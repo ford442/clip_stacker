@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import { ContaboStorageManagerClient } from "../utils/project";
+import { ContaboStorageManagerClient } from "../project";
 import { ProgressBar } from "./ProgressBar";
 import { projectActions, useStorageAuthToken, useStorageEndpoint } from "../store";
 

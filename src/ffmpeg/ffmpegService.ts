@@ -1,5 +1,5 @@
 export * from "./core";
-export { buildVariableSpeedFilter } from "../utils/variableSpeed";
+export { buildVariableSpeedFilter } from "../timeline/variableSpeed";
 export * from "./video";
 export * from "./audio";
 export * from "./extract";

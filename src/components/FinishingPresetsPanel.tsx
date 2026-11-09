@@ -16,7 +16,7 @@ import {
   presetDocumentToJson,
   summarizePreset,
   type FinishingPresetDocument,
-} from '../utils/finishingPresets';
+} from '../finishing/finishingPresets';
 
 /** Download text as a file (preset export). */
 function downloadText(fileName: string, text: string) {

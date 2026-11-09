@@ -1,4 +1,4 @@
-import { LIBRARY_THUMB_HEIGHT, LIBRARY_THUMB_WIDTH } from '../utils/media';
+import { LIBRARY_THUMB_HEIGHT, LIBRARY_THUMB_WIDTH } from '../media/media';
 import { GPU_MIN_PIXELS, pixelCount, WORKER_MIN_PIXELS } from './breakEven';
 import { gpuComputeAvailable } from './diagnostics';
 import { peekChoresGpuDevice } from './device';
@@ -26,12 +26,6 @@ export interface StillImportChoreResult {
 }
 
 export { bitmapDimensions, rasterizeBitmapToRgba };
-
-export async function pixelsFromBitmap(
-  bitmap: StillBitmapSource,
-): Promise<{ pixels: Uint8ClampedArray; width: number; height: number }> {
-  return rasterizeBitmapToRgba(bitmap);
-}
 
 export async function decodeStillBitmap(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
   if (typeof createImageBitmap === 'function') {

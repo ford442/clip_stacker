@@ -14,23 +14,23 @@ import {
   type MouseEvent,
 } from 'react';
 import type { Clip, ClipAutomation, SyncMarker } from '../types';
-import type { Keyframe } from '../utils/keyframes';
-import { sortKeyframes, upsertKeyframe, removeKeyframeAt } from '../utils/keyframes';
+import type { Keyframe } from '../timeline/keyframes';
+import { sortKeyframes, upsertKeyframe, removeKeyframeAt } from '../timeline/keyframes';
 import {
   clampClipPlaybackRate,
   getClipLoopCount,
   getClipPlaybackRate,
   MAX_CLIP_PLAYBACK_RATE,
   MIN_CLIP_PLAYBACK_RATE,
-} from '../utils/playbackRate';
+} from '../timeline/playbackRate';
 import {
   cycleDurationForClip,
   samplePlaybackRateAt,
   sampleRemapCurve,
   sourceTimeAtOutputLocal,
   wrapOutputLocalToCycle,
-} from '../utils/timeRemap';
-import { normalizeClipAutomation } from '../utils/clipAutomation';
+} from '../timeline/timeRemap';
+import { normalizeClipAutomation } from '../timeline/clipAutomation';
 import {
   collectSpeedKeyframeSnapTimes,
   formatPlaybackRateAria,
@@ -44,7 +44,7 @@ import {
   SPEED_KEYFRAME_RATE_NUDGE_FINE,
   SPEED_KEYFRAME_TIME_NUDGE_FINE_SEC,
   SPEED_KEYFRAME_TIME_NUDGE_SEC,
-} from '../utils/speedLane';
+} from '../timeline/speedLane';
 
 export interface SpeedAutomationLaneProps {
   clip: Clip;

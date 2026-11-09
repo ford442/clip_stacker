@@ -6,14 +6,14 @@ import {
   useSnapEnabled,
   useTimelineTool,
 } from '../store';
-import type { DropEditMode, TimelineEditTool } from '../utils/editModes';
+import type { DropEditMode, TimelineEditTool } from '../timeline/editModes';
 
 /**
  * Edit-mode tool cluster for the timeline chrome (#168 follow-up).
  *
  * Pure view over `uiStore`: the sticky tool, overwrite/insert drop mode, the
  * magnet and linked ripple. The edits themselves run through
- * `useTimelineActions` → `utils/editModes.ts`, so lock guards and undo are
+ * `useTimelineActions` → `timeline/editModes.ts`, so lock guards and undo are
  * shared with the keyboard shortcuts listed next to each button.
  */
 

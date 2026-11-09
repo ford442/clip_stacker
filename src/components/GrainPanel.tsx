@@ -2,7 +2,7 @@ import { useRef } from 'react';
 import {
   DEFAULT_GRAIN,
   type GrainPass,
-} from '../utils/finishing';
+} from '../finishing/finishing';
 import {
   GRAIN_AMOUNT_RECOMMENDED,
   GRAIN_PRESETS,
@@ -11,14 +11,14 @@ import {
   grainMonochromeBias,
   type GrainPresetId,
   type GrainQuality,
-} from '../utils/grain';
+} from '../finishing/grain';
 import {
   FLAT_GRAIN_RESPONSE,
   GRAIN_FILM_STOCKS,
   GRAIN_RESPONSE_MAX,
   normalizeGrainResponse,
   type GrainResponseCurve,
-} from '../utils/filmGrain';
+} from '../finishing/filmGrain';
 
 interface Props {
   settings: GrainPass;

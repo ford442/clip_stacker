@@ -3,9 +3,9 @@ import type { DriveMediaItem } from '../../types';
 import { useDriveLibraryItems, driveLibraryActions } from '../../store';
 import { segmentActions } from '../../store/segmentStore';
 import { useSegmentWorkflow } from '../../hooks/useSegmentWorkflow';
-import { fetchSegmentBlob } from '../../utils/segments/segmentDeps';
+import { fetchSegmentBlob } from '../../actions/segments/segmentDeps';
 import { formatBytes } from '../../utils/memory';
-import type { MediaLibraryItem } from '../../utils/project';
+import type { MediaLibraryItem } from '../../project';
 import { SegmentSessionView } from './SegmentSessionView';
 
 interface Props {

@@ -1,13 +1,13 @@
 /**
  * Bloom / glow / light wrap — finishing pass after chromatic aberration,
  * before grain. A prefilter → downsample pyramid → additive tent upsample →
- * composite chain over rgba16float levels (see `utils/bloom.ts` for the
+ * composite chain over rgba16float levels (see `finishing/bloom.ts` for the
  * model). Every draw shares one command encoder with the rest of the chain.
  */
 
 import bloomShader from './shaders/bloom.wgsl?raw';
-import { shaderForSceneLinear } from '../utils/colorManagement';
-import type { BloomPass } from '../utils/finishing';
+import { shaderForSceneLinear } from '../finishing/colorManagement';
+import type { BloomPass } from '../finishing/finishing';
 import {
   BLOOM_UNIFORM_FLOATS,
   bloomLevelChain,
@@ -15,7 +15,7 @@ import {
   packBloomUniforms,
   planBloom,
   type BloomLevelSize,
-} from '../utils/bloom';
+} from '../finishing/bloom';
 
 const LEVEL_FORMAT: GPUTextureFormat = 'rgba16float';
 

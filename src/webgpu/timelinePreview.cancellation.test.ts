@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Clip } from '../types';
-import { buildPreviewCompositionPlan } from '../utils/previewComposition';
+import { buildPreviewCompositionPlan } from '../composition/previewComposition';
 import { PreviewEngine } from './previewEngine';
 import { ClipMediaPool, TimelinePreviewEngine } from './timelinePreview';
 

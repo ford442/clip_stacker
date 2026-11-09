@@ -1,4 +1,4 @@
-import type { ClipTransition } from '../../types';
+
 import {
   CUSTOM_TRANSITION_TYPE,
   DEFAULT_CUSTOM_EXPRESSION,
@@ -413,13 +413,6 @@ export function resolveTransitionShaderId(transition: {
   if (transition.type !== CUSTOM_TRANSITION_TYPE) return transition.type;
   if (!transition.customShader) return CUSTOM_TRANSITION_TYPE;
   return registerCustomTransition(transition.customShader);
-}
-
-/** True when this transition's shader body is user-authored WGSL. */
-export function isCustomTransition(
-  transition: Pick<ClipTransition, 'type'> | undefined,
-): boolean {
-  return transition?.type === CUSTOM_TRANSITION_TYPE;
 }
 
 /** UI options for TransitionEditor (excludes 'none'). */

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 import type { Clip } from '../types';
-import { clipProxyKey } from '../utils/proxyMedia';
+import { clipProxyKey } from '../media/proxyMedia';
 import { proxyStore } from '../store/proxyStore';
 
 /**
@@ -54,7 +54,7 @@ export function useClipStabilization(
         try {
           // Decode + optical flow (and mp4box) load with the first clip that
           // needs analysis, not with the editor.
-          const { stabilizeClip } = await import('../utils/stabilizePipeline');
+          const { stabilizeClip } = await import('../media/stabilizePipeline');
           const result = await stabilizeClip(clip, {
             source: stabilizationSourceFor(clip),
             isCancelled: () => cancelled,

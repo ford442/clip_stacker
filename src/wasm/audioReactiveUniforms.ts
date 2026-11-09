@@ -45,6 +45,7 @@ export const PREVIEW_UNIFORM_FLOATS = 20;
 /**
  * WGSL fragment helper — optional warm bass lift (matches canvas glow intent).
  * Shaders can copy this body or import via build-time include later.
+ * @public — documented for new transition shaders (AGENTS.md); not imported.
  */
 export const AUDIO_REACTIVE_WGSL_SNIPPET = `
 // audioReactive — modulate rgb by bass/beat (no-op when all zeros)

@@ -1,8 +1,6 @@
-add_executable(media_engine_tests media_engine_tests.cpp)
-target_link_libraries(media_engine_tests PRIVATE media_engine_dsp)
-clip_stacker_host_target(media_engine_tests)
-
-add_test(NAME media_engine_host COMMAND media_engine_tests)
-
+clip_stacker_host_test(media_engine_tests media_engine_tests.cpp media_engine_dsp)
 clip_stacker_host_test(time_stretch_tests time_stretch_tests.cpp media_engine_dsp)
 clip_stacker_host_test(bus_fx_tests bus_fx_tests.cpp media_engine_dsp)
+clip_stacker_host_test(rt_safety_tests rt_safety_tests.cpp media_engine_dsp)
+clip_stacker_host_test(fx_property_tests fx_property_tests.cpp media_engine_dsp)
+clip_stacker_host_fuzz(fx_fuzz fx_fuzz.cpp media_engine_dsp)
