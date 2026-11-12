@@ -1,6 +1,14 @@
 /** Quality settings forwarded to the FFmpeg (or WebCodecs) encode path. */
 export type VideoOutputFormat = 'mp4' | 'prores';
 
+/** Optional cleanup a processing job (RIFE, batch) runs alongside its main work. */
+export interface CleanupOptions {
+  /** Light hqdn3d + deband. */
+  lightVideoCleanup: boolean;
+  /** High-pass, light denoise and loudness normalization. */
+  audioCleanup: boolean;
+}
+
 export interface ExportSettings {
   /** H.264 CRF value (0–51; lower = higher quality). Default 18. */
   crf: number;

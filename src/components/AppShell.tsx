@@ -1,5 +1,5 @@
 import { useRef, type RefObject } from "react";
-import type { Clip, ClipTransition, TextOverlay } from "../types";
+import type { Clip, ClipTransition, CleanupOptions, TextOverlay, VideoOutputFormat } from "../types";
 import type { CaptionsPanelProps } from "./CaptionsPanel";
 import { formatEncoderPathLabel } from "../export/encoderPathLabel";
 import { uiActions } from "../store";
@@ -114,7 +114,12 @@ export interface InspectorBundle {
   onAudioEffectsChange: (clipId: string, effects: Clip["audioEffects"]) => void;
   onApplyKenBurns: () => void;
   onExtractAudio: () => Promise<void>;
-  onRife: (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => Promise<void>;
+  onRife: (
+    mode: "interpolation" | "boomerang",
+    multiplier: 2 | 4,
+    outputFormat?: VideoOutputFormat,
+    cleanup?: CleanupOptions,
+  ) => Promise<void>;
   onStabilizeChange: (enabled: boolean) => void;
   onReverseChange: (enabled: boolean) => void;
 }

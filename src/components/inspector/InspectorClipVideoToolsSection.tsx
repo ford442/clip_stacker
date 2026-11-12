@@ -1,6 +1,6 @@
 import { type SyntheticEvent } from 'react';
 import type { Clip, ClipAnimatableProp, ClipKeyframes } from '../../types';
-import type { VideoOutputFormat } from '../../types';
+import type { CleanupOptions, VideoOutputFormat } from '../../types';
 import {
   clipHasKeyframes,
   clipHasPictureTransform,
@@ -42,6 +42,8 @@ interface InspectorClipVideoToolsSectionProps {
   setRifeMultiplier: (value: 2 | 4) => void;
   rifeOutputFormat: VideoOutputFormat;
   setRifeOutputFormat: (value: VideoOutputFormat) => void;
+  rifeCleanup: CleanupOptions;
+  setRifeCleanup: (value: CleanupOptions) => void;
   rifeProcessing: boolean;
   stabilizeStatus: string | null;
   update: (field: keyof ClipValues, value: string) => void;
@@ -53,6 +55,7 @@ interface InspectorClipVideoToolsSectionProps {
     mode: 'interpolation' | 'boomerang',
     multiplier: 2 | 4,
     outputFormat?: VideoOutputFormat,
+    cleanup?: CleanupOptions,
   ) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onApplyKenBurns?: () => void;
@@ -76,6 +79,8 @@ export function InspectorClipVideoToolsSection({
   setRifeMultiplier,
   rifeOutputFormat,
   setRifeOutputFormat,
+  rifeCleanup,
+  setRifeCleanup,
   rifeProcessing,
   stabilizeStatus,
   update,
@@ -149,11 +154,29 @@ export function InspectorClipVideoToolsSection({
               </select>
             </label>
           </div>
+          <label className="inspector-checkbox-label">
+            <input
+              type="checkbox"
+              checked={rifeCleanup.lightVideoCleanup}
+              disabled={rifeProcessing}
+              onChange={(e) => setRifeCleanup({ ...rifeCleanup, lightVideoCleanup: e.target.checked })}
+            />
+            Light denoise + deband
+          </label>
+          <label className="inspector-checkbox-label">
+            <input
+              type="checkbox"
+              checked={rifeCleanup.audioCleanup}
+              disabled={rifeProcessing}
+              onChange={(e) => setRifeCleanup({ ...rifeCleanup, audioCleanup: e.target.checked })}
+            />
+            Audio cleanup
+          </label>
           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => onRife('interpolation', rifeMultiplier, rifeOutputFormat)}
+              onClick={() => onRife('interpolation', rifeMultiplier, rifeOutputFormat, rifeCleanup)}
               disabled={rifeProcessing}
               title={`Apply RIFE ${rifeMultiplier}× frame interpolation to this clip (per-clip, before merging)`}
             >
@@ -162,7 +185,7 @@ export function InspectorClipVideoToolsSection({
             <button
               type="button"
               className="btn-secondary"
-              onClick={() => onRife('boomerang', rifeMultiplier, rifeOutputFormat)}
+              onClick={() => onRife('boomerang', rifeMultiplier, rifeOutputFormat, rifeCleanup)}
               disabled={rifeProcessing}
               title="Apply Boomerang (loop forward+reverse) with RIFE frame interpolation"
             >

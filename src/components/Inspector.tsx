@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, useMemo } from 'react';
-import type { ClipAnimatableProp, ExportSettings } from '../types';
+import type { ClipAnimatableProp, CleanupOptions, ExportSettings } from '../types';
 import { RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { resolveClipLocalTimeAtGlobal } from '../composition/previewComposition';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
@@ -111,6 +111,10 @@ function InspectorImpl({
   );
   const [rifeMultiplier, setRifeMultiplier] = useState<2 | 4>(2);
   const [rifeOutputFormat, setRifeOutputFormat] = useState<'mp4' | 'prores'>('mp4');
+  const [rifeCleanup, setRifeCleanup] = useState<CleanupOptions>({
+    lightVideoCleanup: false,
+    audioCleanup: false,
+  });
   const [activeKeyframeProp, setActiveKeyframeProp] = useState<ClipAnimatableProp>('x');
   const inspectorRef = useRef<HTMLDivElement>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -502,6 +506,8 @@ function InspectorImpl({
               setRifeMultiplier={setRifeMultiplier}
               rifeOutputFormat={rifeOutputFormat}
               setRifeOutputFormat={setRifeOutputFormat}
+              rifeCleanup={rifeCleanup}
+              setRifeCleanup={setRifeCleanup}
               rifeProcessing={rifeProcessing}
               stabilizeStatus={stabilizeStatus}
               update={update}

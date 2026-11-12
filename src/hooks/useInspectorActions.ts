@@ -5,6 +5,7 @@ import type {
   ClipAutomation,
   OverlayBlendMode,
   VideoOutputFormat,
+  CleanupOptions,
 } from "../types";
 import { sanitizeClipAdjustments, ContaboStorageManagerClient } from "../project";
 import { getClipDuration } from "../timeline/clipTiming";
@@ -325,6 +326,7 @@ export function useInspectorActions({
       mode: "interpolation" | "boomerang",
       multiplier: 2 | 4,
       outputFormat: VideoOutputFormat = "mp4",
+      cleanup?: CleanupOptions,
     ) => {
       if (!selectedClip || selectedClip.kind !== "video") return;
       const { rifeProcessingClipId, setRifeProcessingClipId, setStatus } = renderJobStore.getState();
@@ -339,8 +341,11 @@ export function useInspectorActions({
       setStatus("Preparing trimmed clip for RIFE…");
 
       try {
-        const { extractTrimmedVideoClip, muxProcessedVideoWithSourceAudio } =
-          await loadFfmpegService();
+        const {
+          extractTrimmedVideoClip,
+          muxProcessedVideoWithSourceAudio,
+          finalizeRenderedVideo,
+        } = await loadFfmpegService();
         // Step 1: Export the trimmed segment via FFmpeg (lossless copy).
         // RIFE must operate on the trimmed portion only — running it on the
         // merged video would cause morphing artifacts across scene cuts.
@@ -362,12 +367,27 @@ export function useInspectorActions({
           },
           outputFormat,
         );
-        const blobWithAudio = await muxProcessedVideoWithSourceAudio(
+        const rifeBlobWithAudio = await muxProcessedVideoWithSourceAudio(
           blob,
           clipSnapshot,
           setStatus,
           outputFormat,
         );
+        // Optional cleanup rides along in the same job, after the audio is back
+        // under the picture (same order as the batch path).
+        const blobWithAudio =
+          cleanup?.lightVideoCleanup || cleanup?.audioCleanup
+            ? await finalizeRenderedVideo(
+                rifeBlobWithAudio,
+                {
+                  ...settingsStore.getState().exportSettings,
+                  outputFormat,
+                  lightVideoCleanup: cleanup.lightVideoCleanup,
+                  audioCleanup: cleanup.audioCleanup,
+                },
+                setStatus,
+              )
+            : rifeBlobWithAudio;
 
         const modeLabel = mode === "boomerang" ? "boomerang" : `${multiplier}x`;
         const baseName = clipSnapshot.file.name.replace(/\.[^.]+$/, "");

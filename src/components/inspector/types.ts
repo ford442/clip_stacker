@@ -1,7 +1,7 @@
 import type { ClipAutomation, ClipKeyframes } from '../../types';
 import type { CaptionsPanelProps } from '../CaptionsPanel';
 import type { ClipAudioEffects } from '../../audio/audioEffects';
-import type { VideoOutputFormat } from '../../types';
+import type { CleanupOptions, VideoOutputFormat } from '../../types';
 
 // The Inspector's clip form state lives in ../../types (the action hooks use it too).
 import type { ClipValues } from '../../types';
@@ -19,6 +19,7 @@ export interface InspectorProps {
     mode: 'interpolation' | 'boomerang',
     multiplier: 2 | 4,
     outputFormat?: VideoOutputFormat,
+    cleanup?: CleanupOptions,
   ) => void;
   /** Toggle camera-shake stabilization for the selected video clip. */
   onStabilizeChange?: (enabled: boolean) => void;
