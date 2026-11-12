@@ -23,8 +23,10 @@ fallback and explicit override only.
 
 ## Stages
 
-1. **Decode** — `src/export/webcodecsDecoder.ts`. Each clip is demuxed with
-   mp4box and decoded with a hardware `VideoDecoder`. Frames flow through a
+1. **Decode** — `src/export/webcodecsDecoder.ts`. Each clip is demuxed through
+   the Mediabunny facade (`src/export/container/demux.ts`: MP4, MOV, WebM,
+   MKV; the index is cached per Blob and only the packets decoded are read)
+   and decoded with a hardware `VideoDecoder`. Frames flow through a
    small ring buffer (`FRAME_RING_BUFFER_CAPACITY`) so decode overlaps
    composite + encode. Seeking is exact: decode starts at the last sync sample
    at or before `trimStart` and pre-roll frames are dropped. If a clip cannot

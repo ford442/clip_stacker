@@ -16,7 +16,7 @@ import { clipDisplayPixelsToNormalized } from "../composition/overlayCoords";
 import { parseCanvasSize } from "../composition/pipPreset";
 import { createKenBurnsKeyframes } from "../composition/animatedLayout";
 import { getMediaInfo } from "../media/media";
-import type { ClipValues } from "../types";
+import type { ClipValues, SourceColorSpaceOverride } from "../types";
 import { DEFAULT_CHROMA_KEY } from "../composition/overlayBlend";
 import type { UseEditHistoryResult } from "./useEditHistory";
 import { setClipStabilize } from "./useClipStabilization";
@@ -300,6 +300,23 @@ export function useInspectorActions({
     [selectedClipId, pushHistory, setClips],
   );
 
+  const handleColorSpaceOverrideChange = useCallback(
+    (override: SourceColorSpaceOverride | undefined) => {
+      if (!selectedClipId) return;
+      pushHistory();
+      setClips((prev) =>
+        prev.map((clip) => {
+          if (clip.id !== selectedClipId) return clip;
+          const next = { ...clip };
+          if (override) next.colorSpaceOverride = override;
+          else delete next.colorSpaceOverride;
+          return next;
+        }),
+      );
+    },
+    [selectedClipId, pushHistory, setClips],
+  );
+
   const handleReverseChange = useCallback(
     (enabled: boolean) => {
       if (!selectedClipId) return;
@@ -432,6 +449,7 @@ export function useInspectorActions({
     handleApplyKenBurns,
     handleRife,
     handleStabilizeChange,
+    handleColorSpaceOverrideChange,
     handleReverseChange,
   };
 }

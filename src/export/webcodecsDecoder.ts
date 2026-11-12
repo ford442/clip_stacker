@@ -1,21 +1,34 @@
 /**
- * WebCodecs VideoDecoder frame source for GPU export.
+ * WebCodecs VideoDecoder frame source for GPU export, the preview worker,
+ * proxies and stabilization.
  *
- * Demuxes an MP4/MOV clip with mp4box, feeds encoded samples to a hardware
- * VideoDecoder, and delivers decoded VideoFrames sequentially through a small
+ * Reads a clip through the demux facade (`container/demux.ts`, Mediabunny:
+ * MP4, MOV, WebM, MKV), feeds the packets of the trim window to a
+ * `VideoDecoder` and delivers decoded VideoFrames sequentially through a small
  * ring buffer so decode overlaps GPU composite + encode. This replaces the
- * HTMLVideoElement seek/requestVideoFrameCallback loop in the export hot path:
- * frame delivery is exact (no seek imprecision) and runs as fast as the
- * decoder allows instead of at (playbackRate × realtime).
+ * HTMLVideoElement seek/requestVideoFrameCallback loop: frame delivery is
+ * exact (no seek imprecision) and runs as fast as the decoder allows instead
+ * of at (playbackRate × realtime). Opening reads the container index (cached
+ * per Blob) and the packets decoded — never the whole file — so a cursor the
+ * preview reopens on every backward scrub stays cheap on a 2 GB camera file.
+ *
+ * A track with alpha (WebM VP8 / VP9 `AlphaMode`) decodes through
+ * Mediabunny's sample decoder instead, which decodes the alpha side data with
+ * a second decoder and hands out merged I420A frames.
  *
  * Callers should treat failures as recoverable and fall back to the
  * element-based capture path (see webcodecs.ts).
  */
 
-import { createFile, DataStream, Endianness, MP4BoxBuffer } from 'mp4box';
-import type { ISOFile, Sample, Track } from 'mp4box';
 import { waitForQueueBelow } from './codecQueue';
 import { DECODER_ACCELERATION_LADDER } from './webcodecsCodec';
+import {
+  openVideoDemux,
+  type DemuxPacket,
+  type DemuxStream,
+  type SampleDecodeOptions,
+  type VideoDemux,
+} from './container/demux';
 
 /** Max decoded frames buffered ahead of the consumer (ring buffer depth). */
 export const FRAME_RING_BUFFER_CAPACITY = 8;
@@ -23,64 +36,57 @@ export const FRAME_RING_BUFFER_CAPACITY = 8;
 /** Max encoded chunks queued inside the decoder before we yield to output. */
 const MAX_DECODE_QUEUE_DEPTH = 16;
 
-/** Timing info needed to pick the decode window (subset of mp4box Sample). */
-export interface SampleTiming {
-  /** Composition timestamp in track timescale units. */
-  cts: number;
-  /** Track timescale (units per second). */
-  timescale: number;
-  /** True for sync (key) samples. */
-  is_sync: boolean;
-}
-
-export interface DecodeWindow {
-  /** Index of the sync sample to start decoding from (decode order). */
-  startIndex: number;
-  /** Last sample index (inclusive) that must be decoded to cover the trim. */
-  endIndex: number;
-}
+/** Half a 120 fps frame: absorbs timestamp rounding at the trim edges. */
+const FRAME_EPSILON_SEC = 1 / 240;
 
 /**
- * Choose which samples must be fed to the decoder to produce frames in
- * [trimStart, trimEnd): start at the last sync sample at or before trimStart
- * (frames before the trim are decoded and dropped), end at the last sample
- * that presents before trimEnd.
+ * Alpha tracks: color and alpha are merged on the CPU (both frames are copied
+ * into one I420A frame), which needs readable frames of a known pixel format.
+ * Software VP8 / VP9 decode guarantees that; a hardware decoder may hand out
+ * GPU-only frames the merge cannot read.
  */
-export function selectDecodeWindow(
-  samples: SampleTiming[],
-  trimStartSec: number,
-  trimEndSec: number,
-  baseCts = 0,
-): DecodeWindow | null {
-  if (samples.length === 0) return null;
-
-  let startIndex = 0;
-  let endIndex = -1;
-  for (let i = 0; i < samples.length; i++) {
-    const sample = samples[i]!;
-    const ctsSec = (sample.cts - baseCts) / sample.timescale;
-    if (sample.is_sync && ctsSec <= trimStartSec) startIndex = i;
-    if (ctsSec < trimEndSec) endIndex = i;
-  }
-  if (endIndex < startIndex) return null;
-  return { startIndex, endIndex };
-}
-
-/** Earliest composition timestamp of the track (normalizes clips that don't start at 0). */
-export function computeBaseCts(samples: SampleTiming[]): number {
-  let base = Infinity;
-  for (const sample of samples) base = Math.min(base, sample.cts);
-  return Number.isFinite(base) ? base : 0;
-}
+const ALPHA_DECODER_ACCELERATION_LADDER: readonly HardwareAcceleration[] = Object.freeze([
+  'prefer-software',
+  'no-preference',
+]);
 
 /** Whether a decoded frame at `timestampSec` falls inside the trim window. */
 export function isFrameInTrimWindow(
   timestampSec: number,
   trimStartSec: number,
   trimEndSec: number,
-  frameEpsilonSec = 1 / 240,
+  frameEpsilonSec = FRAME_EPSILON_SEC,
 ): boolean {
   return timestampSec >= trimStartSec - frameEpsilonSec && timestampSec < trimEndSec - frameEpsilonSec;
+}
+
+/** A decoded frame at `timestampSec` is past the window end (see `isFrameInTrimWindow`). */
+function isPastTrimEnd(timestampSec: number, trimEndSec: number): boolean {
+  return timestampSec >= trimEndSec - FRAME_EPSILON_SEC;
+}
+
+/**
+ * Decides, packet by packet in decode order, when the trim window has been
+ * fed. Once a key packet presents at or after `trimEnd`, nothing after it is
+ * needed except open-GOP leading pictures (which present before that key and
+ * reference it), so feeding stops at the first packet presenting at or after
+ * it. Mid-GOP ends usually stop earlier: the decode loop also stops once a
+ * decoded frame reaches `trimEnd` (output is in presentation order).
+ */
+export class DecodeWindowEnd {
+  private readonly trimEndUs: number;
+  private boundaryUs: number | null = null;
+
+  constructor(trimEndSec: number) {
+    this.trimEndUs = trimEndSec * 1_000_000;
+  }
+
+  /** True when `packet` (µs presentation time) and everything after it can be skipped. */
+  isPast(packet: Pick<DemuxPacket, 'type' | 'timestamp'>): boolean {
+    if (this.boundaryUs !== null) return packet.timestamp >= this.boundaryUs;
+    if (packet.type === 'key' && packet.timestamp >= this.trimEndUs) this.boundaryUs = packet.timestamp;
+    return false;
+  }
 }
 
 /**
@@ -137,64 +143,8 @@ export class AsyncFrameQueue<T> {
   }
 }
 
-interface DemuxedClip {
-  isoFile: ISOFile;
-  buffer: ArrayBuffer;
-  track: Track;
-  samples: Sample[];
-  config: VideoDecoderConfig;
-}
-
-/** Extract the codec-private description (avcC/hvcC/vpcC/av1C) for VideoDecoder. */
-function extractDecoderDescription(isoFile: ISOFile, trackId: number): Uint8Array | undefined {
-  const trak = isoFile.getTrackById(trackId) as unknown as {
-    mdia?: { minf?: { stbl?: { stsd?: { entries?: unknown[] } } } };
-  };
-  const entries = trak?.mdia?.minf?.stbl?.stsd?.entries ?? [];
-  for (const entry of entries) {
-    const boxes = entry as Record<string, { write: (stream: DataStream) => void } | undefined>;
-    const box = boxes.avcC ?? boxes.hvcC ?? boxes.vpcC ?? boxes.av1C;
-    if (box) {
-      const stream = new DataStream(undefined, 0, Endianness.BIG_ENDIAN);
-      box.write(stream);
-      // Strip the 8-byte box header (size + fourcc); the payload is the config record.
-      return new Uint8Array(stream.buffer as ArrayBuffer, 8);
-    }
-  }
-  return undefined;
-}
-
-async function demuxClip(source: Blob): Promise<DemuxedClip> {
-  const buffer = await source.arrayBuffer();
-  const isoFile = createFile();
-
-  const info = await new Promise<import('mp4box').Movie>((resolve, reject) => {
-    isoFile.onReady = resolve;
-    isoFile.onError = (_module, message) => reject(new Error(`MP4 demux failed: ${message}`));
-    try {
-      isoFile.appendBuffer(MP4BoxBuffer.fromArrayBuffer(buffer, 0), true);
-      isoFile.flush();
-    } catch (err) {
-      reject(err instanceof Error ? err : new Error(String(err)));
-    }
-  });
-
-  const track = info.videoTracks[0];
-  if (!track) throw new Error('No video track found in clip');
-
-  const samples = isoFile.getTrackSamplesInfo(track.id);
-  if (!samples || samples.length === 0) throw new Error('No video samples found in clip');
-
-  // `hardwareAcceleration` is chosen per machine by `resolveDecoderConfig`.
-  const config: VideoDecoderConfig = {
-    codec: track.codec,
-    codedWidth: track.video?.width || track.track_width,
-    codedHeight: track.video?.height || track.track_height,
-  };
-  const description = extractDecoderDescription(isoFile, track.id);
-  if (description) config.description = description;
-
-  return { isoFile, buffer, track, samples, config };
+function toError(err: unknown): Error {
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 let lastDecoderAcceleration: HardwareAcceleration | null = null;
@@ -205,15 +155,17 @@ export function getLastDecoderAcceleration(): HardwareAcceleration | null {
 }
 
 /**
- * `config` with the first acceleration hint of {@link DECODER_ACCELERATION_LADDER}
- * that `isConfigSupported` accepts, or null when none does. Hardware decode
- * keeps export GPU-bound end to end; the software rungs keep a machine with no
- * (or a picky) hardware decoder on the decoder path rather than `<video>` seeks.
+ * `config` with the first acceleration hint of `ladder` (default
+ * {@link DECODER_ACCELERATION_LADDER}) that `isConfigSupported` accepts, or
+ * null when none does. Hardware decode keeps export GPU-bound end to end; the
+ * software rungs keep a machine with no (or a picky) hardware decoder on the
+ * decoder path rather than `<video>` seeks.
  */
 export async function resolveDecoderConfig(
   config: VideoDecoderConfig,
+  ladder: readonly HardwareAcceleration[] = DECODER_ACCELERATION_LADDER,
 ): Promise<VideoDecoderConfig | null> {
-  for (const hardwareAcceleration of DECODER_ACCELERATION_LADDER) {
+  for (const hardwareAcceleration of ladder) {
     const candidate: VideoDecoderConfig = { ...config, hardwareAcceleration };
     try {
       const support = await VideoDecoder.isConfigSupported(candidate);
@@ -225,13 +177,252 @@ export async function resolveDecoderConfig(
   return null;
 }
 
+/**
+ * Accepted rung per ladder + codec + coded size. Support does not depend on
+ * the file beyond those, so one probe serves every clip (and every reopen) of
+ * that shape; each still configures with its own `description` / colour tags.
+ * A ladder that found no rung is not kept, so a transient refusal is retried.
+ */
+const acceptedRungs = new Map<string, Promise<HardwareAcceleration | null>>();
+
+function resolveDecoderAcceleration(
+  config: VideoDecoderConfig,
+  ladder: readonly HardwareAcceleration[],
+): Promise<HardwareAcceleration | null> {
+  const key = `${ladder.join('>')}|${config.codec}|${config.codedWidth ?? 0}x${config.codedHeight ?? 0}`;
+  let pending = acceptedRungs.get(key);
+  if (!pending) {
+    const probe = resolveDecoderConfig(config, ladder).then(
+      (resolved) => resolved?.hardwareAcceleration ?? null,
+    );
+    pending = probe;
+    acceptedRungs.set(key, probe);
+    void probe.then((rung) => {
+      if (rung === null && acceptedRungs.get(key) === probe) acceptedRungs.delete(key);
+    });
+  }
+  return pending;
+}
+
 export interface ClipFrameDecoderOptions {
   /** Trim window start within the source, seconds. */
   trimStart: number;
   /** Trim window end within the source, seconds. */
   trimEnd: number;
+  /**
+   * Start delivering at this source time inside the window instead of at
+   * `trimStart`: decode begins at the key frame before it, and the first frame
+   * delivered is the one showing at `startAt` (never one before `trimStart`).
+   * A cursor reading from here hands out exactly the frames one that decoded
+   * all the way from `trimStart` would. Scrubs and backward jumps use it.
+   */
+  startAt?: number;
   /** Ring buffer depth override (default FRAME_RING_BUFFER_CAPACITY). */
   ringBufferCapacity?: number;
+  /**
+   * Ask for a decoder that outputs each frame as soon as it can rather than
+   * buffering for throughput. Preview cursors only — they are reopened on
+   * every backward scrub, so time to first frame is what the user sees.
+   * Export, proxies and stabilization leave it off.
+   */
+  optimizeForLatency?: boolean;
+  /**
+   * Decode as this colour space instead of the file's tags
+   * (`Clip.colorSpaceOverride`): `VideoDecoderConfig.colorSpace` wins over
+   * in-band VUI, so every frame carries it. Not applied to alpha tracks,
+   * which Mediabunny decodes with the file's own configuration.
+   */
+  colorSpace?: VideoColorSpaceInit;
+}
+
+interface FrameSource {
+  frames(): AsyncGenerator<VideoFrame>;
+  close(): void;
+}
+
+/** Opaque tracks: demuxed packets → our own `VideoDecoder` → ring buffer. */
+class PacketFrameSource implements FrameSource {
+  private readonly decoder: VideoDecoder;
+  private readonly queue: AsyncFrameQueue<VideoFrame>;
+  private packets: DemuxStream<DemuxPacket> | null = null;
+  /** With `startAt`: the latest window frame before it — the one showing at `startAt` so far. */
+  private held: VideoFrame | null = null;
+  private disposed = false;
+
+  constructor(
+    private readonly demux: VideoDemux,
+    config: VideoDecoderConfig,
+    private readonly opts: ClipFrameDecoderOptions,
+    private readonly startAt: number,
+  ) {
+    const queue = new AsyncFrameQueue<VideoFrame>(opts.ringBufferCapacity ?? FRAME_RING_BUFFER_CAPACITY);
+    this.queue = queue;
+    this.decoder = new VideoDecoder({
+      output: (frame) => queue.push(frame),
+      error: (err) => queue.fail(toError(err)),
+    });
+    this.decoder.configure(config);
+  }
+
+  /**
+   * Yield decoded frames inside the trim window, presentation order, with
+   * timestamps rebased so the first frame of the source is 0 µs.
+   */
+  async *frames(): AsyncGenerator<VideoFrame> {
+    const { trimStart, trimEnd } = this.opts;
+    const { startAt } = this;
+    const seeking = startAt > trimStart;
+    const packets = this.demux.packets(startAt);
+    this.packets = packets;
+    const windowEnd = new DecodeWindowEnd(trimEnd);
+    // Output is in presentation order: once a frame reaches trimEnd, every
+    // frame of the window has been delivered.
+    let reachedEnd = false;
+    const releaseHeld = (): VideoFrame[] => {
+      const held = this.held;
+      this.held = null;
+      return held ? [held] : [];
+    };
+    /** The frames to deliver for one decoded frame, in order (0, 1 or 2). */
+    const accept = (frame: VideoFrame): VideoFrame[] => {
+      const timeSec = frame.timestamp / 1_000_000;
+      if (isPastTrimEnd(timeSec, trimEnd)) reachedEnd = true;
+      if (reachedEnd || !isFrameInTrimWindow(timeSec, trimStart, trimEnd)) {
+        frame.close();
+        return reachedEnd ? releaseHeld() : [];
+      }
+      if (seeking && timeSec < startAt) {
+        this.held?.close();
+        this.held = frame;
+        return [];
+      }
+      const held = releaseHeld();
+      // A frame exactly at startAt shows there itself; otherwise the held one does.
+      if (held[0] && timeSec <= startAt) {
+        held[0].close();
+        return [frame];
+      }
+      return [...held, frame];
+    };
+
+    try {
+      for (;;) {
+        if (this.disposed) return;
+        if (reachedEnd) {
+          this.stopDecoding();
+          return;
+        }
+        const next = await packets.next();
+        if (this.disposed) return;
+        if (next.done || windowEnd.isPast(next.value)) break;
+        const packet = next.value;
+        this.decoder.decode(
+          new EncodedVideoChunk({
+            type: packet.type,
+            timestamp: packet.timestamp,
+            duration: packet.duration,
+            data: packet.data,
+          }),
+        );
+
+        // Drain whatever the decoder produced; decode never runs unboundedly
+        // ahead of composite + encode (the queue wait below bounds it).
+        while (this.queue.size > 0) {
+          const frame = await this.queue.pull();
+          if (frame === null) return;
+          for (const emitted of accept(frame)) yield emitted;
+        }
+
+        // Rejects if the decoder errors (it closes) or stalls, rather than hanging.
+        // A close() of our own mid-iteration just ends the stream.
+        try {
+          await waitForQueueBelow(this.decoder, MAX_DECODE_QUEUE_DEPTH + 1);
+        } catch (err) {
+          if (this.disposed) return;
+          throw err;
+        }
+      }
+    } finally {
+      packets.close();
+    }
+
+    if (this.disposed) return;
+    const flushDone = this.decoder.flush().then(
+      () => this.queue.close(),
+      (err) => this.queue.fail(toError(err)),
+    );
+
+    for (;;) {
+      const frame = await this.queue.pull();
+      if (frame === null) break;
+      for (const emitted of accept(frame)) yield emitted;
+    }
+    await flushDone;
+    // Nothing presented after startAt: the last frame before it still shows there.
+    for (const emitted of releaseHeld()) yield emitted;
+  }
+
+  /** The window is complete: drop the decoder's remaining (later) output now. */
+  private stopDecoding(): void {
+    try {
+      if (this.decoder.state !== 'closed') this.decoder.close();
+    } catch {
+      // already closed
+    }
+    this.queue.drain((frame) => frame.close());
+  }
+
+  close(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.packets?.close();
+    this.held?.close();
+    this.held = null;
+    this.queue.drain((frame) => frame.close());
+    this.queue.close();
+    try {
+      if (this.decoder.state !== 'closed') this.decoder.close();
+    } catch {
+      // already closed
+    }
+  }
+}
+
+/** Alpha tracks: Mediabunny decodes color + alpha and merges them; we only window the frames. */
+class SampleFrameSource implements FrameSource {
+  private disposed = false;
+
+  constructor(
+    private readonly stream: DemuxStream<VideoFrame>,
+    private readonly opts: ClipFrameDecoderOptions,
+  ) {}
+
+  async *frames(): AsyncGenerator<VideoFrame> {
+    const { trimStart, trimEnd } = this.opts;
+    try {
+      for (;;) {
+        if (this.disposed) return;
+        const next = await this.stream.next();
+        if (next.done) return;
+        const frame = next.value;
+        const timeSec = frame.timestamp / 1_000_000;
+        if (this.disposed || isPastTrimEnd(timeSec, trimEnd)) {
+          frame.close();
+          return;
+        }
+        if (isFrameInTrimWindow(timeSec, trimStart, trimEnd)) yield frame;
+        else frame.close();
+      }
+    } finally {
+      this.stream.close();
+    }
+  }
+
+  close(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.stream.close();
+  }
 }
 
 /**
@@ -240,133 +431,53 @@ export interface ClipFrameDecoderOptions {
  * The consumer owns each yielded frame and must call `frame.close()` on it.
  */
 export class ClipFrameDecoder {
-  private decoder: VideoDecoder;
-  private queue: AsyncFrameQueue<VideoFrame>;
-  private demuxed: DemuxedClip;
-  private opts: ClipFrameDecoderOptions;
-  private baseCts: number;
-  private window: DecodeWindow;
-  private disposed = false;
-
-  private constructor(
-    demuxed: DemuxedClip,
-    decoder: VideoDecoder,
-    queue: AsyncFrameQueue<VideoFrame>,
-    opts: ClipFrameDecoderOptions,
-    baseCts: number,
-    window: DecodeWindow,
-  ) {
-    this.demuxed = demuxed;
-    this.decoder = decoder;
-    this.queue = queue;
-    this.opts = opts;
-    this.baseCts = baseCts;
-    this.window = window;
-  }
-
-  /** Presentation timestamp (seconds, relative to clip start) of a decoded frame. */
-  private frameTimeSec(frame: VideoFrame): number {
-    return frame.timestamp / 1_000_000;
-  }
+  private constructor(private readonly source: FrameSource) {}
 
   static async open(source: Blob, opts: ClipFrameDecoderOptions): Promise<ClipFrameDecoder> {
     if (typeof VideoDecoder === 'undefined') {
       throw new Error('VideoDecoder API not available');
     }
-
-    const demuxed = await demuxClip(source);
-    const config = await resolveDecoderConfig(demuxed.config);
-    if (!config) {
-      throw new Error(`VideoDecoder does not support ${demuxed.config.codec}`);
+    if (!(opts.trimEnd > opts.trimStart)) {
+      throw new Error('Trim window contains no video samples');
     }
-    demuxed.config = config;
-    lastDecoderAcceleration = config.hardwareAcceleration ?? null;
 
-    const baseCts = computeBaseCts(demuxed.samples);
-    const window = selectDecodeWindow(demuxed.samples, opts.trimStart, opts.trimEnd, baseCts);
-    if (!window) throw new Error('Trim window contains no video samples');
+    const { trimStart, trimEnd } = opts;
+    const startAt =
+      opts.startAt !== undefined && opts.startAt > trimStart && opts.startAt < trimEnd
+        ? opts.startAt
+        : trimStart;
 
-    const queue = new AsyncFrameQueue<VideoFrame>(
-      opts.ringBufferCapacity ?? FRAME_RING_BUFFER_CAPACITY,
-    );
-    const decoder = new VideoDecoder({
-      output: (frame) => queue.push(frame),
-      error: (err) => queue.fail(err instanceof Error ? err : new Error(String(err))),
-    });
-    decoder.configure(demuxed.config);
+    const demux = await openVideoDemux(source);
+    const ladder = demux.hasAlpha ? ALPHA_DECODER_ACCELERATION_LADDER : DECODER_ACCELERATION_LADDER;
+    const hardwareAcceleration = await resolveDecoderAcceleration(demux.config, ladder);
+    if (!hardwareAcceleration) {
+      throw new Error(`VideoDecoder does not support ${demux.config.codec}`);
+    }
+    lastDecoderAcceleration = hardwareAcceleration;
 
-    return new ClipFrameDecoder(demuxed, decoder, queue, opts, baseCts, window);
+    if (demux.hasAlpha) {
+      const options: SampleDecodeOptions = { hardwareAcceleration };
+      if (opts.optimizeForLatency) options.optimizeForLatency = true;
+      // Mediabunny starts at the frame showing at startAt itself.
+      const stream = demux.decodeFrames(startAt, trimEnd, options);
+      return new ClipFrameDecoder(new SampleFrameSource(stream, opts));
+    }
+
+    const config: VideoDecoderConfig = { ...demux.config, hardwareAcceleration };
+    if (opts.optimizeForLatency) config.optimizeForLatency = true;
+    if (opts.colorSpace) config.colorSpace = { ...opts.colorSpace };
+    return new ClipFrameDecoder(new PacketFrameSource(demux, config, opts, startAt));
   }
 
   /**
    * Yield decoded frames inside the trim window, presentation order, with
-   * timestamps rebased so the first possible frame of the source is 0 µs.
+   * timestamps rebased so the first frame of the source is 0 µs.
    */
-  async *frames(): AsyncGenerator<VideoFrame> {
-    const { samples, buffer } = this.demuxed;
-    const { trimStart, trimEnd } = this.opts;
-
-    const emitOrDrop = (frame: VideoFrame): VideoFrame | null => {
-      if (isFrameInTrimWindow(this.frameTimeSec(frame), trimStart, trimEnd)) return frame;
-      frame.close();
-      return null;
-    };
-
-    for (let i = this.window.startIndex; i <= this.window.endIndex; i++) {
-      if (this.disposed) return;
-      const sample = samples[i]!;
-      const chunk = new EncodedVideoChunk({
-        type: sample.is_sync ? 'key' : 'delta',
-        timestamp: Math.round(((sample.cts - this.baseCts) / sample.timescale) * 1_000_000),
-        duration: Math.round((sample.duration / sample.timescale) * 1_000_000),
-        data: new Uint8Array(buffer, sample.offset, sample.size),
-      });
-      this.decoder.decode(chunk);
-
-      // Drain whatever the decoder produced; block when the ring buffer is
-      // full so decode never runs unboundedly ahead of composite + encode.
-      while (this.queue.size > 0 || this.queue.atCapacity) {
-        const frame = await this.queue.pull();
-        if (frame === null) return;
-        const emitted = emitOrDrop(frame);
-        if (emitted) yield emitted;
-        if (this.queue.size === 0) break;
-      }
-
-      // Rejects if the decoder errors (it closes) or stalls, rather than hanging.
-      // A close() of our own mid-iteration just ends the stream.
-      try {
-        await waitForQueueBelow(this.decoder, MAX_DECODE_QUEUE_DEPTH + 1);
-      } catch (err) {
-        if (this.disposed) return;
-        throw err;
-      }
-    }
-
-    if (this.disposed) return;
-    const flushDone = this.decoder.flush().then(
-      () => this.queue.close(),
-      (err) => this.queue.fail(err instanceof Error ? err : new Error(String(err))),
-    );
-
-    for (;;) {
-      const frame = await this.queue.pull();
-      if (frame === null) break;
-      const emitted = emitOrDrop(frame);
-      if (emitted) yield emitted;
-    }
-    await flushDone;
+  frames(): AsyncGenerator<VideoFrame> {
+    return this.source.frames();
   }
 
   close(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    this.queue.drain((frame) => frame.close());
-    this.queue.close();
-    try {
-      if (this.decoder.state !== 'closed') this.decoder.close();
-    } catch {
-      // already closed
-    }
+    this.source.close();
   }
 }

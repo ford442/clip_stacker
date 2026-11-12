@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PreviewDecoderSource, decoderLayerKey } from './previewDecoderSource';
 import type { FrameRequest, WorkerClip } from './previewWorkerProtocol';
-import type { ForwardFrameCursor } from '../media/decoderCursorPool';
+import { DEFAULT_MAX_DECODER_CURSORS, type ForwardFrameCursor } from '../media/decoderCursorPool';
+import { nestedInstanceId } from '../timeline/sequenceResolve';
 
 function videoClip(id: string, over: Partial<WorkerClip> = {}): WorkerClip {
   return {
@@ -57,7 +58,24 @@ describe('PreviewDecoderSource', () => {
       new Map([['a', videoClip('a', { trimStart: 1, trimEnd: NaN, duration: 8 })]]),
     );
 
-    expect(factory).toHaveBeenCalledWith(expect.any(Blob), 1, 8);
+    // Opened at the requested time (startAt 2), not decoded forward from trimStart.
+    expect(factory).toHaveBeenCalledWith(expect.any(Blob), 1, 8, 2);
+  });
+
+  it('reopens a backward scrub at the scrub target', async () => {
+    const factory = cursorFactory();
+    const source = new PreviewDecoderSource(factory);
+    source.setClipMedia('a', new Blob());
+    const clips = new Map([['a', videoClip('a', { trimStart: 1, trimEnd: 9 })]]);
+
+    await source.split([request('a', { sourceTime: 1 })], clips);
+    await source.split([request('a', { sourceTime: 8 })], clips);
+    await source.split([request('a', { sourceTime: 4 })], clips);
+
+    expect(factory.mock.calls.map((call) => (call as unknown[]).slice(1))).toEqual([
+      [1, 9],
+      [1, 9, 4],
+    ]);
   });
 
   it('falls back for stills, non-video clips, morph segments, and unregistered media', async () => {
@@ -196,5 +214,28 @@ describe('PreviewDecoderSource', () => {
 
     expect(split.proxyDecoded).toBe(0);
     expect((factory.mock.calls.at(-1) as unknown[])[0]).toBe(original);
+  });
+
+  it('keeps the cursor cap with nested-sequence instances, one cursor per instance', async () => {
+    const factory = cursorFactory();
+    const source = new PreviewDecoderSource(factory);
+    // Ten layers of one nested sequence placed twice: S>a0 … S>a4, T>a0 … T>a4.
+    const ids = ['S', 'T'].flatMap((parent) =>
+      Array.from({ length: 5 }, (_, i) => nestedInstanceId(parent, `a${i}`)),
+    );
+    for (const id of ids) source.setClipMedia(id, new Blob([id]));
+    const clips = new Map(ids.map((id) => [id, videoClip(id)]));
+
+    const split = await source.split(ids.map((id) => request(id)), clips);
+    expect(split.decoded).toHaveLength(ids.length);
+    expect(split.fallback).toEqual([]);
+    expect(source.activeCount).toBeLessThanOrEqual(DEFAULT_MAX_DECODER_CURSORS);
+    expect(decoderLayerKey(request(ids[0]!))).toContain(`${ids[0]}::`);
+
+    // Pruning by instance id parses the key correctly (`>` is not the `::` separator).
+    source.pruneExcept(new Set([ids[0]!]));
+    expect(source.hasClipMedia(ids[0]!)).toBe(true);
+    expect(source.hasClipMedia(ids[1]!)).toBe(false);
+    expect(source.activeCount).toBeLessThanOrEqual(1);
   });
 });

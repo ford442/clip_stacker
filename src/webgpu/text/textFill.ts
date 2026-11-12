@@ -18,6 +18,7 @@
 
 import textFillShader from '../shaders/textFill.wgsl?raw';
 import { acquireGpuContext, onGpuDeviceLost, onGpuDeviceRecovered } from '../gpuDevice';
+import { canvasConfiguration } from '../canvasConfiguration';
 import { ffmpegColorToRgb01 } from '../../composition/color';
 import { getTextShader, resolveShaderColors, resolveShaderParams } from './registry';
 
@@ -139,8 +140,7 @@ export class TextFillRenderer {
   }
 
   static async create(): Promise<TextFillRenderer> {
-    const { device } = await acquireGpuContext();
-    const format = navigator.gpu.getPreferredCanvasFormat();
+    const { device, format } = await acquireGpuContext();
 
     const shaderModule = device.createShaderModule({ code: textFillShader });
 
@@ -190,18 +190,9 @@ export class TextFillRenderer {
     this.outputCanvas.height = h;
     const context = this.outputCanvas.getContext('webgpu') as GPUCanvasContext | null;
     if (!context) throw new Error('Could not acquire a WebGPU canvas context');
-    context.configure({
-      device: this.device,
-      format: this.format,
-      alphaMode: 'premultiplied',
-      // Same reasoning as previewEngine.ts's canvas: this output is only ever
-      // rendered into (RENDER_ATTACHMENT) and read back via drawImage/copy
-      // (COPY_SRC) — never sampled or copied into — so a broader usage mask
-      // risks configure() rejection on some adapters for no benefit.
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
-      colorSpace: 'srgb',
-      toneMapping: { mode: 'standard' },
-    });
+    // Rendered into and read back with drawImage, never sampled: the same
+    // swapchain configuration as every other app canvas.
+    context.configure(canvasConfiguration(this.device, this.format));
     this.context = context;
     return context;
   }

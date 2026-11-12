@@ -248,6 +248,109 @@
   margin: 0;
 }
 
+/* ── Nested sequences (SequencesPanel.tsx) ───────────────────── */
+.sequences-panel {
+  margin-bottom: 0.5rem;
+}
+
+.sequences-toggle {
+  width: 100%;
+  font-size: 0.78rem;
+}
+
+.sequences-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-top: 0.4rem;
+  padding: 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(8, 10, 18, 0.6);
+}
+
+.sequences-pick {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-height: 160px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 0.35rem;
+  margin: 0;
+}
+
+.sequences-pick legend {
+  font-size: 0.7rem;
+  color: var(--muted);
+  padding: 0 0.25rem;
+}
+
+.sequences-pick-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.74rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sequences-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.sequences-actions .btn-secondary {
+  flex: 1 1 auto;
+  font-size: 0.74rem;
+}
+
+.sequences-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.sequences-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  font-size: 0.74rem;
+}
+
+.sequences-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.sequences-rename {
+  flex: 1 1 8rem;
+  min-width: 0;
+  font-size: 0.74rem;
+}
+
+.sequences-item-btns {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.sequences-item-btns button {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.35rem;
+}
+
+.sequences-hint {
+  font-size: 0.7rem;
+  margin: 0;
+}
+
 /* Preview proxy state (see ProxyBadge.tsx) */
 .proxy-badge {
   display: inline-block;

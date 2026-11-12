@@ -14,6 +14,8 @@ import { ChromaticAberrationGpuPass } from './chromaticAberrationPass';
 import { CurvesGpuPass } from './curvesPass';
 import { BloomGpuPass } from './bloomPass';
 import { ColorManagementGpuPass } from './colorManagementPass';
+import { GraphicsOverlayPass } from './graphicsOverlayPass';
+import { gpuProfilerFor } from './gpuProfiler';
 import type { FinishingSettings } from '../finishing/finishing';
 import {
   isBloomActive,
@@ -29,7 +31,8 @@ import {
 } from '../finishing/finishing';
 import { resolveLutData } from '../finishing/lut';
 import {
-  ColorXformMode,
+  graphicsWhiteSceneGain,
+  inputModeFor,
   normalizeColorManagement,
   odtModeForOutput,
   presentModeToXform,
@@ -40,6 +43,11 @@ import {
 } from './finishingShared';
 
 const WORKING_FORMAT: GPUTextureFormat = 'rgba16float';
+/**
+ * The HDR10 PQ image (output encoding, after grain). Half float keeps more
+ * than 10 bits of every PQ code the YUV pack reads; an 8-bit target banded.
+ */
+const PQ_FORMAT: GPUTextureFormat = 'rgba16float';
 
 interface ManagedFinishing {
   source: GPUTexture | null;
@@ -50,9 +58,15 @@ interface ManagedFinishing {
   pq: GPUTexture | null;
   width: number;
   height: number;
+  /**
+   * Input and output transforms run in one command encoder, and a pass's
+   * uniforms are written with `queue.writeBuffer` before the submit — so one
+   * instance used twice would run both draws with the last mode written.
+   */
+  xformInput: ColorManagementGpuPass;
   xformFloat: ColorManagementGpuPass;
   xformCanvas: ColorManagementGpuPass;
-  xformUnorm: ColorManagementGpuPass;
+  graphics: GraphicsOverlayPass | null;
   noise: NoiseReductionGpuPass;
   primary: PrimaryColorGpuPass;
   curves: CurvesGpuPass;
@@ -89,7 +103,10 @@ export class ManagedFinishingChain {
     options: FinishingApplyOptions | undefined,
   ): void {
     const color = normalizeColorManagement(options?.colorManagement);
-    const present = presentModeToXform(options?.presentation?.present ?? 'identity');
+    const present = presentModeToXform(
+      options?.presentation?.present ?? 'identity',
+      options?.presentation?.colorSpace,
+    );
     const frameSeed = Number.isFinite(options?.frameIndex)
       ? Math.max(0, Math.floor(options!.frameIndex as number))
       : 0;
@@ -98,6 +115,9 @@ export class ManagedFinishingChain {
     this.ensureManagedTextures(device, width, height);
     const managed = this.managed!;
     const encoder = device.createCommandEncoder();
+    const profiler = gpuProfilerFor(device);
+    const profile = (label: string, active: boolean): number | null =>
+      active && profiler ? profiler.begin(encoder, label) : null;
     const canvasTexture = context.getCurrentTexture();
     encoder.copyTextureToTexture(
       { texture: canvasTexture },
@@ -105,13 +125,15 @@ export class ManagedFinishingChain {
       [width, height, 1],
     );
 
-    managed.xformFloat.applyBetweenTextures(
+    const pInput = profile('colour in', true);
+    managed.xformInput.applyBetweenTextures(
       device,
       managed.source!,
       managed.ping!.createView(),
-      ColorXformMode.inputRec709ToLinear2020,
+      inputModeFor(options?.importColorSpace ?? 'srgb'),
       encoder,
     );
+    profiler?.end(encoder, pInput);
 
     let current = managed.ping!;
     let next = managed.pong!;
@@ -121,6 +143,10 @@ export class ManagedFinishingChain {
       next = tmp;
     };
 
+    const pNoise = profile(
+      `NR ${settings.noiseReduction?.quality ?? 'standard'}`,
+      isNoiseReductionActive(settings.noiseReduction),
+    );
     if (isNoiseReductionActive(settings.noiseReduction) && settings.noiseReduction) {
       const nr = settings.noiseReduction;
       const wantsTemporal = Boolean(nr.temporal) && (nr.temporalStrength ?? 0) > 0;
@@ -145,7 +171,9 @@ export class ManagedFinishingChain {
         managed.prevValid = true;
       }
     }
+    profiler?.end(encoder, pNoise);
 
+    const pPrimary = profile('primary', isPrimaryColorActive(settings.primaryColor));
     if (isPrimaryColorActive(settings.primaryColor) && settings.primaryColor) {
       managed.primary.applyBetweenTextures(
         device,
@@ -159,7 +187,9 @@ export class ManagedFinishingChain {
       );
       swap();
     }
+    profiler?.end(encoder, pPrimary);
 
+    const pCurves = profile('curves', isCurvesActive(settings.curves));
     if (isCurvesActive(settings.curves) && settings.curves) {
       managed.curves.applyBetweenTextures(
         device,
@@ -172,7 +202,9 @@ export class ManagedFinishingChain {
       );
       swap();
     }
+    profiler?.end(encoder, pCurves);
 
+    const pSecondary = profile('secondary', isSecondaryColorActive(settings.secondaryColor));
     if (isSecondaryColorActive(settings.secondaryColor) && settings.secondaryColor) {
       managed.secondary.applyBetweenTextures(
         device,
@@ -185,7 +217,9 @@ export class ManagedFinishingChain {
       );
       swap();
     }
+    profiler?.end(encoder, pSecondary);
 
+    const pLut = profile('LUT', isLutFinishingPassActive(settings.lut));
     if (isLutFinishingPassActive(settings.lut)) {
       const lut = resolveLutData(lutPassToColorGrade(settings.lut));
       if (lut) {
@@ -202,7 +236,9 @@ export class ManagedFinishingChain {
         swap();
       }
     }
+    profiler?.end(encoder, pLut);
 
+    const pSharpen = profile('sharpen', isSharpenActive(settings.sharpen));
     if (isSharpenActive(settings.sharpen) && settings.sharpen) {
       managed.sharpen.applyBetweenTextures(
         device,
@@ -215,7 +251,9 @@ export class ManagedFinishingChain {
       );
       swap();
     }
+    profiler?.end(encoder, pSharpen);
 
+    const pCa = profile('CA', isChromaticAberrationActive(settings.chromaticAberration));
     if (
       isChromaticAberrationActive(settings.chromaticAberration) &&
       settings.chromaticAberration
@@ -231,7 +269,9 @@ export class ManagedFinishingChain {
       );
       swap();
     }
+    profiler?.end(encoder, pCa);
 
+    const pBloom = profile('bloom', isBloomActive(settings.bloom));
     if (isBloomActive(settings.bloom) && settings.bloom) {
       managed.bloom.applyBetweenTextures(
         device,
@@ -244,7 +284,31 @@ export class ManagedFinishingChain {
       );
       swap();
     }
+    profiler?.end(encoder, pBloom);
 
+    // Titles and captions of an HDR10 frame: composited in the working space
+    // at the graphics white, so the PQ file carries them (not drawn later
+    // over the 8-bit canvas). Last before the output transform, so no
+    // optical pass blooms or fringes them; grain still runs over them.
+    const pTitles = profile(
+      'HDR titles',
+      Boolean(color.outputColor === 'hdr10' && options?.graphicsOverlay),
+    );
+    if (color.outputColor === 'hdr10' && options?.graphicsOverlay) {
+      managed.graphics ??= GraphicsOverlayPass.create(device, WORKING_FORMAT);
+      managed.graphics.composite(
+        device,
+        encoder,
+        options.graphicsOverlay,
+        current.createView(),
+        width,
+        height,
+        graphicsWhiteSceneGain(color),
+      );
+    }
+    profiler?.end(encoder, pTitles);
+
+    const pOutput = profile('colour out', true);
     managed.xformFloat.applyBetweenTextures(
       device,
       current,
@@ -253,7 +317,9 @@ export class ManagedFinishingChain {
       encoder,
     );
     swap();
+    profiler?.end(encoder, pOutput);
 
+    const pGrain = profile('grain', isGrainActive(settings.grain));
     if (isGrainActive(settings.grain) && settings.grain) {
       managed.grain.applyBetweenTextures(
         device,
@@ -267,17 +333,13 @@ export class ManagedFinishingChain {
       );
       swap();
     }
+    profiler?.end(encoder, pGrain);
 
     if (color.outputColor === 'hdr10' && managed.pq) {
-      managed.xformUnorm.applyBetweenTextures(
-        device,
-        current,
-        managed.pq.createView(),
-        ColorXformMode.presentIdentity,
-        encoder,
-      );
+      encoder.copyTextureToTexture({ texture: current }, { texture: managed.pq }, [width, height, 1]);
     }
 
+    const pPresent = profile('present', true);
     managed.xformCanvas.applyBetweenTextures(
       device,
       current,
@@ -285,11 +347,12 @@ export class ManagedFinishingChain {
       present,
       encoder,
     );
+    profiler?.end(encoder, pPresent);
 
     device.queue.submit([encoder.finish()]);
   }
 
-  /** RGBA8 PQ image from the last managed HDR10 frame, or null. */
+  /** Half-float PQ image (Rec.2020 R'G'B') of the last managed HDR10 frame, or null. */
   getPqExportTexture(): GPUTexture | null {
     return this.managed?.pq ?? null;
   }
@@ -314,9 +377,10 @@ export class ManagedFinishingChain {
       pq: null,
       width: 0,
       height: 0,
+      xformInput: ColorManagementGpuPass.create(device, WORKING_FORMAT),
       xformFloat: ColorManagementGpuPass.create(device, WORKING_FORMAT),
       xformCanvas: ColorManagementGpuPass.create(device, this.format),
-      xformUnorm: ColorManagementGpuPass.create(device, 'rgba8unorm'),
+      graphics: null,
       noise: NoiseReductionGpuPass.create(device, WORKING_FORMAT, true),
       primary: PrimaryColorGpuPass.create(device, WORKING_FORMAT),
       curves: CurvesGpuPass.create(device, WORKING_FORMAT, true),
@@ -351,7 +415,7 @@ export class ManagedFinishingChain {
       finishingIntermediateTextureDescriptor(width, height, WORKING_FORMAT),
     );
     managed.pq = device.createTexture(
-      finishingIntermediateTextureDescriptor(width, height, 'rgba8unorm'),
+      finishingIntermediateTextureDescriptor(width, height, PQ_FORMAT),
     );
     managed.prevValid = false;
     managed.width = width;
@@ -366,9 +430,10 @@ export class ManagedFinishingChain {
     managed.pong?.destroy();
     managed.prev?.destroy();
     managed.pq?.destroy();
+    managed.xformInput.destroy();
     managed.xformFloat.destroy();
     managed.xformCanvas.destroy();
-    managed.xformUnorm.destroy();
+    managed.graphics?.destroy();
     managed.noise.destroy();
     managed.primary.destroy();
     managed.curves.destroy();

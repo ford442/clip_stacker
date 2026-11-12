@@ -45,6 +45,11 @@ export interface PreviewMetricsSnapshot {
   proxySourcedLayers: number;
   /** Layers of the last frame read from the full-res original (either path). */
   originalSourcedLayers: number;
+  /**
+   * `?gpu_profile`: averaged GPU milliseconds per pass of the preview
+   * (compositor, transition, each finishing pass). Empty when off.
+   */
+  gpuPassMs: Record<string, number>;
 }
 
 /** Returns true when running under Vite's dev flag (guarded for non-Vite envs). */
@@ -66,6 +71,7 @@ export class PreviewMetrics {
   private decoderSourcedLayers = 0;
   private elementSourcedLayers = 0;
   private proxySourcedLayers = 0;
+  private gpuPassMs: Record<string, number> = {};
   private lastLogAt = 0;
 
   recordFrame(ms: number): void {
@@ -95,6 +101,11 @@ export class PreviewMetrics {
     this.proxySourcedLayers = Math.min(sources.proxy ?? 0, sources.decoder + sources.element);
   }
 
+  /** The preview realm's GPU timings (`gpuProfiler` snapshot). */
+  setGpuProfile(passMs: Record<string, number>): void {
+    this.gpuPassMs = { ...passMs };
+  }
+
   snapshot(): PreviewMetricsSnapshot {
     return {
       avgFrameMs: average(this.frameSamples),
@@ -108,6 +119,7 @@ export class PreviewMetrics {
       proxySourcedLayers: this.proxySourcedLayers,
       originalSourcedLayers:
         this.decoderSourcedLayers + this.elementSourcedLayers - this.proxySourcedLayers,
+      gpuPassMs: { ...this.gpuPassMs },
     };
   }
 
@@ -122,6 +134,7 @@ export class PreviewMetrics {
     this.decoderSourcedLayers = 0;
     this.elementSourcedLayers = 0;
     this.proxySourcedLayers = 0;
+    this.gpuPassMs = {};
     this.lastLogAt = 0;
   }
 

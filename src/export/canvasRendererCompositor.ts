@@ -56,7 +56,7 @@ export function drawTextOverlays(
       continue;
     }
     if (layer.kind !== "text") continue;
-    drawTextLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
+    drawTextLayer(ctx, layer, layer.time ?? plan.globalTime, plan.canvasWidth, plan.scale);
   }
 }
 
@@ -142,7 +142,7 @@ export async function renderTextOverlaysAsync(
       ctx.textBaseline = 'top';
       const tw = ctx.measureText(overlay.text).width;
       const x = overlay.scrolling
-        ? resolveScrollingX(overlay.scrollSpeed, plan.globalTime, plan.canvasWidth, tw)
+        ? resolveScrollingX(overlay.scrollSpeed, layer.time ?? plan.globalTime, plan.canvasWidth, tw)
         : layer.x;
       ctx.fillStyle = color;
       ctx.fillRect(x - pad, layer.y - pad, tw + pad * 2, fs + pad * 2);
@@ -158,7 +158,7 @@ export async function renderTextOverlaysAsync(
         const { createSingleOverlayGlyphMask } = await import('../composition/textMask');
         const mask = createSingleOverlayGlyphMask(
           overlay,
-          plan.globalTime,
+          layer.time ?? plan.globalTime,
           plan.canvasWidth,
           plan.canvasHeight,
         );
@@ -178,7 +178,7 @@ export async function renderTextOverlaysAsync(
           plan.canvasHeight,
         ].join(':');
         const filled = await renderer.render(mask, {
-          time: plan.globalTime,
+          time: layer.time ?? plan.globalTime,
           ...(overlay.shaderId !== undefined ? { shaderId: overlay.shaderId } : {}),
           ...(overlay.shaderParams !== undefined ? { params: overlay.shaderParams } : {}),
           ...(overlay.shaderColors !== undefined ? { colors: overlay.shaderColors } : {}),
@@ -193,11 +193,11 @@ export async function renderTextOverlaysAsync(
         ctx.globalAlpha = prev;
       } catch {
         // Fallback to solid if GPU path fails
-        drawTextLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
+        drawTextLayer(ctx, layer, layer.time ?? plan.globalTime, plan.canvasWidth, plan.scale);
       }
     } else {
       // Solid path reuses existing per-layer draw (color + alpha)
-      drawTextLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
+      drawTextLayer(ctx, layer, layer.time ?? plan.globalTime, plan.canvasWidth, plan.scale);
     }
   }
 }

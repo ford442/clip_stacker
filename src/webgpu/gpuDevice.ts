@@ -29,6 +29,8 @@
  * previous one was lost in the meantime.
  */
 
+import { installGpuProfiler, isGpuProfilingRequested } from './gpuProfiler';
+
 export type GpuErrorType = 'validation' | 'out-of-memory' | 'internal' | 'lost';
 
 /** Which JS realm's device an error came from. */
@@ -47,12 +49,17 @@ export interface GpuContext {
   readonly device: GPUDevice;
   readonly format: GPUTextureFormat;
   /**
-   * Optional GPU features actually adopted on this device (subset of
-   * {@link DESIRED_OPTIONAL_FEATURES} that this adapter supports). Always
-   * check `features.has(...)` before using a feature-gated code path —
-   * these are best-effort and commonly absent on Safari/Firefox.
+   * Optional GPU features actually adopted on this device (the subset of
+   * {@link requestedOptionalFeatures} this adapter supports). Always check
+   * `features.has(...)` before using a feature-gated code path — these are
+   * best-effort and commonly absent on Safari/Firefox.
    */
   readonly features: Set<GPUFeatureName>;
+  /**
+   * The adapter is a software / CPU fallback (SwiftShader, WARP). Live
+   * preview refuses it (`assertPreviewAdapter`) unless the page allows it.
+   */
+  readonly isFallbackAdapter: boolean;
   /** Returns this context if still live, otherwise acquires a fresh one. */
   ensure(): Promise<GpuContext>;
   /** Destroys the underlying device. Only call this if you truly own the app's GPU lifecycle (e.g. tests). */
@@ -79,18 +86,63 @@ const DESIRED_LIMITS: Record<string, number> = {
 /**
  * Optional features adopted when the adapter supports them, and otherwise
  * silently skipped — never passed as a hard requirement, so an adapter
- * missing one (Safari, Firefox, older Chrome) still boots. Callers check
- * `GpuContext.features` before relying on any of these.
+ * missing one (Safari, Firefox, older Chrome) still boots. Only features a
+ * code path reads are asked for: an enabled feature can cost the driver
+ * (timestamp queries, for one, keep extra state per pass).
+ *
+ * - `shader-f16` — half-precision maths in the colour transform pass.
+ * - `timestamp-query` — only under `?gpu_profile` (`requestGpuProfiling`).
  */
-const DESIRED_OPTIONAL_FEATURES: GPUFeatureName[] = [
-  'timestamp-query',
-  'float32-filterable',
-  'bgra8unorm-storage',
-  'rg11b10ufloat-renderable',
-  'dual-source-blending',
-  // Optional half-precision math for the color-transform pass. Never required.
-  'shader-f16' as GPUFeatureName,
-];
+export function requestedOptionalFeatures(profiling = isGpuProfilingRequested()): GPUFeatureName[] {
+  const features: GPUFeatureName[] = ['shader-f16' as GPUFeatureName];
+  if (profiling) features.push('timestamp-query');
+  return features;
+}
+
+/** `GPUAdapterInfo.isFallbackAdapter`, else the older `GPUAdapter.isFallbackAdapter`. */
+export function adapterIsFallback(adapter: GPUAdapter): boolean {
+  const withInfo = adapter as GPUAdapter & {
+    info?: { isFallbackAdapter?: boolean };
+    isFallbackAdapter?: boolean;
+  };
+  return Boolean(withInfo.info?.isFallbackAdapter ?? withInfo.isFallbackAdapter ?? false);
+}
+
+let fallbackAdapterAllowed = false;
+
+/**
+ * Let live preview run on a fallback adapter in this realm. Main resolves it
+ * from `?test_harness` (the regression harness runs on SwiftShader) and
+ * passes it to the preview worker.
+ */
+export function allowFallbackAdapterForPreview(allowed: boolean): void {
+  fallbackAdapterAllowed = allowed;
+}
+
+export class FallbackAdapterError extends Error {
+  constructor() {
+    super(
+      'WebGPU is running on a software fallback adapter, too slow for live preview. ' +
+        'Enable hardware acceleration in the browser settings.',
+    );
+    this.name = 'FallbackAdapterError';
+  }
+}
+
+/** Throws {@link FallbackAdapterError} when live preview would run on a fallback adapter. */
+export function assertPreviewAdapter(ctx: Pick<GpuContext, 'isFallbackAdapter'>): void {
+  if (ctx.isFallbackAdapter && !fallbackAdapterAllowed) throw new FallbackAdapterError();
+}
+
+/**
+ * Device-loss recovery: each recreate waits 250 ms, 500 ms, … up to 4 s, and
+ * after {@link MAX_DEVICE_RECOVERY_ATTEMPTS} attempts without a stable device
+ * it stops and reports recovery failed. A device that lived
+ * {@link STABLE_DEVICE_MS} resets the count.
+ */
+export const DEVICE_RECOVERY_BACKOFF_MS = [250, 500, 1000, 2000, 4000] as const;
+export const MAX_DEVICE_RECOVERY_ATTEMPTS = 5;
+const STABLE_DEVICE_MS = 30_000;
 
 function resolveRequiredLimits(adapter: GPUAdapter): Record<string, number> {
   const limits = adapter.limits as unknown as Record<string, number>;
@@ -105,7 +157,7 @@ function resolveRequiredLimits(adapter: GPUAdapter): Record<string, number> {
 }
 
 function resolveOptionalFeatures(adapter: GPUAdapter): GPUFeatureName[] {
-  return DESIRED_OPTIONAL_FEATURES.filter((feature) => adapter.features.has(feature));
+  return requestedOptionalFeatures().filter((feature) => adapter.features.has(feature));
 }
 
 const MAX_ERROR_LOG = 20;
@@ -173,14 +225,44 @@ export function onGpuDeviceRecoveryFailed(listener: DeviceRecoveryFailedListener
   return () => recoveryFailedListeners.delete(listener);
 }
 
+let recoveryAttempts = 0;
+let recoveryTimer: ReturnType<typeof setTimeout> | null = null;
+
+function scheduleRecovery(): void {
+  if (recoveryTimer !== null) return;
+  if (recoveryAttempts >= MAX_DEVICE_RECOVERY_ATTEMPTS) {
+    const error = new Error(
+      `WebGPU device lost repeatedly; gave up after ${MAX_DEVICE_RECOVERY_ATTEMPTS} recovery attempts`,
+    );
+    for (const listener of recoveryFailedListeners) listener(error);
+    return;
+  }
+  const delay =
+    DEVICE_RECOVERY_BACKOFF_MS[Math.min(recoveryAttempts, DEVICE_RECOVERY_BACKOFF_MS.length - 1)]!;
+  recoveryAttempts++;
+  recoveryTimer = setTimeout(() => {
+    recoveryTimer = null;
+    acquireGpuContext()
+      .then((ctx) => {
+        for (const listener of recoveredListeners) listener(ctx);
+      })
+      .catch(() => {
+        // Try again after a longer wait, or report failure once capped.
+        scheduleRecovery();
+      });
+  }, delay);
+}
+
 class GpuContextImpl implements GpuContext {
   private destroyed = false;
+  private readonly createdAt = Date.now();
 
   constructor(
     readonly adapter: GPUAdapter,
     readonly device: GPUDevice,
     readonly format: GPUTextureFormat,
     readonly features: Set<GPUFeatureName>,
+    readonly isFallbackAdapter: boolean,
   ) {
     void this.device.lost.then((info) => this.handleLost(info));
     this.device.onuncapturederror = (event) => {
@@ -203,19 +285,12 @@ class GpuContextImpl implements GpuContext {
     if (current === this) current = null;
     for (const listener of lostListeners) listener(info);
 
-    // Attempt exactly one automatic recreate so an unexpected loss (GPU
-    // process crash, driver reset) doesn't strand the app until a full
-    // page reload. If this also fails, callers see it the next time they
-    // call acquireGpuContext()/ensure() and get a rejected promise.
-    void acquireGpuContext()
-      .then((ctx) => {
-        for (const listener of recoveredListeners) listener(ctx);
-      })
-      .catch((err: unknown) => {
-        // Nothing more is tried automatically; the next acquire retries.
-        const error = err instanceof Error ? err : new Error(String(err));
-        for (const listener of recoveryFailedListeners) listener(error);
-      });
+    // Recreate automatically so an unexpected loss (GPU process crash,
+    // driver reset) doesn't strand the app until a reload — with a backoff
+    // and a cap, so a device that keeps dying is not recreated in a loop.
+    // After the cap, the next acquireGpuContext() / ensure() still tries.
+    if (Date.now() - this.createdAt >= STABLE_DEVICE_MS) recoveryAttempts = 0;
+    scheduleRecovery();
   }
 
   async ensure(): Promise<GpuContext> {
@@ -248,9 +323,7 @@ export async function acquireGpuContext(): Promise<GpuContext> {
     if (!('gpu' in navigator) || !navigator.gpu) {
       throw new Error('WebGPU is not available in this browser');
     }
-    const adapter = await navigator.gpu.requestAdapter({
-      powerPreference: 'high-performance',
-    });
+    const adapter = await takeAdapter();
     if (!adapter) throw new Error('No WebGPU adapter available');
 
     const optionalFeatures = resolveOptionalFeatures(adapter);
@@ -262,8 +335,15 @@ export async function acquireGpuContext(): Promise<GpuContext> {
     });
     const format = navigator.gpu.getPreferredCanvasFormat();
 
-    const ctx = new GpuContextImpl(adapter, device, format, new Set(optionalFeatures));
+    const ctx = new GpuContextImpl(
+      adapter,
+      device,
+      format,
+      new Set(optionalFeatures),
+      adapterIsFallback(adapter),
+    );
     current = ctx;
+    installGpuProfiler(device);
     return ctx;
   })();
 
@@ -272,6 +352,37 @@ export async function acquireGpuContext(): Promise<GpuContext> {
   } finally {
     pendingAcquire = null;
   }
+}
+
+let probedAdapter: Promise<GPUAdapter | null> | null = null;
+
+function requestHighPerformanceAdapter(): Promise<GPUAdapter | null> {
+  return navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+}
+
+/**
+ * The adapter for the next device: the one {@link probeGpuAdapter} found, if
+ * it has not been used yet (an adapter makes one device), else a new one.
+ */
+async function takeAdapter(): Promise<GPUAdapter | null> {
+  const probed = probedAdapter;
+  probedAdapter = null;
+  return (probed ? await probed.catch(() => null) : null) ?? requestHighPerformanceAdapter();
+}
+
+/**
+ * Boot probe without a device: `requestAdapter` only. The main thread uses
+ * this, so it holds no `GPUDevice` until the first export or text fill
+ * actually needs one (the preview worker owns its own). The adapter is
+ * kept for that first {@link acquireGpuContext}.
+ */
+export async function probeGpuAdapter(): Promise<GPUAdapter | null> {
+  if (current) return current.adapter;
+  if (!('gpu' in navigator) || !navigator.gpu) {
+    throw new Error('WebGPU is not available in this browser');
+  }
+  probedAdapter ??= requestHighPerformanceAdapter();
+  return probedAdapter;
 }
 
 /** Whether a shared device currently exists (without allocating one). */
@@ -296,6 +407,11 @@ export function peekGpuFeatures(): Set<GPUFeatureName> | null {
 export function __resetGpuContextForTests(): void {
   current = null;
   pendingAcquire = null;
+  probedAdapter = null;
+  recoveryAttempts = 0;
+  if (recoveryTimer !== null) clearTimeout(recoveryTimer);
+  recoveryTimer = null;
+  fallbackAdapterAllowed = false;
   errorLog.length = 0;
   errorListeners.clear();
   lostListeners.clear();

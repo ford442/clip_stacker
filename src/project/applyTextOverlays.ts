@@ -1,5 +1,5 @@
 import type { TextAnimatableProp, TextOverlay, TextOverlayKeyframes } from '../types';
-import { PROJECT_SCHEMA_VERSION } from '../types';
+import { NORMALIZED_LAYOUT_SCHEMA_VERSION } from '../types';
 import { sanitizeFfmpegColor } from '../composition/color';
 import type { Keyframe, KeyframeEasing } from '../timeline/keyframes';
 import {
@@ -182,5 +182,5 @@ export function deserializeTextOverlays(
 }
 
 export function usesPixelLayoutForProject(schemaVersion: number | undefined): boolean {
-  return (schemaVersion ?? 1) < PROJECT_SCHEMA_VERSION;
+  return (schemaVersion ?? 1) < NORMALIZED_LAYOUT_SCHEMA_VERSION;
 }

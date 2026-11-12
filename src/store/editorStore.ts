@@ -49,6 +49,13 @@ import {
 import { settingsStore } from './settingsStore';
 import { selectTimelineClips } from './selectors';
 import { registerExportStateSource } from '../export/exportSources';
+import { sanitizeSequenceClip } from '../timeline/sequenceResolve';
+import {
+  allSequenceClips,
+  committedSequences,
+  type SequenceEditorState,
+} from '../timeline/sequenceModel';
+import { createEditorSequenceActions, type EditorSequenceActions } from './editorSequences';
 
 /**
  * Durable editing state (#144).
@@ -75,7 +82,23 @@ function resolveUpdater<T>(action: StateUpdater<T>, prev: T): T {
     : action;
 }
 
-export interface EditorState {
+/** Sequence clips keep only what they can honour (`sanitizeSequenceClip`). */
+function sanitizeClips(clips: Clip[]): Clip[] {
+  let changed = false;
+  const next = clips.map((clip) => {
+    const clean = sanitizeSequenceClip(clip);
+    if (clean !== clip) changed = true;
+    return clean;
+  });
+  return changed ? next : clips;
+}
+
+/**
+ * The editor edits one sequence at a time through `clips` / `tracks` /
+ * `clipGroups` / `transitions` / `textOverlays` — the main timeline, or the
+ * nested sequence open in `sequencePath` (see `timeline/sequenceModel.ts`).
+ */
+export interface EditorState extends EditorSequenceActions {
   clips: Clip[];
   tracks: Track[];
   clipGroups: ClipGroup[];
@@ -189,6 +212,9 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       selectedClipId: state.selectedClipId,
       masterAudio: state.masterAudio,
       ...(state.masterBus ? { masterBus: state.masterBus } : {}),
+      ...(state.sequences.length > 0 || state.sequencePath.length > 0
+        ? { sequences: state.sequences, sequencePath: state.sequencePath, rootStash: state.rootStash }
+        : {}),
     };
   };
 
@@ -199,10 +225,26 @@ export const editorStore = createStore<EditorState>()((set, get) => {
   const applySnapshot = (snapshot: EditSnapshot) => {
     isRestoring = true;
     try {
-      const previousClips = get().clips;
+      // Every sequence's clips share the session's object URLs: merge and
+      // revoke against all of them, or nesting a clip would revoke its media.
+      const previousClips = allSequenceClips(get());
+      const mergeBody = <T extends { clips: Clip[]; clipGroups: ClipGroup[] }>(body: T): T => {
+        const clips = mergeClipUrls(body.clips, previousClips);
+        return { ...body, clips, clipGroups: syncClipGroups(body.clipGroups, clips) };
+      };
+      const sequences = (snapshot.sequences ?? []).map(mergeBody);
+      const rootStash = snapshot.rootStash ? mergeBody(snapshot.rootStash) : null;
       const mergedClips = mergeClipUrls(snapshot.clips, previousClips);
-      revokeOrphanedUrls(previousClips, mergedClips);
+      revokeOrphanedUrls(previousClips, [
+        ...mergedClips,
+        ...(rootStash?.clips ?? []),
+        ...sequences.flatMap((seq) => seq.clips),
+      ]);
+      const sequencePath = rootStash ? (snapshot.sequencePath ?? []) : [];
       set({
+        sequences,
+        sequencePath,
+        rootStash: sequencePath.length > 0 ? rootStash : null,
         clips: mergedClips,
         tracks: cloneTracks(snapshot.tracks),
         clipGroups: syncClipGroups(snapshot.clipGroups, mergedClips),
@@ -234,6 +276,10 @@ export const editorStore = createStore<EditorState>()((set, get) => {
   };
 
   return {
+    sequences: [],
+    sequencePath: [],
+    rootStash: null,
+    ...createEditorSequenceActions(get, set, pushHistory),
     clips: [],
     tracks: createDefaultTracks(),
     clipGroups: [],
@@ -248,7 +294,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
     undoDepth: 0,
     redoDepth: 0,
 
-    setClips: (action) => set((s) => ({ clips: resolveUpdater(action, s.clips) })),
+    setClips: (action) => set((s) => ({ clips: sanitizeClips(resolveUpdater(action, s.clips)) })),
     setTracks: (action) => set((s) => ({ tracks: resolveUpdater(action, s.tracks) })),
 
     addTrack: (kind) => {
@@ -307,7 +353,7 @@ export const editorStore = createStore<EditorState>()((set, get) => {
         const ids = new Set(next.clips.map((c) => c.id));
         return {
           tracks: next.tracks,
-          clips: next.clips,
+          clips: sanitizeClips(next.clips),
           transitions: next.transitions,
           clipGroups: syncClipGroups(s.clipGroups, next.clips)
             .map((group) => ({
@@ -489,6 +535,13 @@ export const useIsClipSelected = (clipId: string) =>
 export const useEditorClip = (id: string | null) =>
   useStore(editorStore, (s) => (id ? (s.clips.find((c) => c.id === id) ?? null) : null));
 
+/** The open sequence path (`[]` = the main timeline). */
+export const useSequencePath = () => useStore(editorStore, useShallow((s) => s.sequencePath));
+
+/** Every nested sequence, the open one's live edits included. */
+export const useEditorSequences = () =>
+  useStore(editorStore, (s: SequenceEditorState) => committedSequences(s));
+
 // The export premix reads the lanes and master bus from here when a caller
 // does not pass them, without the export layer importing a store.
 registerExportStateSource({
@@ -532,6 +585,14 @@ export const editorActions: Pick<
   | 'redo'
   | 'resetHistory'
   | 'applyFinishing'
+  | 'enterSequence'
+  | 'exitSequence'
+  | 'exitToRootSequence'
+  | 'nestClips'
+  | 'placeSequence'
+  | 'createSequence'
+  | 'renameSequence'
+  | 'deleteSequence'
 > = editorStore.getState();
 
 /** Test-only reset so specs start from a clean store and empty history. */
@@ -543,6 +604,9 @@ export function __resetEditorStoreForTests(): void {
   debounceTimers.clear();
   isRestoring = false;
   editorStore.setState({
+    sequences: [],
+    sequencePath: [],
+    rootStash: null,
     clips: [],
     tracks: createDefaultTracks(),
     clipGroups: [],

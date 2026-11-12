@@ -13,7 +13,6 @@ import { ExportCompositor, isWebGpuExportAvailable } from '../webgpu/exportCompo
 import { TARGET_FPS } from './webcodecsCodec';
 import {
   ColorPipelineExportError,
-  HDR10_COLOR_SPACE,
   exportCanvas2dSettings,
   isColorManagementActive,
   type OutputColor,
@@ -125,24 +124,17 @@ export async function captureCompositedFrame(
         'HDR10 export needs the WebGPU compositor. This file was not tagged Rec.709.',
       );
     }
-    const rgba = await compositor.gpuCompositor.readPqExportRgba();
-    if (!rgba) {
-      throw new ColorPipelineExportError(
-        'HDR10 frame readback produced no image. This file was not tagged Rec.709.',
-      );
-    }
     try {
-      return new VideoFrame(rgba, {
-        format: 'RGBA',
-        codedWidth: compositor.canvas.width,
-        codedHeight: compositor.canvas.height,
+      return await compositor.gpuCompositor.captureHdr10Frame({
         timestamp,
         duration: durationUs,
-        colorSpace: HDR10_COLOR_SPACE as VideoColorSpaceInit,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'VideoFrame rejected the PQ buffer';
-      throw new ColorPipelineExportError(`${message} This file was not tagged Rec.709.`);
+      const message = err instanceof Error ? err.message : 'the 10-bit frame readback failed';
+      throw new ColorPipelineExportError(
+        `HDR10 frame readback failed (${message}). This browser may not build I420P10 video ` +
+          'frames; the file was not written.',
+      );
     }
   }
   if (

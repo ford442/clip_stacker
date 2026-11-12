@@ -55,6 +55,33 @@ function finishing(
 export const GOLDEN_CASES: GoldenCase[] = [
   { name: 'cut', spec: { clips: TWO_CLIPS, resolution: RESOLUTION }, times: [1, 7] },
   {
+    // Two clips and a title nested into one sequence, placed after a clip of
+    // the parent: the nested sequence samples its own time (#283).
+    name: 'nested-sequence',
+    spec: {
+      clips: [{ demo: 'b', trimEnd: 2 }, { demo: 'a', trimEnd: 2 }, { demo: 'b', trimStart: 2, trimEnd: 4 }],
+      textOverlays: [{ text: 'Nested', x: 0.1, y: 0.6, fontsize: 36 }],
+      resolution: RESOLUTION,
+      nest: { clips: [1, 2], titles: [0] },
+    },
+    times: [1, 3, 5],
+  },
+  {
+    // A nested PiP on the overlay lane: the inner rect lands in the sequence
+    // clip's slot, above the parent's base clip.
+    name: 'nested-pip',
+    spec: {
+      clips: [
+        { demo: 'a', trimEnd: 3 },
+        { demo: 'b', trimEnd: 3, layer: 1, startTime: 0, x: 0.5, y: 0.1, width: 0.45, height: 0.45 },
+      ],
+      textOverlays: [{ text: 'PiP', x: 0.55, y: 0.6, fontsize: 28 }],
+      resolution: RESOLUTION,
+      nest: { clips: [1], titles: [0] },
+    },
+    times: [1.5],
+  },
+  {
     name: 'xfade',
     spec: {
       clips: TWO_CLIPS,

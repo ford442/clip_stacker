@@ -1,8 +1,10 @@
-import type { IFfmpegRuntime } from './ffmpegRuntime';
-import type {
-  DistributiveOmit,
-  WorkerOutboundMessage,
-  WorkerRpcRequest,
+import type { FfmpegCoreURLs } from './coreSources';
+import type { LoadableFfmpegRuntime } from './ffmpegRuntime';
+import {
+  transferableBytes,
+  type DistributiveOmit,
+  type WorkerOutboundMessage,
+  type WorkerRpcRequest,
 } from './ffmpegWorkerProtocol';
 
 type PendingRpc = {
@@ -10,91 +12,126 @@ type PendingRpc = {
   reject: (reason?: unknown) => void;
 };
 
-/**
- * Main-thread RPC proxy for the dedicated FFmpeg worker. Implements the same
- * runtime surface used by merge / extract / mux helpers.
- */
-export class WorkerFfmpegRuntime implements IFfmpegRuntime {
-  private static sharedWorker: Worker | null = null;
-  private static nextId = 0;
-  private static readonly pending = new Map<number, PendingRpc>();
-  private static readonly logListeners = new Set<(message: string) => void>();
+export interface WorkerFfmpegRuntimeOptions {
+  /** Every FFmpeg log line the worker posts. */
+  onLog?: (message: string) => void;
+  /**
+   * The worker died (an uncaught error reached `onerror`). Pending calls have
+   * been rejected and this runtime refuses new ones: load a new runtime.
+   */
+  onWorkerLost?: (error: Error) => void;
+  /** Worker factory; tests pass a fake. */
+  createWorker?: () => Worker;
+}
 
-  static addLogListener(listener: (message: string) => void): () => void {
-    WorkerFfmpegRuntime.logListeners.add(listener);
-    return () => WorkerFfmpegRuntime.logListeners.delete(listener);
+function createFfmpegWorker(): Worker {
+  return new Worker(new URL('./ffmpeg.worker.ts', import.meta.url), {
+    type: 'module',
+  });
+}
+
+/**
+ * Main-thread RPC proxy for one dedicated FFmpeg worker. Implements the same
+ * runtime surface used by merge / extract / mux helpers.
+ *
+ * Each runtime owns its worker. `terminate()` or a crash ends it for good, so
+ * a worker that died (or never loaded the core) is never reused: the manager
+ * loads a fresh runtime, and with it a fresh worker, on the next call.
+ */
+export class WorkerFfmpegRuntime implements LoadableFfmpegRuntime {
+  private worker: Worker | null = null;
+  /** Set once the worker is gone; every later call rejects with it. */
+  private failure: Error | null = null;
+  private nextId = 0;
+  private readonly pending = new Map<number, PendingRpc>();
+
+  constructor(private readonly options: WorkerFfmpegRuntimeOptions = {}) {}
+
+  private ensureWorker(): Worker {
+    if (this.failure) throw this.failure;
+    if (this.worker) return this.worker;
+
+    const worker = (this.options.createWorker ?? createFfmpegWorker)();
+    worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
+      this.handleMessage(event.data);
+    };
+    worker.onerror = (event: ErrorEvent) => {
+      const error = new Error(event.message || 'FFmpeg worker error');
+      this.shutdown(error);
+      this.options.onWorkerLost?.(error);
+    };
+    this.worker = worker;
+    return worker;
   }
 
-  private static ensureWorker(): Worker {
-    if (WorkerFfmpegRuntime.sharedWorker) {
-      return WorkerFfmpegRuntime.sharedWorker;
+  private handleMessage(data: WorkerOutboundMessage): void {
+    if ('type' in data) {
+      this.options.onLog?.(data.message);
+      return;
     }
+    const pending = this.pending.get(data.id);
+    if (!pending) return;
+    this.pending.delete(data.id);
+    if (data.ok) {
+      pending.resolve(data.result);
+    } else {
+      pending.reject(new Error(data.error));
+    }
+  }
 
-    const worker = new Worker(
-      new URL('./ffmpeg.worker.ts', import.meta.url),
-      { type: 'module' },
-    );
-
-    worker.onmessage = (event: MessageEvent<WorkerOutboundMessage>) => {
-      const data = event.data;
-      if ('type' in data) {
-        WorkerFfmpegRuntime.logListeners.forEach((listener) =>
-          listener(data.message),
-        );
-        return;
-      }
-
-      const pending = WorkerFfmpegRuntime.pending.get(data.id);
-      if (!pending) return;
-      WorkerFfmpegRuntime.pending.delete(data.id);
-      if (data.ok) {
-        pending.resolve(data.result);
-      } else {
-        pending.reject(new Error(data.error));
-      }
-    };
-
-    worker.onerror = (event) => {
-      const error = new Error(event.message || 'FFmpeg worker error');
-      for (const pending of WorkerFfmpegRuntime.pending.values()) {
-        pending.reject(error);
-      }
-      WorkerFfmpegRuntime.pending.clear();
-    };
-
-    WorkerFfmpegRuntime.sharedWorker = worker;
-    return worker;
+  /** Reject everything in flight, kill the worker and refuse later calls. */
+  private shutdown(error: Error): void {
+    this.failure = error;
+    for (const pending of this.pending.values()) {
+      pending.reject(error);
+    }
+    this.pending.clear();
+    if (this.worker) {
+      this.worker.onmessage = null;
+      this.worker.onerror = null;
+      this.worker.terminate();
+      this.worker = null;
+    }
   }
 
   private rpc(
     request: DistributiveOmit<WorkerRpcRequest, 'id'>,
     transfer: Transferable[] = [],
   ): Promise<unknown> {
-    const id = ++WorkerFfmpegRuntime.nextId;
+    let worker: Worker;
+    try {
+      worker = this.ensureWorker();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const id = ++this.nextId;
     return new Promise((resolve, reject) => {
-      WorkerFfmpegRuntime.pending.set(id, { resolve, reject });
-      WorkerFfmpegRuntime.ensureWorker().postMessage(
-        { id, ...request } as WorkerRpcRequest,
-        transfer,
-      );
+      this.pending.set(id, { resolve, reject });
+      try {
+        worker.postMessage({ id, ...request } as WorkerRpcRequest, transfer);
+      } catch (error) {
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
-  async load(coreURL: string, wasmURL: string, workerURL?: string): Promise<void> {
-    await this.rpc({ type: 'load', coreURL, wasmURL, workerURL });
+  async load(urls: FfmpegCoreURLs): Promise<void> {
+    await this.rpc({ type: 'load', urls });
   }
 
   async exec(args: string[]): Promise<number> {
     return (await this.rpc({ type: 'exec', args })) as number;
   }
 
+  /** Bytes are transferred, not copied: the caller's buffer is detached. */
   async writeFile(name: string, data: Uint8Array | string): Promise<boolean> {
     if (typeof data === 'string') {
       await this.rpc({ type: 'writeFile', name, data });
       return true;
     }
-    const copy = data.slice();
-    await this.rpc({ type: 'writeFile', name, data: copy }, [copy.buffer]);
+    const { bytes, transfer } = transferableBytes(data);
+    await this.rpc({ type: 'writeFile', name, data: bytes }, transfer);
     return true;
   }
 
@@ -117,17 +154,9 @@ export class WorkerFfmpegRuntime implements IFfmpegRuntime {
     }[];
   }
 
+  /** Kill the worker (and the mt core's pthread workers with it). */
   terminate(): void {
-    void this.rpc({ type: 'terminate' }).catch(() => {
-      /* ignore */
-    });
-  }
-
-  static disposeSharedWorker(): void {
-    if (!WorkerFfmpegRuntime.sharedWorker) return;
-    WorkerFfmpegRuntime.sharedWorker.terminate();
-    WorkerFfmpegRuntime.sharedWorker = null;
-    WorkerFfmpegRuntime.pending.clear();
-    WorkerFfmpegRuntime.logListeners.clear();
+    if (this.failure && !this.worker) return;
+    this.shutdown(new Error('FFmpeg worker terminated'));
   }
 }

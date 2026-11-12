@@ -10,6 +10,7 @@
 
 import type { Clip } from '../types';
 import { seekToFrame } from './videoFrameCapture';
+import { releaseStillFrame } from '../webgpu/captureFrame';
 
 /** Max wait for a `<video>` seek before giving up on that layer. */
 export const SEEK_TIMEOUT_MS = 2500;
@@ -104,16 +105,19 @@ export class ClipMediaPool {
 
   remove(clipId: string): void {
     const video = this.videos.get(clipId);
-    if (!video) return;
-    video.pause();
-    video.removeAttribute('src');
-    video.load();
-    if (video.parentElement) video.parentElement.removeChild(video);
-    this.videos.delete(clipId);
-    seekQueues.delete(video);
+    if (video) {
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      if (video.parentElement) video.parentElement.removeChild(video);
+      this.videos.delete(clipId);
+      seekQueues.delete(video);
+    }
 
+    // A still has no <video>: it is released on its own.
     const img = this.stillImages.get(clipId);
     if (img) {
+      releaseStillFrame(img);
       img.removeAttribute('src');
       if (img.parentElement) img.parentElement.removeChild(img);
       this.stillImages.delete(clipId);

@@ -1,8 +1,8 @@
 /**
  * Sequential per-layer frame cursor for GPU timeline export.
  *
- * Wraps a single `ClipFrameDecoder` (hardware `VideoDecoder`, see
- * `webcodecsDecoder.ts`) and exposes `frameAt(sourceTimeSec)`: it holds the
+ * Wraps a single `ClipFrameDecoder` (`VideoDecoder` over the demux facade,
+ * see `webcodecsDecoder.ts`) and exposes `frameAt(sourceTimeSec)`: it holds the
  * decoded frame whose presentation window brackets the requested time and
  * advances the decoder forward — never seeking — as the caller's requested
  * time increases. This is the piece that lets GPU timeline export skip the
@@ -11,7 +11,7 @@
  * good at and a random-access seek is not.
  */
 
-import { ClipFrameDecoder } from '../export/webcodecsDecoder';
+import { ClipFrameDecoder, type ClipFrameDecoderOptions } from '../export/webcodecsDecoder';
 
 /** Minimal shape the bracketing algorithm needs — real `VideoFrame` satisfies this. */
 export interface SequentialFrame {
@@ -96,6 +96,12 @@ export class FrameCursor<F extends SequentialFrame> {
   }
 }
 
+/** Per-cursor decoder options (the trim window is passed separately). */
+export type DecoderCursorOptions = Pick<
+  ClipFrameDecoderOptions,
+  'optimizeForLatency' | 'startAt' | 'colorSpace'
+>;
+
 export class DecoderFrameCursor {
   private readonly cursor: FrameCursor<VideoFrame>;
   private readonly decoder: ClipFrameDecoder;
@@ -105,9 +111,24 @@ export class DecoderFrameCursor {
     this.cursor = new FrameCursor<VideoFrame>(decoder.frames());
   }
 
-  /** Open a cursor decoding `[trimStart, trimEnd)` of `source` (source-relative seconds). */
-  static async open(source: Blob, trimStart: number, trimEnd: number): Promise<DecoderFrameCursor> {
-    const decoder = await ClipFrameDecoder.open(source, { trimStart, trimEnd });
+  /**
+   * Open a cursor decoding `[trimStart, trimEnd)` of `source` (source-relative
+   * seconds), from `options.startAt` when given (see `ClipFrameDecoderOptions`).
+   * Only the preview passes `optimizeForLatency`.
+   */
+  static async open(
+    source: Blob,
+    trimStart: number,
+    trimEnd: number,
+    options: DecoderCursorOptions = {},
+  ): Promise<DecoderFrameCursor> {
+    const decoder = await ClipFrameDecoder.open(source, {
+      trimStart,
+      trimEnd,
+      ...(options.optimizeForLatency ? { optimizeForLatency: true } : {}),
+      ...(options.startAt !== undefined ? { startAt: options.startAt } : {}),
+      ...(options.colorSpace ? { colorSpace: options.colorSpace } : {}),
+    });
     return new DecoderFrameCursor(decoder);
   }
 

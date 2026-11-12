@@ -3,6 +3,7 @@ import type {
   ClipAnimatableProp,
   ClipAutomation,
   ClipKeyframes,
+  SourceColorSpaceOverride,
   VideoOutputFormat,
 } from '../../types';
 import type { CanvasSize } from '../../composition/overlayCoords';
@@ -65,6 +66,7 @@ export interface InspectorClipTabProps {
   onAudioEffectsChange?: (clipId: string, effects: ClipAudioEffects | undefined) => void;
   onExtractAudio?: () => void;
   onStabilizeChange?: (enabled: boolean) => void;
+  onColorSpaceOverrideChange?: (override: SourceColorSpaceOverride | undefined) => void;
   onReverseChange?: (enabled: boolean) => void;
   onRife?: (
     mode: 'interpolation' | 'boomerang',
@@ -147,6 +149,7 @@ export function InspectorClipTab(props: InspectorClipTabProps) {
         applyLogoPreset={props.applyLogoPreset}
         useAsBaseLayer={props.useAsBaseLayer}
         onStabilizeChange={props.onStabilizeChange}
+        onColorSpaceOverrideChange={props.onColorSpaceOverrideChange}
         onRife={props.onRife}
         onKeyframesChange={props.onKeyframesChange}
         onApplyKenBurns={props.onApplyKenBurns}

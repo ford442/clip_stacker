@@ -117,6 +117,7 @@ export interface InspectorBundle {
   onRife: (mode: "interpolation" | "boomerang", multiplier: 2 | 4) => Promise<void>;
   onStabilizeChange: (enabled: boolean) => void;
   onReverseChange: (enabled: boolean) => void;
+  onColorSpaceOverrideChange: (override: Clip["colorSpaceOverride"]) => void;
 }
 
 export interface TimelineBundle {
@@ -218,6 +219,7 @@ export function AppShell({
     onRife,
     onStabilizeChange,
     onReverseChange,
+    onColorSpaceOverrideChange,
   } = inspector;
   const {
     onMoveUp,
@@ -337,6 +339,7 @@ export function AppShell({
             onRife={onRife}
             onStabilizeChange={onStabilizeChange}
             onReverseChange={onReverseChange}
+            onColorSpaceOverrideChange={onColorSpaceOverrideChange}
             captions={captions}
           />
         </div>

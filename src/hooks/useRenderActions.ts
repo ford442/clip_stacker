@@ -1,7 +1,10 @@
 import { selectTimelineClips } from '../store/selectors';
 import { useCallback, useMemo, useRef, useState } from "react";
+import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
 import { editorStore } from "../store/editorStore";
+import { effectiveTextOverlays } from "../composition/nestedSequences";
 import { resolveTargetResolution } from "../export/resolution";
 import { formatEncoderPathLabel } from "../export/encoderPathLabel";
 import { computeTotalDuration } from "../timeline/transitions";
@@ -23,7 +26,7 @@ import {
 } from "../actions/renderJob";
 import { renderJobStore } from '../store/renderJobStore';
 
-// The export pipeline (encoders, FFmpeg, mp4box demux, the GPU export
+// The export pipeline (encoders, FFmpeg, the Mediabunny demux / mux, the GPU export
 // compositor) is most of the app's code and none of it is needed to edit, so
 // it loads on the first render / FFmpeg action instead of with the editor.
 // Repeat calls resolve from the module cache.
@@ -57,10 +60,17 @@ export function useRenderActions(deps: RenderActionsDeps) {
     textOverlays,
   } = deps;
 
+  // Sequence clips resolve against the nested sequences (Render exports the
+  // timeline that is open, nested sequences included).
+  const sequenceInputs = useStore(
+    editorStore,
+    useShallow((s) => ({ sequences: s.sequences, sequencePath: s.sequencePath, rootStash: s.rootStash })),
+  );
+
   /** Clips as the tracks lay them out, carrying the derived placement fields. */
   const effectiveClips = useMemo(
-    () => selectTimelineClips({ tracks, clips, clipGroups }),
-    [tracks, clips, clipGroups],
+    () => selectTimelineClips({ tracks, clips, clipGroups, transitions, textOverlays, ...sequenceInputs }),
+    [tracks, clips, clipGroups, transitions, textOverlays, sequenceInputs],
   );
 
   const [renderFailureMessage, setRenderFailureMessage] = useState<string | null>(
@@ -151,7 +161,8 @@ export function useRenderActions(deps: RenderActionsDeps) {
       const plan = calculateRenderPlan(
         timelineClips,
         transitions,
-        textOverlays,
+        // Titles inside nested sequences count for routing (HDR10 graphics, shader text).
+        effectiveTextOverlays(timelineClips, textOverlays),
         exportSettings,
         {
           finishing,

@@ -19,7 +19,6 @@ import type { IFfmpegRuntime } from "./ffmpegRuntime";
 import {
   extractErrorMessage,
   toBlobURLWithRetry as toBlobURLWithRetryBase,
-  toBlobURLWithFallback as toBlobURLWithFallbackBase,
   type FfmpegLogProgressContext,
   type ProgressCallback,
   type StatusCallback,
@@ -155,23 +154,6 @@ export async function toBlobURLWithRetry(
   );
 }
 
-export async function toBlobURLWithFallback(
-  filename: string,
-  mimeType: string,
-  onStatus: StatusCallback,
-  onProgress: ProgressCallback | undefined,
-  label: string,
-): Promise<string> {
-  return toBlobURLWithFallbackBase(
-    filename,
-    mimeType,
-    onStatus,
-    onProgress,
-    label,
-    recordFfmpegLog,
-  );
-}
-
 export async function safeExec(
   ffmpeg: IFfmpegRuntime,
   args: string[],
@@ -190,7 +172,10 @@ export async function safeExec(
   }
 }
 
-/** Safe writeFile with diagnostics on failure (OOM, VFS full, permission, etc.). */
+/**
+ * Safe writeFile with diagnostics on failure (OOM, VFS full, permission, etc.).
+ * Bytes are handed over (transferred to the worker): do not reuse `data`.
+ */
 export async function safeWriteFile(
   ffmpeg: IFfmpegRuntime,
   name: string,

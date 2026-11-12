@@ -1,8 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { FFmpeg } from "@ffmpeg/ffmpeg";
+import type { FfmpegCoreHost } from "./ffmpegCoreHost";
 
-type MockFfmpegInstance = {
-  on: ReturnType<typeof vi.fn>;
+type MockCoreHost = {
   load: ReturnType<typeof vi.fn>;
   terminate: ReturnType<typeof vi.fn>;
   listDir: ReturnType<typeof vi.fn>;
@@ -13,10 +12,9 @@ type MockFfmpegInstance = {
 };
 
 const mocked = vi.hoisted(() => {
-  const instances: MockFfmpegInstance[] = [];
-  const createInstance = (): MockFfmpegInstance => {
-    const instance: MockFfmpegInstance = {
-      on: vi.fn(),
+  const instances: MockCoreHost[] = [];
+  const createInstance = (): MockCoreHost => {
+    const instance: MockCoreHost = {
       load: vi.fn().mockResolvedValue(undefined),
       terminate: vi.fn(),
       listDir: vi.fn().mockResolvedValue([]),
@@ -32,17 +30,14 @@ const mocked = vi.hoisted(() => {
   return {
     instances,
     createInstance,
-    FFmpeg: vi.fn(function MockFFmpeg() {
+    Host: vi.fn(function MockCoreHost() {
       return createInstance();
     }),
     toBlobURL: vi.fn(),
     fetchFile: vi.fn(),
+    fetch: vi.fn(),
   };
 });
-
-vi.mock("@ffmpeg/ffmpeg", () => ({
-  FFmpeg: mocked.FFmpeg,
-}));
 
 vi.mock("@ffmpeg/util", () => ({
   toBlobURL: mocked.toBlobURL,
@@ -61,6 +56,15 @@ import {
   setFfmpegManagerForTesting,
 } from "./ffmpegManager";
 
+/** HEAD answer of a static server that has every self-hosted core file. */
+function headOk(url: string): Response {
+  const type = url.endsWith(".wasm") ? "application/wasm" : "text/javascript";
+  return new Response(null, { status: 200, headers: { "content-type": type } });
+}
+
+const LOCAL_ST = "http://localhost:3000/ffmpeg-core";
+const LOCAL_MT = "http://localhost:3000/ffmpeg-core-mt";
+
 describe("FFmpeg loader", () => {
   beforeEach(async () => {
     await resetFFmpegInstance();
@@ -68,16 +72,19 @@ describe("FFmpeg loader", () => {
     mocked.instances.length = 0;
     mocked.fetchFile.mockReset();
     mocked.toBlobURL.mockReset();
-    mocked.FFmpeg.mockReset();
-    mocked.FFmpeg.mockImplementation(function MockFFmpeg() {
+    mocked.Host.mockReset();
+    mocked.Host.mockImplementation(function MockCoreHost() {
       return mocked.createInstance();
     });
     mocked.toBlobURL.mockImplementation(async (url: string) => `blob:${url}`);
+    mocked.fetch.mockReset();
+    mocked.fetch.mockImplementation(async (url: string) => headOk(url));
+    vi.stubGlobal("fetch", mocked.fetch);
     setFfmpegManagerForTesting(
       new FfmpegManager({
         useWorker: false,
         createDirectRuntime: () =>
-          new DirectFfmpegRuntime(new mocked.FFmpeg() as unknown as FFmpeg),
+          new DirectFfmpegRuntime(new mocked.Host() as unknown as FfmpegCoreHost),
       }),
     );
   });
@@ -85,22 +92,39 @@ describe("FFmpeg loader", () => {
   afterEach(async () => {
     await resetFFmpegInstance();
     resetFfmpegManagerForTesting();
+    vi.unstubAllGlobals();
     vi.useRealTimers();
   });
 
-  it("downloads locally hosted core assets before any fallback CDN", async () => {
+  it("loads the self-hosted core by URL, with no blob download", async () => {
     await ensureFfmpeg(vi.fn(), vi.fn());
 
-    expect(mocked.toBlobURL).toHaveBeenNthCalledWith(
-      1,
-      "http://localhost:3000/ffmpeg-core/ffmpeg-core.js",
-      "text/javascript",
+    expect(mocked.fetch.mock.calls.map(([url, init]) => [url, init?.method])).toEqual([
+      [`${LOCAL_ST}/ffmpeg-core.js`, "HEAD"],
+      [`${LOCAL_ST}/ffmpeg-core.wasm`, "HEAD"],
+    ]);
+    expect(mocked.toBlobURL).not.toHaveBeenCalled();
+    expect(mocked.instances[0]!.load).toHaveBeenCalledWith({
+      coreURL: `${LOCAL_ST}/ffmpeg-core.js`,
+      wasmURL: `${LOCAL_ST}/ffmpeg-core.wasm`,
+    });
+  });
+
+  it("downloads a CDN copy as blob URLs when the self-hosted core is missing", async () => {
+    mocked.fetch.mockImplementation(
+      async () => new Response(null, { status: 404 }),
     );
-    expect(mocked.toBlobURL).toHaveBeenNthCalledWith(
-      2,
-      "http://localhost:3000/ffmpeg-core/ffmpeg-core.wasm",
-      "application/wasm",
-    );
+
+    await ensureFfmpeg(vi.fn(), vi.fn());
+
+    expect(mocked.toBlobURL.mock.calls.map(([url]) => url)).toEqual([
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
+    ]);
+    expect(mocked.instances[0]!.load).toHaveBeenCalledWith({
+      coreURL: "blob:https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.js",
+      wasmURL: "blob:https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm/ffmpeg-core.wasm",
+    });
   });
 
   it("emits indeterminate progress stages while FFmpeg is loading", async () => {
@@ -112,8 +136,7 @@ describe("FFmpeg loader", () => {
     expect(stages).toEqual(
       expect.arrayContaining([
         "Loading FFmpeg core (this may take a moment)...",
-        "Downloading FFmpeg core.js from local hosted FFmpeg core...",
-        "Downloading FFmpeg core.wasm from local hosted FFmpeg core...",
+        "Checking FFmpeg core on local hosted FFmpeg core...",
         "Initializing FFmpeg WASM engine...",
       ]),
     );
@@ -134,9 +157,9 @@ describe("FFmpeg loader", () => {
     const second = mocked.createInstance();
     second.load.mockResolvedValueOnce(undefined);
 
-    mocked.FFmpeg.mockImplementationOnce(function MockFFmpegFirst() {
+    mocked.Host.mockImplementationOnce(function MockCoreHostFirst() {
       return first;
-    }).mockImplementationOnce(function MockFFmpegSecond() {
+    }).mockImplementationOnce(function MockCoreHostSecond() {
       return second;
     });
 
@@ -163,7 +186,7 @@ describe("FFmpeg loader", () => {
     const failing = mocked.createInstance();
     failing.load.mockRejectedValue(new Error("network down"));
 
-    mocked.FFmpeg.mockImplementation(function MockFFmpegFailing() {
+    mocked.Host.mockImplementation(function MockCoreHostFailing() {
       return failing;
     });
 
@@ -192,16 +215,15 @@ describe("FFmpeg loader", () => {
     expect(isFfmpegLoadFailed()).toBe(true);
   });
 
-  it("surfaces a readable message when the worker rejects with a string", async () => {
-    // @ffmpeg/ffmpeg's worker rejects with `error.toString()` (a plain string),
-    // not an Error. Previously this surfaced as "FAILED: undefined" because the
-    // code read `.message` off a string. The final message must carry the text.
+  it("surfaces a readable message when the load rejects with a string", async () => {
+    // Worker errors arrive as strings; reading `.message` off one once
+    // surfaced "FAILED: undefined". The final message must carry the text.
     vi.useFakeTimers();
 
     const failing = mocked.createInstance();
     failing.load.mockRejectedValue("Error: failed to import ffmpeg-core.js");
 
-    mocked.FFmpeg.mockImplementation(function MockFFmpegStringReject() {
+    mocked.Host.mockImplementation(function MockCoreHostStringReject() {
       return failing;
     });
 
@@ -237,60 +259,60 @@ describe("FFmpeg loader", () => {
       const restore = mockIsolatedContext(false);
       try {
         await ensureFfmpeg(vi.fn(), vi.fn());
-        // st path: local core assets are tried first
-        expect(mocked.toBlobURL).toHaveBeenCalledWith(
-          expect.stringContaining("ffmpeg-core.js"),
-          "text/javascript",
-        );
-        // no mt CDN attempted
-        expect(mocked.toBlobURL).not.toHaveBeenCalledWith(
-          expect.stringContaining("core-mt"),
-          expect.any(String),
+        const probed = mocked.fetch.mock.calls.map(([url]) => String(url));
+        expect(probed.every((url) => url.startsWith(`${LOCAL_ST}/`))).toBe(true);
+        expect(probed.some((url) => url.includes("core-mt"))).toBe(false);
+        expect(mocked.instances[0]!.load).toHaveBeenCalledWith(
+          expect.not.objectContaining({ workerURL: expect.anything() }),
         );
       } finally {
         restore();
       }
     });
 
-    it("downloads the self-hosted multi-threaded core before any CDN", async () => {
+    it("loads the self-hosted multi-threaded core (js + wasm + worker) by URL", async () => {
       const restore = mockIsolatedContext(true);
       try {
         await ensureFfmpeg(vi.fn(), vi.fn());
-        expect(mocked.toBlobURL.mock.calls.slice(0, 3)).toEqual([
-          ["http://localhost:3000/ffmpeg-core-mt/ffmpeg-core.js", "text/javascript"],
-          ["http://localhost:3000/ffmpeg-core-mt/ffmpeg-core.wasm", "application/wasm"],
-          ["http://localhost:3000/ffmpeg-core-mt/ffmpeg-core.worker.js", "text/javascript"],
+        expect(mocked.fetch.mock.calls.map(([url]) => url)).toEqual([
+          `${LOCAL_MT}/ffmpeg-core.js`,
+          `${LOCAL_MT}/ffmpeg-core.wasm`,
+          `${LOCAL_MT}/ffmpeg-core.worker.js`,
         ]);
-        expect(mocked.toBlobURL).not.toHaveBeenCalledWith(
-          expect.stringMatching(/^https:/),
-          expect.any(String),
-        );
+        expect(mocked.toBlobURL).not.toHaveBeenCalled();
+        expect(mocked.instances[0]!.load).toHaveBeenCalledWith({
+          coreURL: `${LOCAL_MT}/ffmpeg-core.js`,
+          wasmURL: `${LOCAL_MT}/ffmpeg-core.wasm`,
+          workerURL: `${LOCAL_MT}/ffmpeg-core.worker.js`,
+        });
       } finally {
         restore();
       }
     });
 
-    it("tries the mt CDNs, in order, when the local mt core is unavailable", async () => {
-      vi.useFakeTimers();
+    it("takes all three mt files from one CDN when the local mt core is unavailable", async () => {
       const restore = mockIsolatedContext(true);
       try {
-        mocked.toBlobURL.mockImplementation(async (url: string) => {
-          if (url.includes("/ffmpeg-core-mt/")) throw new Error("404");
-          return `blob:${url}`;
-        });
-        const promise = ensureFfmpeg(vi.fn(), vi.fn());
-        await vi.advanceTimersByTimeAsync(10_000);
-        await promise;
+        mocked.fetch.mockImplementation(async (url: string) =>
+          url.includes("/ffmpeg-core-mt/")
+            ? new Response(null, { status: 404 })
+            : headOk(url),
+        );
+        await ensureFfmpeg(vi.fn(), vi.fn());
 
-        const firstRemote = mocked.toBlobURL.mock.calls.find(([url]) =>
-          String(url).startsWith("https:"),
-        );
-        expect(firstRemote?.[0]).toBe(
-          "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm/ffmpeg-core.js",
-        );
+        const jsdelivr = "https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@0.12.10/dist/esm";
+        expect(mocked.toBlobURL.mock.calls).toEqual([
+          [`${jsdelivr}/ffmpeg-core.js`, "text/javascript"],
+          [`${jsdelivr}/ffmpeg-core.wasm`, "application/wasm"],
+          [`${jsdelivr}/ffmpeg-core.worker.js`, "text/javascript"],
+        ]);
+        expect(mocked.instances[0]!.load).toHaveBeenCalledWith({
+          coreURL: `blob:${jsdelivr}/ffmpeg-core.js`,
+          wasmURL: `blob:${jsdelivr}/ffmpeg-core.wasm`,
+          workerURL: `blob:${jsdelivr}/ffmpeg-core.worker.js`,
+        });
       } finally {
         restore();
-        vi.useRealTimers();
       }
     });
 
@@ -298,7 +320,10 @@ describe("FFmpeg loader", () => {
       vi.useFakeTimers();
       const restore = mockIsolatedContext(true);
       try {
-        // Reject any mt CDN URL immediately; st URLs succeed normally.
+        // No mt core anywhere; st URLs succeed normally.
+        mocked.fetch.mockImplementation(async (url: string) =>
+          url.includes("core-mt") ? new Response(null, { status: 404 }) : headOk(url),
+        );
         mocked.toBlobURL.mockImplementation(async (url: string) => {
           if (url.includes("core-mt")) throw new Error("mt CDN unavailable");
           return `blob:${url}`;
@@ -315,6 +340,10 @@ describe("FFmpeg loader", () => {
         expect(onStatus).toHaveBeenCalledWith(
           expect.stringContaining("single-threaded"),
         );
+        expect(mocked.instances.at(-1)!.load).toHaveBeenCalledWith({
+          coreURL: `${LOCAL_ST}/ffmpeg-core.js`,
+          wasmURL: `${LOCAL_ST}/ffmpeg-core.wasm`,
+        });
       } finally {
         restore();
         vi.useRealTimers();
@@ -328,7 +357,7 @@ describe("FFmpeg loader", () => {
     const first = mocked.createInstance();
     first.load.mockRejectedValue(new Error("network down"));
 
-    mocked.FFmpeg.mockImplementation(function MockFFmpegFailing() {
+    mocked.Host.mockImplementation(function MockCoreHostFailing() {
       return first;
     });
 
@@ -350,7 +379,7 @@ describe("FFmpeg loader", () => {
     const second = mocked.createInstance();
     second.load.mockResolvedValueOnce(undefined);
 
-    mocked.FFmpeg.mockImplementation(function MockFFmpegSecond() {
+    mocked.Host.mockImplementation(function MockCoreHostSecond() {
       return second;
     });
 

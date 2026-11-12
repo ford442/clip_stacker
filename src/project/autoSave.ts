@@ -4,7 +4,8 @@ import type {
   SerializedClip,
 } from '../types';
 import { serializeProject } from './serialize';
-import type { ProjectSnapshot } from './snapshot';
+import { projectSnapshotClips, type ProjectSnapshot } from './snapshot';
+import { isSequenceClip } from '../timeline/sequenceResolve';
 import { STORAGE_KEYS, safeGet, safeRemove, safeSet } from '../utils/storageKeys';
 
 /** localStorage key for the autosaved project JSON payload. */
@@ -96,7 +97,9 @@ export async function buildAutoSaveProject(
   const embedBudgetBytes = options.embedBudgetBytes ?? AUTO_SAVE_MAX_TOTAL_BYTES;
   const maxClipBytes = options.maxClipBytes ?? AUTO_SAVE_MAX_CLIP_BYTES;
   const forceMetadataOnly = options.forceMetadataOnly ?? false;
-  const { clips, masterAudio } = snapshot;
+  const { masterAudio } = snapshot;
+  // Nested sequences' clips are in the saved pool too.
+  const clips = projectSnapshotClips(snapshot);
 
   const project = serializeProject(snapshot);
   const clipById = new Map(clips.map((clip) => [clip.id, clip]));
@@ -107,7 +110,7 @@ export async function buildAutoSaveProject(
   const enrichedClips: SerializedClip[] = [];
   for (const serialized of project.clips) {
     const clip = clipById.get(serialized.id);
-    if (!clip) {
+    if (!clip || isSequenceClip(clip)) {
       enrichedClips.push(serialized);
       continue;
     }

@@ -3,39 +3,59 @@
  *
  * Replaces step 3–4 of the old preview loop — "post `need-frames`, main seeks a
  * hidden `<video>` and transfers a `VideoFrame`" — for every layer whose clip
- * media mp4box can demux. The worker holds the clip blobs itself (main only
- * ever transfers the `File`, once) and serves each layer from its own
- * forward-only `DecoderFrameCursor`, exactly like GPU export.
+ * media the demux facade can read (MP4, MOV, WebM / MKV, alpha included). The
+ * worker holds the clip blobs itself (main only ever transfers the `File`,
+ * once) and serves each layer from its own forward-only `DecoderFrameCursor`,
+ * exactly like GPU export, except that preview cursors ask for a
+ * latency-optimized decoder: a backward scrub reopens one, and the first frame
+ * is what the user waits for. A reopen reads the cached container index and
+ * the packets from the previous key frame on, never the whole file.
  *
  * The registered blob is whatever main resolved for preview: the clip's proxy
  * when one is ready and proxies are on, the original `File` otherwise (see
  * `resolvePreviewMedia`). A proxy layer never opens a full-res decoder.
  *
- * Anything it cannot serve (WebM/alpha, stills, audio-only, RIFE morph segments
- * with their own blob URL, or a clip whose media was never registered) returns
- * null and stays on the `<video>` fallback for the rest of the session.
+ * Anything it cannot serve (stills, audio-only, RIFE morph segments with their
+ * own blob URL, a clip whose media was never registered, or media that fails to
+ * open — an unknown container or a codec no decoder accepts) returns null and
+ * stays on the `<video>` fallback for the rest of the session.
  */
 
 import type { Clip } from '../types';
 import type { PreviewMediaSource } from '../media/proxyMedia';
-import { DecoderFrameCursor } from '../media/decoderCursor';
+import { DecoderFrameCursor, type DecoderCursorOptions } from '../media/decoderCursor';
 import {
+  cursorStartAt,
   DecoderCursorPool,
   DEFAULT_MAX_DECODER_CURSORS,
   type ForwardFrameCursor,
 } from '../media/decoderCursorPool';
 import { ReverseChunkCache } from '../media/reverseFrames';
 import { clipIsReversed } from '../timeline/reverseClip';
+import { colorSpaceForOverride } from '../media/sourceColorSpace';
 import type { CapturedFrame, FrameRequest, WorkerClip } from './previewWorkerProtocol';
 
+/**
+ * `startAt`: where in the window the cursor starts (a scrub target); omitted =
+ * `trimStart`. `colorSpace`: the clip's source override, if any.
+ */
 export type CursorFactory = (
   blob: Blob,
   trimStart: number,
   trimEnd: number,
+  startAt?: number,
+  colorSpace?: VideoColorSpaceInit,
 ) => Promise<ForwardFrameCursor>;
 
-const defaultCursorFactory: CursorFactory = (blob, trimStart, trimEnd) =>
-  DecoderFrameCursor.open(blob, trimStart, trimEnd);
+/** Preview cursors only: export, proxies and stabilization decode for throughput. */
+const PREVIEW_CURSOR_OPTIONS: DecoderCursorOptions = { optimizeForLatency: true };
+
+const defaultCursorFactory: CursorFactory = (blob, trimStart, trimEnd, startAt, colorSpace) =>
+  DecoderFrameCursor.open(blob, trimStart, trimEnd, {
+    ...PREVIEW_CURSOR_OPTIONS,
+    ...(startAt !== undefined ? { startAt } : {}),
+    ...(colorSpace ? { colorSpace } : {}),
+  });
 
 /** Stable per-layer cursor key. Crossfade roles and morph URLs get their own cursor. */
 export function decoderLayerKey(request: FrameRequest): string {
@@ -55,21 +75,34 @@ export class PreviewDecoderSource {
   private readonly media = new Map<string, { blob: Blob; source: PreviewMediaSource }>();
   private readonly pool: DecoderCursorPool;
   private readonly reverseCache: ReverseChunkCache;
-  private pendingOpen: { blob: Blob; trimStart: number; trimEnd: number } | null = null;
+  private pendingOpen: {
+    blob: Blob;
+    trimStart: number;
+    trimEnd: number;
+    colorSpace?: VideoColorSpaceInit;
+  } | null = null;
 
   constructor(
     private readonly cursorFactory: CursorFactory = defaultCursorFactory,
     maxConcurrent: number = DEFAULT_MAX_DECODER_CURSORS,
   ) {
-    this.pool = new DecoderCursorPool(async () => {
+    this.pool = new DecoderCursorPool(async (_key, sourceTime) => {
       const open = this.pendingOpen;
       if (!open) throw new Error('no media staged for cursor open');
-      return this.cursorFactory(open.blob, open.trimStart, open.trimEnd);
+      const startAt = cursorStartAt(sourceTime, open.trimStart, open.trimEnd);
+      if (open.colorSpace) {
+        return this.cursorFactory(open.blob, open.trimStart, open.trimEnd, startAt, open.colorSpace);
+      }
+      return startAt === undefined
+        ? this.cursorFactory(open.blob, open.trimStart, open.trimEnd)
+        : this.cursorFactory(open.blob, open.trimStart, open.trimEnd, startAt);
     }, maxConcurrent);
     this.reverseCache = new ReverseChunkCache(async (_key, trimStart, trimEnd) => {
       const open = this.pendingOpen;
       if (!open) throw new Error('no media staged for reverse cursor');
-      return this.cursorFactory(open.blob, trimStart, trimEnd);
+      return open.colorSpace
+        ? this.cursorFactory(open.blob, trimStart, trimEnd, undefined, open.colorSpace)
+        : this.cursorFactory(open.blob, trimStart, trimEnd);
     });
   }
 
@@ -146,11 +179,18 @@ export class PreviewDecoderSource {
     const blob = this.media.get(request.clipId)?.blob;
     if (!blob) return null;
 
-    const key = decoderLayerKey(request);
+    // An override decodes differently: changing it opens a new cursor.
+    const override = clip.colorSpaceOverride;
+    const key = override ? `${decoderLayerKey(request)}::${override}` : decoderLayerKey(request);
     if (this.pool.isUnsupported(key)) return null;
 
     const trimEnd = Number.isFinite(clip.trimEnd) ? clip.trimEnd : clip.duration;
-    this.pendingOpen = { blob, trimStart: clip.trimStart, trimEnd };
+    this.pendingOpen = {
+      blob,
+      trimStart: clip.trimStart,
+      trimEnd,
+      ...(override ? { colorSpace: colorSpaceForOverride(override) } : {}),
+    };
     let frame: VideoFrame | null;
     try {
       // Reversed playback seeks backward every frame. The chunk cache decodes

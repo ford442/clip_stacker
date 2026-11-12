@@ -2,7 +2,8 @@
  * WebCodecs-based encoder for GPU-accelerated video export.
  *
  * Architecture (Holy Grail path):
- *  - Decode: VideoDecoder (mp4box demux + ring buffer; see webcodecsDecoder.ts)
+ *  - Decode: VideoDecoder (Mediabunny demux via `container/demux.ts` + ring
+ *    buffer; see webcodecsDecoder.ts)
  *  - Composite: WebGPU exportCompositor / timelinePreview (VideoFrame → shaders)
  *  - Encode: VideoEncoder (hardware H.264/HEVC/AV1) ← canvas after GPU flush
  *  - Mux: Mp4Writer (`container/`, Mediabunny) — video + optional WebCodecs AAC;
@@ -102,7 +103,12 @@ export async function encodeVideoWithWebCodecs(
 ): Promise<Blob> {
   const { width, height } = parseOutputResolution(settings.outputResolution);
 
-  if (shouldUseTimelineGpuExport(clips, transitions, textOverlays, finishing)) {
+  // HDR10 titles / captions are composited in the working space before the
+  // PQ output transform, which only the timeline compositor does.
+  const hdr10Graphics =
+    colorManagement.outputColor === 'hdr10' &&
+    (textOverlays.length > 0 || (captionBurnIn.captions?.length ?? 0) > 0);
+  if (hdr10Graphics || shouldUseTimelineGpuExport(clips, transitions, textOverlays, finishing)) {
     const webGpuOk = await isWebGpuExportAvailable();
     if (!webGpuOk) {
       throw new Error('WebGPU required for GPU timeline compositor export');
@@ -159,6 +165,8 @@ export async function encodeVideoWithWebCodecs(
     buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TARGET_FPS, outputColor),
   );
   compositor.colorManagement = colorManagement;
+  // Before the first frame: a colour change reconfigures the canvas.
+  compositor.gpuCompositor?.setColorManagement(colorManagement);
 
   let videoTimeUs = 0;
   const totalDuration = clips.reduce((sum, clip) => sum + getClipDuration(clip), 0);

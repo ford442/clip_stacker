@@ -5,10 +5,11 @@ import type { Clip } from '../types';
  * False for media with no audio track to decode: stills, and files probed as
  * silent. `decodeAudioData` rejects those with "Unable to decode audio data",
  * so callers skip extraction instead of triggering (and logging) the failure.
- * Unknown (`hasAudio` omitted) counts as having audio.
+ * Unknown (`hasAudio` omitted) counts as having audio. A sequence clip has
+ * no file of its own (its audio is its sequence's clips).
  */
-export function clipHasExtractableAudio(clip: Pick<Clip, 'hasAudio' | 'stillImage'>): boolean {
-  return !clip.stillImage && clip.hasAudio !== false;
+export function clipHasExtractableAudio(clip: Pick<Clip, 'hasAudio' | 'stillImage' | 'source'>): boolean {
+  return !clip.stillImage && clip.hasAudio !== false && clip.source?.type !== 'sequence';
 }
 
 /**

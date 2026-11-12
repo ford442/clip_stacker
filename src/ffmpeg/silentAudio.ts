@@ -234,6 +234,7 @@ export async function ensureSilentAacUnit(
   onStatus?: StatusCallback,
 ): Promise<string> {
   const bytes = await getSilentAacUnitBytes(ffmpeg, onStatus);
-  await ffmpeg.writeFile(SILENT_AAC_UNIT_NAME, bytes as any);
+  // writeFile transfers (detaches) its bytes; these are the session cache.
+  await ffmpeg.writeFile(SILENT_AAC_UNIT_NAME, bytes.slice());
   return SILENT_AAC_UNIT_NAME;
 }

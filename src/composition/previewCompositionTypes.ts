@@ -90,6 +90,12 @@ export interface PreviewTextLayer {
   x: number;
   y: number;
   opacity: number;
+  /**
+   * Clock the overlay animates on (scrolling, shader fills). Set on titles
+   * inside a nested sequence — the sequence's local time; omitted means
+   * `plan.globalTime`.
+   */
+  time?: number;
 }
 
 /**
@@ -165,6 +171,11 @@ export interface TimelineRenderOptions {
   captions?: CaptionEntry[];
   /** Project-wide caption style; per-cue `style` overrides win over it. */
   captionStyle?: Partial<TextOverlayStyle>;
+  /**
+   * HDR10 export: this frame's titles / captions on a transparent 2D canvas,
+   * composited in the working space before the PQ output transform.
+   */
+  graphicsOverlay?: HTMLCanvasElement | OffscreenCanvas;
 }
 
 /** Caption inputs for `buildPreviewCompositionPlan`. */
@@ -229,6 +240,12 @@ export interface TimelineCompositor {
    * one). Absent on backends without a device (Canvas2D). Returns unsubscribe.
    */
   onDeviceState?(listener: (state: PreviewDeviceState, message?: string) => void): () => void;
+  /**
+   * The page's display reports `(dynamic-range: high)`: an HDR10 project
+   * previews on an extended-range float canvas instead of the SDR tone map
+   * (WebGPU backends only).
+   */
+  setDisplayHdr?(hdr: boolean): void;
   destroy(): void;
 }
 

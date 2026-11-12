@@ -72,6 +72,9 @@ export class WorkerTimelineRenderer {
       frames.forEach((f) => f.frame.close());
       return;
     }
+    // Before any layer is drawn: a colour change reconfigures the canvas,
+    // which discards the texture already drawn this frame.
+    this.engine.setColorManagement(colorManagement);
 
     const clipLayers = plan.layers.filter(
       (layer): layer is PreviewClipLayer =>
@@ -220,6 +223,12 @@ export class WorkerTimelineRenderer {
         colorManagement,
       });
     }
+    this.engine.endFrameProfile();
+  }
+
+  /** `(dynamic-range: high)`, resolved on main (workers have no `matchMedia`). */
+  setDisplayHdr(displayHdr: boolean): void {
+    this.engine.setDisplayHdr(displayHdr);
   }
 
   private getClipFadeIn(_layer: PreviewClipLayer): number {

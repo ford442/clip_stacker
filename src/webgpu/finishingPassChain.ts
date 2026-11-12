@@ -39,6 +39,7 @@ import {
   type FinishingApplyOptions,
 } from './finishingShared';
 import { ManagedFinishingChain } from './managedFinishing';
+import { gpuProfilerFor } from './gpuProfiler';
 
 export {
   finishingIntermediateTextureDescriptor,
@@ -137,6 +138,9 @@ export class FinishingPassChain {
       { texture: this.pingTexture! },
       [width, height, 1],
     );
+    const profiler = gpuProfilerFor(device);
+    const profile = (label: string, active: boolean): number | null =>
+      active && profiler ? profiler.begin(encoder, label) : null;
 
     let current = this.pingTexture!;
     let next = this.pongTexture!;
@@ -205,6 +209,10 @@ export class FinishingPassChain {
       return isGrainActive(settings.grain);
     };
 
+    const pNoise = profile(
+      `NR ${settings.noiseReduction?.quality ?? 'standard'}`,
+      isNoiseReductionActive(settings.noiseReduction),
+    );
     if (isNoiseReductionActive(settings.noiseReduction) && settings.noiseReduction) {
       const nr = settings.noiseReduction;
       const wantsTemporal = Boolean(nr.temporal) && (nr.temporalStrength ?? 0) > 0;
@@ -257,7 +265,9 @@ export class FinishingPassChain {
         }
       }
     }
+    profiler?.end(encoder, pNoise);
 
+    const pPrimary = profile('primary', isPrimaryColorActive(settings.primaryColor));
     if (isPrimaryColorActive(settings.primaryColor) && settings.primaryColor) {
       const primary = settings.primaryColor;
       const isLast = !hasLaterGpuPass('primary');
@@ -286,7 +296,9 @@ export class FinishingPassChain {
         });
       }
     }
+    profiler?.end(encoder, pPrimary);
 
+    const pCurves = profile('curves', isCurvesActive(settings.curves));
     if (isCurvesActive(settings.curves) && settings.curves) {
       const curves = settings.curves;
       if (!hasLaterGpuPass('curves')) {
@@ -314,7 +326,9 @@ export class FinishingPassChain {
         });
       }
     }
+    profiler?.end(encoder, pCurves);
 
+    const pSecondary = profile('secondary', isSecondaryColorActive(settings.secondaryColor));
     if (isSecondaryColorActive(settings.secondaryColor) && settings.secondaryColor) {
       const secondary = settings.secondaryColor;
       const isLast = !hasLaterGpuPass('secondary');
@@ -343,7 +357,9 @@ export class FinishingPassChain {
         });
       }
     }
+    profiler?.end(encoder, pSecondary);
 
+    const pLut = profile('LUT', isLutFinishingPassActive(settings.lut));
     if (isLutFinishingPassActive(settings.lut)) {
       const lut = resolveLutData(lutPassToColorGrade(settings.lut));
       if (lut) {
@@ -377,7 +393,9 @@ export class FinishingPassChain {
         }
       }
     }
+    profiler?.end(encoder, pLut);
 
+    const pSharpen = profile('sharpen', isSharpenActive(settings.sharpen));
     if (isSharpenActive(settings.sharpen) && settings.sharpen) {
       const sharpen = settings.sharpen;
       const isLast = !hasLaterGpuPass('sharpen');
@@ -406,7 +424,9 @@ export class FinishingPassChain {
         });
       }
     }
+    profiler?.end(encoder, pSharpen);
 
+    const pCa = profile('CA', isChromaticAberrationActive(settings.chromaticAberration));
     if (
       isChromaticAberrationActive(settings.chromaticAberration) &&
       settings.chromaticAberration
@@ -437,7 +457,9 @@ export class FinishingPassChain {
         });
       }
     }
+    profiler?.end(encoder, pCa);
 
+    const pBloom = profile('bloom', isBloomActive(settings.bloom));
     if (isBloomActive(settings.bloom) && settings.bloom) {
       const bloom = settings.bloom;
       if (!hasLaterGpuPass('bloom')) {
@@ -465,7 +487,9 @@ export class FinishingPassChain {
         });
       }
     }
+    profiler?.end(encoder, pBloom);
 
+    const pGrain = profile('grain', isGrainActive(settings.grain));
     if (isGrainActive(settings.grain) && settings.grain) {
       this.grainPass.applyBetweenTextures(
         device,
@@ -479,6 +503,7 @@ export class FinishingPassChain {
       );
       wroteToCanvas = true;
     }
+    profiler?.end(encoder, pGrain);
 
     if (!wroteToCanvas && current !== this.pingTexture) {
       encoder.copyTextureToTexture(
@@ -491,7 +516,7 @@ export class FinishingPassChain {
     device.queue.submit([encoder.finish()]);
   }
 
-  /** RGBA8 PQ image from the last managed HDR10 frame, or null. */
+  /** Half-float PQ image of the last managed HDR10 frame (YUV pack source), or null. */
   getPqExportTexture(): GPUTexture | null {
     return this.managed.getPqExportTexture();
   }

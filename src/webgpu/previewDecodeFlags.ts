@@ -42,6 +42,27 @@ export function isPreviewDecoderEnabled(
   return isPreviewDecoderSupported(scope);
 }
 
+function pageParams(search: string): URLSearchParams {
+  return new URLSearchParams(search.startsWith('?') ? search.slice(1) : search);
+}
+
+/** `?gpu_profile`: per-pass GPU timings (timestamp-query) in metrics and Copy Debug. */
+export function isGpuProfileRequestedByPage(
+  search: string = typeof location !== 'undefined' ? location.search : '',
+): boolean {
+  return pageParams(search).has('gpu_profile');
+}
+
+/**
+ * `?test_harness` runs on SwiftShader, a fallback adapter: only then may live
+ * preview use one (`allowFallbackAdapterForPreview`).
+ */
+export function isFallbackAdapterAllowedByPage(
+  search: string = typeof location !== 'undefined' ? location.search : '',
+): boolean {
+  return pageParams(search).has('test_harness');
+}
+
 export function __setPreviewDecoderOverrideForTests(value: boolean | null): void {
   testOverride = value;
 }

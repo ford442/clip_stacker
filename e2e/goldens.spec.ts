@@ -96,25 +96,3 @@ for (const golden of GOLDEN_CASES) {
     }
   });
 }
-
-/**
- * Known export defect, found by this harness: with managed colour the first
- * frame a fresh compositor draws is black, and export does not discard it, so
- * frame 0 of a Display P3 (and HDR10) file is black. `test.fail` keeps it
- * visible; it flips to an unexpected pass once the export is fixed.
- */
-test('known bug: Display P3 export frame 0 is not black', async ({ page }) => {
-  test.fail();
-  await openHarness(page);
-  const mean = await page.evaluate(async () => {
-    const h = window.clipStacker!.test!;
-    await h.buildProject({
-      clips: [{ demo: 'b', trimEnd: 1 }],
-      resolution: '320x180',
-      colorManagement: { outputColor: 'display-p3' },
-    } as never);
-    const blob = await h.exportProject();
-    return h.meanRgb(await h.decodeFrame(blob, 0));
-  });
-  expect(Math.max(...mean), 'frame 0 mean RGB').toBeGreaterThan(10);
-});

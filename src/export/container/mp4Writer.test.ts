@@ -1,9 +1,17 @@
 import { describe, expect, it } from 'vitest';
-import { createFile, MP4BoxBuffer, type Movie } from 'mp4box';
+import {
+  BufferSource,
+  EncodedPacketSink,
+  Input,
+  MP4,
+  type InputAudioTrack,
+  type InputTrack,
+  type InputVideoTrack,
+} from 'mediabunny';
 import { Mp4Writer, aacLcAudioSpecificConfig, type Mp4Packet } from './index';
 
-// A real SPS / PPS pair (High, level 3.1) — the muxer never decodes, but mp4box
-// parses the avcC we hand it.
+// A real SPS / PPS pair (High, level 3.1) — the muxer never decodes, but the
+// demuxer parses the avcC we hand it.
 const SPS = [
   0x67, 0x64, 0x00, 0x1f, 0xac, 0xd9, 0x40, 0x50, 0x05, 0xbb, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00,
   0x10, 0x00, 0x00, 0x03, 0x03, 0xc0, 0xf1, 0x83, 0x19, 0x60,
@@ -60,16 +68,50 @@ function topLevelBoxes(buffer: ArrayBuffer): string[] {
   return types;
 }
 
-function parseMp4(buffer: ArrayBuffer) {
-  const file = createFile();
-  const ready: { info?: Movie } = {};
-  file.onReady = (movie) => {
-    ready.info = movie;
+interface ParsedTrack {
+  codec: string | null;
+  /** Track timescale: Mediabunny reports it as the time resolution. */
+  timescale: number;
+  /** Per packet, decode order. */
+  types: Array<'key' | 'delta'>;
+  /** Presentation timestamps in timescale units. */
+  cts: number[];
+  /** End of the last packet in timescale units. */
+  duration: number;
+}
+
+async function parseTrack(track: InputTrack): Promise<ParsedTrack> {
+  const timescale = await track.getTimeResolution();
+  const types: Array<'key' | 'delta'> = [];
+  const cts: number[] = [];
+  for await (const packet of new EncodedPacketSink(track).packets(undefined, undefined, { metadataOnly: true })) {
+    types.push(packet.type);
+    cts.push(Math.round(packet.timestamp * timescale));
+  }
+  return {
+    codec: await track.getCodecParameterString(),
+    timescale,
+    types,
+    cts,
+    duration: Math.round((await track.computeDuration()) * timescale),
   };
-  file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(buffer.slice(0), 0));
-  file.flush();
-  if (!ready.info) throw new Error('mp4box never reached onReady');
-  return { file, info: ready.info };
+}
+
+async function parseMp4(buffer: ArrayBuffer) {
+  const input = new Input({ formats: [MP4], source: new BufferSource(buffer.slice(0)) });
+  const videoTracks: InputVideoTrack[] = await input.getVideoTracks();
+  const audioTracks: InputAudioTrack[] = await input.getAudioTracks();
+  return { input, videoTracks, audioTracks, tracks: await input.getTracks() };
+}
+
+/** Whether a box of `type` (e.g. an `elst` edit list) appears anywhere in the file. */
+function containsBox(buffer: ArrayBuffer, type: string): boolean {
+  const bytes = new Uint8Array(buffer);
+  const code = [...type].map((c) => c.charCodeAt(0));
+  for (let i = 4; i + 4 <= bytes.length; i++) {
+    if (code.every((c, j) => bytes[i + j] === c)) return true;
+  }
+  return false;
 }
 
 describe('Mp4Writer', () => {
@@ -90,25 +132,28 @@ describe('Mp4Writer', () => {
     expect(boxes.indexOf('moov')).toBeGreaterThan(0);
     expect(boxes.indexOf('moov')).toBeLessThan(boxes.indexOf('mdat'));
 
-    const { file, info } = parseMp4(buffer);
-    expect(info.isFragmented).toBe(false);
-    expect(info.tracks).toHaveLength(2);
+    expect(boxes).not.toContain('moof'); // not fragmented
 
-    const [video] = info.videoTracks;
-    expect(video!.codec).toBe('avc1.64001f');
-    expect(video!.video).toEqual({ width: 640, height: 360 });
-    expect(video!.timescale).toBe(57_600);
-    expect(video!.nb_samples).toBe(3);
-    expect(video!.duration).toBe(3 * 1920); // 3 frames of 1/30 s
-    expect(file.getTrackSamplesInfo(video!.id).map((s) => s.is_sync)).toEqual([true, false, true]);
+    const { videoTracks, audioTracks, tracks } = await parseMp4(buffer);
+    expect(tracks).toHaveLength(2);
 
-    const [audio] = info.audioTracks;
-    expect(audio!.codec).toBe('mp4a.40.2');
-    expect(audio!.audio?.sample_rate).toBe(48_000);
-    expect(audio!.audio?.channel_count).toBe(2);
-    expect(audio!.timescale).toBe(48_000);
-    expect(audio!.nb_samples).toBe(3);
-    expect(audio!.duration).toBe(3 * 1024);
+    const [video] = videoTracks;
+    expect(await video!.getCodedWidth()).toBe(640);
+    expect(await video!.getCodedHeight()).toBe(360);
+    const parsedVideo = await parseTrack(video!);
+    expect(parsedVideo.codec).toBe('avc1.64001f');
+    expect(parsedVideo.timescale).toBe(57_600);
+    expect(parsedVideo.types).toEqual(['key', 'delta', 'key']);
+    expect(parsedVideo.duration).toBe(3 * 1920); // 3 frames of 1/30 s
+
+    const [audio] = audioTracks;
+    expect(await audio!.getSampleRate()).toBe(48_000);
+    expect(await audio!.getNumberOfChannels()).toBe(2);
+    const parsedAudio = await parseTrack(audio!);
+    expect(parsedAudio.codec).toBe('mp4a.40.2');
+    expect(parsedAudio.timescale).toBe(48_000);
+    expect(parsedAudio.types).toHaveLength(3);
+    expect(parsedAudio.duration).toBe(3 * 1024);
   });
 
   it('offsets each track so its first packet sits at zero (no edit list)', async () => {
@@ -116,10 +161,10 @@ describe('Mp4Writer', () => {
     writer.addVideoPacket(videoPacket(0, 5_000_000), videoMeta());
     writer.addVideoPacket(videoPacket(1, 5_000_000));
 
-    const { file, info } = parseMp4(await writer.finalize());
-    const [video] = info.videoTracks;
-    expect(video!.edits ?? []).toEqual([]);
-    expect(file.getTrackSamplesInfo(video!.id).map((s) => s.cts)).toEqual([0, 1920]);
+    const buffer = await writer.finalize();
+    expect(containsBox(buffer, 'elst')).toBe(false);
+    const { videoTracks } = await parseMp4(buffer);
+    expect((await parseTrack(videoTracks[0]!)).cts).toEqual([0, 1920]);
   });
 
   it('uses the frame rate as the video timescale', async () => {
@@ -128,10 +173,10 @@ describe('Mp4Writer', () => {
     writer.addVideoPacket(videoPacket(1));
     writer.addVideoPacket(videoPacket(2));
 
-    const { file, info } = parseMp4(await writer.finalize());
-    const [video] = info.videoTracks;
-    expect(video!.timescale).toBe(30);
-    expect(file.getTrackSamplesInfo(video!.id).map((s) => s.cts)).toEqual([0, 1, 2]);
+    const { videoTracks } = await parseMp4(await writer.finalize());
+    const parsed = await parseTrack(videoTracks[0]!);
+    expect(parsed.timescale).toBe(30);
+    expect(parsed.cts).toEqual([0, 1, 2]);
   });
 
   it('copies WebCodecs chunks and their decoder config at add time', async () => {
@@ -151,9 +196,10 @@ describe('Mp4Writer', () => {
     // The adds run after the callback returns; a reused buffer must not leak in.
     description.fill(0);
 
-    const { info } = parseMp4(await writer.finalize());
-    expect(info.videoTracks[0]!.codec).toBe('avc1.64001f');
-    expect(info.videoTracks[0]!.nb_samples).toBe(2);
+    const { videoTracks } = await parseMp4(await writer.finalize());
+    const parsed = await parseTrack(videoTracks[0]!);
+    expect(parsed.codec).toBe('avc1.64001f');
+    expect(parsed.types).toHaveLength(2);
   });
 
   it('leaves a declared track that got no packets out of the file', async () => {
@@ -163,9 +209,9 @@ describe('Mp4Writer', () => {
     });
     writer.addVideoPacket(videoPacket(0), videoMeta());
 
-    const { info } = parseMp4(await writer.finalize());
-    expect(info.videoTracks).toHaveLength(1);
-    expect(info.audioTracks).toHaveLength(0);
+    const { videoTracks, audioTracks } = await parseMp4(await writer.finalize());
+    expect(videoTracks).toHaveLength(1);
+    expect(audioTracks).toHaveLength(0);
   });
 
   it('holds the first add failure and rethrows it from finalize', async () => {

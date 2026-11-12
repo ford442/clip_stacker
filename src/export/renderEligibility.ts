@@ -12,6 +12,7 @@ import {
 import { isStabilizationActive } from '../media/stabilization';
 import { isFinishingActive, type FinishingSettings } from '../finishing/finishing';
 import { resolveLayerKey } from '../composition/overlayKey';
+import { isSequenceClip } from '../timeline/sequenceResolve';
 
 /** Mirrors ffmpegService clipNeedsEffects — shared for encoder path selection. */
 export function clipNeedsEffects(clip: Clip): boolean {
@@ -68,6 +69,8 @@ export function needsMultiLayerComposition(
   transitions: ClipTransition[],
 ): boolean {
   if (hasActiveTransitions(transitions)) return true;
+  // A nested sequence is drawn by recursing the composition plan.
+  if (clips.some(isSequenceClip)) return true;
   if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) return true;
   if (clips.some(clipHasKeyframes)) return true;
   if (clips.some((clip) => clip.stillImage)) return true;
@@ -203,6 +206,7 @@ export function remoteConcatBlockers(timelineClips: Clip[], context: RemoteConca
   const add = (label: string) => blockers.add(label);
 
   for (const clip of timelineClips) {
+    if (isSequenceClip(clip)) add('nested sequences');
     if (clip.kind !== 'video') add('audio clips / audio lanes');
     if ((clip.layerIndex ?? 0) > 0) add('PiP/overlay lanes');
     if (clip.trackMuted) add('lane mute');

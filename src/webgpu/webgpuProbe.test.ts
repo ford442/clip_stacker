@@ -94,6 +94,27 @@ describe('webgpuProbe', () => {
     expect(adapter.requestDevice).toHaveBeenCalledTimes(1);
   });
 
+  it('stops at requestAdapter with { device: false } (the main-thread boot probe)', async () => {
+    const device = makeFakeDevice();
+    const adapter = {
+      limits: {},
+      features: new Set<string>(),
+      requestDevice: vi.fn().mockResolvedValue(device),
+      info: { vendor: 'google', description: 'SwiftShader', isFallbackAdapter: true },
+    };
+    vi.stubGlobal('navigator', {
+      userAgent: 'Mozilla/5.0 Chrome/128.0.0.0 Safari/537.36',
+      gpu: {
+        requestAdapter: vi.fn().mockResolvedValue(adapter),
+        getPreferredCanvasFormat: () => 'bgra8unorm',
+      },
+    });
+
+    const probe = await probeWebGpu({ device: false });
+    expect(probe).toMatchObject({ ok: true, deviceProbed: false, isFallbackAdapter: true });
+    expect(adapter.requestDevice).not.toHaveBeenCalled();
+  });
+
   it('reports no navigator.gpu', async () => {
     vi.stubGlobal('navigator', { userAgent: 'Mozilla/5.0 Chrome/1' });
     const probe = await probeWebGpu();

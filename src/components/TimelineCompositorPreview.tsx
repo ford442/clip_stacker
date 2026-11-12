@@ -52,6 +52,7 @@ import { createRenderScheduler } from '../composition/seekCoalescer';
 import { PreviewOverlayManipulator } from './PreviewOverlayManipulator';
 import { AudioSyncOffsetControl } from './AudioSyncOffsetControl';
 import { displayedWebGpuProbe, WebGpuHardFailBanner } from './previewWebGpuFail';
+import { useDisplayHdr } from '../hooks/useDisplayHdr';
 
 export interface TimelinePreviewProps {
   timelineClips: Clip[];
@@ -397,6 +398,14 @@ export function TimelineCompositorPreview({
       );
     });
   }, [backend, canvasGeneration, requestRender]);
+
+  // An HDR10 project previews extended on an HDR display (float canvas), and
+  // tone-mapped to SDR elsewhere; follow the display as the window moves.
+  const displayHdr = useDisplayHdr();
+  useEffect(() => {
+    engineRef.current?.setDisplayHdr?.(displayHdr);
+    if (engineRef.current) requestRender(globalTimeRef.current);
+  }, [displayHdr, backend, canvasGeneration, requestRender]);
 
   // Only the worker-backed WebGPU compositor can produce scopes: they are read
   // from the composed GPU texture, which the Canvas2D path does not have.

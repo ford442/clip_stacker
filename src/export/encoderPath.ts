@@ -16,7 +16,9 @@
  *  2. WebCodecs (GPU compositor / sequential decoder → VideoEncoder) — when
  *     not forced off, eligible (`canUseGpuVideoEncoder`), and **re-encoding**:
  *     a lossless concat stays an FFmpeg stream copy.
- *  3. FFmpeg — everything else, and the runtime fallback.
+ *  3. FFmpeg — everything else, and the runtime fallback; except that a
+ *     nested sequence or a Display P3 / HDR10 output is refused instead of
+ *     falling there (Force FFmpeg still writes a Rec.709 wide output).
  *
  * Pure: no probes, no globals.
  */
@@ -29,6 +31,7 @@ import { clipHasLoop } from '../timeline/playbackRate';
 import { canUseGpuVideoEncoder, hasActiveTransitions, shouldUseTimelineGpuExport } from './renderEligibility';
 import { clipIsReversed } from '../timeline/reverseClip';
 import { clipHasRateAutomation } from '../timeline/timeRemap';
+import { isSequenceClip } from '../timeline/sequenceResolve';
 
 export type SelectedEncoderPath = 'canvas' | 'webcodecs' | 'ffmpeg';
 
@@ -71,6 +74,7 @@ export function canvasCompositingBlockers(
   finishing?: FinishingSettings,
 ): string[] {
   const blockers: string[] = [];
+  if (clips.some(isSequenceClip)) blockers.push('nested sequences');
   if (clips.some((clip) => resolveLayerKey(clip) !== null)) blockers.push('chroma/luma keys');
   if (clips.some((clip) => (clip.layerIndex ?? 0) > 0)) blockers.push('PiP/overlay lanes');
   if (clips.some(clipHasPictureTransform)) blockers.push('picture transforms');
@@ -85,26 +89,43 @@ export function canvasCompositingBlockers(
 }
 
 /**
- * HDR10 is encoded from the PQ readback of the composed frame, which does not
- * contain the 2D text / caption pass yet (#347), so such a file would be
- * missing them. Refuse rather than drop them.
+ * A nested sequence is a recursion of the composition plan: only the GPU
+ * compositor draws it. FFmpeg would read the sequence clip's empty
+ * placeholder file, so a render that would land there is refused rather
+ * than bounced through an intermediate file. Undefined when the timeline
+ * has no sequence clips.
  */
-export function hdr10TextRefusal(input: Pick<EncoderPathInput, 'outputColor' | 'textOverlays' | 'burnCaptions'>): string | undefined {
-  if (input.outputColor !== 'hdr10') return undefined;
-  const parts: string[] = [];
-  if (input.textOverlays.length > 0) parts.push('text overlays');
-  if (input.burnCaptions) parts.push('burned-in captions');
-  if (parts.length === 0) return undefined;
+export function nestedSequenceFfmpegRefusal(clips: Array<Pick<Clip, 'source'>>, why: string): string | undefined {
+  if (!clips.some(isSequenceClip)) return undefined;
   return (
-    `HDR10 export cannot include ${parts.join(' or ')} yet — the HDR10 encoder reads the picture ` +
-    'before titles and captions are drawn, so they would be missing from the file. Export as ' +
-    'Rec.709 or Display P3, or remove them for the HDR10 export.'
+    `This timeline has nested sequences, which only the GPU compositor (WebGPU + WebCodecs) can render — ${why}. ` +
+    'Turn Force FFmpeg off and render in a browser with WebGPU.'
+  );
+}
+
+const WIDE_OUTPUT_LABEL: Partial<Record<OutputColor, string>> = {
+  'display-p3': 'Display P3',
+  hdr10: 'HDR10',
+};
+
+/**
+ * Display P3 and HDR10 are written only by the GPU compositor + WebCodecs
+ * (the managed passes, the P3 canvas and the I420P10 pack are WebGPU). A
+ * render that would *fall* to FFmpeg — not one the user forced there — is
+ * refused rather than written as a Rec.709 file. Undefined for Rec.709 SDR.
+ */
+export function wideOutputFfmpegRefusal(outputColor: OutputColor | undefined, why: string): string | undefined {
+  const label = outputColor ? WIDE_OUTPUT_LABEL[outputColor] : undefined;
+  if (!label) return undefined;
+  return (
+    `${label} output is written only by the GPU encoder (WebGPU + WebCodecs) — ${why}. ` +
+    'Choose Rec.709 SDR output, or turn on Force FFmpeg to write a Rec.709 file.'
   );
 }
 
 /** True when the GPU encoder is the candidate (everything but the WebCodecs probe). */
 export function isGpuEncodeCandidate(input: EncoderPathInput): boolean {
-  if (input.forceFFmpeg || !input.willReencode) return false;
+  if (input.forceFFmpeg || !(input.willReencode || mustReencode(input))) return false;
   return canUseGpuVideoEncoder(input.clips, input.transitions, input.textOverlays, {
     forceFFmpeg: false,
     useCanvas: false,
@@ -113,8 +134,21 @@ export function isGpuEncodeCandidate(input: EncoderPathInput): boolean {
   });
 }
 
+/** A sequence clip has no file to stream-copy; a wide output has to be converted. */
+function mustReencode(input: Pick<EncoderPathInput, 'clips' | 'outputColor'>): boolean {
+  return input.clips.some(isSequenceClip) || wideOutputFfmpegRefusal(input.outputColor, '') !== undefined;
+}
+
+/** The FFmpeg decision for a render that could not take the GPU encoder, refused when it must be. */
+function ffmpegFallback(input: EncoderPathInput, reasons: string[], why: string): EncoderPathDecision {
+  const refusal =
+    nestedSequenceFfmpegRefusal(input.clips, why) ?? wideOutputFfmpegRefusal(input.outputColor, why);
+  return refusal ? { path: 'ffmpeg', reasons, refusal } : { path: 'ffmpeg', reasons };
+}
+
 export function selectEncoderPath(input: EncoderPathInput): EncoderPathDecision {
   const reasons: string[] = [];
+  const wideOutput = wideOutputFfmpegRefusal(input.outputColor, '') !== undefined;
 
   if (input.useCanvas) {
     const blockers = canvasCompositingBlockers(input.clips, input.transitions, input.finishing);
@@ -132,7 +166,8 @@ export function selectEncoderPath(input: EncoderPathInput): EncoderPathDecision 
 
   if (input.forceFFmpeg) {
     reasons.push('Force FFmpeg is on');
-    return { path: 'ffmpeg', reasons };
+    const nested = nestedSequenceFfmpegRefusal(input.clips, 'Force FFmpeg is on');
+    return nested ? { path: 'ffmpeg', reasons, refusal: nested } : { path: 'ffmpeg', reasons };
   }
 
   const eligible = canUseGpuVideoEncoder(input.clips, input.transitions, input.textOverlays, {
@@ -152,23 +187,49 @@ export function selectEncoderPath(input: EncoderPathInput): EncoderPathDecision 
           : 'The timeline needs the GPU compositor and WebGPU is unavailable'
         : 'RIFE-processed clips are encoded by FFmpeg',
     );
-    return { path: 'ffmpeg', reasons };
+    return ffmpegFallback(
+      input,
+      reasons,
+      needsCompositor ? 'WebGPU is not available' : 'RIFE-processed clips are encoded by FFmpeg',
+    );
   }
-  if (!input.willReencode) {
+  if (wideOutput && input.webGpuAvailable !== true) {
+    // A plain timeline is eligible without WebGPU (the sequential encoder can
+    // fall back to a 2D canvas), but a wide output cannot.
+    reasons.push(
+      input.webGpuAvailable === undefined
+        ? 'Display P3 / HDR10 needs the GPU compositor and WebGPU has not been confirmed'
+        : 'Display P3 / HDR10 needs the GPU compositor and WebGPU is unavailable',
+    );
+    return ffmpegFallback(input, reasons, 'WebGPU is not available');
+  }
+  if (!input.willReencode && !mustReencode(input)) {
     reasons.push('Nothing to re-encode — FFmpeg stream-copies (lossless concat)');
     return { path: 'ffmpeg', reasons };
   }
+  if (!input.willReencode && wideOutput) {
+    reasons.push('Display P3 / HDR10 always re-encodes — a stream copy would keep the source colour');
+  }
   const webCodecs = input.webCodecsAvailable ?? input.webGpuAvailable === true;
-  if (!webCodecs) {
+  if (!webCodecs && wideOutput && input.webCodecsAvailable === false) {
+    // The probe is H.264 at this size; it does not speak for the HEVC / AV1
+    // 10-bit (or tagged P3) encoder, which `resolveEncoderCodec` resolves —
+    // and refuses with the precise reason — when the render starts.
+    reasons.push('The H.264 probe failed here; the wide-colour encoder is resolved when the render starts');
+  } else if (!webCodecs) {
     reasons.push(
       input.webCodecsAvailable === undefined
         ? 'WebCodecs has not been confirmed (no WebGPU probe)'
         : 'WebCodecs cannot encode this output size here',
     );
-    return { path: 'ffmpeg', reasons };
+    return ffmpegFallback(input, reasons, 'WebCodecs cannot encode this output here');
   }
 
   reasons.push('GPU encode (WebCodecs)');
-  const refusal = hdr10TextRefusal(input);
-  return refusal ? { path: 'webcodecs', reasons, refusal } : { path: 'webcodecs', reasons };
+  if (input.outputColor === 'hdr10' && (input.textOverlays.length > 0 || input.burnCaptions)) {
+    reasons.push(
+      'HDR10 titles / captions are composited in the working space at the graphics white, before the PQ output transform',
+    );
+  }
+  return { path: 'webcodecs', reasons };
 }

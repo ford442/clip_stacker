@@ -17,7 +17,21 @@ export interface ForwardFrameCursor {
   close(): void;
 }
 
-export type CursorOpener = (key: string) => Promise<ForwardFrameCursor>;
+/**
+ * Opens the cursor for `key`, serving `sourceTimeSec` first. Openers start it
+ * there (`cursorStartAt`), not at the clip's trim start: a scrub or backward
+ * jump then decodes from the key frame before the target, not every frame
+ * since the trim start.
+ */
+export type CursorOpener = (key: string, sourceTimeSec: number) => Promise<ForwardFrameCursor>;
+
+/**
+ * `startAt` for a cursor whose first request is `sourceTimeSec` within
+ * `[trimStart, trimEnd)`, or undefined to start at the trim start.
+ */
+export function cursorStartAt(sourceTimeSec: number, trimStart: number, trimEnd: number): number | undefined {
+  return sourceTimeSec > trimStart && sourceTimeSec < trimEnd ? sourceTimeSec : undefined;
+}
 
 interface CursorEntry {
   cursor: ForwardFrameCursor;
@@ -62,7 +76,7 @@ export class DecoderCursorPool {
     if (!entry) {
       if (this.cursors.size >= this.maxConcurrent) this.evictOldest();
       try {
-        const cursor = await this.openCursor(key);
+        const cursor = await this.openCursor(key, sourceTimeSec);
         entry = { cursor, lastSourceTime: sourceTimeSec };
         this.cursors.set(key, entry);
       } catch {

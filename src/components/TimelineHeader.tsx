@@ -7,6 +7,7 @@ import {
   MIN_PIXELS_PER_SECOND,
 } from '../timeline/timelineLayout';
 import { TimelineTools } from './TimelineTools';
+import { SequenceBreadcrumb } from './SequenceBreadcrumb';
 
 interface TimelineHeaderProps {
   outputDuration: number;
@@ -32,6 +33,7 @@ export function TimelineHeader({
 }: TimelineHeaderProps) {
   return (
     <>
+      <SequenceBreadcrumb />
       <div className="timeline-header-row">
         <h2>Timeline</h2>
         <span className="timeline-total-dur muted">

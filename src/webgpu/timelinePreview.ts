@@ -3,6 +3,7 @@
  */
 
 import type { Clip } from '../types';
+import { withNestedInstances } from '../composition/nestedSequences';
 import { DEFAULT_FINISHING } from '../finishing/finishing';
 import { resolveTimelineFinishing } from '../finishing/finishing';
 import { isColorManagementActive } from '../finishing/colorManagement';
@@ -19,7 +20,9 @@ import {
 } from '../composition/previewComposition';
 import { ClipMediaPool, seekVideoTo } from '../media/clipMediaPool';
 import { previewMetrics } from '../composition/previewMetrics';
-import { PreviewEngine, type LayerDraw } from './previewEngine';
+import { getGpuProfileSnapshot, isGpuProfilingRequested } from './gpuProfiler';
+import { PreviewEngine, type LayerDraw, type PreviewEngineOptions } from './previewEngine';
+import type { PackedFrameInit } from './hdr10FrameReader';
 import { captureStillFrame, captureVideoFrame } from './captureFrame';
 import {
   onGpuDeviceLost,
@@ -94,25 +97,37 @@ export class TimelinePreviewEngine implements TimelineCompositor {
   private readonly mediaPool: ClipMediaPool;
   private readonly canvas: HTMLCanvasElement;
   private readonly clipsById: Map<string, Clip>;
+  /** A live preview (not an offscreen export): its GPU timings feed `previewMetrics`. */
+  private readonly livePreview: boolean;
 
   private constructor(
     engine: PreviewEngine,
     mediaPool: ClipMediaPool,
     canvas: HTMLCanvasElement,
     clips: Clip[],
+    livePreview: boolean,
   ) {
     this.engine = engine;
+    this.livePreview = livePreview;
     this.mediaPool = mediaPool;
     this.canvas = canvas;
-    this.clipsById = new Map(clips.map((clip) => [clip.id, clip]));
+    // Layers inside nested sequences carry namespaced ids (`withNestedInstances`).
+    this.clipsById = new Map(withNestedInstances(clips).map((clip) => [clip.id, clip]));
   }
 
   static async create(
     canvas: HTMLCanvasElement,
     clips: Clip[],
+    options: PreviewEngineOptions = {},
   ): Promise<TimelinePreviewEngine> {
-    const engine = await PreviewEngine.create(canvas);
-    return new TimelinePreviewEngine(engine, new ClipMediaPool(), canvas, clips);
+    const engine = await PreviewEngine.create(canvas, options);
+    return new TimelinePreviewEngine(
+      engine,
+      new ClipMediaPool(),
+      canvas,
+      clips,
+      (options.surface ?? 'display') === 'display',
+    );
   }
 
   /** This engine draws with main's device, so main's registry is the one to watch. */
@@ -144,6 +159,9 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     options?: TimelineRenderOptions,
   ): Promise<void> {
     if (options?.isCancelled?.()) return;
+    // Before any layer is drawn: a colour change reconfigures the canvas,
+    // which discards the texture already drawn this frame.
+    this.engine.setColorManagement(options?.colorManagement);
 
     const clipLayers = plan.layers.filter(
       (layer): layer is PreviewClipLayer =>
@@ -401,7 +419,12 @@ export class TimelinePreviewEngine implements TimelineCompositor {
       this.engine.applyFinishing(finishing ?? DEFAULT_FINISHING, {
         frameIndex,
         colorManagement,
+        ...(options?.graphicsOverlay ? { graphicsOverlay: options.graphicsOverlay } : {}),
       });
+    }
+    this.engine.endFrameProfile();
+    if (this.livePreview && isGpuProfilingRequested()) {
+      previewMetrics.setGpuProfile(getGpuProfileSnapshot());
     }
 
     this.mediaPool.enforceBudget(drawnClipIds);
@@ -438,11 +461,12 @@ export class TimelinePreviewEngine implements TimelineCompositor {
   }
 
   syncClips(clips: Clip[]): void {
+    const all = withNestedInstances(clips);
     this.clipsById.clear();
-    for (const clip of clips) {
+    for (const clip of all) {
       this.clipsById.set(clip.id, clip);
     }
-    this.mediaPool.pruneExcept(new Set(clips.map((clip) => clip.id)));
+    this.mediaPool.pruneExcept(new Set(all.map((clip) => clip.id)));
   }
 
   pauseDecoders(): void {
@@ -462,6 +486,20 @@ export class TimelinePreviewEngine implements TimelineCompositor {
     return this.engine.readPqExportRgba();
   }
 
+  /** See `PreviewEngine.captureHdr10Frame`. */
+  captureHdr10Frame(init: PackedFrameInit): Promise<VideoFrame> {
+    return this.engine.captureHdr10Frame(init);
+  }
+
+  get hdr10ReadbackDepth(): number {
+    return this.engine.hdr10ReadbackDepth;
+  }
+
+  /** `(dynamic-range: high)` for the main-thread preview (see `PreviewEngine.setDisplayHdr`). */
+  setDisplayHdr(displayHdr: boolean): void {
+    this.engine.setDisplayHdr(displayHdr);
+  }
+
   /**
    * Blit shader-filled text onto the WebGPU canvas (no 2D video copy).
    * Solid overlays and boxed shader overlays stay on the Canvas2D export path.
@@ -478,7 +516,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
 
       const mask = createSingleOverlayGlyphMask(
         overlay,
-        plan.globalTime,
+        layer.time ?? plan.globalTime,
         plan.canvasWidth,
         plan.canvasHeight,
       );
@@ -494,7 +532,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
         plan.canvasHeight,
       ].join(':');
       const filled = await renderer.render(mask, {
-        time: plan.globalTime,
+        time: layer.time ?? plan.globalTime,
         shaderId: overlay.shaderId,
         params: overlay.shaderParams,
         colors: overlay.shaderColors,

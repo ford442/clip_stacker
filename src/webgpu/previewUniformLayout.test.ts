@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import previewShader from './shaders/preview.wgsl?raw';
 import { AUDIO_UNIFORM_OFFSET } from '../wasm/audioReactiveUniforms';
 import { KEY_UNIFORM_FLOATS } from '../composition/overlayKey';
+import { DISPLAY_P3_TO_REC709 } from '../finishing/colorManagement';
+import { KEY_SOURCE_P3_UNIFORM_OFFSET } from './previewLayerUniforms';
 
 /**
  * `previewLayerUniforms.ts` packs `Uniforms` by hand from flat float offsets, so a
@@ -83,7 +85,8 @@ describe('preview.wgsl uniform layout', () => {
   });
 
   it('pads the tail rather than leaving the struct unaligned', () => {
-    expect(fields.slice(WARP_QUAD_UNIFORM_OFFSET + 5)).toEqual(['_pad0', '_pad1']);
+    expect(fields.slice(WARP_QUAD_UNIFORM_OFFSET + 5)).toEqual(['keySourceP3', '_pad1']);
+    expect(fields[KEY_SOURCE_P3_UNIFORM_OFFSET]).toBe('keySourceP3');
   });
 });
 
@@ -103,5 +106,16 @@ describe('preview.wgsl layer warp', () => {
     expect(previewShader).toContain('fn applyLayerWarp(');
     expect(previewShader).not.toContain('applyStabilization');
     expect(previewShader.match(/applyLayerWarp\(/g)).toHaveLength(2);
+  });
+});
+
+describe('preview.wgsl key input for P3-imported sources', () => {
+  it('uses the same Display P3 → Rec.709 matrix as colorManagement.ts', () => {
+    const rows = [0, 1, 2].map((row) => {
+      const match = new RegExp(`P3_TO_709_ROW${row} = vec3<f32>\\(([^)]*)\\)`).exec(previewShader);
+      if (!match) throw new Error(`P3_TO_709_ROW${row} missing`);
+      return match[1]!.split(',').map((v) => Number(v.trim()));
+    });
+    rows.flat().forEach((value, i) => expect(value).toBeCloseTo(DISPLAY_P3_TO_REC709[i]!, 6));
   });
 });

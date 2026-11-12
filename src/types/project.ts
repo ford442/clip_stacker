@@ -1,10 +1,17 @@
 import type { SerializedClip, SerializedClipGroup, SyncMarker } from './clip';
 import type { CaptionEntry, TextOverlay, TextOverlayStyle } from './text';
+import type { SerializedSequence } from './sequence';
 import type { SerializedTrack } from './track';
 import type { SerializedTransition } from './transition';
 
-/** Current on-disk project schema. Absent / 0 = legacy flat clip list. */
-export const PROJECT_SCHEMA_VERSION = 2;
+/**
+ * Current on-disk project schema. Absent / 0 = legacy flat clip list;
+ * 2 = normalized layout coordinates; 3 = nested sequences (`sequences`).
+ */
+export const PROJECT_SCHEMA_VERSION = 3;
+
+/** First schema that stores layout as fractions of the output (not pixels). */
+export const NORMALIZED_LAYOUT_SCHEMA_VERSION = 2;
 
 /** External reference music track for lip-sync visual anchoring (serialized). */
 export interface SerializedMasterAudio {
@@ -91,4 +98,9 @@ export interface Project {
   masterAudio?: SerializedMasterAudio;
   /** Global anchor points for text-based sync */
   masterAudioMarkers?: SyncMarker[];
+  /**
+   * Nested sequences (schema v3). The top-level `tracks` / `transitions` /
+   * `textOverlays` are the root sequence; omitted when there are none.
+   */
+  sequences?: SerializedSequence[];
 }

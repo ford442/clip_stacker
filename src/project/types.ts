@@ -4,6 +4,7 @@ import type {
   ClipGroup,
   ClipTransition,
   MasterAudio,
+  Sequence,
   TextOverlay,
   TextOverlayStyle,
   Track,
@@ -33,7 +34,10 @@ export interface RemoteUploadErrorEvent extends RemoteUploadProgressEvent {
 }
 
 export interface AppliedProjectData {
+  /** The main timeline's clips. */
   clips: Clip[];
+  /** Nested sequences (empty for projects saved before they existed). */
+  sequences: Sequence[];
   tracks: Track[];
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];

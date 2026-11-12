@@ -9,7 +9,10 @@
  * Matrices are D65, row-major. The same numbers are packed into the WGSL
  * uniform so the shader cannot drift from this module. No OCIO.
  *
- * Import assumption: untagged media is Rec.709 / sRGB. There is no per-clip ICC.
+ * Sources: with management on, `importExternalTexture` converts every layer
+ * to encoded Display P3 using the frame's own colour tags (or a clip's
+ * `colorSpaceOverride`, applied on the decoder), so a P3 source keeps its
+ * gamut; the input transform then decodes P3. Untagged media is Rec.709.
  */
 
 export type OutputColor = 'rec709-sdr' | 'display-p3' | 'hdr10';
@@ -18,6 +21,11 @@ export type WorkingSpace = 'rec709' | 'rec2020-linear';
 export interface ColorManagementSettings {
   outputColor: OutputColor;
   workingSpace: WorkingSpace;
+  /**
+   * HDR10: luminance titles and captions are composited at (ITU-R BT.2408
+   * graphics white). Omitted = {@link DEFAULT_GRAPHICS_WHITE_NITS}.
+   */
+  graphicsWhiteNits?: number;
 }
 
 export const DEFAULT_COLOR_MANAGEMENT: ColorManagementSettings = {
@@ -30,6 +38,28 @@ export const DEFAULT_COLOR_MANAGEMENT: ColorManagementSettings = {
  * (diffuse white). 10,000 nits is the PQ peak, not the grade white.
  */
 export const PQ_REFERENCE_WHITE_NITS = 100;
+
+/** ITU-R BT.2408 graphics white: where HDR10 titles and captions sit. */
+export const DEFAULT_GRAPHICS_WHITE_NITS = 203;
+export const GRAPHICS_WHITE_NITS_RANGE = { min: 80, max: 1000 } as const;
+
+export function resolveGraphicsWhiteNits(
+  settings: Pick<ColorManagementSettings, 'graphicsWhiteNits'> | undefined | null,
+): number {
+  const value = settings?.graphicsWhiteNits;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return DEFAULT_GRAPHICS_WHITE_NITS;
+  return Math.min(GRAPHICS_WHITE_NITS_RANGE.max, Math.max(GRAPHICS_WHITE_NITS_RANGE.min, value));
+}
+
+/**
+ * Scene-linear gain for sRGB-encoded graphics composited before the HDR10
+ * output transform: 1.0 sRGB white lands at the graphics white.
+ */
+export function graphicsWhiteSceneGain(
+  settings: Pick<ColorManagementSettings, 'graphicsWhiteNits'> | undefined | null,
+): number {
+  return resolveGraphicsWhiteNits(settings) / PQ_REFERENCE_WHITE_NITS;
+}
 
 /** Managed-mode pass order. Grain stays last, on the output encoding. */
 export const COLOR_MANAGED_PASS_ORDER = [
@@ -153,6 +183,7 @@ const XYZ_TO_REC2020 = invertMat3(REC2020_TO_XYZ);
 const XYZ_TO_DISPLAY_P3 = invertMat3(DISPLAY_P3_TO_XYZ);
 
 export const REC709_TO_REC2020: Mat3 = mulMat3(XYZ_TO_REC2020, REC709_TO_XYZ);
+export const DISPLAY_P3_TO_REC2020: Mat3 = mulMat3(XYZ_TO_REC2020, DISPLAY_P3_TO_XYZ);
 export const REC2020_TO_REC709: Mat3 = mulMat3(XYZ_TO_REC709, REC2020_TO_XYZ);
 export const REC2020_TO_DISPLAY_P3: Mat3 = mulMat3(XYZ_TO_DISPLAY_P3, REC2020_TO_XYZ);
 export const DISPLAY_P3_TO_REC709: Mat3 = mulMat3(XYZ_TO_REC709, DISPLAY_P3_TO_XYZ);
@@ -218,7 +249,11 @@ export function normalizeColorManagement(raw: unknown): ColorManagementSettings 
       : 'rec709-sdr';
   const workingSpace: WorkingSpace =
     value.workingSpace === 'rec2020-linear' ? 'rec2020-linear' : 'rec709';
-  return { outputColor, workingSpace };
+  const out: ColorManagementSettings = { outputColor, workingSpace };
+  if (typeof value.graphicsWhiteNits === 'number' && Number.isFinite(value.graphicsWhiteNits)) {
+    out.graphicsWhiteNits = resolveGraphicsWhiteNits(value);
+  }
+  return out;
 }
 
 /**
@@ -286,30 +321,74 @@ export interface CanvasPresentation {
   presentFallback: boolean;
 }
 
-/** What we ask the canvas for. HDR still uses the 8-bit swapchain format. */
-export function requestedCanvasColor(output: OutputColor): CanvasColorRequest {
+/**
+ * What the canvas is for: a `display` canvas is on screen (the preview); an
+ * `offscreen` one only feeds an encoder or a readback (export, harness).
+ */
+export type CanvasSurface = 'display' | 'offscreen';
+
+export interface CanvasSurfacePlan extends CanvasColorRequest {
+  format: GPUTextureFormat;
+}
+
+/** The float swapchain format: extended range, and > 8 bits through compositing. */
+export const FLOAT_CANVAS_FORMAT: GPUTextureFormat = 'rgba16float';
+
+/**
+ * Swapchain format and colour for one engine. Compositing draws into the
+ * canvas, so its format is also the compositing precision.
+ *
+ * - HDR10 on an HDR display: `rgba16float` + `extended` in Display P3, so
+ *   the preview shows highlights above SDR white (`pq-to-extended`).
+ * - HDR10 offscreen (export / harness): `rgba16float`, so layers composite
+ *   with more than 8 bits before the PQ output transform; it is never shown.
+ * - HDR10 on an SDR display: the preferred 8-bit format, `pq-to-sdr`.
+ * - Everything else keeps the preferred format; Display P3 asks for a P3
+ *   canvas (an encoder reads it, so it stays 8-bit RGBA).
+ */
+export function planCanvasSurface(
+  output: OutputColor,
+  surface: CanvasSurface,
+  displayHdr: boolean,
+  preferredFormat: GPUTextureFormat,
+): CanvasSurfacePlan {
   switch (output) {
     case 'display-p3':
-      return { colorSpace: 'display-p3', toneMapping: 'standard' };
+      return { format: preferredFormat, colorSpace: 'display-p3', toneMapping: 'standard' };
     case 'hdr10':
-      return { colorSpace: 'srgb', toneMapping: 'extended' };
+      if (surface === 'offscreen') {
+        return { format: FLOAT_CANVAS_FORMAT, colorSpace: 'srgb', toneMapping: 'standard' };
+      }
+      if (displayHdr) {
+        return { format: FLOAT_CANVAS_FORMAT, colorSpace: 'display-p3', toneMapping: 'extended' };
+      }
+      return { format: preferredFormat, colorSpace: 'srgb', toneMapping: 'standard' };
     default:
-      return { colorSpace: 'srgb', toneMapping: 'standard' };
+      return { format: preferredFormat, colorSpace: 'srgb', toneMapping: 'standard' };
   }
 }
 
 /**
- * Presentation after a configure attempt. `configured` is what actually stuck.
- * An 8-bit unorm swapchain cannot store values above 1, so a successful
- * `extended` configure still previews HDR as a 100-nit downmap — the file
- * readback is the PQ image, not the canvas.
+ * `importExternalTexture` colour space. Managed: every source is converted
+ * to encoded Display P3 by the browser from the frame's own tags, so P3
+ * footage is not clipped to sRGB first; the input transform then decodes P3.
+ * Unmanaged stays sRGB, byte-identical to before.
  */
+export function importColorSpaceFor(
+  settings: ColorManagementSettings | undefined | null,
+): PredefinedColorSpace {
+  return isColorManagementActive(settings) ? 'display-p3' : 'srgb';
+}
+
+/** Presentation after a configure attempt. `configured` is what actually stuck. */
 export function resolveCanvasPresentation(
   output: OutputColor,
   configured: CanvasColorRequest,
   canvasFormat: string,
 ): CanvasPresentation {
-  const floatCanvas = canvasFormat === 'rgba16float' || canvasFormat === 'rg11b10ufloat';
+  // Only a float swapchain can hold values above 1; an 8-bit `extended`
+  // canvas would still show a 100-nit downmap.
+  const floatCanvas = canvasFormat === FLOAT_CANVAS_FORMAT;
   if (output === 'display-p3') {
     if (configured.colorSpace === 'display-p3') {
       return {
@@ -329,7 +408,7 @@ export function resolveCanvasPresentation(
   if (output === 'hdr10') {
     if (configured.toneMapping === 'extended' && floatCanvas) {
       return {
-        colorSpace: 'srgb',
+        colorSpace: configured.colorSpace,
         toneMapping: 'extended',
         present: 'pq-to-extended',
         presentFallback: false,
@@ -360,6 +439,8 @@ export const ColorXformMode = {
   presentP3ToSrgb: 5,
   presentPqToExtended: 6,
   presentPqToSdr: 7,
+  inputDisplayP3ToLinear2020: 8,
+  presentPqToExtendedP3: 9,
 } as const;
 
 export type ColorXformModeId = (typeof ColorXformMode)[keyof typeof ColorXformMode];
@@ -370,6 +451,10 @@ export function matrixForXform(mode: ColorXformModeId): Mat3 {
   switch (mode) {
     case ColorXformMode.inputRec709ToLinear2020:
       return REC709_TO_REC2020;
+    case ColorXformMode.inputDisplayP3ToLinear2020:
+      return DISPLAY_P3_TO_REC2020;
+    case ColorXformMode.presentPqToExtendedP3:
+      return REC2020_TO_DISPLAY_P3;
     case ColorXformMode.odtRec709:
     case ColorXformMode.presentPqToExtended:
     case ColorXformMode.presentPqToSdr:
@@ -417,12 +502,24 @@ export function odtModeForOutput(output: OutputColor): ColorXformModeId {
   }
 }
 
-export function presentModeToXform(present: PresentMode): ColorXformModeId {
+/** Input transform for what `importColorSpaceFor` asked the browser for. */
+export function inputModeFor(importColorSpace: PredefinedColorSpace): ColorXformModeId {
+  return importColorSpace === 'display-p3'
+    ? ColorXformMode.inputDisplayP3ToLinear2020
+    : ColorXformMode.inputRec709ToLinear2020;
+}
+
+export function presentModeToXform(
+  present: PresentMode,
+  canvasColorSpace: CanvasColorSpaceId = 'srgb',
+): ColorXformModeId {
   switch (present) {
     case 'p3-to-srgb':
       return ColorXformMode.presentP3ToSrgb;
     case 'pq-to-extended':
-      return ColorXformMode.presentPqToExtended;
+      return canvasColorSpace === 'display-p3'
+        ? ColorXformMode.presentPqToExtendedP3
+        : ColorXformMode.presentPqToExtended;
     case 'pq-to-sdr':
       return ColorXformMode.presentPqToSdr;
     default:
@@ -481,6 +578,10 @@ export function displayP3UnavailableReason(): string {
 export interface ColorDebugSnapshot {
   outputColor: OutputColor;
   workingSpace: WorkingSpace;
+  /** What `importExternalTexture` converts sources to. */
+  importColorSpace?: PredefinedColorSpace;
+  /** `(dynamic-range: high)` as the engine last heard it. */
+  displayHdr?: boolean;
   canvasColorSpace: CanvasColorSpaceId;
   toneMapping: CanvasToneMappingMode;
   canvasFormat: string;

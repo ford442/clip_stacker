@@ -1,4 +1,15 @@
 import type { Keyframe } from '../timeline/keyframes';
+import type { TextOverlay } from './text';
+import type { Track } from './track';
+import type { ClipTransition } from './transition';
+
+/** How a clip's source should be interpreted, overriding its own tags (`Clip.colorSpaceOverride`). */
+export type SourceColorSpaceOverride =
+  | 'rec709'
+  | 'srgb'
+  | 'display-p3'
+  | 'rec2020-pq'
+  | 'rec2020-hlg';
 
 export type ClipKind = 'video' | 'audio';
 
@@ -261,6 +272,12 @@ export interface Clip {
   stabilization?: ClipStabilization;
   /** Why analysis could not run for this clip (WASM disabled, undecodable, …). */
   stabilizeError?: string;
+  /**
+   * Interpret the source as this colour space instead of its own tags (a
+   * mistagged or untagged file). Applied in the decoder config, so preview
+   * and GPU export see it; omitted = the file's tags (`media/sourceColorSpace.ts`).
+   */
+  colorSpaceOverride?: SourceColorSpaceOverride;
   // ---------------------------------------------------------------------------
   // Preview proxy (see `media/proxyMedia.ts`)
   // ---------------------------------------------------------------------------
@@ -270,6 +287,21 @@ export interface Clip {
    * Preview and stabilization read the proxy; export always reads `file`.
    */
   proxy?: ClipProxy;
+  // ---------------------------------------------------------------------------
+  // Nested sequence (see `types/sequence.ts`)
+  // ---------------------------------------------------------------------------
+  /**
+   * Present when this clip plays a nested sequence rather than a file. Its
+   * `file` is an empty placeholder and `objectUrl` is `''`; its `duration`
+   * is the sequence's, and the trim picks the in / out points inside it.
+   */
+  source?: SequenceClipSource;
+  /**
+   * The resolved sequence — derived by `resolveNestedSequences` on the
+   * flattened timeline view, never serialized; setting it on a pool clip
+   * does nothing.
+   */
+  nested?: NestedSequenceContent;
 }
 
 export interface SerializedClip {
@@ -349,8 +381,12 @@ export interface SerializedClip {
    * recomputes them instead of bloating every project file.
    */
   stabilize?: boolean;
+  /** Source colour space override (`Clip.colorSpaceOverride`). */
+  colorSpaceOverride?: SourceColorSpaceOverride;
   /** Preview proxy record — no bytes, no data URL. */
   proxy?: ClipProxy;
+  /** Plays a nested sequence (no media). Old clients load it as a missing-media clip. */
+  source?: SequenceClipSource;
 }
 
 /** A group of up to two variants (A = original, B = edited) for A/B comparison. */
@@ -365,4 +401,29 @@ export interface ClipGroup {
 export interface SerializedClipGroup {
   id: string;
   activeVariant: 'A' | 'B';
+}
+
+/** `Clip.source` of a clip that plays a nested sequence instead of a file. */
+export interface SequenceClipSource {
+  type: 'sequence';
+  sequenceId: string;
+}
+
+/**
+ * A nested sequence resolved for playback — derived, never authored or
+ * serialized. `resolveNestedSequences` stamps it onto each sequence clip of
+ * the flattened timeline view (like `timelineStart`), so the composition
+ * plan, the compositors and the audio schedule can recurse without being
+ * handed the sequence graph.
+ */
+export interface NestedSequenceContent {
+  sequenceId: string;
+  /** The sequence's flattened timeline view (A/B resolved, placement stamped, nested again). */
+  clips: Clip[];
+  transitions: ClipTransition[];
+  /** Titles that draw (muted titles lanes already dropped). */
+  textOverlays: TextOverlay[];
+  tracks: Track[];
+  /** Output duration of the sequence in seconds. */
+  duration: number;
 }

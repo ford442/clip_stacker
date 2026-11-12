@@ -1,4 +1,9 @@
-import { acquireGpuContext, onGpuDeviceRecovered, type GpuContext } from "./gpuDevice";
+import {
+  acquireGpuContext,
+  assertPreviewAdapter,
+  onGpuDeviceRecovered,
+  type GpuContext,
+} from "./gpuDevice";
 import {
   renderTransitionPass,
   TRANSITION_UNIFORM_FLOATS,
@@ -8,19 +13,18 @@ import type { TransitionRenderParams } from "./transitions/types";
 import type { FinishingPassChain } from "./finishingPassChain";
 import {
   DEFAULT_COLOR_MANAGEMENT,
+  importColorSpaceFor,
   isColorManagementActive,
   normalizeColorManagement,
+  planCanvasSurface,
   publishColorDebugSnapshot,
-  requestedCanvasColor,
   resolveCanvasPresentation,
-  rgbaRowStride,
-  unpadRgbaRows,
+  type CanvasColorRequest,
   type CanvasPresentation,
+  type CanvasSurface,
   type ColorManagementSettings,
 } from "../finishing/colorManagement";
 import { adoptGpuDevice } from "../gpu-chores/device";
-import type { ColorGradeSettings } from "../finishing/lut";
-import { isColorGradeActive } from "../finishing/lut";
 import { isFinishingActive, type FinishingSettings } from "../finishing/finishing";
 import {
   ZERO_AUDIO_REACTIVE,
@@ -32,14 +36,22 @@ import {
   type LayerDraw,
   type LayerRenderParams,
 } from "./previewLayerUniforms";
-import {
-  buildPreviewDeviceResources,
-  CANVAS_TEXTURE_USAGE,
-  canvasConfiguration,
-  GPU_TEX_COPY_DST,
-  GPU_TEX_TEXTURE_BINDING,
-} from "./previewDeviceResources";
-import { OVERLAY_TEXTURE_PREMULTIPLIED } from "./overlayBlit";
+import { buildPreviewDeviceResources } from "./previewDeviceResources";
+import { canvasConfiguration } from "./canvasConfiguration";
+import { OverlayBlitter, ScopeTextureCopy } from "./previewCanvasCopies";
+import { Hdr10FrameReader, type PackedFrameInit } from "./hdr10FrameReader";
+import type { GraphicsOverlaySource } from "./graphicsOverlayPass";
+import { readPqTextureAsRgba8 } from "./pqReadback";
+import { gpuProfilerFor } from "./gpuProfiler";
+
+export interface PreviewEngineOptions {
+  /**
+   * `display` (default) is an on-screen preview; `offscreen` only feeds an
+   * encoder or a readback (export, harness), so HDR10 composites on a float
+   * canvas regardless of the monitor.
+   */
+  surface?: CanvasSurface;
+}
 
 export type {
   LayerDraw,
@@ -75,15 +87,18 @@ export class PreviewEngine {
   private finishingChain: FinishingPassChain;
   private overlayPipeline: GPURenderPipeline;
   private overlaySampler: GPUSampler;
-  private overlayTexture: GPUTexture | null = null;
-  private overlayWidth = 0;
-  private overlayHeight = 0;
-  private scopeTexture: GPUTexture | null = null;
-  private scopeWidth = 0;
-  private scopeHeight = 0;
+  private readonly overlayBlitter = new OverlayBlitter();
+  private readonly scopeCopy = new ScopeTextureCopy();
   private destroyed = false;
   private audioReactive: AudioReactiveState = { ...ZERO_AUDIO_REACTIVE };
+  /** Swapchain (= compositing) format: the device's preferred one, or rgba16float for HDR. */
   private format: GPUTextureFormat;
+  private preferredFormat: GPUTextureFormat;
+  private surface: CanvasSurface = "display";
+  private displayHdr = false;
+  /** What `importExternalTexture` converts sources to (P3 when managed). */
+  private importColorSpace: PredefinedColorSpace = "srgb";
+  private hdr10Reader: Hdr10FrameReader | null = null;
   private canvas: HTMLCanvasElement | OffscreenCanvas;
   private unsubscribeRecovered: (() => void) | null = null;
   private colorManagement: ColorManagementSettings = { ...DEFAULT_COLOR_MANAGEMENT };
@@ -118,6 +133,7 @@ export class PreviewEngine {
     this.overlayPipeline = overlayPipeline;
     this.overlaySampler = overlaySampler;
     this.format = format;
+    this.preferredFormat = format;
     this.canvas = { width: 0, height: 0 } as unknown as OffscreenCanvas;
   }
 
@@ -130,8 +146,14 @@ export class PreviewEngine {
     this.configureCanvas();
   }
 
-  static async create(canvas: HTMLCanvasElement | OffscreenCanvas): Promise<PreviewEngine> {
-    const { device, format } = await acquireGpuContext();
+  static async create(
+    canvas: HTMLCanvasElement | OffscreenCanvas,
+    options: PreviewEngineOptions = {},
+  ): Promise<PreviewEngine> {
+    const gpu = await acquireGpuContext();
+    const { device, format } = gpu;
+    // Live preview on SwiftShader / WARP would crawl; export may still use it.
+    if ((options.surface ?? "display") === "display") assertPreviewAdapter(gpu);
 
     const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
     if (!context) throw new Error("Could not get WebGPU context from canvas");
@@ -154,6 +176,7 @@ export class PreviewEngine {
       format,
     );
     engine.canvas = canvas;
+    engine.surface = options.surface ?? "display";
     adoptGpuDevice(device);
     engine.unsubscribeRecovered = onGpuDeviceRecovered((ctx) => engine.handleDeviceRecovered(ctx));
     return engine;
@@ -170,20 +193,31 @@ export class PreviewEngine {
    */
   private handleDeviceRecovered(ctx: GpuContext): void {
     if (this.destroyed || ctx.device === this.device) return;
+    this.preferredFormat = ctx.format;
+    this.rebuildDeviceResources(ctx.device, this.surfacePlan().format);
+    this.configureCanvas();
+  }
 
+  /**
+   * Drop every device- or format-bound object and build them again for
+   * `device` / `format`. Device recovery and a swapchain format change (HDR
+   * on / off) both come through here.
+   */
+  private rebuildDeviceResources(device: GPUDevice, format: GPUTextureFormat): void {
     this.uniformBuffer.destroy();
     this.transitionUniformBuffer.destroy();
     this.transitionPipelineCache.destroy();
     this.finishingChain.destroy();
-    this.overlayTexture?.destroy();
-    this.overlayTexture = null;
-    this.overlayWidth = 0;
-    this.overlayHeight = 0;
+    this.overlayBlitter.destroy();
+    this.scopeCopy.destroy();
+    this.hdr10Reader?.destroy();
+    this.hdr10Reader = null;
     for (const buffer of this.extraLayerUniformBuffers) buffer.destroy();
     this.extraLayerUniformBuffers = [];
 
-    this.device = ctx.device;
-    this.format = ctx.format;
+    const deviceChanged = device !== this.device;
+    this.device = device;
+    this.format = format;
     const built = buildPreviewDeviceResources(this.device, this.format);
     this.pipeline = built.pipeline;
     this.sampler = built.sampler;
@@ -193,39 +227,51 @@ export class PreviewEngine {
     this.finishingChain = built.finishingChain;
     this.overlayPipeline = built.overlayPipeline;
     this.overlaySampler = built.overlaySampler;
+    if (deviceChanged) adoptGpuDevice(this.device);
+  }
 
+  private surfacePlan() {
+    return planCanvasSurface(
+      this.colorManagement.outputColor,
+      this.surface,
+      this.displayHdr,
+      this.preferredFormat,
+    );
+  }
+
+  /** Rebuild for a new swapchain format when the plan changed it, then configure. */
+  private applySurfacePlan(): void {
+    const plan = this.surfacePlan();
+    if (plan.format !== this.format) this.rebuildDeviceResources(this.device, plan.format);
     this.configureCanvas();
-    adoptGpuDevice(this.device);
   }
 
   /**
    * Apply the selected output color to the swapchain. Display P3 and extended
-   * HDR are attempted and, on failure, the canvas stays sRGB / standard.
+   * HDR are attempted and, on failure, the canvas falls back to the preferred
+   * format in sRGB / standard.
    */
   private configureCanvas(): void {
-    const request = requestedCanvasColor(this.colorManagement.outputColor);
-    const isDefault = request.colorSpace === "srgb" && request.toneMapping === "standard";
-    const base = {
-      device: this.device,
-      format: this.format,
-      alphaMode: "premultiplied" as const,
-      usage: CANVAS_TEXTURE_USAGE,
-    };
+    const plan = this.surfacePlan();
+    const request: CanvasColorRequest = { colorSpace: plan.colorSpace, toneMapping: plan.toneMapping };
+    const isDefault =
+      request.colorSpace === "srgb" &&
+      request.toneMapping === "standard" &&
+      this.format === this.preferredFormat;
     let configured = request;
     try {
       this.context.configure({
-        ...base,
+        ...canvasConfiguration(this.device, this.format),
         colorSpace: request.colorSpace,
         toneMapping: { mode: request.toneMapping },
       });
     } catch (err) {
       if (isDefault) throw err;
       configured = { colorSpace: "srgb", toneMapping: "standard" };
-      this.context.configure({
-        ...base,
-        colorSpace: "srgb",
-        toneMapping: { mode: "standard" },
-      });
+      if (this.format !== this.preferredFormat) {
+        this.rebuildDeviceResources(this.device, this.preferredFormat);
+      }
+      this.context.configure(canvasConfiguration(this.device, this.format));
     }
     this.presentation = resolveCanvasPresentation(
       this.colorManagement.outputColor,
@@ -235,6 +281,8 @@ export class PreviewEngine {
     publishColorDebugSnapshot({
       outputColor: this.colorManagement.outputColor,
       workingSpace: this.colorManagement.workingSpace,
+      importColorSpace: this.importColorSpace,
+      displayHdr: this.displayHdr,
       canvasColorSpace: this.presentation.colorSpace,
       toneMapping: this.presentation.toneMapping,
       canvasFormat: this.format,
@@ -243,7 +291,10 @@ export class PreviewEngine {
     });
   }
 
-  /** Reconfigure when the user changes output color or working space. */
+  /**
+   * Reconfigure when the user changes output color or working space. Call
+   * before drawing a frame: a reconfigure discards the current texture.
+   */
   setColorManagement(settings: ColorManagementSettings | undefined): void {
     if (this.destroyed) return;
     const next = normalizeColorManagement(settings);
@@ -251,7 +302,19 @@ export class PreviewEngine {
       next.outputColor !== this.colorManagement.outputColor ||
       next.workingSpace !== this.colorManagement.workingSpace;
     this.colorManagement = next;
-    if (changed) this.configureCanvas();
+    this.importColorSpace = importColorSpaceFor(next);
+    if (changed) this.applySurfacePlan();
+  }
+
+  /**
+   * Whether the monitor showing this canvas is HDR (`(dynamic-range: high)`,
+   * resolved on main — workers have no `matchMedia`). An HDR10 project then
+   * previews on an extended-range float canvas. Call before drawing a frame.
+   */
+  setDisplayHdr(displayHdr: boolean): void {
+    if (this.destroyed || displayHdr === this.displayHdr) return;
+    this.displayHdr = displayHdr;
+    if (this.colorManagement.outputColor === "hdr10") this.applySurfacePlan();
   }
 
   get canvasPresentation(): CanvasPresentation {
@@ -317,11 +380,14 @@ export class PreviewEngine {
 
     const encoder = this.device.createCommandEncoder();
     const canvasView = this.context.getCurrentTexture().createView();
+    const profiler = gpuProfilerFor(this.device);
+    const span = profiler?.begin(encoder, "compositor") ?? null;
 
     for (let i = 0; i < layers.length; i++) {
-      this.encodeLayerDraw(encoder, canvasView, layers[i], i);
+      this.encodeLayerDraw(encoder, canvasView, layers[i]!, i);
     }
 
+    profiler?.end(encoder, span);
     this.device.queue.submit([encoder.finish()]);
   }
 
@@ -334,39 +400,16 @@ export class PreviewEngine {
     const width = this.canvas.width;
     const height = this.canvas.height;
     if (width <= 0 || height <= 0) return;
-
-    this.ensureOverlayTexture(width, height);
-    // The blend is premultiplied source-over, so the texture must hold
-    // premultiplied colour; the default (`false`) un-premultiplies and haloes
-    // every anti-aliased edge (see overlayBlit.ts).
-    this.device.queue.copyExternalImageToTexture(
-      { source },
-      { texture: this.overlayTexture!, premultipliedAlpha: OVERLAY_TEXTURE_PREMULTIPLIED },
-      [width, height],
+    this.overlayBlitter.blit(
+      this.device,
+      this.overlayPipeline,
+      this.overlaySampler,
+      this.format,
+      source,
+      this.context.getCurrentTexture(),
+      width,
+      height,
     );
-
-    const encoder = this.device.createCommandEncoder();
-    const bindGroup = this.device.createBindGroup({
-      layout: this.overlayPipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: this.overlaySampler },
-        { binding: 1, resource: this.overlayTexture!.createView() },
-      ],
-    });
-    const pass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.context.getCurrentTexture().createView(),
-          loadOp: "load",
-          storeOp: "store",
-        },
-      ],
-    });
-    pass.setPipeline(this.overlayPipeline);
-    pass.setBindGroup(0, bindGroup);
-    pass.draw(6);
-    pass.end();
-    this.device.queue.submit([encoder.finish()]);
   }
 
   /**
@@ -394,7 +437,6 @@ export class PreviewEngine {
 
     renderTransitionPass(
       this.device,
-      this.context,
       this.transitionPipelineCache,
       this.sampler,
       this.transitionUniformBuffer,
@@ -405,6 +447,11 @@ export class PreviewEngine {
       params,
       this.canvas.width,
       this.canvas.height,
+      {
+        view: this.context.getCurrentTexture().createView(),
+        importColorSpace: this.importColorSpace,
+        profiler: gpuProfilerFor(this.device),
+      },
     );
   }
 
@@ -424,37 +471,18 @@ export class PreviewEngine {
     const width = this.canvas.width;
     const height = this.canvas.height;
     if (width <= 0 || height <= 0) return null;
-
-    if (!this.scopeTexture || this.scopeWidth !== width || this.scopeHeight !== height) {
-      this.scopeTexture?.destroy();
-      this.scopeTexture = this.device.createTexture({
-        size: { width, height },
-        format: this.format,
-        usage: GPU_TEX_COPY_DST | GPU_TEX_TEXTURE_BINDING,
-      });
-      this.scopeWidth = width;
-      this.scopeHeight = height;
-    }
-
-    try {
-      const encoder = this.device.createCommandEncoder();
-      encoder.copyTextureToTexture(
-        { texture: this.context.getCurrentTexture() },
-        { texture: this.scopeTexture },
-        { width, height },
-      );
-      this.device.queue.submit([encoder.finish()]);
-    } catch {
-      // Swapchain texture already presented (or device lost) — skip this
-      // frame's scopes rather than failing the render.
-      return null;
-    }
-    return this.scopeTexture;
+    return this.scopeCopy.capture(
+      this.device,
+      () => this.context.getCurrentTexture(),
+      this.format,
+      width,
+      height,
+    );
   }
 
   /** Size of the texture `captureScopeTexture` returns. */
   get scopeTextureSize(): { width: number; height: number } {
-    return { width: this.scopeWidth, height: this.scopeHeight };
+    return this.scopeCopy.size;
   }
 
   /** Clear the canvas to black without sampling a video frame. */
@@ -478,7 +506,12 @@ export class PreviewEngine {
   /** Apply the finishing pass chain after compositing. */
   applyFinishing(
     settings: FinishingSettings,
-    opts?: { frameIndex?: number; colorManagement?: ColorManagementSettings },
+    opts?: {
+      frameIndex?: number;
+      colorManagement?: ColorManagementSettings;
+      /** HDR10: this frame's titles / captions (see `FinishingApplyOptions`). */
+      graphicsOverlay?: GraphicsOverlaySource;
+    },
   ): void {
     if (this.destroyed) return;
     if (opts?.colorManagement) this.setColorManagement(opts.colorManagement);
@@ -491,62 +524,58 @@ export class PreviewEngine {
       this.canvas.height,
       settings,
       {
-        frameIndex: opts?.frameIndex,
+        ...(opts?.frameIndex !== undefined ? { frameIndex: opts.frameIndex } : {}),
         colorManagement: this.colorManagement,
         presentation: this.presentation,
+        importColorSpace: this.importColorSpace,
+        ...(opts?.graphicsOverlay ? { graphicsOverlay: opts.graphicsOverlay } : {}),
       },
     );
   }
 
   /**
-   * Tightly packed RGBA8 of the last HDR10 PQ image. Null when this engine
+   * The last managed HDR10 frame as an `I420P10` `VideoFrame` (BT.2020 NCL,
+   * PQ, limited range) for the encoder — packed on the GPU and read back
+   * through a three-slot ring. The GPU work is recorded now; at most
+   * {@link hdr10ReadbackDepth} captures may be outstanding. Caller closes the
+   * frame. Rejects when no HDR10 frame was rendered.
+   */
+  captureHdr10Frame(init: PackedFrameInit): Promise<VideoFrame> {
+    if (this.destroyed) return Promise.reject(new Error("Preview engine destroyed"));
+    const texture = this.finishingChain.getPqExportTexture();
+    if (!texture) return Promise.reject(new Error("No HDR10 frame has been rendered"));
+    this.hdr10Reader ??= new Hdr10FrameReader(this.device);
+    return this.hdr10Reader.capture(texture, init, gpuProfilerFor(this.device));
+  }
+
+  /** How many HDR10 captures may be in flight at once. */
+  get hdr10ReadbackDepth(): number {
+    return this.hdr10Reader?.depth ?? 3;
+  }
+
+  /**
+   * Tightly packed RGBA8 of the last HDR10 PQ image (each code rounded to
+   * 8 bits) — for the regression harness and debugging, not the export, which
+   * reads 10-bit YUV through {@link captureHdr10Frame}. Null when this engine
    * has not rendered a managed HDR10 frame.
    */
   async readPqExportRgba(): Promise<Uint8Array | null> {
     if (this.destroyed) return null;
     const texture = this.finishingChain.getPqExportTexture();
     if (!texture) return null;
-    const width = texture.width;
-    const height = texture.height;
-    if (width <= 0 || height <= 0) return null;
-    const stride = rgbaRowStride(width);
-    const buffer = this.device.createBuffer({
-      size: stride * height,
-      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
-    });
-    const encoder = this.device.createCommandEncoder();
-    encoder.copyTextureToBuffer(
-      { texture },
-      { buffer, bytesPerRow: stride, rowsPerImage: height },
-      { width, height, depthOrArrayLayers: 1 },
-    );
-    this.device.queue.submit([encoder.finish()]);
-    const done = this.device.queue.onSubmittedWorkDone?.();
-    if (done) await done;
-    await buffer.mapAsync(GPUMapMode.READ);
-    const copy = new Uint8Array(buffer.getMappedRange()).slice();
-    buffer.unmap();
-    buffer.destroy();
-    return unpadRgbaRows(copy, width, height, stride);
+    return readPqTextureAsRgba8(this.device, texture);
+  }
+
+  /** Close this frame's GPU profile (no-op unless `?gpu_profile`). */
+  endFrameProfile(): void {
+    if (this.destroyed) return;
+    gpuProfilerFor(this.device)?.endFrame();
   }
 
   /** Clear temporal finishing buffers after seek or clip change. */
   resetFinishingTemporal(): void {
     if (this.destroyed) return;
     this.finishingChain.resetTemporal();
-  }
-
-  /** @deprecated Use applyFinishing() — kept for callers not yet migrated. */
-  applyColorGrade(settings: ColorGradeSettings): void {
-    this.applyFinishing({
-      lut: {
-        enabled: isColorGradeActive(settings),
-        lutId: settings.lutId,
-        intensity: settings.intensity,
-        ...(settings.customCubeText ? { customCubeText: settings.customCubeText } : {}),
-        ...(settings.customFileName ? { customFileName: settings.customFileName } : {}),
-      },
-    });
   }
 
   /**
@@ -574,14 +603,14 @@ export class PreviewEngine {
     this.transitionUniformBuffer.destroy();
     this.transitionPipelineCache.destroy();
     this.finishingChain.destroy();
-    this.overlayTexture?.destroy();
-    this.scopeTexture?.destroy();
-    this.scopeTexture = null;
+    this.overlayBlitter.destroy();
+    this.scopeCopy.destroy();
+    this.hdr10Reader?.destroy();
+    this.hdr10Reader = null;
     for (const buffer of this.extraLayerUniformBuffers) {
       buffer.destroy();
     }
     this.extraLayerUniformBuffers = [];
-    this.overlayTexture = null;
   }
 
   private uniformBufferForLayer(index: number): GPUBuffer {
@@ -604,14 +633,18 @@ export class PreviewEngine {
     layer: LayerDraw,
     index: number,
   ): void {
-    const params = layer.params;
+    const sourceP3 = this.importColorSpace === "display-p3";
+    const params = sourceP3 ? { ...layer.params, sourceP3 } : layer.params;
     packLayerUniforms(this.uniformData, params, this.audioReactive);
 
     const uniformBuffer = this.uniformBufferForLayer(index);
     this.device.queue.writeBuffer(uniformBuffer, 0, this.uniformData);
 
+    // The browser converts from the frame's own colour tags (or the clip's
+    // decoder-side override) to sRGB, or to Display P3 when managed.
     const externalTexture = this.device.importExternalTexture({
       source: layer.videoFrame,
+      colorSpace: this.importColorSpace,
     });
 
     const bindGroup = this.device.createBindGroup({
@@ -637,23 +670,5 @@ export class PreviewEngine {
     pass.setBindGroup(0, bindGroup);
     pass.draw(6);
     pass.end();
-  }
-
-  private ensureOverlayTexture(width: number, height: number): void {
-    if (
-      this.overlayTexture &&
-      this.overlayWidth === width &&
-      this.overlayHeight === height
-    ) {
-      return;
-    }
-    this.overlayTexture?.destroy();
-    this.overlayTexture = this.device.createTexture({
-      size: [width, height, 1],
-      format: this.format,
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
-    });
-    this.overlayWidth = width;
-    this.overlayHeight = height;
   }
 }

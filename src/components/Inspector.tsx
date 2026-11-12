@@ -74,6 +74,7 @@ function InspectorImpl({
   onRife,
   onStabilizeChange,
   onReverseChange,
+  onColorSpaceOverrideChange,
   captions,
 }: InspectorProps) {
   const { exportSettings, finishing, colorManagement } = useStore(
@@ -196,6 +197,7 @@ function InspectorImpl({
           completedThumbs.current.add(clip.id);
         }
       } else if (
+        clip.source?.type !== 'sequence' &&
         !completedThumbs.current.has(clip.id) &&
         !generatingThumbs.current.has(clip.id)
       ) {
@@ -517,6 +519,7 @@ function InspectorImpl({
               onAudioEffectsChange={onAudioEffectsChange}
               onExtractAudio={onExtractAudio}
               onStabilizeChange={onStabilizeChange}
+              onColorSpaceOverrideChange={onColorSpaceOverrideChange}
               onReverseChange={onReverseChange}
               onRife={onRife}
               onKeyframesChange={onKeyframesChange}

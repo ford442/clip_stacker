@@ -48,7 +48,9 @@ struct Uniforms {
   quadY: f32,
   quadW: f32,
   quadH: f32,
-  _pad0: f32,
+  // 1 when the source was imported as encoded Display P3 (colour management
+  // on): the key reads the sRGB view of the pixel, as it was authored.
+  keySourceP3: f32,
   _pad1: f32,
 };
 
@@ -66,6 +68,31 @@ fn chromaUv(c: vec3<f32>) -> vec2<f32> {
   return vec2<f32>(scale * (c.b - y) / 1.772, scale * (c.r - y) / 1.402);
 }
 
+fn srgbEotf(c: vec3<f32>) -> vec3<f32> {
+  let v = max(c, vec3<f32>(0.0));
+  return select(pow((v + 0.055) / 1.055, vec3<f32>(2.4)), v / 12.92, v <= vec3<f32>(0.04045));
+}
+
+fn srgbOetf(c: vec3<f32>) -> vec3<f32> {
+  let v = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+  return select(1.055 * pow(v, vec3<f32>(1.0 / 2.4)) - 0.055, v * 12.92, v <= vec3<f32>(0.0031308));
+}
+
+// Display P3 → Rec.709, linear light (DISPLAY_P3_TO_REC709 in
+// src/finishing/colorManagement.ts; previewUniformLayout.test.ts pins it).
+const P3_TO_709_ROW0 = vec3<f32>(1.2249402, -0.2249402, 0.0);
+const P3_TO_709_ROW1 = vec3<f32>(-0.0420570, 1.0420570, 0.0);
+const P3_TO_709_ROW2 = vec3<f32>(-0.0196376, -0.0786360, 1.0982736);
+
+/** The pixel as the key colour was authored: encoded sRGB. */
+fn keyInput(c: vec3<f32>) -> vec3<f32> {
+  if (u.keySourceP3 < 0.5) {
+    return c;
+  }
+  let lin = srgbEotf(c);
+  return srgbOetf(vec3<f32>(dot(P3_TO_709_ROW0, lin), dot(P3_TO_709_ROW1, lin), dot(P3_TO_709_ROW2, lin)));
+}
+
 /**
  * Alpha multiplier for one pixel: 0 = keyed out, 1 = kept.
  *
@@ -74,10 +101,11 @@ fn chromaUv(c: vec3<f32>) -> vec2<f32> {
  * `vf_lumakey.c` as `buildOverlayAlphaFilters` configures it (threshold=0,
  * tolerance=similarity, softness=blend).
  */
-fn keyAlpha(color: vec3<f32>) -> f32 {
+fn keyAlpha(sampled: vec3<f32>) -> f32 {
   if (u.keyMode < 0.5) {
     return 1.0;
   }
+  let color = keyInput(sampled);
 
   if (u.keyMode < 1.5) {
     let d = chromaUv(color) - chromaUv(vec3<f32>(u.keyR, u.keyG, u.keyB));

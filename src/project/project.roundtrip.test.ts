@@ -127,6 +127,24 @@ describe("project - Serialize/Apply Roundtrip", () => {
     expect(result.clips[1].stabilize).toBeUndefined();
   });
 
+  it("should roundtrip a source colour space override and drop unknown ones", async () => {
+    const clips = [
+      { ...createTestClip("a", 5, "Clip A"), colorSpaceOverride: "rec2020-hlg" as const },
+      createTestClip("b", 3, "Clip B"),
+    ];
+    const serialized = serializeProject(createProjectSnapshot({ clips }));
+    expect(serialized.clips[0].colorSpaceOverride).toBe("rec2020-hlg");
+    expect(serialized.clips[1]).not.toHaveProperty("colorSpaceOverride");
+
+    const result = await applyProjectData(serialized, clips);
+    expect(result.clips[0].colorSpaceOverride).toBe("rec2020-hlg");
+    expect(result.clips[1].colorSpaceOverride).toBeUndefined();
+
+    (serialized.clips[0] as { colorSpaceOverride?: string }).colorSpaceOverride = "aces-cct";
+    const unknown = await applyProjectData(serialized, clips);
+    expect(unknown.clips[0].colorSpaceOverride).toBeUndefined();
+  });
+
   it("should roundtrip the proxy record but never proxy bytes", async () => {
     const proxy = { profile: "h264-960-v1", hash: "ab".repeat(32), width: 1706, height: 960 };
     const clips = [

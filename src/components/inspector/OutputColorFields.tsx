@@ -5,6 +5,8 @@ import {
   resolveEncoderBitrate,
 } from '../../export/webcodecsCodec';
 import {
+  GRAPHICS_WHITE_NITS_RANGE,
+  resolveGraphicsWhiteNits,
   type ColorManagementSettings,
   type OutputColor,
   type WorkingSpace,
@@ -87,6 +89,18 @@ export function OutputColorFields({
         {selectedReason ||
           'A P3 display stays Rec.709 until you choose Display P3 or HDR10. Those exports are GPU-only.'}
       </p>
+      {colorManagement.outputColor === 'hdr10' && (
+        <>
+          <GraphicsWhiteField
+            nits={resolveGraphicsWhiteNits(colorManagement)}
+            onCommit={(nits) => onChange({ ...colorManagement, graphicsWhiteNits: nits })}
+          />
+          <p className="inspector-hint">
+            Titles and captions are composited in the working space at this white, before
+            the PQ output transform, so the 10-bit file carries them.
+          </p>
+        </>
+      )}
       <details>
         <summary>Working space</summary>
         <label title="Scene-linear Rec.2020 grades exposure and lift/gamma/gain in linear light. Rec.709 keeps the current display-referred chain.">
@@ -107,5 +121,40 @@ export function OutputColorFields({
         </p>
       </details>
     </>
+  );
+}
+
+/**
+ * The HDR10 graphics white. Typed freely and committed (clamped to
+ * {@link GRAPHICS_WHITE_NITS_RANGE}) on blur or Enter, so typing "300" does
+ * not clamp the "3" on the way.
+ */
+function GraphicsWhiteField({ nits, onCommit }: { nits: number; onCommit: (nits: number) => void }) {
+  // Null while not editing, so the field always shows the committed value.
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const value = Number(draft);
+    setDraft(null);
+    if (draft.trim() === '' || !Number.isFinite(value)) return;
+    const clamped = resolveGraphicsWhiteNits({ graphicsWhiteNits: Math.round(value) });
+    if (clamped !== nits) onCommit(clamped);
+  };
+  return (
+    <label title="How bright sRGB-white titles and captions are in the HDR10 file. ITU-R BT.2408 recommends 203 nits.">
+      Graphics white (nits)
+      <input
+        type="number"
+        min={GRAPHICS_WHITE_NITS_RANGE.min}
+        max={GRAPHICS_WHITE_NITS_RANGE.max}
+        step={1}
+        value={draft ?? String(nits)}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commit();
+        }}
+      />
+    </label>
   );
 }

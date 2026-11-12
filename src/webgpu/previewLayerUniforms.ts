@@ -20,6 +20,9 @@ const WARP_QUAD_UNIFORM_OFFSET = 29;
 /** First slot of the chroma/luma key block in `Uniforms` (must match preview.wgsl). */
 const KEY_UNIFORM_OFFSET = 23;
 
+/** `keySourceP3` in `Uniforms` (must match preview.wgsl). */
+export const KEY_SOURCE_P3_UNIFORM_OFFSET = 34;
+
 export interface NormalizedDestRect {
   x: number;
   y: number;
@@ -52,6 +55,11 @@ export interface LayerRenderParams {
   destRect?: NormalizedDestRect;
   /** When true, clears the canvas before drawing this layer. */
   clear?: boolean;
+  /**
+   * Set by the engine: the source was imported as encoded Display P3, so the
+   * key converts the pixel back to the sRGB it was authored against.
+   */
+  sourceP3?: boolean;
 }
 
 export interface LayerDraw {
@@ -87,4 +95,5 @@ export function packLayerUniforms(
   const quad = params.warpQuad ?? dest;
   uniformData.set([params.warpQuad ? 1 : 0, quad.x, quad.y, quad.w, quad.h], WARP_QUAD_UNIFORM_OFFSET);
   packKeyUniforms(uniformData, KEY_UNIFORM_OFFSET, params.key);
+  uniformData[KEY_SOURCE_P3_UNIFORM_OFFSET] = params.sourceP3 ? 1 : 0;
 }

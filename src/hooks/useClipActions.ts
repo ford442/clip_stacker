@@ -190,7 +190,8 @@ export function useClipActions({
       for (const file of files) {
         const isVideo =
           file.type.startsWith("video/") ||
-          file.name.toLowerCase().endsWith(".mp4");
+          // MKV often arrives with no MIME type; the demuxer reads it.
+          /\.(mp4|mov|webm|mkv)$/i.test(file.name);
         const isAudio =
           file.type.startsWith("audio/") || /\.(wav|mp3)$/i.test(file.name);
         const isImage = isImageFile(file);

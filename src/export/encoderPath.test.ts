@@ -11,7 +11,7 @@ import type { Clip, ClipTransition, TextOverlay } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
 import { DEFAULT_COLOR_MANAGEMENT, type ColorManagementSettings } from '../finishing/colorManagement';
-import { hdr10TextRefusal, selectEncoderPath, type SelectedEncoderPath } from './encoderPath';
+import { selectEncoderPath, type SelectedEncoderPath } from './encoderPath';
 
 const probes = vi.hoisted(() => ({ webGpu: false, webCodecs: false }));
 
@@ -224,29 +224,134 @@ describe('selectEncoderPath', () => {
   });
 });
 
-describe('HDR10 with titles or captions (refused, #347)', () => {
+describe('HDR10 with titles or captions (composited before the PQ transform)', () => {
   const row: Row = { name: 'hdr10 title', clips: FADED, textOverlays: [TITLE], webGpu: true, webCodecs: true, expected: 'webcodecs' };
 
-  it('the estimate carries the refusal', () => {
+  it('is no longer refused: the estimate and the router both take the GPU path', async () => {
     const plan = estimate(row, HDR10);
-    expect(plan.refusal).toMatch(/HDR10 export cannot include text overlays/);
-    expect(estimate(row).refusal).toBeUndefined();
+    expect(plan.refusal).toBeUndefined();
+    expect(plan.encoderIntent).toBe('webcodecs');
+    expect(plan.encoderReasons?.join(' ')).toMatch(/graphics white/);
+    await route(row, HDR10);
+    expect(encodeVideoWithWebCodecs).toHaveBeenCalled();
   });
 
-  it('the router refuses before encoding anything', async () => {
-    await expect(route(row, HDR10)).rejects.toThrow(/HDR10 export cannot include text overlays/);
-    expect(encodeVideoWithWebCodecs).not.toHaveBeenCalled();
-  });
-
-  it('burned-in captions are refused too; soft captions and plain HDR10 are not', () => {
-    expect(hdr10TextRefusal({ outputColor: 'hdr10', textOverlays: [], burnCaptions: true })).toMatch(/captions/);
-    expect(hdr10TextRefusal({ outputColor: 'hdr10', textOverlays: [], burnCaptions: false })).toBeUndefined();
-    expect(hdr10TextRefusal({ outputColor: 'display-p3', textOverlays: [TITLE], burnCaptions: true })).toBeUndefined();
+  it('says so for burned-in captions, not for plain HDR10 or Display P3 titles', () => {
+    const decide = (outputColor: 'hdr10' | 'display-p3', textOverlays: typeof row.textOverlays, burnCaptions: boolean) =>
+      selectEncoderPath({
+        ...inputFor({ ...row, textOverlays }),
+        webGpuAvailable: true,
+        webCodecsAvailable: true,
+        willReencode: true,
+        outputColor,
+        burnCaptions,
+      });
+    expect(decide('hdr10', [], true).reasons.join(' ')).toMatch(/graphics white/);
+    expect(decide('hdr10', [], false).reasons.join(' ')).not.toMatch(/graphics white/);
+    expect(decide('display-p3', [TITLE], true).reasons.join(' ')).not.toMatch(/graphics white/);
   });
 
   it('HDR10 + title on FFmpeg is not refused (FFmpeg writes Rec.709 and says so)', () => {
     const plan = estimate({ ...row, forceFFmpeg: true }, HDR10);
     expect(plan.encoderIntent).toBe('ffmpeg');
     expect(plan.refusal).toBeUndefined();
+  });
+});
+
+describe('Display P3 / HDR10 never fall to an FFmpeg Rec.709 file', () => {
+  beforeEach(() => {
+    vi.mocked(encodeVideoWithWebCodecs).mockClear();
+  });
+  const decide = (
+    outputColor: 'hdr10' | 'display-p3' | 'rec709-sdr',
+    overrides: Partial<Parameters<typeof selectEncoderPath>[0]> = {},
+  ) =>
+    selectEncoderPath({
+      ...inputFor({ name: 'wide', clips: PLAIN, transitions: XFADE, webGpu: true, webCodecs: true, expected: 'webcodecs' }),
+      webGpuAvailable: true,
+      webCodecsAvailable: true,
+      mediaRecorderAvailable: true,
+      willReencode: true,
+      outputColor,
+      ...overrides,
+    });
+
+  it('takes the GPU encoder when the H.264 probe fails at this size (it does not speak for HEVC / AV1 10-bit)', () => {
+    const hdr = decide('hdr10', { webCodecsAvailable: false });
+    expect(hdr.path).toBe('webcodecs');
+    expect(hdr.refusal).toBeUndefined();
+    expect(decide('display-p3', { webCodecsAvailable: false }).path).toBe('webcodecs');
+    // Rec.709 keeps the FFmpeg fallback.
+    expect(decide('rec709-sdr', { webCodecsAvailable: false }).path).toBe('ffmpeg');
+  });
+
+  it('refuses without WebGPU — even for a plain timeline the sequential encoder could take', () => {
+    expect(decide('hdr10', { webGpuAvailable: false }).refusal).toMatch(/^HDR10 output is written only by the GPU encoder/);
+    expect(decide('display-p3', { webGpuAvailable: false, transitions: [] }).refusal).toMatch(/^Display P3 output/);
+    expect(decide('hdr10', { transitions: [], webGpuAvailable: undefined }).refusal).toMatch(/WebGPU is not available/);
+    expect(decide('rec709-sdr', { webGpuAvailable: false }).refusal).toBeUndefined();
+  });
+
+  it('refuses a RIFE clip rather than encoding it with FFmpeg', () => {
+    expect(decide('hdr10', { clips: RIFE, transitions: [] }).refusal).toMatch(/RIFE/);
+  });
+
+  it('re-encodes instead of stream-copying', () => {
+    const decision = decide('hdr10', { transitions: [], willReencode: false });
+    expect(decision.path).toBe('webcodecs');
+    expect(decision.reasons.join(' ')).toMatch(/always re-encodes/);
+  });
+
+  it('still lets Force FFmpeg / the canvas renderer write Rec.709 (wideColor: ignored)', () => {
+    expect(decide('hdr10', { forceFFmpeg: true }).refusal).toBeUndefined();
+    expect(decide('display-p3', { useCanvas: true, transitions: [], clips: FADED }).path).toBe('canvas');
+  });
+
+  it('the router refuses before any encoder runs', async () => {
+    const row: Row = { name: 'hdr10 no WebGPU', clips: FADED, webGpu: false, webCodecs: true, expected: 'ffmpeg' };
+    expect(estimate(row, HDR10).refusal).toMatch(/^HDR10 output/);
+    await expect(route(row, HDR10)).rejects.toThrow(/^HDR10 output is written only by the GPU encoder/);
+    expect(encodeVideoWithWebCodecs).not.toHaveBeenCalled();
+  });
+
+  it('the router takes the GPU encoder when only the H.264 probe failed', async () => {
+    const row: Row = { name: 'hdr10 960x540', clips: FADED, transitions: XFADE, webGpu: true, webCodecs: false, expected: 'webcodecs' };
+    expect(estimate(row, HDR10).encoderIntent).toBe('webcodecs');
+    await route(row, HDR10);
+    expect(encodeVideoWithWebCodecs).toHaveBeenCalled();
+  });
+});
+
+describe('nested sequences (GPU compositor only)', () => {
+  const NESTED = [clip('a'), clip('S', { objectUrl: '', source: { type: 'sequence', sequenceId: 'seq' } })];
+  const decide = (overrides: Partial<Parameters<typeof selectEncoderPath>[0]>) =>
+    selectEncoderPath({
+      ...inputFor({ name: 'nested', clips: NESTED, webGpu: true, webCodecs: true, expected: 'webcodecs' }),
+      webGpuAvailable: true,
+      webCodecsAvailable: true,
+      mediaRecorderAvailable: true,
+      willReencode: false,
+      ...overrides,
+    });
+
+  it('always re-encodes on the GPU — there is no file to stream-copy', () => {
+    const decision = decide({});
+    expect(decision.path).toBe('webcodecs');
+    expect(decision.refusal).toBeUndefined();
+    expect(decide({ useCanvas: true }).path).toBe('webcodecs');
+  });
+
+  it('refuses rather than flattening through FFmpeg', () => {
+    expect(decide({ forceFFmpeg: true }).refusal).toMatch(/nested sequences/);
+    expect(decide({ webGpuAvailable: false }).refusal).toMatch(/nested sequences/);
+    expect(decide({ webCodecsAvailable: false }).refusal).toMatch(/nested sequences/);
+  });
+
+  it('the estimate agrees', () => {
+    const row: Row = { name: 'nested', clips: NESTED, webGpu: true, webCodecs: true, expected: 'webcodecs' };
+    const plan = estimate(row);
+    expect(plan.willReencode).toBe(true);
+    expect(plan.encoderIntent).toBe('webcodecs');
+    expect(estimate({ ...row, forceFFmpeg: true }).refusal).toMatch(/nested sequences/);
   });
 });

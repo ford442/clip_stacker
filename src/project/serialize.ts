@@ -1,6 +1,10 @@
 import type {
   CaptionEntry,
+  Clip,
+  ClipTransition,
   Project,
+  SerializedSequence,
+  Track,
   SerializedClip,
   SerializedMasterAudio,
   SerializedTransition,
@@ -48,26 +52,11 @@ export function serializeProject(
     captionStyle,
     colorManagement,
     masterBus,
+    sequences,
   } = snapshot;
-  const serializedTracks: SerializedTrack[] = tracks.map((track) => {
-    // Bypassed effects round-trip too, like clip inserts.
-    const audioFx = normalizeBusEffects(track.audioFx);
-    const duck = normalizeLaneDuck(track.duck);
-    return {
-      id: track.id,
-      kind: track.kind,
-      ...(track.label ? { label: track.label } : {}),
-      items: track.items.map((item) => ({
-        clipId: item.clipId,
-        startTime: item.startTime,
-      })),
-      ...(track.muted ? { muted: true } : {}),
-      ...(track.locked ? { locked: true } : {}),
-      ...(track.height != null ? { height: track.height } : {}),
-      ...(audioFx ? { audioFx } : {}),
-      ...(duck ? { duck } : {}),
-    };
-  });
+  // A/B groups are rebuilt from the pool's `groupId`s on load, wherever they sit.
+  const allGroups = [...clipGroups, ...sequences.flatMap((seq) => seq.clipGroups)];
+  const serializedTracks = serializeTracks(tracks);
   const savedMasterBus = normalizeMasterBus(masterBus);
 
   return {
@@ -76,104 +65,12 @@ export function serializeProject(
       ? { layoutReferenceResolution }
       : {}),
     ...(serializedTracks.length > 0 ? { tracks: serializedTracks } : {}),
-    clips: clips.map((clip): SerializedClip => {
-      const automation = normalizeClipAutomation(clip.automation);
-      // Bypassed blocks round-trip too: the settings survive a toggle.
-      const audioEffects = normalizeClipAudioEffects(clip.audioEffects);
-      return {
-      id: clip.id,
-      title: clip.title,
-      kind: clip.kind,
-      duration: clip.duration,
-      ...(clip.videoWidth ? { videoWidth: clip.videoWidth } : {}),
-      ...(clip.videoHeight ? { videoHeight: clip.videoHeight } : {}),
-      ...(clip.hasAudio === false || clip.hasAudio === true
-        ? { hasAudio: clip.hasAudio }
-        : {}),
-      trimStart: clip.trimStart,
-      trimEnd: Number.isFinite(clip.trimEnd) ? clip.trimEnd : null,
-      videoFadeIn: clip.videoFadeIn,
-      videoFadeOut: clip.videoFadeOut,
-      audioFadeIn: clip.audioFadeIn,
-      audioFadeOut: clip.audioFadeOut,
-      ...(clip.volume != null && clip.volume !== 1 ? { volume: clip.volume } : {}),
-      ...(clip.playbackRate != null && clip.playbackRate !== 1
-        ? { playbackRate: clip.playbackRate }
-        : {}),
-      ...(clip.loopCount != null && clip.loopCount !== 1
-        ? { loopCount: clip.loopCount }
-        : {}),
-      ...(clip.reversed ? { reversed: true } : {}),
-      ...(automation ? { automation } : {}),
-      ...(audioEffects ? { audioEffects } : {}),
-      fileName: clip.file.name,
-      ...(clip.file.type ? { fileType: clip.file.type } : {}),
-      ...(clip.groupId ? { groupId: clip.groupId } : {}),
-      ...(clip.groupVariant ? { groupVariant: clip.groupVariant } : {}),
-      ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
-      ...(clip.rifeProcessed ? {
-        rifeProcessed: clip.rifeProcessed,
-        ...(clip.rifeMultiplier !== undefined ? { rifeMultiplier: clip.rifeMultiplier } : {}),
-        ...(clip.originalFps !== undefined ? { originalFps: clip.originalFps } : {}),
-        ...(clip.processedFps !== undefined ? { processedFps: clip.processedFps } : {}),
-        ...(clip.rifeMode !== undefined ? { rifeMode: clip.rifeMode } : {}),
-      } : {}),
-      ...((clip.layerIndex ?? 0) > 0 ||
-      clip.x ||
-      clip.y ||
-      clip.width ||
-      clip.height ||
-      (clip.opacity != null && clip.opacity !== 1) ||
-      clip.keyframes ||
-      clip.stillImage
-        ? {
-            layerIndex: clip.layerIndex ?? 0,
-            x: clip.x ?? 0,
-            y: clip.y ?? 0,
-            width: clip.width ?? 0,
-            height: clip.height ?? 0,
-            opacity: clip.opacity ?? 1,
-          }
-        : {}),
-      ...(clip.overlayBlend ? { overlayBlend: clip.overlayBlend } : {}),
-      ...(clip.chromaKey ? { chromaKey: { ...clip.chromaKey } } : {}),
-      ...(clip.keyframes ? { keyframes: clip.keyframes } : {}),
-      ...(clip.stillImage ? { stillImage: true } : {}),
-      ...(clip.beatTimestamps && clip.beatTimestamps.length > 0
-        ? { beatTimestamps: clip.beatTimestamps.slice() }
-        : {}),
-      ...(clip.bpmEstimate != null ? { bpmEstimate: clip.bpmEstimate } : {}),
-      ...(clip.bpmConfidence != null ? { bpmConfidence: clip.bpmConfidence } : {}),
-      ...(clip.bpmOverride != null ? { bpmOverride: clip.bpmOverride } : {}),
-      ...(clip.lumaHistogram && clip.lumaHistogram.length === 256
-        ? { lumaHistogram: clip.lumaHistogram.slice() }
-        : {}),
-      ...(clip.lumaLevels ? { lumaLevels: { ...clip.lumaLevels } } : {}),
-      ...(clip.stabilize ? { stabilize: true } : {}),
-      // The record only — proxy bytes live in the media store, never in JSON.
-      ...(clip.proxy ? { proxy: { ...clip.proxy } } : {}),
-    };
-    }),
-    transitions: transitions.map((t): SerializedTransition => ({
-      afterClipIndex: t.afterClipIndex,
-      type: t.type,
-      duration: t.duration,
-      ...(t.params ? { params: t.params } : {}),
-      ...(t.customShader ? { customShader: t.customShader } : {}),
-      ...(t.morphSegment
-        ? {
-            morphSegment: {
-              fileName: t.morphSegment.fileName,
-              duration: t.morphSegment.duration,
-              status: t.morphSegment.status,
-              ...(t.morphSegment.error ? { error: t.morphSegment.error } : {}),
-            },
-          }
-        : {}),
-    })),
-    ...(clipGroups.length > 0
+    // The shared pool: the main timeline's clips, then each sequence's.
+    clips: [...clips, ...sequences.flatMap((seq) => seq.clips)].map(serializeClip),
+    transitions: serializeTransitions(transitions),
+    ...(allGroups.length > 0
     ? {
-        clipGroups: clipGroups.map((group): SerializedClipGroup => ({
+        clipGroups: allGroups.map((group): SerializedClipGroup => ({
           id: group.id,
           activeVariant: group.activeVariant,
         })),
@@ -207,6 +104,21 @@ export function serializeProject(
           })),
         }
       : {}),
+    ...(sequences.length > 0
+      ? {
+          sequences: sequences.map((seq): SerializedSequence => {
+            const seqTracks = serializeTracks(seq.tracks);
+            return {
+              id: seq.id,
+              name: seq.name,
+              clipIds: seq.clips.map((clip) => clip.id),
+              ...(seqTracks.length > 0 ? { tracks: seqTracks } : {}),
+              ...(seq.transitions.length > 0 ? { transitions: serializeTransitions(seq.transitions) } : {}),
+              ...(seq.textOverlays.length > 0 ? { textOverlays: seq.textOverlays } : {}),
+            };
+          }),
+        }
+      : {}),
     ...(masterAudio
       ? {
           masterAudio: {
@@ -227,4 +139,127 @@ export function serializeProject(
         }
       : {}),
   };
+}
+
+function serializeTracks(tracks: Track[]): SerializedTrack[] {
+  return tracks.map((track) => {
+    // Bypassed effects round-trip too, like clip inserts.
+    const audioFx = normalizeBusEffects(track.audioFx);
+    const duck = normalizeLaneDuck(track.duck);
+    return {
+      id: track.id,
+      kind: track.kind,
+      ...(track.label ? { label: track.label } : {}),
+      items: track.items.map((item) => ({
+        clipId: item.clipId,
+        startTime: item.startTime,
+      })),
+      ...(track.muted ? { muted: true } : {}),
+      ...(track.locked ? { locked: true } : {}),
+      ...(track.height != null ? { height: track.height } : {}),
+      ...(audioFx ? { audioFx } : {}),
+      ...(duck ? { duck } : {}),
+    };
+  });
+}
+
+function serializeClip(clip: Clip): SerializedClip {
+  const automation = normalizeClipAutomation(clip.automation);
+  // Bypassed blocks round-trip too: the settings survive a toggle.
+  const audioEffects = normalizeClipAudioEffects(clip.audioEffects);
+  return {
+    id: clip.id,
+    title: clip.title,
+    kind: clip.kind,
+    duration: clip.duration,
+    ...(clip.videoWidth ? { videoWidth: clip.videoWidth } : {}),
+    ...(clip.videoHeight ? { videoHeight: clip.videoHeight } : {}),
+    ...(clip.hasAudio === false || clip.hasAudio === true
+      ? { hasAudio: clip.hasAudio }
+      : {}),
+    trimStart: clip.trimStart,
+    trimEnd: Number.isFinite(clip.trimEnd) ? clip.trimEnd : null,
+    videoFadeIn: clip.videoFadeIn,
+    videoFadeOut: clip.videoFadeOut,
+    audioFadeIn: clip.audioFadeIn,
+    audioFadeOut: clip.audioFadeOut,
+    ...(clip.volume != null && clip.volume !== 1 ? { volume: clip.volume } : {}),
+    ...(clip.playbackRate != null && clip.playbackRate !== 1
+      ? { playbackRate: clip.playbackRate }
+      : {}),
+    ...(clip.loopCount != null && clip.loopCount !== 1
+      ? { loopCount: clip.loopCount }
+      : {}),
+    ...(clip.reversed ? { reversed: true } : {}),
+    ...(automation ? { automation } : {}),
+    ...(audioEffects ? { audioEffects } : {}),
+    fileName: clip.file.name,
+    ...(clip.file.type ? { fileType: clip.file.type } : {}),
+    ...(clip.groupId ? { groupId: clip.groupId } : {}),
+    ...(clip.groupVariant ? { groupVariant: clip.groupVariant } : {}),
+    ...(clip.remoteAudioUrl ? { remoteAudioUrl: clip.remoteAudioUrl } : {}),
+    ...(clip.rifeProcessed ? {
+      rifeProcessed: clip.rifeProcessed,
+      ...(clip.rifeMultiplier !== undefined ? { rifeMultiplier: clip.rifeMultiplier } : {}),
+      ...(clip.originalFps !== undefined ? { originalFps: clip.originalFps } : {}),
+      ...(clip.processedFps !== undefined ? { processedFps: clip.processedFps } : {}),
+      ...(clip.rifeMode !== undefined ? { rifeMode: clip.rifeMode } : {}),
+    } : {}),
+    ...((clip.layerIndex ?? 0) > 0 ||
+    clip.x ||
+    clip.y ||
+    clip.width ||
+    clip.height ||
+    (clip.opacity != null && clip.opacity !== 1) ||
+    clip.keyframes ||
+    clip.stillImage
+      ? {
+          layerIndex: clip.layerIndex ?? 0,
+          x: clip.x ?? 0,
+          y: clip.y ?? 0,
+          width: clip.width ?? 0,
+          height: clip.height ?? 0,
+          opacity: clip.opacity ?? 1,
+        }
+      : {}),
+    ...(clip.overlayBlend ? { overlayBlend: clip.overlayBlend } : {}),
+    ...(clip.chromaKey ? { chromaKey: { ...clip.chromaKey } } : {}),
+    ...(clip.keyframes ? { keyframes: clip.keyframes } : {}),
+    ...(clip.stillImage ? { stillImage: true } : {}),
+    ...(clip.beatTimestamps && clip.beatTimestamps.length > 0
+      ? { beatTimestamps: clip.beatTimestamps.slice() }
+      : {}),
+    ...(clip.bpmEstimate != null ? { bpmEstimate: clip.bpmEstimate } : {}),
+    ...(clip.bpmConfidence != null ? { bpmConfidence: clip.bpmConfidence } : {}),
+    ...(clip.bpmOverride != null ? { bpmOverride: clip.bpmOverride } : {}),
+    ...(clip.lumaHistogram && clip.lumaHistogram.length === 256
+      ? { lumaHistogram: clip.lumaHistogram.slice() }
+      : {}),
+    ...(clip.lumaLevels ? { lumaLevels: { ...clip.lumaLevels } } : {}),
+    ...(clip.stabilize ? { stabilize: true } : {}),
+    ...(clip.colorSpaceOverride ? { colorSpaceOverride: clip.colorSpaceOverride } : {}),
+    // The record only — proxy bytes live in the media store, never in JSON.
+    ...(clip.proxy ? { proxy: { ...clip.proxy } } : {}),
+    ...(clip.source ? { source: { ...clip.source } } : {}),
+  };
+}
+
+function serializeTransitions(transitions: ClipTransition[]): SerializedTransition[] {
+  return transitions.map((t): SerializedTransition => ({
+    afterClipIndex: t.afterClipIndex,
+    type: t.type,
+    duration: t.duration,
+    ...(t.params ? { params: t.params } : {}),
+    ...(t.customShader ? { customShader: t.customShader } : {}),
+    ...(t.morphSegment
+      ? {
+          morphSegment: {
+            fileName: t.morphSegment.fileName,
+            duration: t.morphSegment.duration,
+            status: t.morphSegment.status,
+            ...(t.morphSegment.error ? { error: t.morphSegment.error } : {}),
+          },
+        }
+      : {}),
+  }));
 }

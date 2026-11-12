@@ -31,6 +31,7 @@ import {
 } from './previewCompositionSegments';
 import { buildPipLayers, collectScheduledClipLayers } from './previewCompositionLayers';
 import { buildCaptionLayers, buildTextLayers } from './previewCompositionOverlays';
+import { expandNestedClipLayers } from './previewCompositionNested';
 import type { CaptionPlanOptions, PreviewCompositionPlan } from './previewCompositionTypes';
 
 export type {
@@ -54,7 +55,31 @@ export { captionPlanOptions } from './previewCompositionTypes';
 export { buildClipTimelineSegments, filterBaseLayerTransitions } from './previewCompositionSegments';
 
 /**
+ * Output duration of a flattened timeline: the base sequence (transition
+ * overlaps removed), extended by any overlay placed past its end — an
+ * overlay at t=5s over a 3s base yields an 8s output rather than being
+ * clipped away (Phase B: startTime is the output time).
+ */
+export function timelinePlanDuration(timelineClips: Clip[], transitions: ClipTransition[]): number {
+  const pipClips = timelineClips.filter((clip) => !isBaseClip(clip));
+  const hasPip = pipClips.length > 0;
+  const scheduleClips = hasPip ? timelineClips.filter(isBaseClip) : timelineClips;
+  const scheduleTransitions = hasPip
+    ? filterBaseLayerTransitions(timelineClips, transitions)
+    : transitions;
+  const baseDuration = computeTotalDuration(scheduleClips, scheduleTransitions);
+  return pipClips.reduce((max, clip) => {
+    const { end } = placementWindow(clip, getClipDuration(clip));
+    return Math.max(max, end);
+  }, baseDuration);
+}
+
+/**
  * Pure composition planner: map global timeline time → ordered draw layers.
+ *
+ * Sequence clips (`Clip.nested`, stamped by `resolveNestedSequences`) are
+ * planned recursively at the nested sequence's local time — see
+ * `previewCompositionNested.ts`.
  */
 export function buildPreviewCompositionPlan(
   clips: Clip[],
@@ -66,6 +91,23 @@ export function buildPreviewCompositionPlan(
   maxHeight: number = DEFAULT_PREVIEW_MAX_HEIGHT,
   maxWidth?: number,
   captionOptions?: CaptionPlanOptions,
+): PreviewCompositionPlan {
+  return buildPlanAtDepth(
+    clips, groups, transitions, overlays, settings, globalTime, maxHeight, maxWidth, captionOptions, 0,
+  );
+}
+
+function buildPlanAtDepth(
+  clips: Clip[],
+  groups: ClipGroup[],
+  transitions: ClipTransition[],
+  overlays: TextOverlay[],
+  settings: Pick<ExportSettings, 'outputResolution'> | undefined,
+  globalTime: number,
+  maxHeight: number,
+  maxWidth: number | undefined,
+  captionOptions: CaptionPlanOptions | undefined,
+  depth: number,
 ): PreviewCompositionPlan {
   const timelineClips = getTimelineClips(clips, groups);
   const geom = resolveCanvasSize(settings, { maxHeight, maxWidth });
@@ -92,14 +134,7 @@ export function buildPreviewCompositionPlan(
     ? filterBaseLayerTransitions(timelineClips, transitions)
     : transitions;
 
-  // Overlay lanes extend the output when they are placed past the base
-  // sequence's end — an overlay at t=5s over a 3s base yields an 8s output
-  // rather than being clipped away (Phase B: startTime is the output time).
-  const baseDuration = computeTotalDuration(scheduleClips, scheduleTransitions);
-  const totalDuration = pipClips.reduce((max, { clip }) => {
-    const { end } = placementWindow(clip, getClipDuration(clip));
-    return Math.max(max, end);
-  }, baseDuration);
+  const totalDuration = timelinePlanDuration(timelineClips, transitions);
   const segments = buildClipTimelineSegments(
     scheduleClips,
     scheduleTransitions,
@@ -119,15 +154,33 @@ export function buildPreviewCompositionPlan(
     };
   }
 
-  const clipLayers = [
-    ...collectScheduledClipLayers(
-      segments,
-      scheduleTransitions,
-      globalTime,
-      geom,
-    ),
-    ...buildPipLayers(pipClips, globalTime, totalDuration, geom),
-  ];
+  const clipLayers = expandNestedClipLayers(
+    [
+      ...collectScheduledClipLayers(
+        segments,
+        scheduleTransitions,
+        globalTime,
+        geom,
+      ),
+      ...buildPipLayers(pipClips, globalTime, totalDuration, geom),
+    ],
+    timelineClips,
+    geom,
+    depth,
+    (content, localTime, nestedDepth) =>
+      buildPlanAtDepth(
+        content.clips,
+        [],
+        content.transitions,
+        content.textOverlays,
+        settings,
+        localTime,
+        maxHeight,
+        maxWidth,
+        undefined,
+        nestedDepth,
+      ).layers,
+  );
 
   const textLayers = buildTextLayers(overlays, globalTime, totalDuration, geom);
   const captionLayers = buildCaptionLayers(

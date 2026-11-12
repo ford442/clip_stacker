@@ -1,52 +1,48 @@
-import type { FFmpeg } from '@ffmpeg/ffmpeg';
-import type { IFfmpegRuntime } from './ffmpegRuntime';
+import type { FfmpegCoreURLs } from './coreSources';
+import type { FfmpegCoreHost } from './ffmpegCoreHost';
+import type { LoadableFfmpegRuntime } from './ffmpegRuntime';
 
-/** Wraps a live @ffmpeg/ffmpeg instance (used in tests and inside the worker). */
-export class DirectFfmpegRuntime implements IFfmpegRuntime {
-  constructor(private readonly ffmpeg: FFmpeg) {}
+/**
+ * Runs the core in this realm through an `FfmpegCoreHost` — the same code the
+ * worker runs, without the worker. Used by tests and where no Worker exists;
+ * exec blocks the calling thread, so the browser always uses the worker.
+ */
+export class DirectFfmpegRuntime implements LoadableFfmpegRuntime {
+  constructor(private readonly host: FfmpegCoreHost) {}
 
-  get underlying(): FFmpeg {
-    return this.ffmpeg;
+  get underlying(): FfmpegCoreHost {
+    return this.host;
   }
 
-  async load(
-    coreURL: string,
-    wasmURL: string,
-    options?: { signal?: AbortSignal; workerURL?: string },
-  ): Promise<void> {
-    await this.ffmpeg.load(
-      {
-        coreURL,
-        wasmURL,
-        ...(options?.workerURL ? { workerURL: options.workerURL } : {}),
-      },
-      options?.signal ? { signal: options.signal } : undefined,
-    );
+  async load(urls: FfmpegCoreURLs): Promise<void> {
+    await this.host.load(urls);
   }
 
-  exec(args: string[]): Promise<number> {
-    return this.ffmpeg.exec(args);
+  async exec(args: string[]): Promise<number> {
+    return this.host.exec(args);
   }
 
-  writeFile(name: string, data: Uint8Array | string): Promise<boolean> {
-    return this.ffmpeg.writeFile(name, data as Uint8Array);
+  async writeFile(name: string, data: Uint8Array | string): Promise<boolean> {
+    await this.host.writeFile(name, data);
+    return true;
   }
 
-  readFile(name: string): Promise<Uint8Array | string> {
-    return this.ffmpeg.readFile(name);
+  async readFile(name: string): Promise<Uint8Array | string> {
+    return this.host.readFile(name);
   }
 
-  deleteFile(name: string): Promise<boolean> {
-    return this.ffmpeg.deleteFile(name);
+  async deleteFile(name: string): Promise<boolean> {
+    await this.host.deleteFile(name);
+    return true;
   }
 
-  listDir(path: string): Promise<{ name: string; isDir: boolean }[]> {
-    return this.ffmpeg.listDir(path);
+  async listDir(path: string): Promise<{ name: string; isDir: boolean }[]> {
+    return this.host.listDir(path);
   }
 
   terminate(): void {
     try {
-      this.ffmpeg.terminate();
+      this.host.terminate();
     } catch {
       /* ignore */
     }

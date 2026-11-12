@@ -9,7 +9,8 @@ import {
   MAX_UPLOAD_RETRY_ATTEMPTS,
 } from './constants';
 import { serializeProject } from './serialize';
-import type { ProjectSnapshot } from './snapshot';
+import { projectSnapshotClips, type ProjectSnapshot } from './snapshot';
+import { isSequenceClip } from '../timeline/sequenceResolve';
 import { formatBytes } from './remoteMedia';
 import type { RemoteUploadErrorEvent, RemoteUploadProgressEvent } from './types';
 
@@ -179,7 +180,9 @@ export async function serializeProjectWithMedia(
   options: SerializeProjectWithMediaOptions = {},
 ): Promise<Project> {
   const mediaMode = options.mediaMode ?? 'metadata';
-  const { clips, masterAudio } = snapshot;
+  const { masterAudio } = snapshot;
+  // Nested sequences' clips are in the saved pool too.
+  const clips = projectSnapshotClips(snapshot);
   const project = serializeProject(snapshot);
   if (mediaMode === 'metadata') return project;
 
@@ -191,6 +194,11 @@ export async function serializeProjectWithMedia(
     const index = i + 1;
     const clip = clipById.get(serialized.id);
     if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
+    // A sequence clip has no media of its own.
+    if (isSequenceClip(clip)) {
+      enrichedClips.push(serialized);
+      continue;
+    }
     const updated: SerializedClip = { ...serialized };
     // Clear any stale media-source fields from a previous save in a
     // different mode; the branches below set whichever field applies.

@@ -11,6 +11,10 @@
  * - `renderPreviewFrame(t)` — one frame from the main-thread WebGPU timeline
  *   compositor, fed by `<video>` seeks (the preview's frame source), with
  *   the project's finishing, colour management, titles and captions.
+ * - `renderPqFrame(t)` / `hdr10FrameStats(t)` — the HDR10 PQ readback, and
+ *   the 10-bit luma codes of the I420P10 frame export hands its encoder.
+ * - `renderP3Chart(outputColor)` — a Display P3 chart frame through the
+ *   compositor, read back in P3 (`colorProbes.ts`).
  * - `exportProject()` — the app's real Render action; resolves to the file.
  * - `decodeFrame(blob, t)` — the exported file's frame at `t` via WebCodecs.
  * - `compare`, `toPng`, `fromPng`, `mediaDuration` — helpers that keep pixel
@@ -51,6 +55,15 @@ import { readAutoSaveSession } from '../../project/autoSave';
 import { DecoderFrameCursor } from '../../media/decoderCursor';
 import { harnessBindings } from '../harnessBindings';
 import { compareImages, meanRgb, type ImageComparison } from './imageMetrics';
+import {
+  P3_CHART_PATCHES,
+  barMeans,
+  buildP3ChartFrame,
+  lumaStats,
+  readCanvasIn,
+  type LumaStats,
+} from './colorProbes';
+import type { LayerFrameProvider } from '../../composition/previewComposition';
 
 export interface HarnessClipSpec {
   /** Which bundled demo clip (`public/demo/demo-clip-{a,b}.mp4`). */
@@ -83,6 +96,12 @@ export interface HarnessFixtureSpec {
   resolution?: string;
   /** How export carries captions (`settingsStore.captionExportMode`); default `none`. */
   captionExportMode?: CaptionExportMode;
+  /**
+   * Nest these clips (indices into `clips`) and titles (indices into
+   * `textOverlays`) into one sequence, placed where they were — the
+   * Library's *Nest selected*.
+   */
+  nest?: { clips: number[]; titles?: number[] };
 }
 
 const DEFAULT_RESOLUTION = '640x360';
@@ -155,9 +174,11 @@ async function buildProject(spec: HarnessFixtureSpec): Promise<void> {
   resetProject();
   setResolution(spec.resolution ?? DEFAULT_RESOLUTION);
   const editor = editorStore.getState();
+  const clipIds: string[] = [];
   for (const clipSpec of spec.clips) {
     const { demo, layer = 0, startTime, ...fields } = clipSpec;
     const clip: Clip = { ...(await clipFromFile(await demoFile(demo))), ...fields };
+    clipIds.push(clip.id);
     editor.addClip(clip);
     if (layer > 0) {
       const state = editorStore.getState();
@@ -191,6 +212,13 @@ async function buildProject(spec: HarnessFixtureSpec): Promise<void> {
     );
   }
   if (spec.captions) editor.setCaptions(spec.captions);
+  if (spec.nest) {
+    const refused = editor.nestClips({
+      clipIds: spec.nest.clips.map((index) => clipIds[index] ?? ''),
+      textOverlayIds: (spec.nest.titles ?? []).map((index) => `title-${index}`),
+    });
+    if (refused) throw new Error(`nest: ${refused}`);
+  }
   if (spec.finishing) {
     const result = applyFinishingPresetInput(spec.finishing);
     if (!result.ok) throw new Error(`finishing: ${result.errors.join('; ')}`);
@@ -217,6 +245,7 @@ async function loadProject(json: Project | string): Promise<void> {
     clips: applied.clips,
     tracks: applied.tracks,
     clipGroups: applied.clipGroups,
+    sequences: applied.sequences,
     transitions: applied.transitions,
     textOverlays: applied.textOverlays,
     captions: applied.captions,
@@ -257,8 +286,6 @@ type PreviewEngineHandle = {
   engine: import('../../webgpu/timelinePreview').TimelinePreviewEngine;
   canvas: HTMLCanvasElement;
   provider: import('../../media/decoderFrameProvider').TimelineDecoderFrameProvider;
-  /** No frame drawn yet (see `renderPreviewFrame`). */
-  fresh: boolean;
 };
 
 /** One engine for the harness's lifetime: SwiftShader pipeline compiles are slow. */
@@ -278,8 +305,10 @@ async function previewEngine(clips: Clip[]): Promise<PreviewEngineHandle> {
   const { width, height } = outputSize();
   canvas.width = width;
   canvas.height = height;
-  const engine = await TimelinePreviewEngine.create(canvas, clips);
-  previewHandle = { engine, canvas, provider: new TimelineDecoderFrameProvider(), fresh: true };
+  // Offscreen like export's compositor: an HDR10 project composites on a
+  // float canvas, so the PQ readback and packed frames are export's.
+  const engine = await TimelinePreviewEngine.create(canvas, clips, { surface: 'offscreen' });
+  previewHandle = { engine, canvas, provider: new TimelineDecoderFrameProvider() };
   return previewHandle;
 }
 
@@ -290,6 +319,17 @@ async function previewEngine(clips: Clip[]): Promise<PreviewEngineHandle> {
  * composed frame, as the preview overlay and the 2D export composite do.
  */
 async function renderPreviewFrame(t: number): Promise<ImageData> {
+  return renderPreviewFrameWith(t, {});
+}
+
+interface PreviewFrameOptions {
+  /** Feed layers from this provider instead of the clips' decoder cursors. */
+  provider?: LayerFrameProvider;
+  /** Read the canvas back in this colour space (default sRGB). */
+  readColorSpace?: PredefinedColorSpace;
+}
+
+async function renderPreviewFrameWith(t: number, options: PreviewFrameOptions): Promise<ImageData> {
   const { renderTextOverlaysAsync } = await import('../../export/canvasRenderer');
   const editor = editorStore.getState();
   const settings = settingsStore.getState();
@@ -317,21 +357,13 @@ async function renderPreviewFrame(t: number): Promise<ImageData> {
         captionStyle: editor.captionStyle,
         // The preview worker's happy path: WebCodecs cursors, as export uses.
         // (The `<video>`-seek fallback renders black under headless SwiftShader.)
-        frameProvider: provider,
+        frameProvider: options.provider ?? provider,
       },
     );
-  // With managed colour (P3 / HDR10) the first frame a fresh engine draws
-  // comes out black — the live preview never shows it because it keeps
-  // drawing. Draw it once and throw it away. (Export's frame 0 has the same
-  // defect; e2e/goldens.spec.ts pins it as a known failure.)
-  if (handle.fresh) {
-    await render();
-    await engine.flush();
-    handle.fresh = false;
-  }
   const plan = await render();
   await engine.flush();
   const hasText = plan.layers.some((layer) => layer.kind === 'text' || layer.kind === 'caption');
+  if (options.readColorSpace) return readCanvasIn(canvas, options.readColorSpace);
   if (!hasText) return readCanvas(canvas);
   const composite = document.createElement('canvas');
   composite.width = canvas.width;
@@ -354,6 +386,58 @@ async function renderPqFrame(t: number): Promise<ImageData> {
   if (!rgba) throw new Error('no PQ readback (is colourManagement.outputColor hdr10?)');
   const { width, height } = previewHandle.canvas;
   return new ImageData(new Uint8ClampedArray(rgba), width, height);
+}
+
+/**
+ * HDR10: the 10-bit luma codes of the I420P10 frame export hands its encoder
+ * for frame `t` (BT.2020 NCL, limited range, packed on the GPU).
+ */
+async function hdr10FrameStats(t: number): Promise<LumaStats> {
+  await renderPreviewFrame(t);
+  if (!previewHandle) throw new Error('preview engine missing');
+  const frame = await previewHandle.engine.captureHdr10Frame({ timestamp: 0 });
+  try {
+    return await lumaStats(frame);
+  } finally {
+    frame.close();
+  }
+}
+
+/** Luma codes of the exported file's frame at `t` (a 10-bit decode keeps 10 bits). */
+async function decodeFrameStats(blob: Blob, t: number): Promise<LumaStats> {
+  const cursor = await DecoderFrameCursor.open(blob, 0, t + 1);
+  try {
+    const frame = await cursor.frameAt(t);
+    if (!frame) throw new Error(`no decoded frame at ${t}s`);
+    try {
+      return await lumaStats(frame);
+    } finally {
+      frame.close();
+    }
+  } finally {
+    cursor.close();
+  }
+}
+
+/**
+ * A Display P3 test chart (`P3_CHART_PATCHES`, tagged P3) through the
+ * compositor in place of demo clip a's frames, read back in P3: mean
+ * [r, g, b] per patch. With `display-p3` output the primaries survive; a
+ * Rec.709 output clips them to the sRGB gamut.
+ */
+async function renderP3Chart(outputColor: ColorManagementSettings['outputColor']): Promise<number[][]> {
+  await buildProject({ clips: [{ demo: 'a', trimEnd: 1 }], resolution: '320x180', colorManagement: { outputColor } });
+  const { width, height } = outputSize();
+  const chart = buildP3ChartFrame(width, height);
+  try {
+    const image = await renderPreviewFrameWith(0.5, {
+      provider: { getFrame: async () => chart.clone() },
+      readColorSpace: 'display-p3',
+    });
+    return barMeans(image, P3_CHART_PATCHES.length);
+  } finally {
+    chart.close();
+  }
 }
 
 function settle(): Promise<void> {
@@ -474,6 +558,9 @@ export const testHarness = {
   snapshotProject,
   renderPreviewFrame,
   renderPqFrame,
+  hdr10FrameStats,
+  decodeFrameStats,
+  renderP3Chart,
   exportProject,
   decodeFrame,
   mediaDuration,

@@ -10,7 +10,7 @@ import { useMasterAudioBeatAnalysis } from "./hooks/useMasterAudioBeatAnalysis";
 import { useClipImportChores } from "./hooks/useClipImportChores";
 import { visibleTextOverlays } from "./timeline/trackModel";
 import { selectTimelineClips } from "./store/selectors";
-import { editorStore, playbackStore, setPlayheadTime, uiActions } from "./store";
+import { editorStore, playbackStore, setPlayheadTime, uiActions, useEditorTimelineClips } from "./store";
 import { playheadForSelectedClip, resolveClipOutputWindow } from "./composition/previewComposition";
 import { useClipActions } from "./hooks/useClipActions";
 import { useIntercutActions } from "./hooks/useIntercutActions";
@@ -250,10 +250,7 @@ export function App() {
   const { handleClipLayoutCommit, handleTextOverlayLayoutCommit } =
     useLayoutCommitHandlers(setClips, setTextOverlays);
 
-  const timelineClips = useMemo(
-    () => selectTimelineClips({ tracks, clips, clipGroups }),
-    [tracks, clips, clipGroups],
-  );
+  const timelineClips = useEditorTimelineClips();
 
   const { handleUndo, handleRedo } = useAppKeyboardShortcuts({
     toolbarRef,
@@ -337,6 +334,7 @@ export function App() {
     onRife: inspectorActions.handleRife,
     onStabilizeChange: inspectorActions.handleStabilizeChange,
     onReverseChange: inspectorActions.handleReverseChange,
+    onColorSpaceOverrideChange: inspectorActions.handleColorSpaceOverrideChange,
   });
   const timeline = useStableObject({
     onMoveUp: timelineActions.handleMoveUp,

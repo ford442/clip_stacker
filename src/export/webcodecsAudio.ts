@@ -16,6 +16,7 @@
  * project's tracks, as the preview builds it.
  */
 
+import { isSequenceClip } from '../timeline/sequenceResolve';
 import type { Clip, ClipGroup, ClipTransition } from '../types';
 import { ClipAudioCache } from '../audio/clipAudioCache';
 import {
@@ -173,11 +174,14 @@ export function exportMasterLimiter(): MasterLimiterSettings | null {
  * FFmpeg filters.
  */
 export function timelineNeedsAudioPremix(
-  clips: Array<Pick<Clip, 'automation' | 'audioEffects'>>,
+  clips: Array<Pick<Clip, 'automation' | 'audioEffects' | 'source'>>,
   limiter: MasterLimiterSettings | null = exportMasterLimiter(),
   bus: ExportAudioBus | null = exportAudioBus(),
 ): boolean {
   return (
+    // A sequence clip has no file to mux: its audio is its sequence's clips,
+    // which only the schedule (and so the premix) reaches.
+    clips.some(isSequenceClip) ||
     timelineHasAudioAutomation(clips) ||
     clips.some((clip) => clipAudioEffectsActive(clip.audioEffects)) ||
     masterLimiterActive(limiter) ||
