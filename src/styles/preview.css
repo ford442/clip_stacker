@@ -441,3 +441,20 @@ audio {
   margin: 0.4rem 0 0;
   color: #f6ad55;
 }
+
+/* `?gpu_profile` dev overlay under the Effects Stack. */
+.gpu-profile-overlay {
+  margin-top: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.72rem;
+  color: var(--muted, #9aa4b2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.gpu-profile-overlay-label {
+  font-weight: 600;
+  color: var(--text, #e6e9ef);
+}

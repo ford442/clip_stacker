@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Clip } from "../types";
 
 type MockFfmpegInstance = {
-  on: ReturnType<typeof vi.fn>;
   load: ReturnType<typeof vi.fn>;
   terminate: ReturnType<typeof vi.fn>;
   listDir: ReturnType<typeof vi.fn>;
@@ -16,7 +15,6 @@ const mocked = vi.hoisted(() => {
   const instances: MockFfmpegInstance[] = [];
   const createInstance = (): MockFfmpegInstance => {
     const instance: MockFfmpegInstance = {
-      on: vi.fn(),
       load: vi.fn().mockResolvedValue(undefined),
       terminate: vi.fn(),
       listDir: vi.fn().mockResolvedValue([]),
@@ -40,8 +38,9 @@ const mocked = vi.hoisted(() => {
   };
 });
 
-vi.mock("@ffmpeg/ffmpeg", () => ({
-  FFmpeg: mocked.FFmpeg,
+// The default (no Worker in happy-dom) runtime drives an FfmpegCoreHost.
+vi.mock("./ffmpegCoreHost", () => ({
+  FfmpegCoreHost: mocked.FFmpeg,
 }));
 
 vi.mock("@ffmpeg/util", () => ({
@@ -86,10 +85,23 @@ describe("muxProcessedVideoWithSourceAudio", () => {
     });
     mocked.fetchFile.mockResolvedValue(new Uint8Array([7, 8, 9]));
     mocked.toBlobURL.mockImplementation(async (url: string) => `blob:${url}`);
+    // HEAD probes of the self-hosted core.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        new Response(null, {
+          status: 200,
+          headers: {
+            "content-type": url.endsWith(".wasm") ? "application/wasm" : "text/javascript",
+          },
+        }),
+      ),
+    );
   });
 
   afterEach(async () => {
     await resetFFmpegInstance();
+    vi.unstubAllGlobals();
   });
 
   it("maps processed video with trimmed source audio into the output mp4", async () => {

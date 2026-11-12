@@ -16,7 +16,14 @@ import {
   normalizeColorManagement,
   packColorXformUniforms,
   pqToNits,
-  requestedCanvasColor,
+  planCanvasSurface,
+  importColorSpaceFor,
+  inputModeFor,
+  presentModeToXform,
+  resolveGraphicsWhiteNits,
+  graphicsWhiteSceneGain,
+  DISPLAY_P3_TO_REC2020,
+  REC2020_TO_DISPLAY_P3,
   resolveCanvasPresentation,
   rgbaRowStride,
   shaderForSceneLinear,
@@ -130,14 +137,46 @@ describe('encoder color tags', () => {
 });
 
 describe('canvas presentation', () => {
-  it('asks for display-p3 or extended HDR and falls back without crashing the choice', () => {
-    expect(requestedCanvasColor('rec709-sdr')).toEqual({
+  it('plans the swapchain: float + extended P3 only for HDR10 on an HDR display or offscreen', () => {
+    expect(planCanvasSurface('rec709-sdr', 'display', true, 'bgra8unorm')).toEqual({
+      format: 'bgra8unorm',
       colorSpace: 'srgb',
       toneMapping: 'standard',
     });
-    expect(requestedCanvasColor('display-p3').colorSpace).toBe('display-p3');
-    expect(requestedCanvasColor('hdr10').toneMapping).toBe('extended');
+    expect(planCanvasSurface('display-p3', 'offscreen', false, 'bgra8unorm')).toEqual({
+      format: 'bgra8unorm',
+      colorSpace: 'display-p3',
+      toneMapping: 'standard',
+    });
+    expect(planCanvasSurface('hdr10', 'display', true, 'bgra8unorm')).toEqual({
+      format: 'rgba16float',
+      colorSpace: 'display-p3',
+      toneMapping: 'extended',
+    });
+    // SDR monitor: today's 8-bit pq-to-sdr view.
+    expect(planCanvasSurface('hdr10', 'display', false, 'bgra8unorm')).toEqual({
+      format: 'bgra8unorm',
+      colorSpace: 'srgb',
+      toneMapping: 'standard',
+    });
+    // Export / harness: composite above 8 bits whatever the monitor.
+    expect(planCanvasSurface('hdr10', 'offscreen', false, 'bgra8unorm').format).toBe('rgba16float');
+  });
 
+  it('never treats rg11b10ufloat as a float canvas (it is not a canvas format)', () => {
+    const hdr = resolveCanvasPresentation('hdr10', { colorSpace: 'srgb', toneMapping: 'extended' }, 'rg11b10ufloat');
+    expect(hdr.present).toBe('pq-to-sdr');
+  });
+
+  it('presents extended HDR in the canvas colour space', () => {
+    const p3 = resolveCanvasPresentation('hdr10', { colorSpace: 'display-p3', toneMapping: 'extended' }, 'rgba16float');
+    expect(p3).toMatchObject({ colorSpace: 'display-p3', present: 'pq-to-extended', presentFallback: false });
+    expect(presentModeToXform(p3.present, p3.colorSpace)).toBe(ColorXformMode.presentPqToExtendedP3);
+    expect(presentModeToXform('pq-to-extended', 'srgb')).toBe(ColorXformMode.presentPqToExtended);
+    expect(matrixForXform(ColorXformMode.presentPqToExtendedP3)).toEqual(REC2020_TO_DISPLAY_P3);
+  });
+
+  it('falls back to SDR views when the canvas did not take P3 / extended', () => {
     const p3 = resolveCanvasPresentation(
       'display-p3',
       { colorSpace: 'srgb', toneMapping: 'standard' },
@@ -238,5 +277,41 @@ describe('project round-trip', () => {
     const legacy = await applyProjectData({ clips: [] }, []);
     expect(legacy.colorManagement.outputColor).toBe('rec709-sdr');
     expect(legacy.colorManagement.workingSpace).toBe('rec709');
+  });
+});
+
+describe('source import and graphics white', () => {
+  it('imports sources as Display P3 only when management is on, and decodes what it imported', () => {
+    expect(importColorSpaceFor(undefined)).toBe('srgb');
+    expect(importColorSpaceFor({ outputColor: 'rec709-sdr', workingSpace: 'rec709' })).toBe('srgb');
+    expect(importColorSpaceFor({ outputColor: 'hdr10', workingSpace: 'rec709' })).toBe('display-p3');
+    expect(inputModeFor('srgb')).toBe(ColorXformMode.inputRec709ToLinear2020);
+    expect(inputModeFor('display-p3')).toBe(ColorXformMode.inputDisplayP3ToLinear2020);
+    expect(matrixForXform(ColorXformMode.inputDisplayP3ToLinear2020)).toEqual(DISPLAY_P3_TO_REC2020);
+  });
+
+  it('P3 white stays white and P3 red lands outside Rec.709 in Rec.2020', () => {
+    const white = DISPLAY_P3_TO_REC2020;
+    const rowSums = [0, 1, 2].map((r) => white[r * 3]! + white[r * 3 + 1]! + white[r * 3 + 2]!);
+    rowSums.forEach((sum) => expect(sum).toBeCloseTo(1, 6));
+    // Pure P3 red is more saturated than Rec.709 red (0.6274, 0.0691, 0.0164 in 2020).
+    expect(DISPLAY_P3_TO_REC2020[0]).toBeGreaterThan(0.6274);
+  });
+
+  it('defaults graphics white to BT.2408 203 nits, clamps, and keeps old projects unchanged', () => {
+    expect(resolveGraphicsWhiteNits(undefined)).toBe(203);
+    expect(resolveGraphicsWhiteNits({ graphicsWhiteNits: 5000 })).toBe(1000);
+    expect(resolveGraphicsWhiteNits({ graphicsWhiteNits: 10 })).toBe(80);
+    expect(graphicsWhiteSceneGain({})).toBeCloseTo(2.03, 6);
+    expect(normalizeColorManagement({ outputColor: 'hdr10' })).toEqual({
+      outputColor: 'hdr10',
+      workingSpace: 'rec709',
+    });
+    expect(normalizeColorManagement({ outputColor: 'hdr10', graphicsWhiteNits: 300 })).toEqual({
+      outputColor: 'hdr10',
+      workingSpace: 'rec709',
+      graphicsWhiteNits: 300,
+    });
+    expect(normalizeColorManagement({ graphicsWhiteNits: 'x' })).not.toHaveProperty('graphicsWhiteNits');
   });
 });

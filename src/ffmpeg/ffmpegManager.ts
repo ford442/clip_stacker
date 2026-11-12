@@ -1,6 +1,7 @@
-import { FFmpeg } from '@ffmpeg/ffmpeg';
 import { DirectFfmpegRuntime } from './directFfmpegRuntime';
-import type { IFfmpegRuntime } from './ffmpegRuntime';
+import { resolveFfmpegCoreSource, type FfmpegCoreURLs } from './coreSources';
+import { FfmpegCoreHost } from './ffmpegCoreHost';
+import type { IFfmpegRuntime, LoadableFfmpegRuntime } from './ffmpegRuntime';
 import {
   buildFfmpegLoadErrorMessage,
   clampProgress,
@@ -9,11 +10,9 @@ import {
   extractErrorMessage,
   FFMPEG_LOAD_TIMEOUT_MS,
   getFfmpegEnvironmentDiagnostics,
-  loadMtCoreSources,
   type FfmpegLogProgressContext,
   type ProgressCallback,
   type StatusCallback,
-  toBlobURLWithFallback,
   withTimeout,
 } from './ffmpegCommon';
 import { resolveFfmpegCoreVariant } from '../export/featureDetector';
@@ -25,15 +24,13 @@ export interface FfmpegManagerOptions {
   /** When true (default in browser), FFmpeg runs inside a dedicated Web Worker. */
   useWorker?: boolean;
   /** Factory for direct in-thread FFmpeg (tests and fallback). */
-  createDirectRuntime?: (onLog: (message: string) => void) => IFfmpegRuntime;
+  createDirectRuntime?: (onLog: (message: string) => void) => LoadableFfmpegRuntime;
 }
 
 function defaultCreateDirectRuntime(
   onLog: (message: string) => void,
-): IFfmpegRuntime {
-  const ffmpeg = new FFmpeg();
-  ffmpeg.on('log', ({ message }) => onLog(message));
-  return new DirectFfmpegRuntime(ffmpeg);
+): LoadableFfmpegRuntime {
+  return new DirectFfmpegRuntime(new FfmpegCoreHost(onLog));
 }
 
 /**
@@ -58,9 +55,7 @@ export class FfmpegManager {
   private readonly useWorker: boolean;
   private readonly createDirectRuntime: (
     onLog: (message: string) => void,
-  ) => IFfmpegRuntime;
-  private workerRuntime: WorkerFfmpegRuntime | null = null;
-  private removeWorkerLogListener: (() => void) | null = null;
+  ) => LoadableFfmpegRuntime;
 
   constructor(options: FfmpegManagerOptions = {}) {
     this.useWorker =
@@ -189,16 +184,29 @@ export class FfmpegManager {
     }
   }
 
-  private attachWorkerLogListener(): void {
-    if (!this.useWorker || this.removeWorkerLogListener) return;
-    this.removeWorkerLogListener = WorkerFfmpegRuntime.addLogListener((message) =>
-      this.recordLog(message),
+  /**
+   * The loaded worker crashed. Its runtime already rejected what was in
+   * flight and refuses new calls; forget it (and the fonts written to its VFS)
+   * so the next `ensureFfmpeg` spawns and loads a fresh worker.
+   */
+  private handleWorkerLost(runtime: IFfmpegRuntime, error: Error): void {
+    this.recordLog(
+      `[FFmpeg] Worker failed: ${error.message}. FFmpeg will reload on next use.`,
     );
+    if (this.instance === runtime) {
+      this.instance = null;
+      this.resetFonts();
+    }
   }
 
-  private detachWorkerLogListener(): void {
-    this.removeWorkerLogListener?.();
-    this.removeWorkerLogListener = null;
+  private createRuntime(): LoadableFfmpegRuntime {
+    const onLog = (message: string) => this.recordLog(message);
+    if (!this.useWorker) return this.createDirectRuntime(onLog);
+    const runtime: WorkerFfmpegRuntime = new WorkerFfmpegRuntime({
+      onLog,
+      onWorkerLost: (error) => this.handleWorkerLost(runtime, error),
+    });
+    return runtime;
   }
 
   private async loadRuntime(
@@ -207,7 +215,6 @@ export class FfmpegManager {
     onProgress?: ProgressCallback,
   ): Promise<IFfmpegRuntime> {
     this.resetFonts();
-    this.attachWorkerLogListener();
 
     emitLoadStatus(
       onStatus,
@@ -219,58 +226,35 @@ export class FfmpegManager {
     );
     this.recordLog(`[FFmpeg load] Attempting ${variant} core variant`);
 
-    let coreURL: string;
-    let wasmURL: string;
-    let workerURL: string | undefined;
+    // js + wasm (+ the mt pthread worker) from one source: self-hosted by URL,
+    // else the first CDN that delivers all of them, as blob URLs.
+    const core = await resolveFfmpegCoreSource(
+      variant,
+      onStatus,
+      onProgress,
+      (message) => this.recordLog(message),
+    );
+    this.recordLog(
+      `[FFmpeg load] Using ${variant} core from ${core.source} (${
+        core.delivery === 'url' ? 'loaded by URL' : 'blob URLs'
+      })`,
+    );
+    const urls: FfmpegCoreURLs = {
+      coreURL: core.coreURL,
+      wasmURL: core.wasmURL,
+      ...(core.workerURL ? { workerURL: core.workerURL } : {}),
+    };
 
-    if (variant === 'mt') {
-      ({ coreURL, wasmURL, workerURL } = await loadMtCoreSources(
-        onStatus,
-        onProgress,
-        (message) => this.recordLog(message),
-      ));
-    } else {
-      coreURL = await toBlobURLWithFallback(
-        'ffmpeg-core.js',
-        'text/javascript',
-        onStatus,
-        onProgress,
-        'FFmpeg core.js',
-        (message) => this.recordLog(message),
-      );
-      wasmURL = await toBlobURLWithFallback(
-        'ffmpeg-core.wasm',
-        'application/wasm',
-        onStatus,
-        onProgress,
-        'FFmpeg core.wasm',
-        (message) => this.recordLog(message),
-      );
-    }
-
-    let runtime: IFfmpegRuntime;
+    const runtime = this.createRuntime();
+    this.loadingRuntime = runtime;
+    emitLoadStatus(onStatus, onProgress, 'Initializing FFmpeg WASM engine...');
     if (this.useWorker) {
-      this.workerRuntime = new WorkerFfmpegRuntime();
-      runtime = this.workerRuntime;
-      this.loadingRuntime = runtime;
-      emitLoadStatus(onStatus, onProgress, 'Initializing FFmpeg WASM engine...');
-      this.recordLog(
-        '[FFmpeg load] Starting dedicated FFmpeg worker load',
-      );
-      await withTimeout(
-        this.workerRuntime.load(coreURL, wasmURL, workerURL),
-        FFMPEG_LOAD_TIMEOUT_MS,
-        'ffmpeg.load()',
-      );
+      this.recordLog('[FFmpeg load] Starting dedicated FFmpeg worker load');
+      await withTimeout(runtime.load(urls), FFMPEG_LOAD_TIMEOUT_MS, 'ffmpeg.load()');
     } else {
-      runtime = this.createDirectRuntime((message) => this.recordLog(message));
-      this.loadingRuntime = runtime;
-      emitLoadStatus(onStatus, onProgress, 'Initializing FFmpeg WASM engine...');
       this.recordLog(
         '[FFmpeg load] Starting direct FFmpeg load (test/fallback path)',
       );
-      const abortController =
-        typeof AbortController !== 'undefined' ? new AbortController() : null;
       const loadStartedAt = Date.now();
       const checkpointTimers = [5_000, 15_000, 30_000, 60_000, 90_000].map(
         (delayMs) =>
@@ -284,13 +268,8 @@ export class FfmpegManager {
           }, delayMs),
       );
       try {
-        const direct = runtime as DirectFfmpegRuntime;
-        await withTimeout(
-          direct.load(coreURL, wasmURL, { signal: abortController?.signal, workerURL }),
-          FFMPEG_LOAD_TIMEOUT_MS,
-          'ffmpeg.load()',
-          () => abortController?.abort(),
-        );
+        // A timeout terminates the runtime (attempt loop), which cancels it.
+        await withTimeout(runtime.load(urls), FFMPEG_LOAD_TIMEOUT_MS, 'ffmpeg.load()');
       } finally {
         checkpointTimers.forEach(clearTimeout);
       }
@@ -457,11 +436,6 @@ export class FfmpegManager {
     this.loadingPromise = null;
     this.loadFailed = false;
     this.resetFonts();
-    this.workerRuntime = null;
-    this.detachWorkerLogListener();
-    if (this.useWorker) {
-      WorkerFfmpegRuntime.disposeSharedWorker();
-    }
   }
 }
 
@@ -481,5 +455,3 @@ export function setFfmpegManagerForTesting(manager: FfmpegManager): void {
 export function resetFfmpegManagerForTesting(): void {
   defaultManager = null;
 }
-
-;

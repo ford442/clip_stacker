@@ -9,6 +9,7 @@ import type {
   Project,
   SerializedClip,
   SerializedClipGroup,
+  Sequence,
   TextOverlayStyle,
   Track,
 } from '../types';
@@ -40,6 +41,9 @@ import { normalizeClipAutomation } from '../timeline/clipAutomation';
 import { normalizeClipAudioEffects } from '../audio/audioEffects';
 import { normalizeBusEffects, normalizeLaneDuck, normalizeMasterBus } from '../audio/audioBus';
 import { createCaptionId, normalizeCaptions } from '../captions/subtitles';
+import { createSequenceClip, syncSequenceDurations } from '../timeline/sequenceModel';
+import { sanitizeSequenceClip } from '../timeline/sequenceResolve';
+import { isSourceColorSpaceOverride } from '../media/sourceColorSpace';
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
@@ -146,6 +150,93 @@ function deserializeCaptions(raw: Project['captions']): CaptionEntry[] {
   return normalizeCaptions(entries);
 }
 
+function deserializeTransitions(raw: Project['transitions']): ClipTransition[] {
+  return Array.isArray(raw)
+
+    ? raw.map((t) => ({
+        afterClipIndex: Number(t.afterClipIndex),
+        type: t.type ?? 'dissolve',
+        duration: Number(t.duration ?? 0.5),
+        ...(t.params ? { params: t.params } : {}),
+        ...(typeof t.customShader === 'string' ? { customShader: t.customShader } : {}),
+        ...(t.morphSegment
+          ? {
+              morphSegment: {
+                objectUrl: '',
+                fileName: t.morphSegment.fileName ?? 'morph.mp4',
+                duration: Number(t.morphSegment.duration ?? t.duration ?? 0.5),
+                status: t.morphSegment.status ?? 'pending',
+                ...(t.morphSegment.error ? { error: t.morphSegment.error } : {}),
+              },
+            }
+          : {}),
+      }))
+    : [];
+}
+
+function deserializeTracks(raw: Project['tracks']): Track[] | undefined {
+  return Array.isArray(raw)
+
+    ? raw.map((t): Track => {
+        const kind = t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video';
+        // Malformed effects are dropped, not thrown on; titles lanes carry no audio.
+        const audioFx = kind === 'text' ? undefined : normalizeBusEffects(t.audioFx);
+        const duck = kind === 'text' ? undefined : normalizeLaneDuck(t.duck);
+        return {
+          id: String(t.id),
+          kind,
+          ...(t.label ? { label: String(t.label) } : {}),
+          items: Array.isArray(t.items)
+            ? t.items.map((item) => ({
+                clipId: String(item.clipId),
+                startTime: Number(item.startTime) || 0,
+              }))
+            : [],
+          ...(t.muted ? { muted: true } : {}),
+          ...(t.locked ? { locked: true } : {}),
+          ...(t.height != null ? { height: Number(t.height) } : {}),
+          ...(audioFx ? { audioFx } : {}),
+          ...(duck ? { duck } : {}),
+        };
+      })
+    : undefined;
+}
+
+/** The sequence a saved clip plays, or null for a media clip. */
+function savedSequenceClipId(saved: SerializedClip): string | null {
+  const source = saved.source as { type?: unknown; sequenceId?: unknown } | undefined;
+  return source?.type === 'sequence' && typeof source.sequenceId === 'string' && source.sequenceId
+    ? source.sequenceId
+    : null;
+}
+
+/** Saved nested sequences, coerced: malformed entries are dropped, ids deduplicated. */
+function readSavedSequences(raw: Project['sequences']): Array<{
+  id: string;
+  name: string;
+  clipIds: string[];
+  tracks: Project['tracks'];
+  transitions: Project['transitions'];
+  textOverlays: Project['textOverlays'];
+}> {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out = [];
+  for (const saved of raw) {
+    if (!saved || typeof saved.id !== 'string' || !saved.id || seen.has(saved.id)) continue;
+    seen.add(saved.id);
+    out.push({
+      id: saved.id,
+      name: typeof saved.name === 'string' && saved.name.trim() ? saved.name : 'Sequence',
+      clipIds: Array.isArray(saved.clipIds) ? saved.clipIds.map(String) : [],
+      tracks: saved.tracks,
+      transitions: saved.transitions,
+      textOverlays: saved.textOverlays,
+    });
+  }
+  return out;
+}
+
 export async function applyProjectData(
   project: Project,
   clips: Clip[],
@@ -156,6 +247,7 @@ export async function applyProjectData(
   }
 
   const usesPixelLayout = usesPixelLayoutForProject(project.schemaVersion);
+  const savedSequences = readSavedSequences(project.sequences);
   const layoutReference = parseLayoutReferenceResolution(
     project.layoutReferenceResolution,
   );
@@ -170,8 +262,31 @@ export async function applyProjectData(
   const remoteProgressEnd = options.remoteProgressEnd ?? 1;
   let remoteDownloadIndex = 0;
 
+  const savedSequenceIds = new Set(savedSequences.map((seq) => seq.id));
+  // Each sequence claims its clips by saved id; a clip matched to live media
+  // keeps the live clip's id, so ownership is recorded on the loaded clip.
+  const ownerBySavedId = new Map<string, string>();
+  for (const seq of savedSequences) {
+    for (const clipId of seq.clipIds) if (!ownerBySavedId.has(clipId)) ownerBySavedId.set(clipId, seq.id);
+  }
+  const owner = new Map<string, string>();
   for (const savedClip of project.clips) {
-    let liveClip = byName.get(savedClip.fileName);
+    const sequenceId = savedSequenceClipId(savedClip);
+    if (sequenceId !== null && !savedSequenceIds.has(sequenceId)) {
+      // A sequence clip whose sequence is missing (hand-edited / truncated file).
+      skippedCount++;
+      skippedClipFileNames.push(savedClip.title || savedClip.fileName);
+      continue;
+    }
+    // A sequence clip has no media: it is rebuilt from its sequence.
+    let liveClip =
+      sequenceId !== null
+        ? createSequenceClip(
+            { id: sequenceId, name: savedClip.title || 'Sequence' },
+            Number(savedClip.duration) || MIN_CLIP_DURATION,
+            savedClip.id || createClipId(),
+          )
+        : byName.get(savedClip.fileName);
     if (!liveClip && hasRestorableRemoteMedia(savedClip)) {
       remoteDownloadIndex += 1;
       const clipIndex = remoteDownloadIndex;
@@ -359,6 +474,13 @@ export async function applyProjectData(
       // matrices from the source on load.
       liveClip.stabilize = true;
     }
+    // The saved project decides; unknown ids (a newer client's) fall back to
+    // the file's own tags.
+    if (isSourceColorSpaceOverride(savedClip.colorSpaceOverride)) {
+      liveClip.colorSpaceOverride = savedClip.colorSpaceOverride;
+    } else {
+      delete liveClip.colorSpaceOverride;
+    }
     const proxy = sanitizeClipProxy(savedClip.proxy);
     if (proxy) {
       // useProxyBuilder looks the bytes up in the media store; a miss leaves
@@ -366,6 +488,10 @@ export async function applyProjectData(
       liveClip.proxy = proxy;
     }
     sanitizeClipAdjustments(liveClip);
+    // A sequence clip cannot honour speed, keys or a picture transform.
+    if (sequenceId !== null) liveClip = sanitizeSequenceClip(liveClip);
+    const ownerId = ownerBySavedId.get(savedClip.id);
+    if (ownerId !== undefined) owner.set(liveClip.id, ownerId);
     mapped.push(liveClip);
   }
 
@@ -394,26 +520,7 @@ export async function applyProjectData(
     group.variants[clip.groupVariant] = clip;
   }
 
-  const transitions: ClipTransition[] = Array.isArray(project.transitions)
-    ? project.transitions.map((t) => ({
-        afterClipIndex: Number(t.afterClipIndex),
-        type: t.type ?? 'dissolve',
-        duration: Number(t.duration ?? 0.5),
-        ...(t.params ? { params: t.params } : {}),
-        ...(typeof t.customShader === 'string' ? { customShader: t.customShader } : {}),
-        ...(t.morphSegment
-          ? {
-              morphSegment: {
-                objectUrl: '',
-                fileName: t.morphSegment.fileName ?? 'morph.mp4',
-                duration: Number(t.morphSegment.duration ?? t.duration ?? 0.5),
-                status: t.morphSegment.status ?? 'pending',
-                ...(t.morphSegment.error ? { error: t.morphSegment.error } : {}),
-              },
-            }
-          : {}),
-      }))
-    : [];
+  const transitions = deserializeTransitions(project.transitions);
 
   const { textOverlays, invalidColorWarnings } = deserializeTextOverlays(
     project.textOverlays,
@@ -431,40 +538,64 @@ export async function applyProjectData(
   const colorGrade = getColorGradeFromFinishing(finishing);
   const colorManagement = normalizeColorManagement(project.colorManagement);
 
-  const savedTracks = Array.isArray(project.tracks)
-    ? project.tracks.map((t): Track => {
-        const kind = t.kind === 'audio' || t.kind === 'text' ? t.kind : 'video';
-        // Malformed effects are dropped, not thrown on; titles lanes carry no audio.
-        const audioFx = kind === 'text' ? undefined : normalizeBusEffects(t.audioFx);
-        const duck = kind === 'text' ? undefined : normalizeLaneDuck(t.duck);
-        return {
-          id: String(t.id),
-          kind,
-          ...(t.label ? { label: String(t.label) } : {}),
-          items: Array.isArray(t.items)
-            ? t.items.map((item) => ({
-                clipId: String(item.clipId),
-                startTime: Number(item.startTime) || 0,
-              }))
-            : [],
-          ...(t.muted ? { muted: true } : {}),
-          ...(t.locked ? { locked: true } : {}),
-          ...(t.height != null ? { height: Number(t.height) } : {}),
-          ...(audioFx ? { audioFx } : {}),
-          ...(duck ? { duck } : {}),
-        };
-      })
-    : undefined;
+  const savedTracks = deserializeTracks(project.tracks);
 
-  let tracks = resolveProjectTracks(savedTracks, mapped, transitions, clipGroups);
-  tracks = syncTracksWithClips(tracks, mapped, clipGroups);
+  // The pool holds every sequence's clips (claimed above); the rest are the
+  // main timeline's. A/B groups follow their clips.
+  const clipsOf = (sequenceId: string | null) =>
+    mapped.filter((clip) => (owner.get(clip.id) ?? null) === sequenceId);
+  const groupsOf = (bodyClips: Clip[]) => {
+    const ids = new Set(bodyClips.map((clip) => clip.id));
+    return clipGroups.filter((group) =>
+      [group.variants.A, group.variants.B].some((variant) => variant && ids.has(variant.id)),
+    );
+  };
+
+  const rootClips = clipsOf(null);
+  const rootGroups = groupsOf(rootClips);
+  let tracks = resolveProjectTracks(savedTracks, rootClips, transitions, rootGroups);
+  tracks = syncTracksWithClips(tracks, rootClips, rootGroups);
+
+  const sequences: Sequence[] = savedSequences.map((saved) => {
+    const seqClips = clipsOf(saved.id);
+    const seqGroups = groupsOf(seqClips);
+    const seqTransitions = deserializeTransitions(saved.transitions);
+    const seqOverlays = deserializeTextOverlays(
+      saved.textOverlays,
+      usesPixelLayout,
+      project.layoutReferenceResolution,
+    );
+    invalidColorWarnings.push(...seqOverlays.invalidColorWarnings);
+    const seqTracks = syncTracksWithClips(
+      resolveProjectTracks(deserializeTracks(saved.tracks), seqClips, seqTransitions, seqGroups),
+      seqClips,
+      seqGroups,
+    );
+    return {
+      id: saved.id,
+      name: saved.name,
+      tracks: seqTracks,
+      clips: seqClips,
+      clipGroups: seqGroups,
+      transitions: seqTransitions,
+      textOverlays: seqOverlays.textOverlays,
+    };
+  });
+  // Sequence clips take their sequence's current length (a hand-edited file
+  // may disagree); bodies that already agree are returned as they are.
+  const synced = syncSequenceDurations({
+    root: { tracks, clips: rootClips, clipGroups: rootGroups, transitions, textOverlays },
+    sequences,
+    path: [],
+  });
 
   const masterAudio = await restoreMasterAudio(project, mapped);
 
   return {
-    clips: mapped,
-    tracks,
-    clipGroups,
+    clips: synced.root.clips,
+    tracks: synced.root.tracks,
+    clipGroups: rootGroups,
+    sequences: synced.sequences,
     transitions,
     textOverlays,
     captions,

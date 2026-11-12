@@ -10,6 +10,8 @@ import { acquireGpuContext } from './gpuDevice';
 import { adoptGpuDevice } from '../gpu-chores/device';
 import type { TransitionRenderParams } from './transitions/types';
 import { computeLetterboxUv } from './letterboxUv';
+import type { PackedFrameInit } from './hdr10FrameReader';
+import type { ColorManagementSettings } from '../finishing/colorManagement';
 
 export {
   combineLetterboxWithLayerUv,
@@ -36,7 +38,7 @@ export class ExportCompositor {
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
-    const engine = await PreviewEngine.create(canvas);
+    const engine = await PreviewEngine.create(canvas, { surface: 'offscreen' });
     return new ExportCompositor(engine, canvas);
   }
 
@@ -80,13 +82,14 @@ export class ExportCompositor {
     return this.engine.canvasPresentation;
   }
 
-  readPqExportRgba(): Promise<Uint8Array | null> {
-    return this.engine.readPqExportRgba();
+  /** Set before the first frame is drawn (a change reconfigures the canvas). */
+  setColorManagement(settings: ColorManagementSettings | undefined): void {
+    this.engine.setColorManagement(settings);
   }
 
-  /** @deprecated Use applyFinishing(). */
-  applyColorGrade(settings: import('../finishing/lut').ColorGradeSettings): void {
-    this.engine.applyColorGrade(settings);
+  /** See `PreviewEngine.captureHdr10Frame`. */
+  captureHdr10Frame(init: PackedFrameInit): Promise<VideoFrame> {
+    return this.engine.captureHdr10Frame(init);
   }
 
   /** Ensure GPU work is complete before capturing the canvas for VideoEncoder. */

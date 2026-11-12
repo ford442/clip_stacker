@@ -1,4 +1,4 @@
-import type { ClipAutomation, ClipKeyframes } from '../../types';
+import type { ClipAutomation, ClipKeyframes, SourceColorSpaceOverride } from '../../types';
 import type { CaptionsPanelProps } from '../CaptionsPanel';
 import type { ClipAudioEffects } from '../../audio/audioEffects';
 import type { VideoOutputFormat } from '../../types';
@@ -22,6 +22,8 @@ export interface InspectorProps {
   ) => void;
   /** Toggle camera-shake stabilization for the selected video clip. */
   onStabilizeChange?: (enabled: boolean) => void;
+  /** Interpret the selected clip's source as another colour space (undefined = the file's tags). */
+  onColorSpaceOverrideChange?: (override: SourceColorSpaceOverride | undefined) => void;
   /** Play the selected clip's trim window backward. */
   onReverseChange?: (enabled: boolean) => void;
   /** Caption-track callbacks, forwarded to the Captions tab. */

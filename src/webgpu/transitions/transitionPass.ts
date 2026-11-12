@@ -1,3 +1,4 @@
+import type { GpuProfiler } from '../gpuProfiler';
 import {
   buildTransitionShader,
   FROM_WARP_UNIFORM_OFFSET,
@@ -213,7 +214,6 @@ export function writeTransitionUniforms(
 
 export function renderTransitionPass(
   device: GPUDevice,
-  context: GPUCanvasContext,
   pipelineCache: TransitionPipelineCache,
   sampler: GPUSampler,
   uniformBuffer: GPUBuffer,
@@ -224,6 +224,12 @@ export function renderTransitionPass(
   params: TransitionRenderParams,
   canvasWidth: number,
   canvasHeight: number,
+  target: {
+    view: GPUTextureView;
+    importColorSpace?: PredefinedColorSpace;
+    /** `?gpu_profile`: time the draw as "transition". */
+    profiler?: GpuProfiler | null;
+  },
 ): void {
   writeTransitionUniforms(
     uniformData,
@@ -234,8 +240,11 @@ export function renderTransitionPass(
   );
   device.queue.writeBuffer(uniformBuffer, 0, uniformData as BufferSource);
 
-  const fromTexture = device.importExternalTexture({ source: fromFrame });
-  const toTexture = device.importExternalTexture({ source: toFrame });
+  // Same colour space as the layer draws (`importColorSpaceFor`), so a
+  // crossfade does not shift a managed timeline's colours.
+  const colorSpace = target.importColorSpace ?? 'srgb';
+  const fromTexture = device.importExternalTexture({ source: fromFrame, colorSpace });
+  const toTexture = device.importExternalTexture({ source: toFrame, colorSpace });
   const pipeline = pipelineCache.getOrCreatePipeline(transitionId);
 
   const bindGroup = device.createBindGroup({
@@ -250,10 +259,11 @@ export function renderTransitionPass(
   });
 
   const encoder = device.createCommandEncoder();
+  const span = target.profiler?.begin(encoder, 'transition') ?? null;
   const pass = encoder.beginRenderPass({
     colorAttachments: [
       {
-        view: context.getCurrentTexture().createView(),
+        view: target.view,
         loadOp: params.clear ? 'clear' : 'load',
         storeOp: 'store',
         clearValue: { r: 0, g: 0, b: 0, a: 1 },
@@ -264,6 +274,7 @@ export function renderTransitionPass(
   pass.setBindGroup(0, bindGroup);
   pass.draw(6);
   pass.end();
+  target.profiler?.end(encoder, span);
   device.queue.submit([encoder.finish()]);
 }
 

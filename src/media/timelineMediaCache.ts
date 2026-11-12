@@ -1,3 +1,4 @@
+import { isSequenceClip } from '../timeline/sequenceResolve';
 import type { Clip } from '../types';
 import { extractThumbnails } from './media';
 import { analyzeImportedStillFile } from '../gpu-chores/stillImport';
@@ -33,7 +34,8 @@ export function requestTimelineThumbnails(
   clip: Clip,
   onComplete: (clipId: string, thumbs: string[]) => void,
 ): void {
-  if (clip.kind !== 'video') return;
+  // A sequence clip has no media of its own to thumbnail.
+  if (clip.kind !== 'video' || isSequenceClip(clip)) return;
 
   if (clip.stillImage && clip.posterUrl) {
     thumbnailCache.set(clip.id, [clip.posterUrl]);

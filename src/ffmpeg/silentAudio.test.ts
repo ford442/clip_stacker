@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createFile, MP4BoxBuffer, type Movie } from 'mp4box';
+import { BufferSource, EncodedPacketSink, Input, MP4 } from 'mediabunny';
 import {
   buildSilentAacLoopInputArgs,
   createSilentAudioBuffer,
@@ -157,21 +157,19 @@ describe('silentAudio', () => {
     const bytes = await encodeSilentAacUnitViaWebCodecs(SILENT_AAC_UNIT_SEC);
     expect(bytes).not.toBeNull();
 
-    const file = createFile();
-    const ready: { info?: Movie } = {};
-    file.onReady = (info) => {
-      ready.info = info;
-    };
-    file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(bytes!.slice().buffer, 0));
-    file.flush();
-    const movie = ready.info!;
-    expect(movie.videoTracks).toHaveLength(0);
-    expect(movie.audioTracks).toHaveLength(1);
-    const [audio] = movie.audioTracks;
-    expect(audio!.codec).toBe('mp4a.40.2');
-    expect(audio!.audio?.sample_rate).toBe(SILENT_AAC_SAMPLE_RATE);
-    expect(audio!.audio?.channel_count).toBe(SILENT_AAC_CHANNELS);
-    expect(audio!.nb_samples).toBe(Math.ceil((SILENT_AAC_UNIT_SEC * SILENT_AAC_SAMPLE_RATE) / 1024));
+    const input = new Input({ formats: [MP4], source: new BufferSource(bytes!.slice()) });
+    expect(await input.getVideoTracks()).toHaveLength(0);
+    const audioTracks = await input.getAudioTracks();
+    expect(audioTracks).toHaveLength(1);
+    const [audio] = audioTracks;
+    expect(await audio!.getCodecParameterString()).toBe('mp4a.40.2');
+    expect(await audio!.getSampleRate()).toBe(SILENT_AAC_SAMPLE_RATE);
+    expect(await audio!.getNumberOfChannels()).toBe(SILENT_AAC_CHANNELS);
+    let packets = 0;
+    for await (const _packet of new EncodedPacketSink(audio!).packets(undefined, undefined, { metadataOnly: true })) {
+      packets++;
+    }
+    expect(packets).toBe(Math.ceil((SILENT_AAC_UNIT_SEC * SILENT_AAC_SAMPLE_RATE) / 1024));
   });
 
   it('getSilentAacUnitBytes falls back to FFmpeg when the WebCodecs unit cannot be muxed', async () => {

@@ -23,6 +23,8 @@ import {
   TRANSFORM_KEYFRAME_PROPS,
 } from './helpers';
 import type { ClipValues } from './types';
+import type { SourceColorSpaceOverride } from '../../types';
+import { SourceColorSpaceField } from './SourceColorSpaceField';
 
 interface InspectorClipVideoToolsSectionProps {
   clip: Clip;
@@ -49,6 +51,7 @@ interface InspectorClipVideoToolsSectionProps {
   applyLogoPreset: (corner: PipCorner) => void;
   useAsBaseLayer: () => void;
   onStabilizeChange?: (enabled: boolean) => void;
+  onColorSpaceOverrideChange?: (override: SourceColorSpaceOverride | undefined) => void;
   onRife?: (
     mode: 'interpolation' | 'boomerang',
     multiplier: 2 | 4,
@@ -83,6 +86,7 @@ export function InspectorClipVideoToolsSection({
   applyLogoPreset,
   useAsBaseLayer,
   onStabilizeChange,
+  onColorSpaceOverrideChange,
   onRife,
   onKeyframesChange,
   onApplyKenBurns,
@@ -91,6 +95,9 @@ export function InspectorClipVideoToolsSection({
 
   return (
     <>
+      {!clip.stillImage && !clip.source && (
+        <SourceColorSpaceField clip={clip} onChange={onColorSpaceOverrideChange} />
+      )}
       {onStabilizeChange && (
         <div className="inspector-stabilize">
           <div className="inspector-group-label" style={{ marginTop: '0.75rem' }}>

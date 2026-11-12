@@ -14,6 +14,12 @@ import {
   getFfmpegEnvironmentDiagnostics,
 } from '../ffmpeg/ffmpegService';
 import { getGpuErrorLog, peekGpuFeatures } from '../webgpu/gpuDevice';
+import {
+  formatGpuProfile,
+  getGpuProfileSnapshot,
+  isGpuProfilingRequested,
+} from '../webgpu/gpuProfiler';
+import { previewMetrics } from '../composition/previewMetrics';
 import { getPublishedWebGpuProbe } from '../webgpu/webgpuProbe';
 import { formatGpuChoreDiagnostics } from '../gpu-chores/diagnostics';
 import { formatMediaEngineDiagnostics } from '../wasm/mediaEngine';
@@ -236,6 +242,8 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   lines.push('```');
   lines.push('');
 
+  lines.push(...gpuProfileReportLines());
+
   const colorDebug = getColorDebugSnapshot();
   const selected = ctx.colorManagement;
   lines.push('## Color');
@@ -254,7 +262,6 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   const gpuFeaturesForColor = peekGpuFeatures();
   const adopted = (name: string) => (gpuFeaturesForColor?.has(name as GPUFeatureName) ? 'yes' : 'no');
   lines.push(`- shader-f16 adopted: ${adopted('shader-f16')}`);
-  lines.push(`- rg11b10ufloat-renderable adopted: ${adopted('rg11b10ufloat-renderable')}`);
   lines.push('');
 
   const gpuFeatures = peekGpuFeatures();
@@ -302,4 +309,23 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   }
 
   return lines.join('\n');
+}
+
+/** `## GPU profile`: per-pass GPU milliseconds under `?gpu_profile`. */
+export function gpuProfileReportLines(): string[] {
+  const lines = ['## GPU profile'];
+  if (!isGpuProfilingRequested()) {
+    lines.push('- off (open the page with `?gpu_profile` to time each GPU pass)');
+  } else {
+    const preview = previewMetrics.snapshot().gpuPassMs;
+    const main = getGpuProfileSnapshot();
+    lines.push(
+      `- Preview: ${Object.keys(preview).length > 0 ? formatGpuProfile(preview) : '(no profiled frame yet)'}`,
+    );
+    lines.push(
+      `- Main thread (export, text fill): ${Object.keys(main).length > 0 ? formatGpuProfile(main) : '(no profiled frame yet, or timestamp-query unavailable)'}`,
+    );
+  }
+  lines.push('');
+  return lines;
 }

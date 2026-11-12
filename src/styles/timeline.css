@@ -688,6 +688,79 @@
   color: var(--accent-blue, #5aa0dc);
 }
 
+.timeline-clip-badge--sequence {
+  background: rgba(124, 77, 255, 0.22);
+  color: #b39dff;
+}
+
+/* A nested sequence clip: no thumbnails of its own, a striped body instead. */
+.timeline-clip--sequence .timeline-thumbs {
+  background: repeating-linear-gradient(
+    135deg,
+    rgba(124, 77, 255, 0.16) 0 8px,
+    rgba(124, 77, 255, 0.06) 8px 16px
+  );
+  align-items: center;
+  justify-content: center;
+}
+
+.timeline-sequence-icon {
+  font-size: 1.1rem;
+  color: #b39dff;
+  opacity: 0.8;
+}
+
+/* Breadcrumb above the timeline while a nested sequence is open. */
+.sequence-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  padding: 0.3rem 0.5rem;
+  margin-bottom: 0.35rem;
+  border: 1px solid rgba(124, 77, 255, 0.45);
+  border-radius: var(--radius-sm);
+  background: rgba(124, 77, 255, 0.1);
+  font-size: 0.78rem;
+}
+
+.sequence-breadcrumb ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.sequence-breadcrumb li + li::before {
+  content: '›';
+  margin-right: 0.25rem;
+  color: var(--muted);
+}
+
+.sequence-breadcrumb-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--accent-blue, #5aa0dc);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.sequence-breadcrumb-current {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.sequence-breadcrumb-exit {
+  font-size: 0.74rem;
+}
+
 .transition-zone--overlay {
   position: absolute;
   top: 4px;

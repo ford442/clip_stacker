@@ -52,7 +52,7 @@ export function useClipStabilization(
         if (cancelled) break;
         analyzing.current.add(clip.id);
         try {
-          // Decode + optical flow (and mp4box) load with the first clip that
+          // Decode + optical flow (and the Mediabunny demuxer) load with the first clip that
           // needs analysis, not with the editor.
           const { stabilizeClip } = await import('../media/stabilizePipeline');
           const result = await stabilizeClip(clip, {

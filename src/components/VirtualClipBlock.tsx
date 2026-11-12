@@ -19,6 +19,8 @@ import { normalizeClipAutomation } from '../timeline/clipAutomation';
 import { remapWaveformPeaks } from '../timeline/automation';
 import { clipHasRateAutomation, sampleRemapCurve } from '../timeline/timeRemap';
 import { clipHasLoop, getClipLoopCount } from '../timeline/playbackRate';
+import { isSequenceClip } from '../timeline/sequenceResolve';
+import { renderJobStore } from '../store/renderJobStore';
 
 const TRANSITION_COLORS: Record<string, string> = {
   none: 'var(--border)',
@@ -102,7 +104,8 @@ function VirtualClipBlockImpl({
     );
     return resolved?.localTime ?? null;
   }, [clip.id, clipGroups, clips, isSelected, playheadTime, transitions]);
-  const isLoadingThumbs = clip.kind === 'video' && thumbs === undefined;
+  const isSequence = isSequenceClip(clip);
+  const isLoadingThumbs = clip.kind === 'video' && !isSequence && thumbs === undefined;
   const isLoadingWave = clip.kind === 'audio' && waves === undefined;
   const layerIndex = clip.layerIndex ?? 0;
   const isOverlay = layerIndex > 0;
@@ -253,6 +256,14 @@ function VirtualClipBlockImpl({
     editorActions.setSelectedClipId(clip.id);
   }, [clip.id]);
 
+  // Double-click a sequence clip to open its sequence (breadcrumb above the timeline).
+  const handleDoubleClick = useCallback(() => {
+    const sequenceId = clip.source?.sequenceId;
+    if (!sequenceId) return;
+    const refused = editorActions.enterSequence(sequenceId);
+    if (refused) renderJobStore.getState().setStatus(refused);
+  }, [clip.source?.sequenceId]);
+
   return (
     <>
       {showTransition && transition && (
@@ -303,10 +314,15 @@ function VirtualClipBlockImpl({
         <div
           className={`timeline-clip${clip.kind === 'audio' ? ' timeline-clip--audio' : ''}${
             isSelected ? ' selected' : ''
-          }${isOverlay ? ' timeline-clip--pip' : ''}${locked ? ' timeline-clip--locked' : ''}`}
+          }${isOverlay ? ' timeline-clip--pip' : ''}${locked ? ' timeline-clip--locked' : ''}${
+            isSequence ? ' timeline-clip--sequence' : ''
+          }`}
           onClick={handleClick}
+          onDoubleClick={isSequence ? handleDoubleClick : undefined}
           title={
-            locked
+            isSequence
+              ? `${clip.title}\nNested sequence — double-click to open it.${locked ? '\n🔒 This lane is locked.' : ''}`
+              : locked
               ? `${clip.title}\n🔒 This lane is locked — unlock it in the lane header to trim, drag or delete.`
               : isOverlay
                 ? `${clip.title}\nOverlay on video lane ${layerIndex} — composites above the lanes below it, at ${(clip.timelineStart ?? 0).toFixed(2)}s on the output.\n\nSwipe left/right to swap with neighbor, or long-press then drag to reorder.`
@@ -315,6 +331,7 @@ function VirtualClipBlockImpl({
         >
           {clip.kind === 'video' ? (
             <div className={`timeline-thumbs${isLoadingThumbs ? ' is-loading' : ''}`}>
+              {isSequence && <span className="timeline-sequence-icon" aria-hidden="true">▣</span>}
               {thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null}
               {(showVideoWaveform || hasRateCurve) && displayWaves && (
                 <div className="timeline-video-waveform">
@@ -362,6 +379,15 @@ function VirtualClipBlockImpl({
                 title={`Overlay on video lane ${layerIndex}. Stacking order is lane order; this clip appears at ${(clip.timelineStart ?? 0).toFixed(2)}s on the output.`}
               >
                 PiP · L{layerIndex}
+              </span>
+            )}
+
+            {isSequence && (
+              <span
+                className="timeline-clip-badge timeline-clip-badge--sequence"
+                title="Nested sequence — double-click to open it"
+              >
+                SEQ
               </span>
             )}
 

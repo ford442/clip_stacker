@@ -5,6 +5,7 @@
  */
 
 import type { Clip } from "../types";
+import { withNestedInstances } from "../composition/nestedSequences";
 import {
   buildPreviewCompositionPlan,
   captionPlanOptions,
@@ -32,7 +33,8 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
     this.ctx = ctx;
     this.canvas = canvas;
     this.mediaPool = mediaPool;
-    this.clipsById = new Map(clips.map((clip) => [clip.id, clip]));
+    // Layers inside nested sequences carry namespaced ids (`withNestedInstances`).
+    this.clipsById = new Map(withNestedInstances(clips).map((clip) => [clip.id, clip]));
   }
 
   static create(
@@ -167,8 +169,9 @@ export class TimelineCanvas2DRenderer implements TimelineCompositor {
   }
 
   syncClips(clips: Clip[]): void {
-    this.clipsById = new Map(clips.map((clip) => [clip.id, clip]));
-    this.mediaPool.pruneExcept(new Set(clips.map((clip) => clip.id)));
+    const all = withNestedInstances(clips);
+    this.clipsById = new Map(all.map((clip) => [clip.id, clip]));
+    this.mediaPool.pruneExcept(new Set(all.map((clip) => clip.id)));
   }
 
   pauseDecoders(): void {

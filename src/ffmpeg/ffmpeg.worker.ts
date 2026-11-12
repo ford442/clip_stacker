@@ -1,108 +1,22 @@
 /**
- * Dedicated Web Worker host for FFmpeg WASM. All heavy exec / VFS work runs
- * off the main thread; the UI thread only downloads core assets and forwards RPC.
+ * Dedicated Web Worker host for FFmpeg WASM. It drives the `@ffmpeg/core`
+ * Emscripten module itself (`FfmpegCoreHost`), so there is no second
+ * `@ffmpeg/ffmpeg` worker in between: main → this worker (→ the mt core's
+ * pthread workers). All exec / VFS work runs here; main resolves the core
+ * URLs and forwards RPC (`workerFfmpegRuntime.ts`).
  */
-import { FFmpeg } from '@ffmpeg/ffmpeg';
-import type {
-  DistributiveOmit,
-  WorkerLogMessage,
-  WorkerOutboundMessage,
-  WorkerRpcRequest,
-  WorkerRpcResponse,
-} from './ffmpegWorkerProtocol';
+import { FfmpegCoreHost } from './ffmpegCoreHost';
+import { handleFfmpegWorkerRequest } from './ffmpegWorkerHandler';
+import type { WorkerLogMessage, WorkerRpcRequest } from './ffmpegWorkerProtocol';
 
-let ffmpeg: FFmpeg | null = null;
+const scope = self as DedicatedWorkerGlobalScope;
 
-function respond(
-  id: number,
-  response: DistributiveOmit<WorkerRpcResponse, 'id'>,
-): void {
-  const message: WorkerOutboundMessage = { id, ...response } as WorkerOutboundMessage;
-  self.postMessage(message);
-}
-
-function postLog(message: string): void {
+const host = new FfmpegCoreHost((message) => {
   const payload: WorkerLogMessage = { type: 'log', message };
-  self.postMessage(payload);
-}
+  scope.postMessage(payload);
+});
 
-function terminateInstance(): void {
-  if (!ffmpeg) return;
-  try {
-    ffmpeg.terminate();
-  } catch {
-    /* ignore */
-  }
-  ffmpeg = null;
-}
-
-self.onmessage = async (event: MessageEvent<WorkerRpcRequest>) => {
-  const request = event.data;
-  const { id, type } = request;
-
-  try {
-    switch (type) {
-      case 'load': {
-        terminateInstance();
-        const instance = new FFmpeg();
-        instance.on('log', ({ message }) => postLog(message));
-        await instance.load({
-          coreURL: request.coreURL,
-          wasmURL: request.wasmURL,
-          ...(request.workerURL ? { workerURL: request.workerURL } : {}),
-        });
-        ffmpeg = instance;
-        respond(id, { ok: true });
-        break;
-      }
-      case 'exec': {
-        if (!ffmpeg) throw new Error('FFmpeg is not loaded in worker');
-        const code = await ffmpeg.exec(request.args);
-        if (code !== 0) {
-          throw new Error(`FFmpeg exited with code ${code}`);
-        }
-        respond(id, { ok: true, result: code });
-        break;
-      }
-      case 'writeFile': {
-        if (!ffmpeg) throw new Error('FFmpeg is not loaded in worker');
-        await ffmpeg.writeFile(request.name, request.data as Uint8Array);
-        respond(id, { ok: true });
-        break;
-      }
-      case 'readFile': {
-        if (!ffmpeg) throw new Error('FFmpeg is not loaded in worker');
-        const data = (await ffmpeg.readFile(request.name)) as Uint8Array;
-        const copy = data.slice();
-        self.postMessage({ id, ok: true, result: copy } satisfies WorkerRpcResponse, [
-          copy.buffer,
-        ]);
-        break;
-      }
-      case 'deleteFile': {
-        if (!ffmpeg) throw new Error('FFmpeg is not loaded in worker');
-        const deleted = await ffmpeg.deleteFile(request.name);
-        respond(id, { ok: true, result: deleted });
-        break;
-      }
-      case 'listDir': {
-        if (!ffmpeg) throw new Error('FFmpeg is not loaded in worker');
-        const entries = await ffmpeg.listDir(request.path);
-        respond(id, { ok: true, result: entries });
-        break;
-      }
-      case 'terminate': {
-        terminateInstance();
-        respond(id, { ok: true });
-        break;
-      }
-      default: {
-        const exhaustive: never = type;
-        throw new Error(`Unknown worker request type: ${exhaustive}`);
-      }
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    respond(id, { ok: false, error: message });
-  }
+scope.onmessage = async (event: MessageEvent<WorkerRpcRequest>) => {
+  const { response, transfer } = await handleFfmpegWorkerRequest(host, event.data);
+  scope.postMessage(response, transfer);
 };

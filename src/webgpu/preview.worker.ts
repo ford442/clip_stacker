@@ -6,8 +6,8 @@
  *   2. Worker runs buildPreviewCompositionPlan (pure math, no DOM).
  *   3. Worker decodes what it can itself (PreviewDecoderSource — same
  *      `VideoDecoder` + ring buffer + forward cursor as GPU export).
- *   4. Only layers the decoder cannot serve (WebM/alpha, stills, RIFE morph
- *      segments) go back to main as 'need-frames' → 'frames-ready'.
+ *   4. Only layers the decoder cannot serve (stills, RIFE morph segments,
+ *      media that fails to open) go back to main as 'need-frames' → 'frames-ready'.
  *   5. Worker renders layers to OffscreenCanvas and posts 'render-complete',
  *      plus 'scopes' when waveform/vectorscope are enabled.
  *
@@ -17,6 +17,7 @@
  */
 
 import type { Clip } from '../types';
+import { withNestedInstances } from '../composition/nestedSequences';
 import type { FinishingSettings } from '../finishing/finishing';
 import type { ColorManagementSettings } from '../finishing/colorManagement';
 import { getColorDebugSnapshot } from '../finishing/colorManagement';
@@ -27,13 +28,15 @@ import {
   type PreviewCompositionPlan,
 } from '../composition/previewComposition';
 import {
+  allowFallbackAdapterForPreview,
   onGpuDeviceLost,
   onGpuDeviceRecovered,
   onGpuDeviceRecoveryFailed,
   onGpuError,
   peekGpuDevice,
 } from './gpuDevice';
-import { probeWebGpu } from './webgpuProbe';
+import { getGpuProfileSnapshot, isGpuProfilingRequested, requestGpuProfiling } from './gpuProfiler';
+import { probeWebGpu, type WebGpuProbeResult } from './webgpuProbe';
 import { adoptGpuDevice, peekChoresGpuDevice } from '../gpu-chores/device';
 import { runJob } from '../gpu-chores/runJob';
 import { closeBitmap } from '../gpu-chores/rasterize';
@@ -55,6 +58,8 @@ import { SCOPES_OFF } from './previewWorkerProtocol';
 import type { PreviewMediaSource } from '../media/proxyMedia';
 
 let renderer: WorkerTimelineRenderer | null = null;
+/** Main's `(dynamic-range: high)`, kept for a renderer created after it arrived. */
+let displayHdr = false;
 let decoderSource: PreviewDecoderSource | null = null;
 let scopeSettings: ScopeSettings = SCOPES_OFF;
 
@@ -105,16 +110,26 @@ onGpuDeviceRecoveryFailed((error) => {
   post({ type: 'gpu-recovery-failed', message: error.message, timestamp: Date.now() });
 });
 
-// Phase-1 probe as soon as the worker module loads — before main transfers
-// the canvas — so a failed probe never neuters the DOM canvas.
-void probeWebGpu().then((webgpuProbe) => {
+// Phase-1 probe once main's `configure` arrives (it is posted right after
+// the worker is constructed, so it is the first message) — before main
+// transfers the canvas, so a failed probe never neuters the DOM canvas.
+let probed = false;
+async function runProbe(allowFallbackAdapter: boolean): Promise<void> {
+  if (probed) return;
+  probed = true;
+  let webgpuProbe: WebGpuProbeResult = await probeWebGpu();
+  if (webgpuProbe.ok && webgpuProbe.isFallbackAdapter && !allowFallbackAdapter) {
+    // A software adapter would preview at a few frames per second: say so
+    // in the hard-fail banner instead of starting it.
+    webgpuProbe = { ...webgpuProbe, ok: false, reason: 'software fallback adapter (refused for live preview)' };
+  }
   console.info('[webgpuProbe]', webgpuProbe);
   if (webgpuProbe.ok) {
     const device = peekGpuDevice();
     if (device) adoptGpuDevice(device);
   }
   post({ type: 'ready', webgpuAvailable: webgpuProbe.ok, webgpuProbe });
-});
+}
 
 /**
  * Composite `pending` and report completion. Owns every frame passed in and
@@ -173,7 +188,13 @@ async function completeRender(
       : null;
   const scopeSize = renderer.scopeTextureSize;
 
-  post({ type: 'render-complete', renderId, plan: pending.plan, frameSources });
+  post({
+    type: 'render-complete',
+    renderId,
+    plan: pending.plan,
+    frameSources,
+    ...(isGpuProfilingRequested() ? { gpuProfile: getGpuProfileSnapshot() } : {}),
+  });
 
   if (scopeTexture) {
     await postScopes(renderId, scopeTexture, scopeSize);
@@ -226,10 +247,18 @@ async function postScopes(
 self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
   const msg = event.data;
   switch (msg.type) {
+    case 'configure': {
+      requestGpuProfiling(msg.gpuProfile);
+      allowFallbackAdapterForPreview(msg.allowFallbackAdapter);
+      await runProbe(msg.allowFallbackAdapter);
+      break;
+    }
+
     case 'init': {
       try {
         renderer?.destroy();
         renderer = await WorkerTimelineRenderer.create(msg.canvas);
+        renderer.setDisplayHdr(displayHdr);
         renderer.resizeCanvas(msg.width, msg.height);
         decoderSource?.destroy();
         decoderSource = msg.decoderEnabled === false ? null : new PreviewDecoderSource();
@@ -325,7 +354,10 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
       let proxyDecoded = 0;
       let fallback = requests;
       if (decoderSource) {
-        const clipsById = new Map<string, WorkerClip>(clips.map((c) => [c.id, c]));
+        // Nested-sequence layers carry namespaced ids (`withNestedInstances`).
+        const clipsById = new Map<string, WorkerClip>(
+          withNestedInstances(clips as unknown as Clip[]).map((c) => [c.id, c]),
+        );
         const split = await decoderSource.split(requests, clipsById);
         decoded = split.decoded;
         proxyDecoded = split.proxyDecoded;
@@ -398,6 +430,12 @@ self.onmessage = async (event: MessageEvent<PreviewWorkerInbound>) => {
 
     case 'set-scopes': {
       scopeSettings = msg.scopes;
+      break;
+    }
+
+    case 'display-hdr': {
+      displayHdr = msg.hdr;
+      renderer?.setDisplayHdr(displayHdr);
       break;
     }
 

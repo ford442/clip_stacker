@@ -11,6 +11,7 @@ import {
 import { getClipDuration } from '../timeline/clipTiming';
 import { LazyBoundary, lazyNamed } from './LazyBoundary';
 import { AutoCutPanel } from './AutoCutPanel';
+import { SequencesPanel } from './SequencesPanel';
 import { ProxyBadge, ProxyPlaybackToggle } from './ProxyBadge';
 import { useStore } from 'zustand';
 import type { IntercutGeneratorConfig } from '../ffmpeg/intercutGenerator';
@@ -245,6 +246,7 @@ function ClipLibraryImpl({ onToggleVariant, onDelete, onGenerateIntercut, onBatc
         </button>
       )}
       <AutoCutPanel />
+      <SequencesPanel />
       <ProxyPlaybackToggle />
       {videoCount > 0 && (
         <div className="clip-batch">

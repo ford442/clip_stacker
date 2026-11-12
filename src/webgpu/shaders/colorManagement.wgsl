@@ -95,7 +95,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   let mode = u.mode;
 
   // 0 — encoded Rec.709 → scene-linear Rec.2020
-  if (mode < 0.5) {
+  // 8 — encoded Display P3 → scene-linear Rec.2020 (sources imported as P3)
+  // Same sRGB EOTF; the matrix row uniforms carry the primaries.
+  if (mode < 0.5 || (mode > 7.5 && mode < 8.5)) {
     let linear = srgbToLinear(max(src.rgb, vec3<f32>(0.0)));
     let rec2020 = applyMatrix(u.row0, u.row1, u.row2, linear);
     return vec4<f32>(rec2020, src.a);
@@ -119,7 +121,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(nitsToPq(nits), src.a);
   }
 
-  // 4 — copy display-referred codes (also the HDR10 rgba8 quantize)
+  // 4 — copy display-referred codes
   if (mode < 4.5) {
     return src;
   }
@@ -132,7 +134,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
   }
 
   // 6 — PQ codes → extended sRGB (float canvas only)
-  if (mode < 6.5) {
+  // 9 — PQ codes → extended Display P3 (float canvas only)
+  // 1.0 = SDR white = scene-linear reference white; highlights go above it.
+  if ((mode > 5.5 && mode < 6.5) || mode > 8.5) {
     let scene = pqToScene(src.rgb);
     let lin = applyMatrix(u.row0, u.row1, u.row2, max(scene, vec3<f32>(0.0)));
     return vec4<f32>(linearToSrgb(max(lin, vec3<f32>(0.0))), src.a);

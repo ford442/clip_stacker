@@ -13,7 +13,7 @@ import { remoteConcatBlockers } from "../export/renderEligibility";
 import { normalizeError } from "../ffmpeg/ffmpegCommon";
 import { getMemoryStatus } from "../utils/memory";
 
-// The export pipeline (encoders, FFmpeg, mp4box demux, the GPU export
+// The export pipeline (encoders, FFmpeg, the Mediabunny demux / mux, the GPU export
 // compositor) is most of the app's code and none of it is needed to edit, so
 // it loads on the first render / FFmpeg action instead of with the editor.
 // Repeat calls resolve from the module cache.

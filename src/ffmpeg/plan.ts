@@ -29,6 +29,7 @@ import { resolveLayerKey } from "../composition/overlayKey";
 import { pictureTransformPlanFields } from "../export/renderEligibility";
 import { clipHasPictureTransform } from "../composition/animatedLayout";
 import { selectEncoderPath } from "../export/encoderPath";
+import { isSequenceClip } from "../timeline/sequenceResolve";
 import type { OutputColor } from "../finishing/colorManagement";
 import {
   clipNeedsEffects,
@@ -54,7 +55,7 @@ export interface RenderPlanContext {
   mediaRecorderAvailable?: boolean;
   /** Export setting "Force re-encode". */
   forceReencode?: boolean;
-  /** Requested output colour (HDR10 + text is refused, see `hdr10TextRefusal`). */
+  /** Requested output colour (`ColorManagementSettings.outputColor`). */
   outputColor?: OutputColor;
   captionMode?: 'none' | 'burn' | 'soft';
 }
@@ -144,6 +145,16 @@ function computeRenderPlanPath(
   textOverlays: TextOverlay[] = [],
   settings: ExportSettings = DEFAULT_EXPORT_SETTINGS,
 ): RenderPlan {
+  // A nested sequence is composited from its own plan — always a re-encode.
+  if (clips.some(isSequenceClip)) {
+    return {
+      path: "pip",
+      reason: "Nested sequence detected",
+      willReencode: true,
+      description: "Re-encoding with nested-sequence compositing (re-encode)",
+    };
+  }
+
   // Check for PiP clips
   const hasPipClips = clips.some((c) => (c.layerIndex ?? 0) > 0);
   if (hasPipClips) {

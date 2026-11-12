@@ -132,7 +132,6 @@ describe('webgpu/transitions smoke render', () => {
     const uniformData = new Float32Array(TRANSITION_UNIFORM_FLOATS);
     renderTransitionPass(
       gpu.device,
-      gpu.context,
       cache,
       gpu.sampler,
       gpu.uniformBuffer,
@@ -143,6 +142,7 @@ describe('webgpu/transitions smoke render', () => {
       fakeRenderParams(progress, custom),
       1920,
       1080,
+      { view: gpu.context.getCurrentTexture().createView() },
     );
     return { gpu, cache };
   }
@@ -205,7 +205,6 @@ describe('webgpu/transitions smoke render', () => {
     const uniformData = new Float32Array(TRANSITION_UNIFORM_FLOATS);
     renderTransitionPass(
       gpu.device,
-      gpu.context,
       cache,
       gpu.sampler,
       gpu.uniformBuffer,
@@ -221,6 +220,7 @@ describe('webgpu/transitions smoke render', () => {
       },
       1920,
       1080,
+      { view: gpu.context.getCurrentTexture().createView() },
     );
     const u = gpu.writtenUniforms[0]!;
     // Float32Array storage, so compare at f32 precision.

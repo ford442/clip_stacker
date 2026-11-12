@@ -20,7 +20,7 @@ export interface ProxyBuildDeps {
 const defaultDeps = (): ProxyBuildDeps => ({
   store: getMediaStore(),
   fingerprint: fingerprintMedia,
-  // The encoder (decoder, mp4box, muxer) loads with the first proxy build.
+  // The encoder (decoder, Mediabunny demux + muxer) loads with the first proxy build.
   encode: async (source, options) =>
     (await import('../media/proxyEncoder')).encodeProxy(source, options),
 });

@@ -4,7 +4,7 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 
 ## Features
 
-- Upload and keep multiple clips in project state (MP4/MOV video, WAV/MP3 audio)
+- Upload and keep multiple clips in project state (MP4/MOV/WebM/MKV video, WAV/MP3 audio)
 - Auto-select the newest uploaded clip while retaining older clips
 - Trim each clip with start/end offsets
 - Reorder clips in a timeline editor
@@ -12,6 +12,8 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - **Picture-in-Picture overlays**: select a video clip and hit **Use as overlay (PiP)** in the Inspector to composite it over the base video in any corner; **Use as base layer** puts it back. Size, position and opacity stay editable under *Picture-in-Picture layout (advanced)*
 - **Channel logos / bugs**: **Use as channel logo** snaps the clip to a corner at ~10% of the canvas width, locked to the source's own aspect ratio, muted, and keyed on the source alpha — so a non-square mark composites without a black box on both the GPU export and the FFmpeg fallback. Transparency mode is editable under *Picture-in-Picture layout (advanced)*: source alpha (straight or premultiplied), chroma key, luma key, or an opaque rectangle. The mask has to exist in the file: use PNG/WebP for stills and WebM (VP8/VP9 + alpha) for motion — H.264 MP4 carries no alpha, so key those with chroma/luma instead. Chroma and luma keying run in the compositor itself (`src/composition/overlayKey.ts` — one `keyPixel()` shared by the WGSL shader, the Canvas2D path, and the unit tests), so the Inspector's sliders update the live preview and the default WebGPU + WebCodecs export matches it. FFmpeg's `chromakey` / `lumakey` stay as the Force-FFmpeg fallback and are tuned to the same maths, so the two paths look alike rather than merely similar. The render-plan line under the toolbar says which one ran
 - **News tickers / lower thirds**: use a scrolling text overlay (`scrolling` + `scrollSpeed`), which matches between preview and FFmpeg `drawtext`. Only bake a designed motion lower third to video (as WebM + alpha, placed as a full-width bottom overlay) when `drawtext` cannot express it
+- **Nested sequences (compound clips)**: in the Library's **▣ Sequences** panel, tick clips and titles and **Nest selected** to turn them into one clip placed where they were; double-click it on the timeline to edit inside (a breadcrumb above the timeline leads back), and **Place** a sequence on another timeline. Sequences nest up to 8 deep, a sequence can never contain itself, and the preview and GPU export render them live from their contents — no intermediate file. Rendering one needs WebGPU + WebCodecs (Force FFmpeg refuses)
+- **Wide colour and HDR10 export**: Inspector → Export → *Output color* picks Rec.709 SDR, Display P3 or HDR10 (and an optional scene-linear Rec.2020 working space). HDR10 is true 10-bit: the GPU compositor works in float and packs BT.2020 PQ I420P10 frames for an HEVC Main10 / AV1 10-bit encoder; titles and captions sit at a configurable graphics white (203 nits by default). On an HDR display the preview shows the highlights; on an SDR display it shows a 100-nit downmap. A clip's colour space is read from the file and can be overridden under the Inspector's *Source* line. A P3 / HDR10 render needs WebGPU + WebCodecs (and, for HDR10, a 10-bit encoder): it refuses rather than writing a Rec.709 file, unless Force FFmpeg is on. See [`docs/color-pipeline.md`](docs/color-pipeline.md). Add `?gpu_profile` to the URL for per-pass GPU timings under the Effects Stack and in Copy Debug
 - **Captions / subtitles**: a time-coded caption track with its own timeline lane. Import `.srt` / `.ass`, edit text and timings in the Inspector's *Captions* tab, drag a chip's edges to retime, press <kbd>C</kbd> to add a cue at the playhead, and export burned-in, as a toggle-able soft subtitle track, or as a sidecar `.srt` — see [Captions and subtitles](#captions-and-subtitles)
 - **Resizable workspace**: drag the splitters between Library, Preview and Inspector, and the divider above the timeline (or focus one and use the arrow keys; double-click resets it). Collapse the side panels, pick S / M / L control density, fill the window or centre it, and **Reset layout** from the header. The layout is remembered per browser
 - Merge timeline to MP4 or edit-friendly ProRes MOV via FFmpeg WebAssembly; MOV supports ProRes LT, 422 and 422 HQ profiles
@@ -82,7 +84,7 @@ The Contabo job API (`POST/GET /webhook/clip-stacker/jobs`, `POST .../jobs/{id}/
 
 - React 18 + TypeScript
 - Vite 8 (bundler and dev server; Node `^20.19.0 || >=22.12.0`)
-- FFmpeg WebAssembly (`@ffmpeg/ffmpeg`)
+- FFmpeg WebAssembly (`@ffmpeg/core`, driven directly from one dedicated worker)
 - WebGPU preview compositor (shared device) + **gpu-chores** for import histogram / library thumbs (CPU/Worker fallback; never a second `GPUDevice`)
 
 ## Local Development
@@ -139,7 +141,7 @@ For Apache deployments, `public/.htaccess` is copied into `dist/` during the bui
 
 The app ships with a CSP that allows:
 
-- `'wasm-unsafe-eval'`, `script-src blob:`, and `worker-src blob:` for FFmpeg WebAssembly (dynamic core imports via blob URLs)
+- `'wasm-unsafe-eval'`, `script-src blob:`, and `worker-src blob:` for FFmpeg WebAssembly (the self-hosted core loads by same-origin URL; blob URLs carry only a CDN fallback copy)
 - `blob:` / `data:` / `https:` for media previews, renders, and remote storage downloads
 - `https:` / `wss:` for user-configurable storage endpoints, CDN fallbacks, and HuggingFace RIFE
 - Google Drive import only: `accounts.google.com/gsi/client` and `apis.google.com` scripts, `accounts.google.com/gsi/style`, and `accounts.google.com/gsi/`, `docs.google.com`, `content.googleapis.com` frames
@@ -150,7 +152,7 @@ The policy lives only in `src/utils/csp.ts`: `cspMetaPlugin` writes the `<meta>`
 
 ### Self-hosted FFmpeg cores
 
-Both FFmpeg cores are served from the app itself — `public/ffmpeg-core/` (single-threaded) and `public/ffmpeg-core-mt/` (multi-threaded, used when the page is cross-origin isolated) — with jsDelivr/unpkg only as fallbacks. They are generated (and gitignored — 32 MB each would otherwise grow history on every bump): `predev` / `prebuild` copy them verbatim from the `@ffmpeg/core` / `@ffmpeg/core-mt` devDependencies (`npm run sync:ffmpeg-core` does it by hand). After bumping either package, update `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts`; `npm run sync:ffmpeg-core -- --check` (and the build) fails when they disagree.
+Both FFmpeg cores are served from the app itself — `public/ffmpeg-core/` (single-threaded) and `public/ffmpeg-core-mt/` (multi-threaded, used when the page is cross-origin isolated) — with jsDelivr/unpkg only as fallbacks. The self-hosted files are checked with a `HEAD` request (an HTML answer counts as missing) and then loaded by URL, so the wasm compiles while it streams and the browser can cache the compiled code; a CDN copy is downloaded into blob URLs, because the CSP allows `blob:` scripts but not the CDN hosts. The js, the wasm and (multi-threaded) the pthread worker always come from one source, so they are one build. They are generated (and gitignored — 32 MB each would otherwise grow history on every bump): `predev` / `prebuild` copy them verbatim from the `@ffmpeg/core` / `@ffmpeg/core-mt` devDependencies (`npm run sync:ffmpeg-core` does it by hand). After bumping either package, update `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts`; `npm run sync:ffmpeg-core -- --check` (and the build) fails when they disagree.
 
 ### Storage backend hardening
 

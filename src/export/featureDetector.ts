@@ -57,7 +57,8 @@ export async function detectCapabilities(): Promise<BrowserCapabilities> {
 
   let webgpu: boolean;
   try {
-    const probe = await probeWebGpu();
+    // Adapter only: main holds no GPUDevice until an export or text fill needs one.
+    const probe = await probeWebGpu({ device: false });
     publishWebGpuProbe('main', probe);
     webgpu = probe.ok;
   } catch {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import type { ClipGroup, ClipTransition, TextOverlay } from "../types";
+import { PROJECT_SCHEMA_VERSION, type ClipGroup, type ClipTransition, type TextOverlay } from "../types";
 import { createProjectSnapshot, serializeProject } from "./index";
 import { createTestClip } from "./project.test.helpers";
 
@@ -146,7 +146,7 @@ describe("project - serializeProject", () => {
     clip.height = 400 / 720;
     clip.opacity = 0.8;
     const project = serializeProject(createProjectSnapshot({ clips: [clip] }));
-    expect(project.schemaVersion).toBe(2);
+    expect(project.schemaVersion).toBe(PROJECT_SCHEMA_VERSION);
     expect(project.clips[0].layerIndex).toBe(1);
     expect(project.clips[0].x).toBeCloseTo(100 / 1280);
     expect(project.clips[0].y).toBeCloseTo(200 / 720);

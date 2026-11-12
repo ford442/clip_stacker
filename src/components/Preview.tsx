@@ -23,6 +23,7 @@ import type { Clip, TextOverlay } from '../types';
 import { sanitizeFilename } from '../utils/filename';
 import { applyFinishingPreviewView } from '../finishing/finishingStack';
 import { EffectsStack } from './EffectsStack';
+import { GpuProfileOverlay } from './GpuProfileOverlay';
 import { TimelineCompositorPreview } from './TimelineCompositorPreview';
 import { renderJobStore } from '../store/renderJobStore';
 
@@ -127,6 +128,7 @@ function PreviewImpl({
           onPreviewDragStart={onPreviewDragStart}
         />
         <EffectsStack />
+        <GpuProfileOverlay />
       </section>
     );
   }

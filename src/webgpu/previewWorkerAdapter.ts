@@ -5,6 +5,7 @@ import type {
   ExportSettings,
   TextOverlay,
 } from '../types';
+import { withNestedInstances } from '../composition/nestedSequences';
 import { resolveTimelineFinishing } from '../finishing/finishing';
 import type {
   PreviewCompositionPlan,
@@ -70,8 +71,13 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
     const runtime = await PreviewWorkerRuntime.create(canvas);
     if (!runtime) return null;
     const adapter = new PreviewWorkerAdapter(runtime, new ClipMediaPool(), proxyLookup);
-    adapter.sendClipMedia(clips);
+    adapter.sendClipMedia(withNestedInstances(clips));
     return adapter;
+  }
+
+  /** `(dynamic-range: high)` on main, forwarded to the worker's engine. */
+  setDisplayHdr(hdr: boolean): void {
+    this.runtime.setDisplayHdr(hdr);
   }
 
   /** Scope bins for the composed preview frame (no-op when both toggles are off). */
@@ -116,6 +122,8 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
     globalTime: number,
     options?: TimelineRenderOptions,
   ): Promise<PreviewCompositionPlan> {
+    // Layers inside nested sequences carry namespaced ids (`withNestedInstances`).
+    const layerClips = withNestedInstances(clips);
     const captureOne = async (req: FrameRequest): Promise<CapturedFrame | null> => {
       if (options?.isCancelled?.()) return null;
 
@@ -137,7 +145,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         };
       }
 
-      const clip = clips.find((c) => c.id === req.clipId);
+      const clip = layerClips.find((c) => c.id === req.clipId);
       if (!clip) return null;
 
       if (clip.stillImage) {
@@ -219,6 +227,7 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
     );
 
     previewMetrics.setFrameSources(this.runtime.frameSources);
+    if (this.runtime.gpuProfile) previewMetrics.setGpuProfile(this.runtime.gpuProfile);
 
     if (!plan) {
       // Render was cancelled — throw so the caller's catch block handles it.
@@ -230,14 +239,15 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
   }
 
   syncClips(clips: Clip[]): void {
-    const ids = new Set(clips.map((c) => c.id));
+    const all = withNestedInstances(clips);
+    const ids = new Set(all.map((c) => c.id));
     this.pool.pruneExcept(ids);
     for (const id of [...this.sentMedia.keys()]) {
       if (!ids.has(id)) this.sentMedia.delete(id);
     }
-    this.sendClipMedia(clips);
+    this.sendClipMedia(all);
     previewMetrics.setDecoderCount(this.pool.size, this.pool.limit);
-    this.runtime.syncClips(clips);
+    this.runtime.syncClips(all);
   }
 
   pauseDecoders(): void {

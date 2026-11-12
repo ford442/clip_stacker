@@ -96,6 +96,8 @@ beforeEach(() => {
     renderLayers,
     renderTransition,
     clearToBlack,
+    setColorManagement: vi.fn(),
+    endFrameProfile: vi.fn(),
     destroy: vi.fn(),
   } as unknown as PreviewEngine);
 

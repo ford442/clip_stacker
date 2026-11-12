@@ -55,7 +55,7 @@ Shared state worth knowing:
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
 - `npm run deploy`: build, then upload `dist/` using `deploy.py`.
-- `npm run sync:ffmpeg-core`: copy `@ffmpeg/core` / `@ffmpeg/core-mt` ESM dist into `public/ffmpeg-core{,-mt}/` (the self-hosted cores; CDNs are fallbacks). `-- --check` exits non-zero if `public/` or `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts` drifts from `node_modules`.
+- `npm run sync:ffmpeg-core`: copy `@ffmpeg/core` / `@ffmpeg/core-mt` ESM dist into `public/ffmpeg-core{,-mt}/` (the self-hosted cores; CDNs are fallbacks). `ffmpeg/coreSources.ts` HEAD-probes them and passes them to the worker by URL (CDN copies as blob URLs), always js + wasm (+ pthread worker) from one source; `ffmpeg.worker.ts` drives the Emscripten core itself (`FfmpegCoreHost`, no `@ffmpeg/ffmpeg` worker inside it). Bytes passed to `writeFile` are transferred (detached) — copy anything you keep. `-- --check` exits non-zero if `public/` or `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts` drifts from `node_modules`.
 - `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, video stabilize, media engine incl. time stretch, and its glue-free bus-FX build `media_engine_fx.wasm`) via the shared CMake toolchain into `public/wasm/`. Requires Emscripten (`emcmake` / `emcc`); use the SDK pinned in `native/emsdk-version` to reproduce the committed bytes.
 - `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF), written to `native/build-debug/wasm/` (never over `public/wasm`). The dev/preview servers serve it at `/wasm-debug/`; open the app with `?wasm_debug`.
 - `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan + float-cast-overflow). No Emscripten needed. `npm run test:native:pr` runs the `pr` label only (what PR CI runs; the `nightly` label holds the long battery). `npm run fuzz:native` runs the libFuzzer FX target (clang).
@@ -142,7 +142,8 @@ Playwright runs against `npm run preview`, on Chromium with WebGPU on SwiftShade
 
 - `buildProject(spec)` builds fixtures from the demo clips. `loadProject(json)` loads a saved project.
 - `renderPreviewFrame(t)` draws through the timeline compositor fed by WebCodecs cursors, the preview worker's happy path. The `<video>` fallback renders black under SwiftShader.
-- `renderPqFrame(t)` returns the PQ readback an HDR10 export encodes.
+- `renderPqFrame(t)` returns the PQ readback an HDR10 export encodes; `hdr10FrameStats(t)` packs that frame exactly as export does (`captureHdr10Frame`) and returns its luma statistics (format, bit depth, distinct / min / max Y codes, colour tags).
+- `decodeFrameStats(blob, t)` is the same statistics for a decoded file frame; `renderP3Chart(outputColor)` feeds a Display P3 test chart (`colorProbes.ts`) through the compositor and reads it back in P3.
 - `exportProject()` runs the real Render action, bound by `App` through `app/harnessBindings.ts`, and forces a re-encode by default.
 - `decodeFrame(blob, t)` decodes one frame of a file.
 - `compare` returns PSNR + SSIM (`imageMetrics.ts`).
@@ -157,11 +158,12 @@ Sample times sit on the 30 fps export grid. A new finishing case needs settings 
 
 HDR10 compares the PQ readback, not the preview: the preview is the SDR monitor view. The export may refuse where no 10-bit encoder exists, as in CI's Chromium.
 
+**Colour** (`e2e/color.spec.ts`): an HDR10 ramp (a custom transition drawing `uv.x^2.6`, +3 EV, 1280x720) must pack to I420P10 / BT.2020 PQ / limited range with > 600 distinct Y codes (it lands 638; an 8-bit path caps at ~250), and the file keeps them where a 10-bit encoder exists; the P3 chart keeps the P3 primaries where Rec.709 clips them; a Display P3 export's frame 0 is not black.
+
 **Smoke flows** (`e2e/smoke.spec.ts`) go through the real UI: load demo clips → split → ripple delete → undo → render; crash → reload → recovery offer.
 
 **Known bugs** are pinned with `test.fail`, so they flip to an unexpected pass when fixed:
 
-- frame 0 of a managed-colour (P3 / HDR10) export is black;
 - recovering an autosave drops embedded media, because the restore `fetch()`es `data:` URLs that the production `connect-src` blocks.
 
 ## Demo clips, Export-tab sections, encoder badge
@@ -548,17 +550,97 @@ before `-i` with `-c copy` snaps to the previous keyframe.
 for canvas → WebCodecs → FFmpeg. `calculateRenderPlan` (the estimate) and
 `hybridMergeClips` (the router) both call it; the estimate leaves the runtime
 probes undefined. It returns `reasons` (`RenderPlan.encoderReasons`, Copy
-Debug) and a `refusal` when the file would be wrong (HDR10 with text
-overlays or burned-in captions — the PQ readback precedes the 2D text pass).
-`encoderPath.test.ts` table-tests that the estimate and the router agree; add
-a row there for any new routing rule.
+Debug) and a `refusal` when the file would be wrong. Display P3 and HDR10
+outputs never *fall* to FFmpeg (`wideOutputFfmpegRefusal`): without WebGPU,
+or with a RIFE clip, they refuse; they always re-encode (no stream copy);
+and a failed H.264 probe does not demote them, because it does not speak for
+the HEVC / AV1 10-bit or tagged-P3 encoder `resolveEncoderCodec` picks when
+the render starts (and refuses precisely). Force FFmpeg and the canvas
+renderer still write Rec.709 (`wideColor: 'ignored'`). HDR10 titles and
+captions are no longer refused: they composite in the working space (see
+*Color pipeline*). `encoderPath.test.ts` table-tests that the estimate and
+the router agree; add a row there for any new routing rule.
+
+## Nested sequences (compound clips)
+
+A sequence is a timeline of its own — lanes, clips, A/B groups, base-lane
+transitions, titles — that a parent places as one clip. The main timeline is
+the implicit root sequence: its body is the editor's top-level fields, so a
+project without sequences is exactly what it was. Captions, finishing,
+colour management, master audio and the master bus stay root-only.
+
+- **Types** (`types/sequence.ts`, `types/clip.ts`): `Sequence` /
+  `SequenceBody`; a sequence clip is a `Clip` with
+  `source: { type: 'sequence', sequenceId }`, an empty placeholder `File`
+  and no `objectUrl`. `Clip.nested` (`NestedSequenceContent`: the inner
+  timeline clips, transitions, visible titles, lanes, duration) is
+  **derived** — stamped by `selectTimelineClips` through
+  `resolveNestedSequences` (`composition/nestedSequences.ts`), never
+  serialized. Unknown, cyclic or deeper-than-8 references stamp nothing.
+- **Editor state** (`timeline/sequenceModel.ts`, pure; store actions in
+  `store/editorSequences.ts`): `sequences`, `sequencePath` (open sequences,
+  outermost first) and `rootStash`. Opening a sequence swaps its body into
+  the top-level fields, so every existing edit, hook and undo path edits it
+  unchanged; while open, its `sequences` entry is stale and
+  `committedSequences` / `toCommitted` give the real one. Exit (and
+  `exitToRoot`) re-sync every sequence clip's length bottom-up
+  (`syncSequenceDurations`). Nest / place / create / rename / delete are one
+  undo step; enter / exit push none. `EditSnapshot` carries the three
+  fields, and URL revocation scans every body (`allSequenceClips`).
+- **Rules**: `NESTED_SEQUENCE_MAX_DEPTH` = 8; `sequenceWouldCycle` refuses a
+  placement whose sequence reaches the host. Nest needs a contiguous run on
+  the main lane (overlays / titles may be anywhere) and moves A/B groups
+  whole. A sequence clip cannot take speed, reverse, loops, keys, blend,
+  stabilization, proxies or a picture transform (`sanitizeSequenceClip`,
+  applied by `setClips` / `commitEdit` / load); fades, opacity, volume,
+  trim and the PiP rect apply.
+- **Preview / GPU export**: one recursive plan.
+  `buildPreviewCompositionPlan` plans the sequence clip like any clip, then
+  `expandNestedClipLayers` (`previewCompositionNested.ts`) replaces it with
+  the nested plan at its `sourceTime` (= `parentTime − start + trimStart`):
+  ids namespaced `parent>inner` (`nestedInstanceId` — never `::`, the
+  decoder-cursor key separator), z inside the clip's slot, opacity
+  multiplied, rects and title positions / sizes mapped into its rect, and
+  titles animated on the nested clock (`PreviewTextLayer.time`). Compositors
+  resolve layer ids through `withNestedInstances(clips)`, so each instance
+  has its own media element / decoder cursor under the usual cap of 8.
+  A transition touching a sequence clip renders as a dissolve.
+- **Audio**: `buildAudioSchedule` recurses (`scheduleNested.ts`): inner
+  entries are cut to the clip's trim window, shifted, namespaced, scaled by
+  its volume and routed to the lane that holds it. Inner lane mute applies;
+  inner lane FX / ducks do not (the parent lane's bus does). The sequence
+  clip's own audio fades and automation are not applied yet.
+- **Export routing**: nested sequences render only on the GPU compositor.
+  `selectEncoderPath` never stream-copies them and refuses
+  (`nestedSequenceFfmpegRefusal`) on Force FFmpeg, no WebGPU or no
+  WebCodecs; a GPU failure refuses instead of falling back. There is no
+  FFmpeg flattening and no intermediate file. Canvas and remote concat list
+  them as blockers. Audio always premixes (`timelineNeedsAudioPremix`: a
+  sequence clip has no file to mux). Export gates that ask about titles use
+  `effectiveTextOverlays`.
+- **Persistence**: `Project.sequences` (`SerializedSequence`) claims clips by
+  id from the shared `clips` pool, so media embed / upload / autosave treat
+  them like any clip (`projectSnapshotClips`); a sequence clip saves only
+  `source`. `PROJECT_SCHEMA_VERSION` 3 (layout migration still keys on
+  `NORMALIZED_LAYOUT_SCHEMA_VERSION`); a client that predates sequences
+  ignores the field. On load (`applyProjectData`), malformed sequences are
+  dropped, a sequence clip whose sequence is missing is skipped, and
+  durations re-sync. Saves are always the whole project, even from inside a
+  sequence (`selectProjectSnapshotEditorFields` reads the root from
+  `rootStash`); Render exports the open timeline.
+- **UI**: Library **▣ Sequences** (`SequencesPanel`: nest the checked clips /
+  titles, New sequence, Open / Place / Rename / Delete), double-click a
+  sequence clip to open it, `SequenceBreadcrumb` above the timeline (Main
+  timeline › … › Exit to parent). Goldens: `nested-sequence`, `nested-pip`.
+- **Not built**: captions / finishing per sequence, nested lane FX, a
+  picture transform or keys on a sequence clip, cached renders.
 
 ## Persistence (project snapshot, browser storage)
 
 - `selectProjectSnapshot(editor, settings)` (`project/snapshot.ts`) is
   the one definition of what a project contains (clips, tracks, transitions,
-  text, captions, master audio + markers, master bus, finishing, colour
-  management). Manual save, remote save, autosave and the autosave hash all
+  text, captions, master audio + markers, master bus, nested sequences,
+  finishing, colour management). Manual save, remote save, autosave and the autosave hash all
   serialize it with `serializeProject(snapshot, options)`, and recovery
   restores every field. Add a project field to the snapshot, not to a call
   site; `projectSnapshotHasContent` decides whether there is anything to keep.
@@ -631,6 +713,11 @@ coerces and drops malformed cues rather than throwing.
 ## Color pipeline
 
 Default pixels stay Rec.709 SDR. Managed mode (Display P3, HDR10, or scene-linear Rec.2020) is `src/finishing/colorManagement.ts` plus the finishing-chain path in `src/webgpu/finishingPassChain.ts` (the managed passes are `ManagedFinishingChain` in `managedFinishing.ts`). Matrices, pass order (output transform, then display-referred grain), and the PQ-file vs SDR-preview split are in `docs/color-pipeline.md`. Force FFmpeg / canvas export sets `RenderPlan.wideColor: 'ignored'` and does not relabel the file. `shader-f16` is optional and never required.
+
+- **HDR10 export is true 10-bit.** The export compositor's canvas is `rgba16float` (`planCanvasSurface`, `surface: 'offscreen'`), so layers composite in float before the PQ output transform. `YuvPackPass` (`shaders/yuvPack.wgsl`; CPU reference `finishing/yuvPack.ts`) packs the PQ texture into I420P10 — BT.2020 NCL, limited range (Y 64–940, C 64–960), chroma siting 0 ([1 2 1]/4 horizontally, a two-row mean vertically) — in a storage buffer; `Hdr10FrameReader` reads it through a three-slot `ReadbackRing` (pipelined `mapAsync`) into `new VideoFrame(planes, { format: 'I420P10', colorSpace: HDR10 })`. Buffers and bind groups are made once per frame size: nothing is allocated per frame (`hdr10FrameReader.test.ts` counts). The pack also has an 8-bit BT.709 `i420-bt709` mode, tested but not yet used by the SDR export.
+- **HDR10 titles / captions** are drawn on the 2D text canvas and composited by `GraphicsOverlayPass` onto the scene-linear working texture before the output transform, at `ColorManagementSettings.graphicsWhiteNits` (default 203, 80–1000; Inspector → Output color). `finishing/hdrGraphics.ts` is the CPU reference.
+- **HDR preview.** `useDisplayHdr` (`(dynamic-range: high)`, resolved on main and posted to the worker as `display-hdr`) → `PreviewEngine.setDisplayHdr`: an HDR10 project on an HDR display previews on an `rgba16float` / `extended` / Display P3 canvas (`pq-to-extended`); an SDR display keeps the `pq-to-sdr` downmap. A format change rebuilds the device resources through the same path device recovery uses.
+- **Sources.** `importExternalTexture` takes `colorSpace` (`importColorSpaceFor`: Display P3 in managed mode, so P3 footage is not clipped to sRGB first). A clip's tags come from the file (`readVideoColorSpace`); `Clip.colorSpaceOverride` (`media/sourceColorSpace.ts`: Rec.709, sRGB, Display P3, Rec.2020 PQ / HLG) replaces them in the `VideoDecoderConfig`, which wins over in-band VUI, for the preview worker and GPU export alike. The Inspector shows "Source: Rec.2020 PQ (from file)" with an *Interpret as* select. The override is serialized; WebM-alpha tracks (Mediabunny's own decoder) and the `<video>` fallback ignore it.
 
 ## Overlay keying (chroma / luma)
 
@@ -975,9 +1062,19 @@ layer carries no warp fields at all.
   `ffmpeg`, and `pictureTransformGaps` lists what FFmpeg loses — notably the
   stabilization warp on a rotated clip (no libvidstab). The MediaRecorder
   canvas encoder is demoted for transformed clips rather than dropping them.
-- **Not here.** Morph (RIFE) transition segments are drawn unwarped. Nested
-  sequences, corner-pin and crop should add rows to this warp, not a new
+- **Not here.** Morph (RIFE) transition segments are drawn unwarped. A
+  nested sequence clip takes no picture transform yet (`sanitizeSequenceClip`
+  strips it); it, corner-pin and crop should add rows to this warp, not a new
   layout language.
+
+## GPU device hygiene and profiling
+
+- **Features.** `requestedOptionalFeatures` asks only for what a code path reads: `shader-f16`, plus `timestamp-query` under `?gpu_profile`. Nothing else is requested.
+- **Fallback adapters** (SwiftShader / WARP, `adapter.info.isFallbackAdapter`) are reported in the probe and Copy Debug and refused for the on-screen preview (`assertPreviewAdapter` → `FallbackAdapterError`) unless `?test_harness` (CI runs on SwiftShader). Export may use one.
+- **Device loss** recovers with backoff 250 ms → 500 ms → 1 s → 2 s → 4 s and gives up after 5 attempts (`gpu-recovery-failed`, "WebGPU device lost repeatedly…"); a device that lived ≥ 30 s resets the count.
+- **Main-thread probe** stops at `requestAdapter` (`probeWebGpu({ device: false })`); the adapter is reused by the first `acquireGpuContext`, and the device is created by the first export or text fill. The preview worker probes after main's `configure` message (profiling + fallback flags).
+- `captureStillFrame` caches one `VideoFrame` per `<img>` (cloned per call, redrawn when `src` changes, released by `ClipMediaPool.remove`); `textFill` configures through `canvasConfiguration()` like every canvas.
+- **`?gpu_profile`** (`webgpu/gpuProfiler.ts`): GPU time per finishing pass, compositor, transition and export readback, from timestamp queries written by empty compute passes (no pass class knows about it), resolved through a three-slot readback ring (a busy frame is skipped, never stalled) into a per-label moving average. One profiler per realm; the worker posts its snapshot in `render-complete`. Shown in `previewMetrics.gpuPassMs`, Copy Debug (*GPU profile*) and `GpuProfileOverlay` under the Effects Stack. Chrome quantizes timestamps to 100 µs.
 
 ## gpu-chores (import / library pixel work)
 
@@ -1015,9 +1112,10 @@ never main's `onGpuDeviceLost`.
 
 ### Decoder-backed preview (`src/webgpu/`)
 
-- `previewDecoderSource.ts` — worker-side `PreviewDecoderSource`. Main transfers each clip's `File` once (`clip-media`, structured-cloneable by reference — no byte copy); the worker opens one forward-only `DecoderFrameCursor` per **active** layer (`clipId::role::mediaObjectUrl`), exactly like GPU export.
-- `src/media/decoderCursorPool.ts` — the shared cursor lifecycle: backward jump (> 1/60 s) closes and reopens from the previous sync sample, an exhausted cursor is freed immediately, and live cursors are hard-capped at `DEFAULT_MAX_DECODER_CURSORS` (8), matching `ClipMediaPool`. **Both** `TimelineDecoderFrameProvider` (export) and `PreviewDecoderSource` (preview) use it, so the two paths cannot drift apart again.
-- Per-layer fallback is per-layer, not global: stills, non-video clips, RIFE morph segments (their own blob URL) and anything mp4box cannot demux (WebM/alpha) come back in `need-frames` and are captured from the `<video>` pool as before. A render whose `fallback` list is empty never round-trips to main at all.
+- `previewDecoderSource.ts` — worker-side `PreviewDecoderSource`. Main transfers each clip's `File` once (`clip-media`, structured-cloneable by reference — no byte copy); the worker opens one forward-only `DecoderFrameCursor` per **active** layer (`clipId::role::mediaObjectUrl`), exactly like GPU export, except that preview cursors (only those) configure `optimizeForLatency`.
+- `src/export/container/demux.ts` — the one demuxer (Mediabunny `Input` + `BlobSource`: MP4, MOV, WebM, MKV) behind every `ClipFrameDecoder` (export, preview, proxies, stabilization). Opening reads the container index and the packets decoded, never the whole file; the index is cached per Blob (`WeakMap`, evicted on a failed open) and the accepted acceleration rung per codec + coded size. Tagged files put `colorSpace` in the decoder config (`readVideoColorSpace` exposes the tags). WebM VP8 / VP9 with alpha decode through Mediabunny's `VideoSampleSink` (a second decoder for the alpha side data, merged into I420A frames; software rung first).
+- `src/media/decoderCursorPool.ts` — the shared cursor lifecycle: backward jump (> 1/60 s) closes and reopens the cursor **at the requested time** (`cursorStartAt` → `startAt`: decode from the previous key frame, same frames as decoding from the trim start), an exhausted cursor is freed immediately, and live cursors are hard-capped at `DEFAULT_MAX_DECODER_CURSORS` (8), matching `ClipMediaPool`. Forward jumps keep decoding through. **Both** `TimelineDecoderFrameProvider` (export) and `PreviewDecoderSource` (preview) use it, so the two paths cannot drift apart again.
+- Per-layer fallback is per-layer, not global: stills, non-video clips, RIFE morph segments (their own blob URL) and anything the facade cannot open (an unknown container, a codec no decoder accepts) come back in `need-frames` and are captured from the `<video>` pool as before. WebM / alpha layers are decoder-served. A render whose `fallback` list is empty never round-trips to main at all.
 - `render-complete` carries `frameSources: { decoder, element }`, mirrored into `previewMetrics`. `element > 0` during scrub means some layer still needs `HTMLVideoElement.currentTime`.
 - Feature detection + escape hatch: `previewDecodeFlags.ts`. `?legacy_preview_video` forces the old path (resolved on **main** and passed in `init` — a worker's `location.search` is the worker script's URL, not the page's).
 
@@ -1078,8 +1176,10 @@ its frames in a `finally` (`encodeAndClose`) and waits on the codec queue with
 `waitForQueueBelow` (`src/export/codecQueue.ts`), which rejects when the codec
 closes or stalls instead of hanging.
 
-MP4 muxing goes through `Mp4Writer` (`src/export/container/`), the only module
-that imports Mediabunny (it replaced the deprecated `mp4-muxer`). Its `add*`
+`src/export/container/` owns Mediabunny: MP4 muxing goes through `Mp4Writer`
+(it replaced the deprecated `mp4-muxer`) and all demuxing through `demux.ts`
+(it replaced mp4box); both load Mediabunny lazily. Nothing outside the
+directory imports it (tests aside). `Mp4Writer`'s `add*`
 calls are synchronous so codec output callbacks can feed it; they queue onto
 Mediabunny's async API in call order, a failed add is held and rethrown by
 `await finalize()` (call `throwIfFailed()` in long encode loops), and each

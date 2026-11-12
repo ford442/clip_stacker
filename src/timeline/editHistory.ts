@@ -4,12 +4,15 @@ import type {
   ClipGroup,
   ClipTransition,
   MasterAudio,
+  Sequence,
+  SequenceBody,
   TextOverlay,
   TextOverlayStyle,
   Track,
   SyncMarker,
 } from '../types';
 import { cloneTracks } from './trackModel';
+import { isSequenceClip } from './sequenceResolve';
 import type { FinishingSettings } from '../finishing/finishing';
 import type { MasterBusSettings } from '../audio/audioBus';
 
@@ -45,6 +48,26 @@ export interface EditSnapshot {
    * every other undo step leaves finishing exactly as it is.
    */
   finishing?: FinishingSettings;
+  /**
+   * Nested sequences and which one is open (see `timeline/sequenceModel.ts`).
+   * Optional so snapshots built before sequences restore "root only". An
+   * undo that crosses an enter / exit therefore also re-opens the sequence
+   * the restored state was edited in.
+   */
+  sequences?: Sequence[];
+  sequencePath?: string[];
+  rootStash?: SequenceBody | null;
+}
+
+function cloneBody<T extends SequenceBody>(body: T): T {
+  return {
+    ...body,
+    clips: body.clips.map(cloneClip),
+    tracks: cloneTracks(body.tracks),
+    clipGroups: body.clipGroups.map((group) => ({ ...group, variants: { ...group.variants } })),
+    transitions: body.transitions.map((transition) => ({ ...transition })),
+    textOverlays: body.textOverlays.map((overlay) => ({ ...overlay })),
+  };
 }
 
 /** Shallow-clone clip metadata while reusing File / objectUrl references. */
@@ -78,6 +101,9 @@ export function cloneSnapshot(snapshot: EditSnapshot): EditSnapshot {
       : null,
     ...(snapshot.masterBus ? { masterBus: structuredClone(snapshot.masterBus) } : {}),
     ...(snapshot.finishing ? { finishing: structuredClone(snapshot.finishing) } : {}),
+    ...(snapshot.sequences ? { sequences: snapshot.sequences.map(cloneBody) } : {}),
+    ...(snapshot.sequencePath ? { sequencePath: [...snapshot.sequencePath] } : {}),
+    ...(snapshot.rootStash ? { rootStash: cloneBody(snapshot.rootStash) } : {}),
   };
 }
 
@@ -89,6 +115,8 @@ export function mergeClipUrls(restoredClips: Clip[], currentClips: Clip[]): Clip
   const currentById = new Map(currentClips.map((clip) => [clip.id, clip]));
 
   return restoredClips.map((clip) => {
+    // A sequence clip has no media of its own.
+    if (isSequenceClip(clip)) return clip;
     const current = currentById.get(clip.id);
     if (current?.file === clip.file && current.objectUrl) {
       return { ...clip, objectUrl: current.objectUrl };

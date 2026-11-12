@@ -47,7 +47,11 @@ import {
   type ScopeSettings,
   type WorkerClip,
 } from './previewWorkerProtocol';
-import { isPreviewDecoderEnabled } from './previewDecodeFlags';
+import {
+  isFallbackAdapterAllowedByPage,
+  isGpuProfileRequestedByPage,
+  isPreviewDecoderEnabled,
+} from './previewDecodeFlags';
 import { publishWebGpuProbe, type WebGpuProbeResult } from './webgpuProbe';
 import { recordRemoteGpuError } from './gpuDevice';
 
@@ -135,6 +139,7 @@ export class PreviewWorkerRuntime {
   private choresRunner: PreviewWorkerChoresRunner | null = null;
   private scopesListener: ((scopes: ScopeData) => void) | null = null;
   private lastFrameSources: FrameSourceStats = { decoder: 0, element: 0 };
+  private lastGpuProfile: Record<string, number> | null = null;
   private readonly deviceListeners = new Set<
     (state: PreviewDeviceState, message?: string) => void
   >();
@@ -180,6 +185,13 @@ export class PreviewWorkerRuntime {
     );
 
     const runtime = new PreviewWorkerRuntime(worker);
+    // Before anything else: the worker's GPU probe waits for these flags.
+    const configureMsg: PreviewWorkerInbound = {
+      type: 'configure',
+      gpuProfile: isGpuProfileRequestedByPage(),
+      allowFallbackAdapter: isFallbackAdapterAllowedByPage(),
+    };
+    worker.postMessage(configureMsg);
 
     try {
       const webgpuProbe = await withTimeout(
@@ -299,6 +311,7 @@ export class PreviewWorkerRuntime {
         const pending = this.pendingRenders.get(msg.renderId);
         this.pendingRenders.delete(msg.renderId);
         if (msg.frameSources) this.lastFrameSources = msg.frameSources;
+        if (msg.gpuProfile) this.lastGpuProfile = msg.gpuProfile;
         pending?.resolve(msg.plan);
         break;
       }
@@ -446,6 +459,11 @@ export class PreviewWorkerRuntime {
     return this.lastFrameSources;
   }
 
+  /** `?gpu_profile`: the worker's latest per-pass GPU averages (null when off). */
+  get gpuProfile(): Record<string, number> | null {
+    return this.lastGpuProfile;
+  }
+
   /** Hand the worker the preview bytes (proxy or original) for clips it should decode itself. */
   sendClipMedia(media: Array<{ clipId: string; blob: Blob; source?: PreviewMediaSource }>): void {
     if (this.destroyed || media.length === 0) return;
@@ -459,6 +477,13 @@ export class PreviewWorkerRuntime {
     if (listener) this.scopesListener = listener;
     else if (!scopes.waveform && !scopes.vectorscope) this.scopesListener = null;
     const msg: PreviewWorkerInbound = { type: 'set-scopes', scopes };
+    this.worker.postMessage(msg);
+  }
+
+  /** Tell the worker whether the page's display is HDR (`(dynamic-range: high)`). */
+  setDisplayHdr(hdr: boolean): void {
+    if (this.destroyed) return;
+    const msg: PreviewWorkerInbound = { type: 'display-hdr', hdr };
     this.worker.postMessage(msg);
   }
 

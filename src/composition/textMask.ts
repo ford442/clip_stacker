@@ -60,7 +60,7 @@ export function drawGlyphMask(
 ): void {
   for (const layer of plan.layers) {
     if (layer.kind !== 'text') continue;
-    drawGlyphMaskLayer(ctx, layer, plan.globalTime, plan.canvasWidth, plan.scale);
+    drawGlyphMaskLayer(ctx, layer, layer.time ?? plan.globalTime, plan.canvasWidth, plan.scale);
   }
 }
 

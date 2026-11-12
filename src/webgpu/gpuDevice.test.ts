@@ -1,7 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  DEVICE_RECOVERY_BACKOFF_MS,
+  FallbackAdapterError,
+  MAX_DEVICE_RECOVERY_ATTEMPTS,
   acquireGpuContext,
+  allowFallbackAdapterForPreview,
+  assertPreviewAdapter,
   clearGpuErrorLog,
+  probeGpuAdapter,
+  requestedOptionalFeatures,
   getGpuErrorLog,
   hasGpuContext,
   peekGpuDevice,
@@ -12,6 +19,7 @@ import {
   recordRemoteGpuError,
   __resetGpuContextForTests,
 } from './gpuDevice';
+import { __resetGpuProfilerForTests, gpuProfilerFor, requestGpuProfiling } from './gpuProfiler';
 
 interface FakeDevice {
   lost: Promise<GPUDeviceLostInfo>;
@@ -38,10 +46,12 @@ function makeFakeAdapter(
   device: FakeDevice,
   limits: Record<string, number> = {},
   features: string[] = [],
+  info: { isFallbackAdapter?: boolean } = {},
 ) {
   return {
     limits,
     features: new Set(features),
+    info,
     requestDevice: vi.fn().mockResolvedValue(device),
   };
 }
@@ -70,8 +80,10 @@ describe('gpuDevice registry', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     __resetGpuContextForTests();
+    __resetGpuProfilerForTests();
   });
 
   it('acquires a device and returns the same context on subsequent calls', async () => {
@@ -127,27 +139,79 @@ describe('gpuDevice registry', () => {
     });
   });
 
-  it('adopts only the optional features the adapter reports supporting', async () => {
+  it('requests only the features a code path reads', async () => {
     const { device } = makeFakeDevice();
     const adapter = makeFakeAdapter(device, {}, [
       'timestamp-query',
       'float32-filterable',
+      'rg11b10ufloat-renderable',
       'shader-f16',
-      'texture-compression-bc', // supported, but not in the desired list
+      'texture-compression-bc',
     ]);
     stubGpu(adapter);
 
     const ctx = await acquireGpuContext();
 
     expect(adapter.requestDevice).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requiredFeatures: ['timestamp-query', 'float32-filterable', 'shader-f16'],
-      }),
+      expect.objectContaining({ requiredFeatures: ['shader-f16'] }),
     );
-    expect(ctx.features.has('timestamp-query')).toBe(true);
-    expect(ctx.features.has('float32-filterable')).toBe(true);
-    expect(ctx.features.has('shader-f16' as GPUFeatureName)).toBe(true);
-    expect(ctx.features.has('texture-compression-bc' as GPUFeatureName)).toBe(false);
+    expect([...ctx.features]).toEqual(['shader-f16']);
+  });
+
+  it('adds timestamp-query only under ?gpu_profile, and installs the profiler', async () => {
+    expect(requestedOptionalFeatures(false)).not.toContain('timestamp-query');
+    expect(requestedOptionalFeatures(true)).toContain('timestamp-query');
+
+    requestGpuProfiling(true);
+    const device = { ...makeFakeDevice().device, features: new Set(['timestamp-query']) };
+    const fakeBuffer = { destroy: vi.fn() };
+    Object.assign(device, {
+      createQuerySet: vi.fn(() => ({ destroy: vi.fn() })),
+      createBuffer: vi.fn(() => fakeBuffer),
+    });
+    vi.stubGlobal('GPUBufferUsage', { MAP_READ: 1, COPY_SRC: 4, COPY_DST: 8, QUERY_RESOLVE: 0x200 });
+    const adapter = makeFakeAdapter(device, {}, ['timestamp-query', 'shader-f16']);
+    stubGpu(adapter);
+
+    const ctx = await acquireGpuContext();
+    expect(adapter.requestDevice).toHaveBeenCalledWith(
+      expect.objectContaining({ requiredFeatures: ['shader-f16', 'timestamp-query'] }),
+    );
+    expect(gpuProfilerFor(ctx.device)).not.toBeNull();
+  });
+
+  it('flags a fallback adapter and refuses it for live preview unless allowed', async () => {
+    const { device } = makeFakeDevice();
+    stubGpu(makeFakeAdapter(device, {}, [], { isFallbackAdapter: true }));
+
+    const ctx = await acquireGpuContext();
+    expect(ctx.isFallbackAdapter).toBe(true);
+    expect(() => assertPreviewAdapter(ctx)).toThrow(FallbackAdapterError);
+    allowFallbackAdapterForPreview(true);
+    expect(() => assertPreviewAdapter(ctx)).not.toThrow();
+    expect(() => assertPreviewAdapter({ isFallbackAdapter: false })).not.toThrow();
+  });
+
+  it('reads the older GPUAdapter.isFallbackAdapter too', async () => {
+    const { device } = makeFakeDevice();
+    const adapter = { ...makeFakeAdapter(device), info: undefined, isFallbackAdapter: true };
+    stubGpu(adapter as unknown as ReturnType<typeof makeFakeAdapter>);
+    expect((await acquireGpuContext()).isFallbackAdapter).toBe(true);
+  });
+
+  it('the adapter probe requests no device, and the first acquire reuses its adapter', async () => {
+    const { device } = makeFakeDevice();
+    const adapter = makeFakeAdapter(device);
+    const requestAdapter = stubGpu(adapter);
+
+    expect(await probeGpuAdapter()).toBe(adapter);
+    expect(await probeGpuAdapter()).toBe(adapter);
+    expect(adapter.requestDevice).not.toHaveBeenCalled();
+    expect(hasGpuContext()).toBe(false);
+
+    const ctx = await acquireGpuContext();
+    expect(ctx.adapter).toBe(adapter);
+    expect(requestAdapter).toHaveBeenCalledTimes(1);
   });
 
   it('never requires an optional feature the adapter lacks (boots with an empty feature set)', async () => {
@@ -201,7 +265,8 @@ describe('gpuDevice registry', () => {
     expect(lostListener).not.toHaveBeenCalled();
   });
 
-  it('an unexpected device loss notifies listeners, logs it, and recreates once automatically', async () => {
+  it('an unexpected device loss notifies listeners, logs it, and recreates after a backoff', async () => {
+    vi.useFakeTimers();
     const { device: deviceA, triggerLost } = makeFakeDevice();
     const { device: deviceB } = makeFakeDevice();
     const adapter = makeFakeAdapter(deviceA);
@@ -221,7 +286,9 @@ describe('gpuDevice registry', () => {
     onGpuDeviceRecovered(recoveredListener);
 
     triggerLost({ reason: 'unknown', message: 'GPU process crashed' } as GPUDeviceLostInfo);
-    await flushMicrotasks();
+    await vi.advanceTimersByTimeAsync(DEVICE_RECOVERY_BACKOFF_MS[0] - 1);
+    expect(recoveredListener).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(lostListener).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'GPU process crashed' }),
@@ -262,12 +329,13 @@ describe('gpuDevice registry', () => {
     expect(log[0].message).toBe('bad bind group');
   });
 
-  it('notifies recovery-failed listeners when the automatic recreate fails', async () => {
+  it('retries a failed recreate with a growing backoff, then reports failure once', async () => {
+    vi.useFakeTimers();
     const { device, triggerLost } = makeFakeDevice();
     const adapter = makeFakeAdapter(device);
     adapter.requestDevice
       .mockResolvedValueOnce(device)
-      .mockRejectedValueOnce(new Error('adapter gone'));
+      .mockRejectedValue(new Error('adapter gone'));
     stubGpu(adapter);
     await acquireGpuContext();
 
@@ -276,10 +344,42 @@ describe('gpuDevice registry', () => {
     onGpuDeviceRecoveryFailed(failed);
     onGpuDeviceRecovered(recovered);
     triggerLost({ reason: 'unknown', message: 'driver reset' } as GPUDeviceLostInfo);
-    await flushMicrotasks();
 
+    expect(DEVICE_RECOVERY_BACKOFF_MS).toEqual([250, 500, 1000, 2000, 4000]);
+    let attempts = 1;
+    for (const delay of DEVICE_RECOVERY_BACKOFF_MS) {
+      await vi.advanceTimersByTimeAsync(delay);
+      attempts++;
+      expect(adapter.requestDevice).toHaveBeenCalledTimes(attempts);
+    }
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(failed).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringMatching(/gave up after 5/) }),
+    );
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(adapter.requestDevice).toHaveBeenCalledTimes(1 + MAX_DEVICE_RECOVERY_ATTEMPTS);
     expect(recovered).not.toHaveBeenCalled();
-    expect(failed).toHaveBeenCalledWith(expect.objectContaining({ message: 'adapter gone' }));
+  });
+
+  it('caps a device that keeps dying right after each recreate', async () => {
+    vi.useFakeTimers();
+    const devices = Array.from({ length: 8 }, () => makeFakeDevice());
+    const adapter = makeFakeAdapter(devices[0]!.device);
+    for (const { device } of devices) adapter.requestDevice.mockResolvedValueOnce(device);
+    stubGpu(adapter);
+    await acquireGpuContext();
+
+    const failed = vi.fn();
+    const recovered = vi.fn();
+    onGpuDeviceRecoveryFailed(failed);
+    onGpuDeviceRecovered(recovered);
+    for (let loss = 0; loss <= MAX_DEVICE_RECOVERY_ATTEMPTS; loss++) {
+      devices[loss]!.triggerLost({ reason: 'unknown', message: `loss ${loss}` } as GPUDeviceLostInfo);
+      await vi.advanceTimersByTimeAsync(4000);
+    }
+    expect(recovered).toHaveBeenCalledTimes(MAX_DEVICE_RECOVERY_ATTEMPTS);
+    expect(failed).toHaveBeenCalledTimes(1);
+    expect(adapter.requestDevice).toHaveBeenCalledTimes(1 + MAX_DEVICE_RECOVERY_ATTEMPTS);
   });
 
   it('onGpuError sees this realm\'s errors; remote entries are logged without echoing', async () => {

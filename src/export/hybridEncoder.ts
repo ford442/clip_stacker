@@ -39,6 +39,8 @@ import {
 import { clipsNeedResolutionNormalization, parseOutputResolution } from './resolution';
 import { isWebGpuExportAvailable } from '../webgpu/exportCompositor';
 import { resolveLayerKey } from '../composition/overlayKey';
+import { effectiveTextOverlays } from '../composition/nestedSequences';
+import { nestedSequenceFfmpegRefusal } from './encoderPath';
 import {
   ColorPipelineExportError,
   DEFAULT_COLOR_MANAGEMENT,
@@ -98,10 +100,14 @@ export async function hybridMergeClips(
   // Probed once, up front, so both the render-plan estimate and the GPU
   // eligibility check below agree on whether WebGPU is actually there.
   const webGpuAvailable = await isWebGpuExportAvailable();
+  // Routing has to see the titles inside nested sequences too (HDR10
+  // graphics, shader-text gaps); the plan itself draws them from the
+  // sequence clips, so only the root overlays are passed on to the encoders.
+  const routingOverlays = effectiveTextOverlays(clips, textOverlays);
 
   const effectiveRenderPlan =
     renderPlan ||
-    calculateRenderPlan(clips, transitions, textOverlays, settings, {
+    calculateRenderPlan(clips, transitions, routingOverlays, settings, {
       finishing,
       forceFFmpeg,
       useCanvasRenderer: useCanvas,
@@ -169,7 +175,7 @@ export async function hybridMergeClips(
   const pathInput: EncoderPathInput = {
     clips,
     transitions,
-    textOverlays,
+    textOverlays: routingOverlays,
     finishing,
     forceFFmpeg,
     useCanvas,
@@ -298,6 +304,11 @@ export async function hybridMergeClips(
           { cause: err },
         );
       }
+      const nestedRefusal = nestedSequenceFfmpegRefusal(
+        clips,
+        `the GPU encode failed (${err instanceof Error ? err.message : String(err)})`,
+      );
+      if (nestedRefusal) throw new Error(nestedRefusal, { cause: err });
       gpuFailure = (err as Error).message;
       onStatus(`GPU encode failed (${gpuFailure}). Falling back to FFmpeg...`);
       fallbackReasons.push(`GPU encode failed: ${gpuFailure}`);

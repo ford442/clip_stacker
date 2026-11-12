@@ -1,56 +1,63 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   AsyncFrameQueue,
-  computeBaseCts,
+  DecodeWindowEnd,
   isFrameInTrimWindow,
   resolveDecoderConfig,
-  selectDecodeWindow,
-  type SampleTiming,
 } from './webcodecsDecoder';
 
-/** 30fps track at timescale 30000 (1001-tick samples ≈ 29.97fps simplified to 1000). */
-function makeSamples(count: number, gopSize = 10, timescale = 30000, tickDuration = 1000): SampleTiming[] {
-  return Array.from({ length: count }, (_, i) => ({
-    cts: i * tickDuration,
-    timescale,
-    is_sync: i % gopSize === 0,
-  }));
+type Packet = { type: 'key' | 'delta'; timestamp: number };
+
+/** Feed `packets` (decode order, µs) until the window end says stop; return what was fed. */
+function fedUntilPast(trimEndSec: number, packets: Packet[]): number[] {
+  const end = new DecodeWindowEnd(trimEndSec);
+  const fed: number[] = [];
+  for (const packet of packets) {
+    if (end.isPast(packet)) break;
+    fed.push(packet.timestamp);
+  }
+  return fed;
 }
 
-describe('selectDecodeWindow', () => {
-  it('returns the full track for an untrimmed clip', () => {
-    const samples = makeSamples(90); // 3s @ 30fps
-    const window = selectDecodeWindow(samples, 0, 3);
-    expect(window).toEqual({ startIndex: 0, endIndex: 89 });
+const ms = (t: number) => t * 1000;
+
+describe('DecodeWindowEnd', () => {
+  it('feeds everything when the window runs to the end of the track', () => {
+    const packets: Packet[] = [0, 1, 2, 3].map((i) => ({ type: i % 2 ? 'delta' : 'key', timestamp: ms(i * 500) }));
+    expect(fedUntilPast(Infinity, packets)).toEqual(packets.map((p) => p.timestamp));
   });
 
-  it('starts at the last sync sample at or before trimStart', () => {
-    const samples = makeSamples(90, 10); // sync at 0, 10, 20, ... (≈0.33s GOP)
-    // trimStart 1.05s = sample 31.5 → last sync ≤ that is sample 30
-    const window = selectDecodeWindow(samples, 1.05, 3);
-    expect(window!.startIndex).toBe(30);
-    expect(window!.endIndex).toBe(89);
+  it('stops after the first key packet at or past trimEnd (closed GOPs)', () => {
+    // GOP of two frames, 0.5 s apart: keys at 0, 1, 2 s.
+    const packets: Packet[] = [0, 1, 2, 3, 4, 5].map((i) => ({
+      type: i % 2 === 0 ? 'key' : 'delta',
+      timestamp: ms(i * 500),
+    }));
+    // trimEnd 1.2 s: the key at 2 s is fed (open-GOP leading pictures could
+    // reference it), the delta presenting after it is not.
+    expect(fedUntilPast(1.2, packets)).toEqual([0, 500, 1000, 1500, 2000].map(ms));
   });
 
-  it('ends at the last sample presenting before trimEnd', () => {
-    const samples = makeSamples(90, 10);
-    // trimEnd 1.5s → last sample with cts < 1.5s is sample 44 (cts 44/30 ≈ 1.4667)
-    const window = selectDecodeWindow(samples, 0, 1.5);
-    expect(window).toEqual({ startIndex: 0, endIndex: 44 });
+  it('keeps feeding open-GOP leading pictures that present before the boundary key', () => {
+    // Decode order: I(0) P(0.1) | I(0.3) B(0.2) P(0.4) — the B presents before its key.
+    const packets: Packet[] = [
+      { type: 'key', timestamp: ms(0) },
+      { type: 'delta', timestamp: ms(100) },
+      { type: 'key', timestamp: ms(300) },
+      { type: 'delta', timestamp: ms(200) },
+      { type: 'delta', timestamp: ms(400) },
+    ];
+    expect(fedUntilPast(0.25, packets)).toEqual([0, 100, 300, 200].map(ms));
   });
 
-  it('normalizes tracks that do not start at cts 0 via baseCts', () => {
-    const samples = makeSamples(90, 10).map((s) => ({ ...s, cts: s.cts + 60000 }));
-    const base = computeBaseCts(samples);
-    expect(base).toBe(60000);
-    const window = selectDecodeWindow(samples, 1.05, 3, base);
-    expect(window!.startIndex).toBe(30);
-  });
-
-  it('returns null for an empty track or empty trim window', () => {
-    expect(selectDecodeWindow([], 0, 5)).toBeNull();
-    const samples = makeSamples(90, 10);
-    expect(selectDecodeWindow(samples, 0, 0)).toBeNull();
+  it('treats a key exactly at trimEnd as the boundary', () => {
+    const packets: Packet[] = [
+      { type: 'key', timestamp: ms(0) },
+      { type: 'delta', timestamp: ms(500) },
+      { type: 'key', timestamp: ms(1000) },
+      { type: 'delta', timestamp: ms(1500) },
+    ];
+    expect(fedUntilPast(1, packets)).toEqual([0, 500, 1000].map(ms));
   });
 });
 
@@ -148,5 +155,18 @@ describe('resolveDecoderConfig', () => {
       }),
     });
     expect(await resolveDecoderConfig(base)).toBeNull();
+  });
+
+  it('walks a caller-supplied ladder in order', async () => {
+    const isConfigSupported = vi.fn(async (config: VideoDecoderConfig) => ({
+      supported: config.hardwareAcceleration === 'no-preference',
+    }));
+    vi.stubGlobal('VideoDecoder', { isConfigSupported });
+    const resolved = await resolveDecoderConfig(base, ['prefer-software', 'no-preference']);
+    expect(resolved?.hardwareAcceleration).toBe('no-preference');
+    expect(isConfigSupported.mock.calls.map(([c]) => c.hardwareAcceleration)).toEqual([
+      'prefer-software',
+      'no-preference',
+    ]);
   });
 });

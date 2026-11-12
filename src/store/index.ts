@@ -21,7 +21,8 @@ export {
   useCanUndo,
   useCanRedo,
   useEditorTotalDuration,
-  
+  useSequencePath,
+  useEditorSequences,
 } from './editorStore';
 export {
   uiStore,

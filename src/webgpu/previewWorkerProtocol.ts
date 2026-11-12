@@ -169,6 +169,18 @@ export const PREVIEW_WORKER_INIT_TIMEOUT_MS = 5_000;
 
 export type PreviewWorkerInbound =
   | {
+      /**
+       * First message, posted right after the worker is constructed: page
+       * flags resolved on main that must be set before the worker requests
+       * its device (the GPU probe waits for this).
+       */
+      type: 'configure';
+      /** `?gpu_profile`: request `timestamp-query` and post pass timings. */
+      gpuProfile: boolean;
+      /** `?test_harness`: live preview may run on a software fallback adapter. */
+      allowFallbackAdapter: boolean;
+    }
+  | {
       type: 'init';
       canvas: OffscreenCanvas;
       width: number;
@@ -229,6 +241,8 @@ export type PreviewWorkerInbound =
   | { type: 'pause-decoders' }
   | { type: 'reset-finishing' }
   | { type: 'set-scopes'; scopes: ScopeSettings }
+  /** Main's `(dynamic-range: high)`: an HDR10 project previews extended on an HDR display. */
+  | { type: 'display-hdr'; hdr: boolean }
   | {
       type: 'chore-jobs';
       id: number;
@@ -284,6 +298,8 @@ export type PreviewWorkerOutbound =
       plan: PreviewCompositionPlan;
       /** Per-layer frame sourcing for this frame (decoder path vs `<video>`). */
       frameSources?: FrameSourceStats;
+      /** `?gpu_profile`: the worker's averaged GPU milliseconds per pass. */
+      gpuProfile?: Record<string, number>;
     }
   | {
       type: 'scopes';

@@ -46,11 +46,9 @@
   "author": "ford442",
   "license": "MIT",
   "dependencies": {
-    "@ffmpeg/ffmpeg": "^0.12.10",
     "@ffmpeg/util": "^0.12.1",
     "@tanstack/react-virtual": "^3.14.8",
     "mediabunny": "1.61.4",
-    "mp4box": "^2.4.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zustand": "^5.0.14"

@@ -1,9 +1,11 @@
 /**
  * Structured WebGPU boot probe for Chrome vs Edge diagnosis.
  * Uses the shared acquireGpuContext() path — never a second requestDevice().
+ * The main thread probes the adapter only (`{ device: false }`): its device
+ * is created by the first export or text fill.
  */
 
-import { acquireGpuContext } from './gpuDevice';
+import { acquireGpuContext, adapterIsFallback, probeGpuAdapter } from './gpuDevice';
 
 export interface WebGpuAdapterSnapshot {
   vendor?: string;
@@ -17,6 +19,10 @@ export interface WebGpuProbeResult {
   browser: string;
   reason: string;
   adapter: WebGpuAdapterSnapshot | null;
+  /** The adapter is a software fallback (SwiftShader / WARP). */
+  isFallbackAdapter?: boolean;
+  /** False when the probe stopped at `requestAdapter` (main thread). */
+  deviceProbed?: boolean;
 }
 
 export type WebGpuProbeRealm = 'main' | 'worker';
@@ -60,9 +66,13 @@ export function classifyProbeError(err: unknown): string {
 }
 
 /**
- * Probe navigator.gpu + adapter + device via acquireGpuContext().
+ * Probe navigator.gpu + adapter (+ device via acquireGpuContext() unless
+ * `device: false`).
  */
-export async function probeWebGpu(): Promise<WebGpuProbeResult> {
+export async function probeWebGpu(
+  options: { device?: boolean } = {},
+): Promise<WebGpuProbeResult> {
+  const probeDevice = options.device ?? true;
   const browser = classifyBrowser();
   if (typeof navigator === 'undefined' || !('gpu' in navigator) || !navigator.gpu) {
     return {
@@ -73,12 +83,26 @@ export async function probeWebGpu(): Promise<WebGpuProbeResult> {
     };
   }
   try {
+    if (!probeDevice) {
+      const adapter = await probeGpuAdapter();
+      if (!adapter) throw new Error('No WebGPU adapter available');
+      return {
+        ok: true,
+        browser,
+        reason: 'ok',
+        adapter: adapterSnapshot(adapter),
+        isFallbackAdapter: adapterIsFallback(adapter),
+        deviceProbed: false,
+      };
+    }
     const ctx = await acquireGpuContext();
     return {
       ok: true,
       browser,
       reason: 'ok',
       adapter: adapterSnapshot(ctx.adapter),
+      isFallbackAdapter: ctx.isFallbackAdapter,
+      deviceProbed: true,
     };
   } catch (err) {
     return {

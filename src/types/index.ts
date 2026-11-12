@@ -5,6 +5,7 @@ export * from './transition';
 export * from './render';
 export * from './text';
 export * from './track';
+export * from './sequence';
 export * from './project';
 export * from './segment';
 export * from './inspector';

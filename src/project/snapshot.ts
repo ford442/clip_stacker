@@ -4,6 +4,8 @@ import type {
   ClipGroup,
   ClipTransition,
   MasterAudio,
+  Sequence,
+  SequenceBody,
   SyncMarker,
   TextOverlay,
   TextOverlayStyle,
@@ -15,6 +17,7 @@ import {
   type ColorManagementSettings,
 } from '../finishing/colorManagement';
 import type { MasterBusSettings } from '../audio/audioBus';
+import { committedSequences, type SequenceEditorState } from '../timeline/sequenceModel';
 
 /**
  * Everything a saved project contains, read from the stores in one place.
@@ -28,6 +31,7 @@ import type { MasterBusSettings } from '../audio/audioBus';
  * has to say what it leaves empty. Tests use {@link createProjectSnapshot}.
  */
 export interface ProjectSnapshot {
+  /** The main timeline's clips (nested sequences hold their own). */
   clips: Clip[];
   tracks: Track[];
   clipGroups: ClipGroup[];
@@ -40,6 +44,8 @@ export interface ProjectSnapshot {
   masterBus: MasterBusSettings | undefined;
   finishing: FinishingSettings;
   colorManagement: ColorManagementSettings;
+  /** Nested sequences, live edits of an open one included. */
+  sequences: Sequence[];
 }
 
 /** The editor-store fields a snapshot reads (structural, so no store import). */
@@ -55,7 +61,14 @@ export type ProjectSnapshotEditorFields = Pick<
   | 'masterAudio'
   | 'masterAudioMarkers'
   | 'masterBus'
+  | 'sequences'
 >;
+
+/** Editor state a snapshot is read from: the open sequence may be a nested one. */
+type EditorSnapshotSource = ProjectSnapshotEditorFields & {
+  sequencePath?: string[];
+  rootStash?: SequenceBody | null;
+};
 
 /** The settings-store fields a snapshot reads. */
 export type ProjectSnapshotSettingsFields = Pick<
@@ -65,17 +78,23 @@ export type ProjectSnapshotSettingsFields = Pick<
 
 /**
  * The editor-store half of a snapshot, field identities kept — wrap it in
- * `useShallow` to re-render only when a saved field changes.
+ * `useShallow` to re-render only when a saved field changes. While a nested
+ * sequence is open, the root fields come from the stashed main timeline and
+ * the open sequence's live edits are written into `sequences`, so a save
+ * from inside a sequence is the whole project.
  */
 export function selectProjectSnapshotEditorFields(
-  editor: ProjectSnapshotEditorFields,
+  editor: EditorSnapshotSource,
 ): ProjectSnapshotEditorFields {
+  const open = (editor.sequencePath?.length ?? 0) > 0 && editor.rootStash ? editor.rootStash : null;
+  const root = open ?? editor;
   return {
-    clips: editor.clips,
-    tracks: editor.tracks,
-    clipGroups: editor.clipGroups,
-    transitions: editor.transitions,
-    textOverlays: editor.textOverlays,
+    clips: root.clips,
+    tracks: root.tracks,
+    clipGroups: root.clipGroups,
+    transitions: root.transitions,
+    textOverlays: root.textOverlays,
+    sequences: open ? committedSequences(editor as SequenceEditorState) : editor.sequences,
     captions: editor.captions,
     captionStyle: editor.captionStyle,
     masterAudio: editor.masterAudio,
@@ -89,7 +108,7 @@ export function selectProjectSnapshotEditorFields(
  * are kept (nothing is copied), so the result can feed a shallow selector.
  */
 export function selectProjectSnapshot(
-  editor: ProjectSnapshotEditorFields,
+  editor: EditorSnapshotSource,
   settings: ProjectSnapshotSettingsFields,
 ): ProjectSnapshot {
   return {
@@ -116,6 +135,7 @@ export function createProjectSnapshot(
     masterBus: undefined,
     finishing: DEFAULT_FINISHING,
     colorManagement: DEFAULT_COLOR_MANAGEMENT,
+    sequences: [],
     ...partial,
   };
 }
@@ -132,6 +152,13 @@ export function projectSnapshotHasContent(snapshot: ProjectSnapshot): boolean {
     snapshot.textOverlays.length > 0 ||
     snapshot.captions.length > 0 ||
     snapshot.masterAudio != null ||
-    snapshot.masterAudioMarkers.length > 0
+    snapshot.masterAudioMarkers.length > 0 ||
+    snapshot.sequences.length > 0
   );
+}
+
+/** Every clip the snapshot holds — the main timeline's and each sequence's. */
+export function projectSnapshotClips(snapshot: Pick<ProjectSnapshot, 'clips' | 'sequences'>): Clip[] {
+  if (snapshot.sequences.length === 0) return snapshot.clips;
+  return [...snapshot.clips, ...snapshot.sequences.flatMap((seq) => seq.clips)];
 }

@@ -1,6 +1,6 @@
 // Barrel module: re-exports the FFmpeg render pipeline's public surface.
 // Split by responsibility across sibling modules — see each file for detail:
-//   coreRuntime.ts    - FFmpeg instance/log/error plumbing, fonts, blob URLs
+//   coreRuntime.ts    - FFmpeg instance/log/error plumbing, fonts, CDN blob URLs
 //   clipFilters.ts    - per-clip predicates and filter_complex/CLI builders
 //   mergeLossless.ts  - fast-path (stream copy) concat render
 //   twoPassEncode.ts  - two-pass re-encode render (fades/effects/loops)
@@ -42,7 +42,6 @@ export {
   FFMPEG_CORE_DOWNLOAD_TIMEOUT_MS,
   FFMPEG_LOAD_TIMEOUT_MS,
   toBlobURLWithRetry,
-  toBlobURLWithFallback,
   safeExec,
   safeWriteFile,
   prepareSecondaryColorFfmpeg,
