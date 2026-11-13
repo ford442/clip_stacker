@@ -4,7 +4,7 @@ import { reindexTransitions } from "../timeline/transitions";
 import {
   isClipLocked,
   removeClipFromTracks,
-  reorderMainTrackClips,
+  reorderMainLane,
   MAIN_VIDEO_TRACK_ID,
 } from "../timeline/trackModel";
 import { editorStore } from "../store/editorStore";
@@ -83,7 +83,6 @@ type TimelineActionsDeps = Pick<
 export function useTimelineActions({
   clips,
   clipGroups,
-  transitions,
   selectedClipId,
   setClips,
   setTracks,
@@ -123,40 +122,28 @@ export function useTimelineActions({
    */
   const handleReorder = useCallback(
     (fromIndex: number, insertBefore: number) => {
-      // No-op when the clip would remain in its current position:
-      // insertBefore === fromIndex means "insert before itself",
-      // insertBefore === fromIndex + 1 means "insert after itself" — both are identity moves.
+      // Identity moves (insert before / right after itself) are no-ops.
       if (insertBefore === fromIndex || insertBefore === fromIndex + 1) return;
-      const mainTrack = editorStore
-        .getState()
-        .tracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID);
-      if (mainTrack?.locked) {
-        renderJobStore.getState().setStatus("Track is locked — unlock the lane to reorder clips.");
-        return;
-      }
-      pushHistory();
-      setTracks((prev) => reorderMainTrackClips(prev, clips, transitions, fromIndex, insertBefore));
-      setClips((prev) => {
-        const legacy = [...prev];
-        const timelineIds = getTimelineClips(prev, clipGroups).map((c) => c.id);
-        const fromId = timelineIds[fromIndex];
-        const fromPoolIndex = legacy.findIndex((c) => c.id === fromId);
-        if (fromPoolIndex < 0) return prev;
-        const next = [...legacy];
-        const [moved] = next.splice(fromPoolIndex, 1);
-        if (insertBefore < timelineIds.length) {
-          const targetId = timelineIds[insertBefore > fromIndex ? insertBefore - 1 : insertBefore];
-          const targetPoolIndex = next.findIndex((c) => c.id === targetId);
-          if (targetPoolIndex >= 0) {
-            next.splice(targetPoolIndex + (insertBefore > fromIndex ? 1 : 0), 0, moved);
-            return next;
-          }
-        }
-        next.push(moved);
-        return next;
+      if (mainTrackLocked()) return;
+      // Read the live store, not this render's props: a drop can land after
+      // another edit and must not reorder against stale arrays.
+      const state = editorStore.getState();
+      const result = reorderMainLane(
+        state.tracks,
+        state.clips,
+        state.transitions,
+        fromIndex,
+        insertBefore,
+      );
+      if (!result) return;
+      // Tracks and pool change together, behind one undo step.
+      state.commitEdit({
+        tracks: result.tracks,
+        clips: result.clips,
+        transitions: state.transitions,
       });
     },
-    [pushHistory, clips, transitions, clipGroups, setTracks, setClips],
+    [],
   );
 
   /**

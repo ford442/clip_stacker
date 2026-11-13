@@ -9,7 +9,7 @@ import type { Clip } from '../types';
 import { editorStore, __resetEditorStoreForTests } from '../store/editorStore';
 import { renderJobStore } from '../store/renderJobStore';
 import { uiStore } from '../store/uiStore';
-import { MAIN_VIDEO_TRACK_ID } from '../timeline/trackModel';
+import { MAIN_VIDEO_TRACK_ID, migrateLegacyClipsToTracks } from '../timeline/trackModel';
 import { useEditHistory } from './useEditHistory';
 import { useTimelineActions } from './useTimelineActions';
 import { renderHook, type RenderedHook } from './renderHook.test.helpers';
@@ -105,6 +105,24 @@ describe('useTimelineActions lane-lock guards', () => {
     hook.current.handleMoveDown(0);
     expect(baseIds()).toEqual(['a', 'b', 'c']);
     expect(state().clips.map((c) => c.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('reorders by main-lane index even when overlay clips sit in the pool, as one undo step', () => {
+    __resetEditorStoreForTests();
+    // Pool order: overlay, a, b, c — a lane index of 0 is `a`, not the overlay.
+    const pool = [{ ...makeClip('o'), layerIndex: 1 }, makeClip('a'), makeClip('b'), makeClip('c')];
+    state().setClips(pool);
+    state().setTracks(migrateLegacyClipsToTracks(pool, []));
+    hook.rerender();
+    const poolBefore = state().clips.map((c) => c.id);
+
+    hook.current.handleReorder(0, 3);
+    expect(baseIds()).toEqual(['b', 'c', 'a']);
+    expect(state().clips.map((c) => c.id).filter((id) => id !== 'o')).toEqual(['b', 'c', 'a']);
+
+    state().undo();
+    expect(baseIds()).toEqual(['a', 'b', 'c']);
+    expect(state().clips.map((c) => c.id)).toEqual(poolBefore);
   });
 
   it('refuses a drop onto a locked target lane', () => {
