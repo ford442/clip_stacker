@@ -38,7 +38,7 @@ export function useTimelineDragDrop({
   onReorder,
   onMoveToTrack,
 }: TimelineDragDropOptions) {
-  // ── Drag-and-drop state ──────────────────────────────────────────────────
+  // ── Drag-and-drop state ──────────────────────────────────────────────
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
   const [dragClipId, setDragClipId] = useState<string | null>(null);
@@ -140,13 +140,42 @@ export function useTimelineDragDrop({
     const drop = calcDropOnTrack(e.clientX, e.clientY);
     const insertBefore = calcInsertIndex(e.clientX);
 
-    if (drop && dragClipId && drop.trackId !== MAIN_VIDEO_TRACK_ID) {
-      if (canDropOn(drop.trackId)) {
+    if (drop && dragClipId) {
+      const isMain = drop.trackId === MAIN_VIDEO_TRACK_ID;
+      const thresholdSec = snapThresholdForZoom(pixelsPerSecond);
+      const thresholdPx = thresholdSec * pixelsPerSecond;
+
+      // Prefer the familiar discrete row-position snap on the gapless main lane
+      // when the pointer is close to a slot boundary (the old midpoint behavior).
+      // Far from any boundary (or snap off) we fall through to precise free placement.
+      let preferSlot = false;
+      if (isMain && !mainTrackLocked && from !== insertBefore && from !== insertBefore - 1) {
+        const track = trackRef.current;
+        const scroll = scrollRef.current;
+        if (track && scroll) {
+          const rect = track.getBoundingClientRect();
+          const x = e.clientX - rect.left + scroll.scrollLeft;
+          // Find the boundary that calcInsertIndex decided
+          let boundaryX = 0;
+          if (insertBefore < clipLayouts.length) {
+            const layout = clipLayouts[insertBefore];
+            boundaryX = layout.start + layout.width / 2; // midpoint used by calcInsertIndex
+          } else if (clipLayouts.length > 0) {
+            const last = clipLayouts[clipLayouts.length - 1];
+            boundaryX = last.start + last.width;
+          }
+          preferSlot = Math.abs(x - boundaryX) <= Math.max(thresholdPx * 1.5, 24);
+        }
+      }
+
+      if (preferSlot) {
+        onReorder(from, insertBefore);
+      } else if (canDropOn(drop.trackId)) {
         onMoveToTrack(
           dragClipId,
           drop.trackId,
           drop.startTime,
-          snapThresholdForZoom(pixelsPerSecond),
+          thresholdSec,
         );
       }
     } else if (
@@ -170,7 +199,7 @@ export function useTimelineDragDrop({
     setDropTargetTrackId(null);
   }, []);
 
-  // ── Touch handlers (mobile) ──────────────────────────────────────────────
+  // ── Touch handlers (mobile) ────────────────────────────────────────
   // Long-press is now initiated inside VirtualClipBlock; this only receives
   // the index once the long-press timer fires so full free-reorder can start.
   const handleTouchStart = useCallback((index: number) => {
