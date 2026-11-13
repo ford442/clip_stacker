@@ -5,6 +5,7 @@ import type {
   ClipKeyframes,
   SourceColorSpaceOverride,
   VideoOutputFormat,
+  CleanupOptions,
 } from '../../types';
 import type { CanvasSize } from '../../composition/overlayCoords';
 import type { PipCorner } from '../../composition/pipPreset';
@@ -51,6 +52,8 @@ export interface InspectorClipTabProps {
   setRifeMultiplier: (value: 2 | 4) => void;
   rifeOutputFormat: VideoOutputFormat;
   setRifeOutputFormat: (value: VideoOutputFormat) => void;
+  rifeCleanup: CleanupOptions;
+  setRifeCleanup: (value: CleanupOptions) => void;
   rifeProcessing: boolean;
   stabilizeStatus: string | null;
   update: (field: keyof ClipValues, value: string) => void;
@@ -72,6 +75,7 @@ export interface InspectorClipTabProps {
     mode: 'interpolation' | 'boomerang',
     multiplier: 2 | 4,
     outputFormat?: VideoOutputFormat,
+    cleanup?: CleanupOptions,
   ) => void;
   onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
   onApplyKenBurns?: () => void;
@@ -142,6 +146,8 @@ export function InspectorClipTab(props: InspectorClipTabProps) {
         setRifeMultiplier={props.setRifeMultiplier}
         rifeOutputFormat={props.rifeOutputFormat}
         setRifeOutputFormat={props.setRifeOutputFormat}
+        rifeCleanup={props.rifeCleanup}
+        setRifeCleanup={props.setRifeCleanup}
         rifeProcessing={props.rifeProcessing}
         stabilizeStatus={props.stabilizeStatus}
         update={props.update}

@@ -73,7 +73,7 @@ Without the first two, the button explains what is missing.
 
 - *Extract segment…* cuts `[start, end]` of the clip. Small and local media is cut in the browser (FFmpeg.wasm, stream copy first, exact re-encode if the copy is not the right length). Large Drive files and remote URLs go to a Contabo `extract` job, which downloads straight from Drive; the browser never holds them. A clip over 256 MB is cut on the server only if it is already in the remote library (*Save remote*).
 - *Send to processing* picks where the segment is processed: **Browser FFmpeg**, **HF RIFE Space**, **Colab (manual)** (download the cut, process it, import the result) or **Contabo job** (`extract` or `rife`).
-- The selected video clip's RIFE controls also send its trimmed range directly to the Space; choose MP4 or ProRes MOV before processing.
+- The selected video clip's RIFE controls also send its trimmed range directly to the Space; choose MP4 or ProRes MOV, and optionally light denoise/deband and audio cleanup, before processing.
 - *Replace with result* swaps the processed segment in at the same timeline position as one undo step. A clip is cut into `[before][replaced][after]` for a sub-range; a transition into or out of the clip stays attached.
 
 Every result has to be **exactly as long as the segment** (±0.25 s, trimmed to the exact length on replace), otherwise the cut, import or replace is refused. That keeps later items in place and a later lossless concat possible. For the same reason only RIFE *interpolation* is offered here, not Boomerang. Sub-range replace needs a clip that plays at source speed (no speed change, loop, reverse or speed automation); those clips can be replaced over their whole trimmed range.
