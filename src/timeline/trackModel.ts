@@ -383,6 +383,43 @@ export function reorderMainTrackClips(
   return next;
 }
 
+/**
+ * Drag / keyboard reorder of the main lane as ONE pure step.
+ *
+ * `fromIndex` / `insertBefore` index the main lane's clips in lane order — what
+ * the timeline UI draws — not the clip pool, which also holds overlays, audio
+ * and inactive A/B variants. The tracks are the source of truth: the new lane
+ * order comes from `reorderMainTrackClips`, and the pool is derived from it by
+ * refilling the slots the main-lane clips already occupy, so every other clip
+ * keeps its place. Returns null when the move is an identity or out of range.
+ */
+export function reorderMainLane(
+  tracks: Track[],
+  clips: Clip[],
+  transitions: ClipTransition[],
+  fromIndex: number,
+  insertBefore: number,
+): { tracks: Track[]; clips: Clip[] } | null {
+  if (insertBefore === fromIndex || insertBefore === fromIndex + 1) return null;
+  const nextTracks = reorderMainTrackClips(tracks, clips, transitions, fromIndex, insertBefore);
+  if (nextTracks === tracks) return null;
+
+  const mainTrack = nextTracks.find((t) => t.id === MAIN_VIDEO_TRACK_ID)
+    ?? nextTracks.find((t) => t.kind === 'video');
+  if (!mainTrack) return null;
+
+  const byId = new Map(clips.map((c) => [c.id, c]));
+  const order = [...mainTrack.items]
+    .sort((a, b) => a.startTime - b.startTime)
+    .map((item) => byId.get(item.clipId))
+    .filter((c): c is Clip => c !== undefined);
+  const laneIds = new Set(order.map((c) => c.id));
+
+  let next = 0;
+  const nextClips = clips.map((c) => (laneIds.has(c.id) ? order[next++]! : c));
+  return { tracks: nextTracks, clips: nextClips };
+}
+
 export interface TrackClipLayout {
   clip: Clip;
   trackId: string;
