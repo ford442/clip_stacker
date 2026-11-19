@@ -17,6 +17,8 @@ export default defineConfig(
     'native/',
     'RIFE/',
     'huggingface/',
+    // Parked HuggingFace Spaces the app does not call (spaces/README.md).
+    'spaces/',
     'contabo_storage_manager/',
   ]),
   js.configs.recommended,

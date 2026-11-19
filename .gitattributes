@@ -1,0 +1,12 @@
+# Binary media and build artifacts: never diff, merge or normalise line endings.
+*.mp4 binary
+*.webm binary
+*.wav binary
+*.png binary
+*.jpg binary
+*.ttf binary
+*.wasm binary
+
+# WGSL is spliced into JS strings at build time and hashed by the shader
+# tests; keep it LF on every checkout.
+*.wgsl text eol=lf
