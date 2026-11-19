@@ -50,7 +50,7 @@ describe('remapAudio', () => {
     expect(offsets.length).toBeGreaterThan(2);
     expect(offsets[0]).toBeCloseTo(0, 0);
     for (let i = 1; i < offsets.length; i++) {
-      expect(offsets[i]).toBeGreaterThanOrEqual(offsets[i - 1] - 1e-3);
+      expect(offsets[i]).toBeGreaterThanOrEqual(offsets[i - 1]! - 1e-3);
     }
   });
 });

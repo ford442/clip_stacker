@@ -23,7 +23,7 @@ function toPlanar(buffer: AudioBuffer, startFrame: number, frameCount: number): 
     const dstOffset = ch * frameCount;
     for (let i = 0; i < frameCount; i++) {
       const idx = startFrame + i;
-      planar[dstOffset + i] = idx >= 0 && idx < src.length ? src[idx] : 0;
+      planar[dstOffset + i] = src[idx] ?? 0;
     }
   }
   return planar;
@@ -89,35 +89,39 @@ function jsRemapPlanar(
   const sampleAt = (ch: number, pos: number): number => {
     const base = ch * inFrames;
     if (inFrames <= 0) return 0;
-    if (pos <= 0) return input[base];
-    if (pos >= inFrames - 1) return input[base + inFrames - 1];
+    if (pos <= 0) return input[base] ?? 0;
+    if (pos >= inFrames - 1) return input[base + inFrames - 1] ?? 0;
     const i0 = Math.floor(pos);
     const frac = pos - i0;
-    return input[base + i0] * (1 - frac) + input[base + Math.min(inFrames - 1, i0 + 1)] * frac;
+    const a = input[base + i0] ?? 0;
+    const b = input[base + Math.min(inFrames - 1, i0 + 1)] ?? 0;
+    return a * (1 - frac) + b * frac;
   };
 
-  for (let h = 0; h < offsets.length; h++) {
+  for (const [h, srcCenter] of offsets.entries()) {
     const outCenter = h * hop;
     if (outCenter >= outFrames) break;
-    const srcCenter = offsets[h];
     const outStart = outCenter - hop;
     const srcStart = srcCenter - hop;
     for (let i = 0; i < win; i++) {
       const outIdx = outStart + i;
       if (outIdx < 0 || outIdx >= outFrames) continue;
-      const w = window[i];
+      const w = window[i] ?? 0;
       const srcPos = srcStart + i;
       for (let ch = 0; ch < channels; ch++) {
-        output[ch * outFrames + outIdx] += sampleAt(ch, srcPos) * w;
+        const o = ch * outFrames + outIdx;
+        output[o] = (output[o] ?? 0) + sampleAt(ch, srcPos) * w;
       }
-      norm[outIdx] += w;
+      norm[outIdx] = (norm[outIdx] ?? 0) + w;
     }
   }
 
   for (let i = 0; i < outFrames; i++) {
-    if (norm[i] > 1e-6) {
+    const n = norm[i] ?? 0;
+    if (n > 1e-6) {
       for (let ch = 0; ch < channels; ch++) {
-        output[ch * outFrames + i] /= norm[i];
+        const o = ch * outFrames + i;
+        output[o] = (output[o] ?? 0) / n;
       }
     }
   }

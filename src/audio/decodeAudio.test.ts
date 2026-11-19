@@ -38,7 +38,7 @@ describe('decodeAudio', () => {
     vi.stubGlobal('OfflineAudioContext', FakeOffline);
     const bytes = new ArrayBuffer(8);
     await decodeAudio(bytes);
-    const passed = FakeOffline.made[0].ctx.decodeAudioData.mock.calls[0][0];
+    const passed = FakeOffline.made[0]!.ctx.decodeAudioData.mock.calls[0]![0];
     expect(passed).not.toBe(bytes);
     expect(passed.byteLength).toBe(8);
   });

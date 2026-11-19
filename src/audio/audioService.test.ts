@@ -55,7 +55,7 @@ describe('audioService', () => {
     const b = getAudioContext();
     expect(a).toBe(b);
     expect(FakeContext.made).toHaveLength(1);
-    expect(FakeContext.made[0].latencyHint).toBe('interactive');
+    expect(FakeContext.made[0]?.latencyHint).toBe('interactive');
     expect(peekAudioContext()).toBe(a);
   });
 
@@ -72,7 +72,7 @@ describe('audioService', () => {
     FakeContext.made = [];
     getAudioContext();
     window.dispatchEvent(new Event('pointerdown'));
-    expect(FakeContext.made[0].resume).toHaveBeenCalled();
+    expect(FakeContext.made[0]?.resume).toHaveBeenCalled();
   });
 
   it('closes on pagehide, and only suspends for the back/forward cache', () => {
@@ -81,16 +81,16 @@ describe('audioService', () => {
     const persisted = new Event('pagehide') as PageTransitionEvent;
     Object.defineProperty(persisted, 'persisted', { value: true });
     window.dispatchEvent(persisted);
-    expect(ctx.suspend).toHaveBeenCalled();
-    expect(ctx.close).not.toHaveBeenCalled();
+    expect(ctx?.suspend).toHaveBeenCalled();
+    expect(ctx?.close).not.toHaveBeenCalled();
 
     const gone = new Event('pagehide') as PageTransitionEvent;
     Object.defineProperty(gone, 'persisted', { value: false });
     window.dispatchEvent(gone);
-    expect(ctx.close).toHaveBeenCalled();
+    expect(ctx?.close).toHaveBeenCalled();
     expect(peekAudioContext()).toBeNull();
     // The next caller gets a fresh one.
-    expect(getAudioContext()).not.toBe(asCtx(ctx));
+    expect(getAudioContext()).not.toBe(asCtx(ctx!));
   });
 
   it('replaces the context for a new latency class only when idle and unbound', () => {
@@ -106,9 +106,9 @@ describe('audioService', () => {
     const next = applyPreferredLatency(true);
     expect(next).not.toBe(first);
     expect(audioContextLatency()).toBe('balanced');
-    expect(FakeContext.made[1].latencyHint).toBe('balanced');
+    expect(FakeContext.made[1]?.latencyHint).toBe('balanced');
     expect(replaced).toHaveBeenCalledWith(next, first);
-    expect(FakeContext.made[0].close).toHaveBeenCalled();
+    expect(FakeContext.made[0]?.close).toHaveBeenCalled();
     expect(latencyChangePending()).toBe(false);
 
     // A bound media element pins the context for good.

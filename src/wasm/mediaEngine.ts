@@ -139,7 +139,7 @@ export interface TimelineMixStreamOptions {
   chunkFrames?: number;
   baseUrl?: string;
   /** Defaults to polyphase unless `?media_engine_resampler=linear`. */
-  resampler?: 'polyphase' | 'linear';
+  resampler?: 'polyphase' | 'linear' | undefined;
   /** Look-ahead limiter on the mix bus; omitted / disabled = none. Ignored with `bus`. */
   limiter?: MasterLimiterSettings | null;
   /**
