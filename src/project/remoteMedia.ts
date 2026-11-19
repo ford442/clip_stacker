@@ -1,3 +1,4 @@
+import { decodeDataUrl, isDataUrl } from './dataUrl';
 import {
   MAX_MEDIA_DOWNLOAD_ATTEMPTS,
   MEDIA_DOWNLOAD_RETRY_DELAY_MS,
@@ -50,6 +51,12 @@ export async function downloadRemoteMedia(
   mediaUrl: string,
   onProgress?: (progress: number, indeterminate: boolean) => void,
 ): Promise<Blob> {
+  // Embedded media: decode in place. `connect-src` blocks fetch('data:…').
+  if (isDataUrl(mediaUrl)) {
+    const blob = decodeDataUrl(mediaUrl);
+    onProgress?.(1, false);
+    return blob;
+  }
   const mediaResponse = await fetchRemoteMediaWithRetry(mediaUrl);
 
   const contentLengthHeader = mediaResponse.headers.get('content-length');

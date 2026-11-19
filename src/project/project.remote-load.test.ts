@@ -355,10 +355,10 @@ describe("remote project load progress", () => {
 
     await applyProjectData(project, []);
 
-    expect(fetchMock).toHaveBeenCalledWith(dataUrl, {
-      mode: "cors",
-      credentials: "omit",
-    });
+    // The data: URL is decoded locally (connect-src blocks fetching it), and
+    // the stale remote URL is not fetched either.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mediaMocks.getMediaInfo).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces the HTTP status when the remote server returns an error response", async () => {
