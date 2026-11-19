@@ -149,7 +149,8 @@ export default defineConfig(
   {
     // Every worker goes through the typed RPC (src/workers/workerRpc.ts);
     // the literal `new Worker(new URL(...))` Vite needs lives in
-    // src/workers/workerFactories.ts.
+    // src/workers/workerFactories.ts. The second selector is the dynamic
+    // `import('fflate')` half of the fflate rule below.
     files: ['src/**/*.{ts,tsx}'],
     ignores: ['src/workers/**', 'src/**/*.test.{ts,tsx}', 'src/**/*.test.helpers.ts'],
     rules: {
@@ -158,6 +159,35 @@ export default defineConfig(
         {
           selector: "NewExpression[callee.name='Worker']",
           message: 'Create workers in src/workers/workerFactories.ts and talk to them through createWorkerClient (src/workers/workerRpc.ts).',
+        },
+        {
+          selector: 'ImportExpression[source.value=/^fflate($|\\u002f)/]',
+          message: 'Build zip archives with createZipBundle (src/export/container/zipBundle.ts), the only fflate import.',
+        },
+      ],
+    },
+  },
+  {
+    // fflate is the zip writer behind src/export/container/zipBundle.ts, as
+    // Mediabunny is the container library behind the rest of that directory.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/export/container/zipBundle.ts', 'src/**/*.test.{ts,tsx}', 'src/**/*.test.helpers.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: 'fflate',
+              message: 'Build zip archives with createZipBundle (src/export/container/zipBundle.ts), the only fflate import.',
+            },
+          ],
+          patterns: [
+            {
+              group: ['fflate/*'],
+              message: 'Build zip archives with createZipBundle (src/export/container/zipBundle.ts), the only fflate import.',
+            },
+          ],
         },
       ],
     },
