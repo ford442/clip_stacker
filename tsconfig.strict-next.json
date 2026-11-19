@@ -1,0 +1,11 @@
+{
+  // The next strictness ratchet: tsconfig.strict.json plus
+  // noPropertyAccessFromIndexSignature (read index-signature keys with
+  // `obj['key']`, so a typo in a declared property name cannot hide behind a
+  // `Record<string, …>`). scripts/check-strict.mjs runs it with its own
+  // baseline in scripts/strict-ratchet.json.
+  "extends": "./tsconfig.strict.json",
+  "compilerOptions": {
+    "noPropertyAccessFromIndexSignature": true
+  }
+}
