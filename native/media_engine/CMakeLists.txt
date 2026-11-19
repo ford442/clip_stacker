@@ -46,6 +46,12 @@ clip_stacker_wasm_module(media_engine
     _mix_fx_session_latency
     _mix_fx_session_range
     _mix_fx_session_meters
+    _mix_bus_session_tap_count
+    _mix_bus_session_range
+    _loudness_meter_create
+    _loudness_meter_process
+    _loudness_meter_read
+    _loudness_meter_destroy
     _insert_chain_create
     _insert_chain_process
     _insert_chain_destroy
@@ -75,6 +81,8 @@ clip_stacker_standalone_wasm(media_engine_fx
     _bus_graph_update
     _bus_graph_latency
     _bus_graph_process
+    _bus_graph_tap_count
+    _bus_graph_process_taps
     _bus_graph_meters
     _bus_graph_reset_meter
     _bus_graph_reset

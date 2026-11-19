@@ -62,13 +62,19 @@ export function createAudioRenderHandlers(port: WorkerPort<AudioRenderProtocol>)
     try {
       const chunk = await stream.next();
       if (state.closed) throw closedError();
-      if (!chunk) return { type: 'done', id, meters: stream.readMeters() };
-      // The stream reuses its chunk buffer: send a copy, by transfer.
+      if (!chunk) return { type: 'done', id, meters: stream.readMeters(), tapMeters: stream.readTapMeters() };
+      // The stream reuses its chunk buffers: send copies, by transfer.
       const frames = chunk.frames.slice();
-      return withTransfer<RenderPullResult>(
-        { type: 'chunk', id, startFrame: chunk.startFrame, frameCount: chunk.frameCount, frames },
-        [frames.buffer],
-      );
+      const taps = chunk.taps?.map((tap) => tap.slice());
+      const result: RenderPullResult = {
+        type: 'chunk',
+        id,
+        startFrame: chunk.startFrame,
+        frameCount: chunk.frameCount,
+        frames,
+        ...(taps ? { taps } : {}),
+      };
+      return withTransfer(result, [frames.buffer, ...(taps ?? []).map((tap) => tap.buffer)]);
     } catch (err) {
       close(id);
       throw err;

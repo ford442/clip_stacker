@@ -13,6 +13,7 @@ import type { Track } from '../types';
 import { createBusEffect, type BusEffect, type MasterBusSettings } from '../audio/audioBus';
 import { planBusGraph, type BusGraphPlan } from '../audio/fxGraph';
 import { busLayoutMessage } from './audioFx';
+import { collectTapped, worstSumUlps } from './mediaEngineTaps.test.helpers';
 import {
   _resetMediaEngineLoadStateForTests,
   loadMediaEngineModule,
@@ -142,9 +143,9 @@ function fullChainProject(): { tracks: Track[]; masterBus: MasterBusSettings } {
   };
 }
 
-/** The export premix of `lanes` (each a whole clip on its lane) through `plan`. */
-async function exportMix(plan: BusGraphPlan, lanes: Float32Array[][], frames: number): Promise<Float32Array[]> {
-  const entries: MediaEngineMixEntry[] = plan.laneTrackIds
+/** Each of `lanes` as one whole clip on its lane. */
+function laneEntries(plan: BusGraphPlan, lanes: Float32Array[][], frames: number): MediaEngineMixEntry[] {
+  return plan.laneTrackIds
     .filter((_, i) => lanes[i])
     .map((trackId) => ({
       clipId: trackId,
@@ -156,11 +157,19 @@ async function exportMix(plan: BusGraphPlan, lanes: Float32Array[][], frames: nu
       audioFadeOut: 0,
       bus: plan.laneIndex.get(trackId)!,
     }));
+}
+
+function lanePcm(plan: BusGraphPlan, lanes: Float32Array[][]): Record<string, ClipPcm> {
   const pcm: Record<string, ClipPcm> = {};
   plan.laneTrackIds.forEach((trackId, i) => {
     if (lanes[i]) pcm[trackId] = { sampleRate: RATE, channelData: lanes[i]! };
   });
-  const stream = await openTimelineMixStream(entries, pcm, {
+  return pcm;
+}
+
+/** The export premix of `lanes` (each a whole clip on its lane) through `plan`. */
+async function exportMix(plan: BusGraphPlan, lanes: Float32Array[][], frames: number): Promise<Float32Array[]> {
+  const stream = await openTimelineMixStream(laneEntries(plan, lanes, frames), lanePcm(plan, lanes), {
     baseUrl: WASM_BASE,
     sampleRate: RATE,
     durationSec: frames / RATE,
@@ -224,6 +233,55 @@ describe('lane buses: AudioWorklet preview vs export premix', () => {
       }
     }
     expect(fromDry).toBeGreaterThan(0.1);
+  }, 60_000);
+
+  it('export stems sum to the master, which still nulls against the (untapped) worklet', async () => {
+    // No master stage, so the master is exactly what the lanes add: their
+    // taps (and the direct input's, silent here) must sum back to it.
+    const { tracks } = fullChainProject();
+    const lanesTapped = ['dialogue', 'music', 'fx'];
+    const plan = planBusGraph(tracks, undefined, { tapTrackIds: lanesTapped, tapDirect: true });
+    const untapped = planBusGraph(tracks, undefined);
+    // The preview never taps: the worklet gets the same layout either way.
+    expect(busLayoutMessage(plan, false)).toEqual(busLayoutMessage(untapped, false));
+    const seconds = 10;
+    const frames = seconds * RATE;
+    const lanes = [laneSignal(seconds, 0.6, 1, true), laneSignal(seconds, 0.7, 2), laneSignal(seconds, 0.2, 3)];
+
+    const stream = await openTimelineMixStream(laneEntries(plan, lanes, frames), lanePcm(plan, lanes), {
+      baseUrl: WASM_BASE,
+      sampleRate: RATE,
+      durationSec: seconds,
+      chunkFrames: 48000,
+      bus: plan,
+      meterTaps: true,
+    });
+    expect(stream).not.toBeNull();
+    const stems = await collectTapped(stream!);
+    expect(stems.taps).toHaveLength(4);
+    expect(worstSumUlps(stems.out, stems.taps)).toBeLessThanOrEqual(1);
+    expect(stems.tapMeters?.map((m) => m.trackId)).toEqual([...lanesTapped, null]);
+    expect(stems.tapMeters![3]!.integrated).toBe(-Infinity); // nothing routed direct
+
+    // Tapping leaves the export master as it was, and it nulls against the preview.
+    const exported = await exportMix(untapped, lanes, frames);
+    const { proc, latency } = await startProcessor(plan);
+    const padded = lanes.map((lane) => lane.map((plane) => {
+      const p = new Float32Array(frames + latency);
+      p.set(plane);
+      return p;
+    }));
+    const previewed = runProcessor(proc, padded, frames + latency);
+    let worst = 0;
+    let changed = 0;
+    for (let c = 0; c < 2; c++) {
+      for (let i = 0; i < frames; i++) {
+        if (stems.out[2 * i + c] !== exported[c]![i]) changed++;
+        worst = Math.max(worst, Math.abs(stems.out[2 * i + c]! - previewed[c]![i + latency]!));
+      }
+    }
+    expect(changed).toBe(0);
+    expect(20 * Math.log10(Math.max(worst, 1e-30))).toBeLessThan(-90);
   }, 60_000);
 
   it('passes the lanes through dry until the module is ready, then reports meters', async () => {

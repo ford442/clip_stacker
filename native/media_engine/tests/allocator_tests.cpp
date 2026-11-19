@@ -195,7 +195,7 @@ Packed everything() {
     for (const Fx& r : rows) p.effects.insert(p.effects.end(), r.begin(), r.end());
     return first;
   };
-  for (const auto& lane : lanes) p.buses.insert(p.buses.end(), {append(lane), static_cast<int>(lane.size())});
+  for (const auto& lane : lanes) p.buses.insert(p.buses.end(), {append(lane), static_cast<int>(lane.size()), 0});
   p.master_first = append(master);
   p.master_count = static_cast<int>(master.size());
   p.final_first = append(final_stage);

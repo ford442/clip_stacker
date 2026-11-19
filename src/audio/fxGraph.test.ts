@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Track } from '../types';
 import { createBusEffect, type LaneDuckSettings } from './audioBus';
-import { MIX_FX_STRIDE } from '../wasm/mediaEngineLayout';
+import { MIX_BUS, MIX_BUS_STRIDE, MIX_BUS_TAP, MIX_FX_STRIDE } from '../wasm/mediaEngineLayout';
 import { busGraphNeededForExport, busGraphNeededForPreview, orderLanes, planBusGraph } from './fxGraph';
 
 const duck = (sourceTrackId: string): LaneDuckSettings => ({
@@ -69,14 +69,48 @@ describe('fxGraph: packed plan', () => {
       { finalRows: new Array(MIX_FX_STRIDE).fill(0), outputGainDb: 4.5 },
     );
     expect(plan.laneTrackIds).toEqual(['dialogue', 'music']);
-    // dialogue: the default EQ's two bands; music: compressor + ducker.
-    expect(plan.buses).toEqual([0, 2, 2, 2]);
+    // dialogue: the default EQ's two bands; music: compressor + ducker. No taps.
+    expect(plan.buses).toEqual([0, 2, 0, 2, 2, 0]);
+    expect(plan.tapTrackIds).toEqual([]);
+    expect(plan.tapDirect).toBe(false);
     const duckRow = plan.effects.slice(3 * MIX_FX_STRIDE, 4 * MIX_FX_STRIDE);
     expect(duckRow[0]).toBe(10); // MIX_FX_DUCKER
     expect(duckRow[12]).toBe(0); // keyed on packed lane 0 (dialogue)
     expect([plan.masterFirst, plan.masterCount, plan.finalFirst, plan.finalCount]).toEqual([4, 1, 5, 1]);
     expect(plan.outputGainDb).toBe(4.5);
     expect(plan.processing).toBe(true);
+  });
+
+  it('taps lanes for stems in packed order, flags their rows and packs the same effect rows', () => {
+    const lanes = [
+      track('music', 'audio', { audioFx: [createBusEffect('compressor')], duck: duck('dialogue') }),
+      track('titles', 'text'),
+      track('dialogue', 'video', { audioFx: [createBusEffect('eq')] }),
+      track('sfx'),
+    ];
+    const untapped = planBusGraph(lanes, { fx: [createBusEffect('limiter')] });
+    // Titles lanes are not buses and unknown ids are not lanes: neither is tapped.
+    const plan = planBusGraph(lanes, { fx: [createBusEffect('limiter')] }, {
+      tapTrackIds: ['music', 'titles', 'gone', 'dialogue'],
+      tapDirect: true,
+    });
+    expect(plan.laneTrackIds).toEqual(['dialogue', 'music', 'sfx']);
+    expect(plan.tapTrackIds).toEqual(['dialogue', 'music']);
+    expect(plan.tapDirect).toBe(true);
+    expect(plan.buses).toEqual([0, 2, MIX_BUS_TAP, 2, 2, MIX_BUS_TAP, 4, 0, 0]);
+    // Tapping changes only the flags field of the bus rows.
+    expect(plan.effects).toEqual(untapped.effects);
+    expect(plan.buses.filter((_, i) => i % MIX_BUS_STRIDE !== MIX_BUS.flags)).toEqual(
+      untapped.buses.filter((_, i) => i % MIX_BUS_STRIDE !== MIX_BUS.flags),
+    );
+    expect(untapped.buses.filter((_, i) => i % MIX_BUS_STRIDE === MIX_BUS.flags)).toEqual([0, 0, 0]);
+    expect([plan.masterFirst, plan.masterCount, plan.finalFirst, plan.finalCount, plan.processing]).toEqual([
+      untapped.masterFirst,
+      untapped.masterCount,
+      untapped.finalFirst,
+      untapped.finalCount,
+      untapped.processing,
+    ]);
   });
 
   it('a project with dry lanes plans a pure sum', () => {

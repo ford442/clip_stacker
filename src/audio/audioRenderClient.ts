@@ -15,6 +15,7 @@ import {
   type ClipPcmProvider,
   type MediaEngineMixEntry,
   type MixMeterReading,
+  type TapMeterReading,
   type TimelineMixChunk,
   type TimelineMixStreamOptions,
 } from '../wasm/mediaEngine';
@@ -30,6 +31,8 @@ export interface MixStream extends AsyncIterable<TimelineMixChunk> {
   readonly channels: number;
   /** The output meter (`meter` option); read after the last chunk. */
   readMeters(): MixMeterReading | null;
+  /** Per-tap loudness (`meterTaps` option), in tap order; read after the last chunk. */
+  readTapMeters(): TapMeterReading[] | null;
   close(): void;
 }
 
@@ -81,6 +84,7 @@ class WorkerMixStream implements MixStream {
   sampleRate = 0;
   channels = 0;
   private meters: MixMeterReading | null = null;
+  private tapMeters: TapMeterReading[] | null = null;
   private closed = false;
   private finished = false;
   /** Pulls in flight, in order; each settles (never rejects). */
@@ -136,6 +140,10 @@ class WorkerMixStream implements MixStream {
     return this.closed ? null : this.meters;
   }
 
+  readTapMeters(): TapMeterReading[] | null {
+    return this.closed ? null : this.tapMeters;
+  }
+
   async *[Symbol.asyncIterator](): AsyncIterator<TimelineMixChunk> {
     while (!this.finished) {
       if (this.closed) throw new Error('mix stream is closed');
@@ -147,9 +155,11 @@ class WorkerMixStream implements MixStream {
       if (result.type === 'done') {
         this.finished = true;
         this.meters = result.meters;
+        this.tapMeters = result.tapMeters;
         return;
       }
-      yield { startFrame: result.startFrame, frameCount: result.frameCount, frames: result.frames };
+      const { startFrame, frameCount, frames, taps } = result;
+      yield taps ? { startFrame, frameCount, frames, taps } : { startFrame, frameCount, frames };
     }
   }
 

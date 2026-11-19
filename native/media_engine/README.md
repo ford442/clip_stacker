@@ -29,7 +29,7 @@ Outputs:
 - `public/wasm/media_engine_fx.wasm` — the bus DSP alone, built
   `-sSTANDALONE_WASM --no-entry` (no JS glue) for the preview's AudioWorklet
 
-Gzipped `.wasm` must stay under **200 KB** (`scripts/wasm-size-check.sh` fails the build otherwise; it is ~36 KB, the fx build ~30 KB). If it passes ~80 KB, simplify before adding anything heavier (e.g. convolution reverb).
+Gzipped `.wasm` must stay under **200 KB** (`scripts/wasm-size-check.sh` fails the build otherwise; it is ~37 KB, the fx build ~27 KB). If it passes ~80 KB, simplify before adding anything heavier (e.g. convolution reverb).
 
 Host tests — same sources, native compiler, ctest, no Emscripten:
 
@@ -171,12 +171,26 @@ That fallback mixes dry: it never builds Web Audio filters for the inserts.
 `mix_bus_session_create(rate, ch, states, effects, n, buses, bus_count,
 master_first, master_count, output_gain_db, final_first, final_count, flags)`
 adds lane buses to a session: `buses` is `MIX_BUS_STRIDE` ints per lane (a row
-range of the effect blob), entries route with `MIX_ENTRY_FX_BUS` (out of range
-= the direct input), and `MIX_BUS_FLAG_METER` turns on the output meter
-(`mix_fx_session_meters`, `MIX_METER_*` layout). A layout that processes
-nothing creates no graph at all, so the mix stays byte-identical.
+range of the effect blob, then flags), entries route with `MIX_ENTRY_FX_BUS`
+(out of range = the direct input), and `MIX_BUS_FLAG_METER` turns on the
+output meter (`mix_fx_session_meters`, `MIX_METER_*` layout). A layout that
+processes nothing creates no graph at all, so the mix stays byte-identical.
 `bus_graph_*` is the same graph without the mixer, fed lane PCM
 (`bus_count + 1` interleaved blocks) — the AudioWorklet's API — and
-`loudness_meter_*` is the meter alone.
+`loudness_meter_*` is the meter alone (exported from both modules).
+
+**Output taps (stems).** `MIX_BUS_TAP` in a lane's `MIX_BUS_FLAGS` (and
+`MIX_BUS_FLAG_TAP_DIRECT` for the direct input, which comes last) taps the
+signal that lane adds to the master sum: after its chain, delay compensation
+and duck. Each tap runs through a delay line as long as the master chain's
+and final stage's look-ahead (allocated at build), so tap frame N is output
+frame N. `mix_bus_session_range(session, out, taps, n, start, …)` is
+`mix_fx_session_range` plus `mix_bus_session_tap_count` tap blocks
+(`n * channels` floats each, tap-major, interleaved, the first call's
+look-ahead dropped like the output's); `bus_graph_process_taps` is the same
+for the standalone graph. With no master chain, final stage or output gain
+the taps sum to the output (within 1 ulp; in practice bit-exact). A tapped
+layout always keeps its graph, the tapped set is structure for
+`bus_graph_update`, and an untapped graph runs exactly the old loop.
 
 Kill switch: `?no_media_engine` (disables the mix, inserts, buses and limiter alike); `?no_audio_fx` disables only the preview's bus worklet.

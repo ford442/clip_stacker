@@ -258,10 +258,12 @@ int BusGraph::build(double sample_rate, int channels, const BusLayout& l, int fl
   if (!cs::try_reserve(lanes_, static_cast<size_t>(l.bus_count) + 1)) return CS_ENOMEM;
   lanes_.resize(static_cast<size_t>(l.bus_count) + 1);
   lane_latency_ = 0;
+  tap_count_ = 0;
   bool any = false;
   for (int b = 0; b < l.bus_count; ++b) {
     const int* bus = l.buses + b * MIX_BUS_STRIDE;
     Lane& lane = lanes_[b];
+    if ((bus[MIX_BUS_FLAGS] & MIX_BUS_TAP) != 0) lane.tap = tap_count_++;
     const double* duck_row = nullptr;
     if (!lane.chain.build(l.effects + static_cast<size_t>(bus[MIX_BUS_FX_FIRST]) * MIX_FX_STRIDE,
                           bus[MIX_BUS_FX_COUNT], sample_rate, channels, false, &duck_row)) {
@@ -278,6 +280,7 @@ int BusGraph::build(double sample_rate, int channels, const BusLayout& l, int fl
     any = any || !lane.chain.empty() || lane.has_duck;
     lane_latency_ = std::max(lane_latency_, lane.chain.latency());
   }
+  if ((flags & MIX_BUS_FLAG_TAP_DIRECT) != 0) lanes_.back().tap = tap_count_++;
   for (Lane& lane : lanes_) {
     lane.pdc_frames = lane_latency_ - lane.chain.latency();
     const size_t pdc = static_cast<size_t>(lane.pdc_frames) * channels;
@@ -297,8 +300,15 @@ int BusGraph::build(double sample_rate, int channels, const BusLayout& l, int fl
   if (meter_on_ && !meter_.init(sample_rate, channels)) return CS_EINVAL;
   if (!cs::try_reserve(lane_out_, lanes_.size() * channels)) return CS_ENOMEM;
   lane_out_.assign(lanes_.size() * channels, 0.f);
+  // A tap leaves before the master chain and the final stage, so it waits
+  // out their look-ahead to stay frame-aligned with the output.
+  tap_delay_ = master_.latency() + final_.latency();
+  const size_t ring = static_cast<size_t>(tap_count_) * static_cast<size_t>(tap_delay_) * channels;
+  if (!cs::try_reserve(tap_ring_, ring)) return CS_ENOMEM;
+  tap_ring_.assign(ring, 0.f);
+  tap_pos_ = 0;
   latency_ = lane_latency_ + master_.latency() + final_.latency();
-  active_ = any || !master_.empty() || !final_.empty() || output_gain_ != 1.f || meter_on_;
+  active_ = any || !master_.empty() || !final_.empty() || output_gain_ != 1.f || meter_on_ || tap_count_ > 0;
   processed_ = 0;
   return CS_OK;
 }
@@ -322,6 +332,8 @@ int BusGraph::retune(const BusLayout& l) {
     if (!lane.chain.matches(lane_rows(b), lane_count_of(b), &duck_row)) return CS_ESTATE;
     const bool duck = duck_row && duck_row[MIX_FX_KEY] >= 0.0 && duck_row[MIX_FX_KEY] < static_cast<double>(b);
     if (duck != lane.has_duck || (duck && static_cast<int>(duck_row[MIX_FX_KEY]) != lane.key)) return CS_ESTATE;
+    const bool tapped = (l.buses[b * MIX_BUS_STRIDE + MIX_BUS_FLAGS] & MIX_BUS_TAP) != 0;
+    if (tapped != (lane.tap >= 0)) return CS_ESTATE;
   }
   if (!master_.matches(master_rows, l.master_count, nullptr) || !final_.matches(final_rows, l.final_count, nullptr)) {
     return CS_ESTATE;
@@ -340,7 +352,17 @@ int BusGraph::retune(const BusLayout& l) {
   return CS_OK;
 }
 
-void BusGraph::process(const float* lanes, float* out, int frames) {
+void BusGraph::process(const float* lanes, float* out, float* taps, int frames) {
+  // Untapped graphs (the preview's, always) run the loop without a tap in it.
+  if (tap_count_ > 0) {
+    run<true>(lanes, out, taps, frames);
+  } else {
+    run<false>(lanes, out, nullptr, frames);
+  }
+}
+
+template <bool Taps>
+void BusGraph::run(const float* lanes, float* out, float* taps, int frames) {
   const int ch = channels_;
   const size_t block = static_cast<size_t>(frames) * ch;
   const int lane_total = static_cast<int>(lanes_.size());
@@ -367,6 +389,25 @@ void BusGraph::process(const float* lanes, float* out, int frames) {
         keep[c] = x[c];
         sum[c] += x[c];
       }
+      if constexpr (Taps) {
+        if (lane.tap >= 0) {
+          // Exactly what this lane added to `sum`, `tap_delay_` frames late.
+          float y[2] = {x[0], x[1]};
+          if (tap_delay_ > 0) {
+            const size_t frame = static_cast<size_t>(lane.tap) * static_cast<size_t>(tap_delay_) +
+                                 static_cast<size_t>(tap_pos_);
+            float* slot = tap_ring_.data() + frame * ch;
+            for (int c = 0; c < ch; ++c) std::swap(slot[c], y[c]);
+          }
+          if (taps) {
+            float* t = taps + static_cast<size_t>(lane.tap) * block + static_cast<size_t>(f) * ch;
+            for (int c = 0; c < ch; ++c) t[c] = y[c];
+          }
+        }
+      }
+    }
+    if constexpr (Taps) {
+      if (tap_delay_ > 0 && ++tap_pos_ == tap_delay_) tap_pos_ = 0;
     }
     if (!master_.empty()) master_.process(sum);
     if (output_gain_ != 1.f) {
@@ -447,6 +488,8 @@ void BusGraph::reset() {
     lane.duck.reset();
   }
   std::fill(lane_out_.begin(), lane_out_.end(), 0.f);
+  std::fill(tap_ring_.begin(), tap_ring_.end(), 0.f);
+  tap_pos_ = 0;
   master_.reset();
   final_.reset();
   // The meter keeps measuring across a seek (EBU Mode: only an explicit
@@ -513,6 +556,15 @@ int bus_graph_latency(const BusGraphHandle* graph) { return graph ? graph->graph
 int bus_graph_process(BusGraphHandle* graph, const float* lanes, float* out, int frames) {
   if (!graph || !lanes || !out || frames < 0) return CS_EINVAL;
   graph->graph.process(lanes, out, frames);
+  return CS_OK;
+}
+
+int bus_graph_tap_count(const BusGraphHandle* graph) { return graph ? graph->graph.tap_count() : 0; }
+
+int bus_graph_process_taps(BusGraphHandle* graph, const float* lanes, float* out, float* taps, int frames) {
+  if (!graph || !lanes || !out || frames < 0) return CS_EINVAL;
+  if (!taps && graph->graph.tap_count() > 0) return CS_EINVAL;
+  graph->graph.process(lanes, out, taps, frames);
   return CS_OK;
 }
 

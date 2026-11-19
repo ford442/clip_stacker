@@ -158,6 +158,8 @@ struct MixFxSession {
   /** Lane inputs (`graph->lane_count() + 1` blocks) and the graph's output, per call. */
   std::vector<float> lanes;
   std::vector<float> bus;
+  /** The graph's output taps (`graph->tap_count()` blocks), per call. */
+  std::vector<float> taps;
 
   ~MixFxSession() { delete graph; }
 
@@ -525,9 +527,17 @@ int mix_fx_session_latency(const MixFxSession* session) {
   return session && session->graph ? session->graph->latency() : 0;
 }
 
-int mix_fx_session_range(
+namespace {
+
+/**
+ * `mix_fx_session_range` / `mix_bus_session_range`: `taps` null = discard
+ * them (a tapped graph still runs its tap delay lines, so later calls stay
+ * aligned).
+ */
+int session_range(
     MixFxSession* session,
     float* out,
+    float* taps,
     int out_frames,
     double start_frame,
     const float* pcm_blob,
@@ -562,23 +572,80 @@ int mix_fx_session_range(
   const int bus_frames = start == 0 ? out_frames + latency : out_frames;
   const int lane_blocks = graph->lane_count() + 1;
   const size_t block = static_cast<size_t>(bus_frames) * ch;
-  if (!cs::try_reserve(session->lanes, block * lane_blocks) || !cs::try_reserve(session->bus, block)) {
+  const size_t tap_floats = taps ? block * static_cast<size_t>(graph->tap_count()) : 0;
+  if (!cs::try_reserve(session->lanes, block * lane_blocks) || !cs::try_reserve(session->bus, block) ||
+      !cs::try_reserve(session->taps, tap_floats)) {
     return CS_ENOMEM;
   }
   session->lanes.assign(block * lane_blocks, 0.f);
   session->bus.resize(block);
+  session->taps.resize(tap_floats);
   // Legacy-twelve entries carry no lane: everything goes to the direct block.
   const bool routed = (flags & MIX_FLAG_EFFECTS) != 0;
   float* mix_out = routed ? session->lanes.data() : session->lanes.data() + block * (lane_blocks - 1);
   const int rc = mix_core(mix_out, bus_frames, bus_begin, rate, ch, pcm_blob, pcm_floats, slices, slice_count, entries,
                           entry_count, keyframes, keyframe_count, flags, session, routed ? lane_blocks : 0);
   if (rc != CS_OK) return rc;
-  graph->process(session->lanes.data(), session->bus.data(), bus_frames);
+  graph->process(session->lanes.data(), session->bus.data(), taps ? session->taps.data() : nullptr, bus_frames);
 
-  const float* first = session->bus.data() + static_cast<size_t>(start == 0 ? latency : 0) * ch;
-  std::copy(first, first + static_cast<size_t>(out_frames) * ch, out);
+  // Taps are aligned with the graph's output, so they drop the same priming frames.
+  const size_t drop = static_cast<size_t>(start == 0 ? latency : 0) * ch;
+  const size_t out_floats = static_cast<size_t>(out_frames) * ch;
+  const float* first = session->bus.data() + drop;
+  std::copy(first, first + out_floats, out);
+  if (taps) {
+    for (int t = 0; t < graph->tap_count(); ++t) {
+      const float* tap = session->taps.data() + static_cast<size_t>(t) * block + drop;
+      std::copy(tap, tap + out_floats, taps + static_cast<size_t>(t) * out_floats);
+    }
+  }
   session->next_frame += out_frames;
   return CS_OK;
+}
+
+}  // namespace
+
+int mix_fx_session_range(
+    MixFxSession* session,
+    float* out,
+    int out_frames,
+    double start_frame,
+    const float* pcm_blob,
+    int pcm_floats,
+    const int* slices,
+    int slice_count,
+    const double* entries,
+    int entry_count,
+    const double* keyframes,
+    int keyframe_count,
+    int flags) {
+  return session_range(session, out, nullptr, out_frames, start_frame, pcm_blob, pcm_floats, slices, slice_count,
+                       entries, entry_count, keyframes, keyframe_count, flags);
+}
+
+int mix_bus_session_tap_count(const MixFxSession* session) {
+  return session && session->graph ? session->graph->tap_count() : 0;
+}
+
+int mix_bus_session_range(
+    MixFxSession* session,
+    float* out,
+    float* taps,
+    int out_frames,
+    double start_frame,
+    const float* pcm_blob,
+    int pcm_floats,
+    const int* slices,
+    int slice_count,
+    const double* entries,
+    int entry_count,
+    const double* keyframes,
+    int keyframe_count,
+    int flags) {
+  if (!session) return CS_EINVAL;
+  if (!taps && mix_bus_session_tap_count(session) > 0) return CS_EINVAL;
+  return session_range(session, out, taps, out_frames, start_frame, pcm_blob, pcm_floats, slices, slice_count,
+                       entries, entry_count, keyframes, keyframe_count, flags);
 }
 
 int mix_fx_session_meters(MixFxSession* session, double* out, int capacity) {
