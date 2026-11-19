@@ -30,6 +30,9 @@ import { getClipPlaybackRate, getTrimmedSourceDuration } from '../timeline/playb
 import { clipIsReversed } from '../timeline/reverseClip';
 import { cycleDurationForClip, sourceTimeAtOutputLocal, wrapOutputLocalToCycle } from '../timeline/timeRemap';
 import { normalizeCaptions } from '../captions/subtitles';
+import { isFinishingActive, resolveFinishingFromProject } from '../finishing/finishing';
+import { isColorManagementActive, normalizeColorManagement } from '../finishing/colorManagement';
+import { normalizeMasterBus } from '../audio/audioBus';
 import { secondsToFrames } from './rational';
 import { timecodeRate, timecodeStartFrames, type TimecodeRate } from './timecode';
 import { compact } from './mapping';
@@ -440,13 +443,16 @@ function projectMeta(project: Project, ctx: Ctx): Record<string, unknown> {
   for (const [id, seq] of ctx.view.sequences) collect(id, seq.body.tracks);
   const unplacedSequences = (project.sequences ?? []).filter((seq) => !ctx.sequencesPlaced.has(seq.id));
   const owner = new Map((project.sequences ?? []).flatMap((seq) => seq.clipIds.map((id) => [id, seq.id] as const)));
+  // In the form a load produces (defaults filled, legacy grade folded in), so
+  // a project exported, imported and exported again writes the same bytes.
+  const finishing = resolveFinishingFromProject(project);
+  const colorManagement = normalizeColorManagement(project.colorManagement);
   return compact({
     schemaVersion: project.schemaVersion,
     layoutReferenceResolution: project.layoutReferenceResolution,
-    finishing: project.finishing,
-    colorGrade: project.colorGrade,
-    colorManagement: project.colorManagement,
-    masterBus: project.masterBus,
+    finishing: isFinishingActive(finishing) ? finishing : undefined,
+    colorManagement: isColorManagementActive(colorManagement) ? colorManagement : undefined,
+    masterBus: normalizeMasterBus(project.masterBus),
     captionStyle: project.captionStyle && Object.keys(project.captionStyle).length > 0 ? project.captionStyle : undefined,
     masterAudio: project.masterAudio
       ? compact({ ...project.masterAudio, sourceMediaDataUrl: undefined, sourceMediaUrl: undefined })

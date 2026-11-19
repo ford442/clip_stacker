@@ -5,6 +5,7 @@
     "src/wasm/*Worker.ts",
     "public/worklets/*.js",
     "scripts/*.mjs",
+    "scripts/cs/*.mjs",
     "e2e/**/*.spec.ts"
   ],
   "project": ["src/**/*.{ts,tsx}", "scripts/**/*.mjs", "e2e/**/*.ts"],

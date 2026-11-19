@@ -26,6 +26,8 @@ export default defineConfig({
         ...devices['Desktop Chrome'],
         viewport: { width: 1440, height: 900 },
         launchOptions: {
+          // CS_CHROMIUM: a local Chrome / Chromium instead of Playwright's download (as `cs` takes it).
+          ...(process.env.CS_CHROMIUM ? { executablePath: process.env.CS_CHROMIUM } : {}),
           args: [
             '--enable-unsafe-webgpu',
             // ANGLE-on-Vulkan with SwiftShader Vulkan: the only combination

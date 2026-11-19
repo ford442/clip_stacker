@@ -270,6 +270,42 @@ export async function importTimelineIntoEditor(request: ImportTimelineRequest): 
   return report;
 }
 
+export interface LoadProjectReport {
+  clipCount: number;
+  offline: string[];
+  skipped: string[];
+  warnings: string[];
+}
+
+/**
+ * Open a saved project (its JSON) with media found the way an import finds
+ * it — the library, picked files, a media root URL, then embedded or remote
+ * copies; anything left loads offline. Replaces the open project.
+ */
+export async function loadProjectJson(project: Project, request: Pick<ImportTimelineRequest, 'files' | 'mediaRoot'> = {}): Promise<LoadProjectReport> {
+  if (!project || !Array.isArray(project.clips)) throw new Error('Not a Clip Stacker project (no clips array).');
+  const media = new Map<string, MediaReference>();
+  for (const clip of project.clips) {
+    if (clip.source) continue;
+    const hash = clip.offline?.hash ?? clip.proxy?.hash;
+    media.set(clip.id, {
+      name: clip.offline?.fileName ?? clip.fileName,
+      hasVideo: clip.kind !== 'audio',
+      hasAudio: clip.hasAudio !== false,
+      ...(hash ? { hash } : {}),
+      ...(clip.offline?.driveId ? { driveId: clip.offline.driveId } : {}),
+    });
+  }
+  const { files } = await resolveImportMedia(media, request);
+  const applied = await loadProjectIntoEditor(project, (saved) => files.get(saved.id) ?? null);
+  return {
+    clipCount: applied.clips.length + applied.sequences.reduce((n, seq) => n + seq.clips.length, 0),
+    offline: applied.offlineClipFileNames,
+    skipped: applied.skippedClipFileNames,
+    warnings: [...applied.mediaDownloadWarnings, ...applied.invalidColorWarnings],
+  };
+}
+
 /** Every offline clip in the project (each sequence's too). */
 export function offlineClips(): Clip[] {
   return allSequenceClips(editorStore.getState()).filter((clip) => Boolean(clip.offline));

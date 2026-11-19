@@ -231,7 +231,7 @@ export async function exportStems(input: StemExportInput, options: StemExportOpt
       trackName: name,
       timeReference,
       bext: {
-        description: `${input.projectName} — ${name}`.slice(0, 256),
+        description: `${input.projectName} - ${name}`.slice(0, 256),
         originationDate,
         originationTime,
         // Measured while writing; filled in at finish.

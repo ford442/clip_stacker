@@ -20,6 +20,8 @@ const METHODS = [
   'schema',
   'agentBrief',
   'getState',
+  'loadProject',
+  'onProgress',
   'validate',
   'apply',
   'importTimeline',

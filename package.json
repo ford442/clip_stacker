@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Upload, trim, reorder, fade, and merge video clips into one MP4 using FFmpeg WebAssembly",
   "type": "module",
+  "bin": {
+    "cs": "scripts/cs/render.mjs"
+  },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
@@ -35,7 +38,8 @@
     "e2e": "playwright test",
     "e2e:update-goldens": "UPDATE_GOLDENS=1 playwright test e2e/goldens.spec.ts",
     "lint": "eslint . --max-warnings 0",
-    "check:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src"
+    "check:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src",
+    "cs": "node scripts/cs/render.mjs"
   },
   "keywords": [
     "video",

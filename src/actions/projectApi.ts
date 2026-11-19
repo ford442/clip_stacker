@@ -29,6 +29,8 @@ import { isInterchangeFormat } from '../interchange';
 import type { StemExportOptions } from '../export/exportStems';
 import {
   currentProject,
+  loadProjectJson,
+  type LoadProjectReport,
   exportCurrentTimeline,
   exportStemsFromEditor,
   importTimelineIntoEditor,
@@ -53,11 +55,22 @@ export interface RenderReport {
   plan: RenderPlan | null;
 }
 
+export interface ProgressEvent {
+  stage: string;
+  /** 0–1, or null while indeterminate. */
+  value: number | null;
+  status: string;
+}
+
 export interface ProjectApi {
   version: number;
   schema: () => Record<string, unknown>;
   agentBrief: () => string;
   getState: () => Project;
+  /** Open a saved project (JSON or its text), finding media like `importTimeline`. */
+  loadProject: (project: Project | string, options?: Omit<ImportTimelineRequest, 'text' | 'format' | 'fileName' | 'rate'>) => Promise<LoadProjectReport>;
+  /** Render / stems progress and status; returns an unsubscribe. */
+  onProgress: (listener: (progress: ProgressEvent) => void) => () => void;
   validate: (ops: unknown) => ValidateOpsResult;
   apply: (ops: unknown, options?: { mediaRoot?: string }) => Promise<ApplyResult>;
   importTimeline: (text: string, options?: Omit<ImportTimelineRequest, 'text'>) => Promise<ImportReport>;
@@ -117,6 +130,14 @@ export function createProjectApi(): ProjectApi {
     schema: projectOpsJsonSchema,
     agentBrief: projectApiAgentBrief,
     getState: currentProject,
+    loadProject: (project, options = {}) =>
+      loadProjectJson(typeof project === 'string' ? (JSON.parse(project) as Project) : project, options),
+    onProgress: (listener) =>
+      renderJobStore.subscribe((s, prev) => {
+        if (s.progressStage !== prev.progressStage || s.progressValue !== prev.progressValue || s.status !== prev.status) {
+          listener({ stage: s.progressStage, value: s.progressValue, status: s.status });
+        }
+      }),
     validate: validateProjectOps,
     apply: (ops, options) => applyProjectOps(ops, options),
     importTimeline: (text, options = {}) => importTimelineIntoEditor({ ...options, text }),

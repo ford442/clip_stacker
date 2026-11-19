@@ -5,6 +5,7 @@ import { serializeProject } from '../project/serialize';
 import { selectProjectSnapshot } from '../project/snapshot';
 import { buildFixture, type HarnessFixtureSpec } from '../app/testHarness/fixtureBuilder';
 import { GOLDEN_CASES } from '../../e2e/fixtures';
+import { isFinishingActive, resolveFinishingFromProject } from '../finishing/finishing';
 
 let nextId = 0;
 
@@ -46,5 +47,13 @@ export const FIXTURE_CASES = GOLDEN_CASES;
 
 /** A project with its clip pool in id order (load order is not part of a project's meaning). */
 export function normalizedProject(project: Project): unknown {
-  return JSON.parse(JSON.stringify({ ...project, clips: [...project.clips].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)) }));
+  // Finishing in the form a load gives it (defaults filled), as an import writes it.
+  const finishing = resolveFinishingFromProject(project);
+  return JSON.parse(
+    JSON.stringify({
+      ...project,
+      finishing: isFinishingActive(finishing) ? finishing : undefined,
+      clips: [...project.clips].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+    }),
+  );
 }
