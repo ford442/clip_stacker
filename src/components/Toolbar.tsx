@@ -6,6 +6,7 @@ import { fetchDemoClips } from '../media/demoClips';
 import { importFromDrive } from '../actions/segments/driveImport';
 import { describeEncoderBadge } from '../export/encoderPathLabel';
 import { ProgressBar } from './ProgressBar';
+import { FileMenu } from './interchange/FileMenu';
 import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { settingsActions, settingsStore, useCanRedo, useCanUndo } from '../store';
@@ -233,6 +234,7 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
           hidden
           onChange={handleProjectFileChange}
         />
+        <FileMenu />
         <button
           type="button"
           onClick={onShowKeyboardShortcuts}

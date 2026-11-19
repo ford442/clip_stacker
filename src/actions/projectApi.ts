@@ -12,6 +12,9 @@
  *   project.render({ outputResolution, … })
  *   project.undo() / project.redo() / project.relink({ files })
  *
+ * On `window` every method is async: `projectApiInstall.ts` installs a stub
+ * at startup that loads this module on the first call.
+ *
  * Same-page only, like `finishing.*`: there is no cross-origin `postMessage`
  * listener, so only code already running in the page can drive it. Format
  * and op reference: `docs/project-api.md`, `docs/project-ops.schema.json`.
@@ -126,24 +129,5 @@ export function createProjectApi(): ProjectApi {
     render,
     undo: () => editorStore.getState().undo(),
     redo: () => editorStore.getState().redo(),
-  };
-}
-
-declare global {
-  interface ClipStackerGlobal {
-    project?: ProjectApi;
-    api?: { version: number };
-  }
-}
-
-/** Install `window.clipStacker.project` and `clipStacker.api`. Returns an uninstall. */
-export function installProjectApi(target: Window = window): () => void {
-  const api = createProjectApi();
-  target.clipStacker = { ...(target.clipStacker ?? {}), project: api, api: { version: PROJECT_API_VERSION } };
-  return () => {
-    if (target.clipStacker?.project === api) {
-      delete target.clipStacker.project;
-      delete target.clipStacker.api;
-    }
   };
 }

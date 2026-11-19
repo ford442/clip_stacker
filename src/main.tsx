@@ -5,7 +5,7 @@ import { App } from "./App";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { initCaptionProviders } from "./app/captionProviderBootstrap";
 import { installFinishingPresetApi } from "./actions/finishingPresetApi";
-import { installProjectApi } from "./actions/projectApi";
+import { installProjectApi } from "./actions/projectApiInstall";
 import { testHarnessRequested } from "./app/harnessBindings";
 import { allowFallbackAdapterForPreview } from "./webgpu/gpuDevice";
 import { requestGpuProfiling } from "./webgpu/gpuProfiler";

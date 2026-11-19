@@ -35,6 +35,8 @@ import {
 import { baseName, needsHashes, planRelink, type RelinkCandidate, type RelinkMatch } from '../interchange/relink';
 import type { TimecodeRateId } from '../types';
 import { exportStems, type StemExportOptions, type StemsReport } from '../export/exportStems';
+import { getDriveAccessToken } from '../remote/googleDrive';
+import { fetchDriveFile } from './segments/segmentDeps';
 
 /** The open project as its saved JSON (what a save writes). */
 export function currentProject(): Project {
@@ -323,6 +325,27 @@ export async function relinkOfflineClips(input: { files?: File[]; assignments?: 
   }
   const remaining = offlineClips().length;
   return { relinked: targets.length - remaining, remaining };
+}
+
+/** Distinct media files the library holds (relink targets), by file name. */
+export function libraryMedia(): Array<{ name: string; file: File }> {
+  return libraryCandidates().map((source) => ({ name: source.candidate.name, file: source.file! }));
+}
+
+/** The Drive library item an offline clip came from (by id, then name), if any. */
+export function driveItemForOffline(clip: Clip): ReturnType<typeof driveLibraryStore.getState>['items'][number] | null {
+  const items = driveLibraryStore.getState().items;
+  return items.find((item) => item.fileId === clip.offline?.driveId) ?? items.find((item) => item.name === clip.offline?.fileName) ?? null;
+}
+
+/** Download an offline clip's media from Drive (asks for access when needed) and relink it. */
+export async function relinkFromDrive(clipId: string): Promise<RelinkReport> {
+  const clip = offlineClips().find((c) => c.id === clipId);
+  if (!clip) throw new Error('That clip is not offline.');
+  const item = driveItemForOffline(clip);
+  if (!item) throw new Error(`No Drive library item matches "${clip.offline?.fileName}". Import it from Drive first.`);
+  const file = await fetchDriveFile(item, await getDriveAccessToken());
+  return relinkOfflineClips({ assignments: [{ clipId, file }] });
 }
 
 export interface StemsDownload extends StemsReport {

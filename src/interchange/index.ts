@@ -20,18 +20,7 @@ export type { InterchangeFormat } from './mapping';
 export type { MediaFacts, ToInterchangeOptions } from './toInterchange';
 export type { MediaReference } from './model';
 
-export const INTERCHANGE_FORMATS: readonly InterchangeFormat[] = ['otio', 'fcpxml', 'edl'];
-
-/** File extension and MIME type each format is saved with. */
-export const INTERCHANGE_FILE_TYPES: Readonly<Record<InterchangeFormat, { extension: string; mime: string; label: string }>> = {
-  otio: { extension: '.otio', mime: 'application/json', label: 'OpenTimelineIO' },
-  fcpxml: { extension: '.fcpxml', mime: 'application/xml', label: 'FCPXML 1.11' },
-  edl: { extension: '.edl', mime: 'text/plain', label: 'CMX 3600 EDL' },
-};
-
-export function isInterchangeFormat(value: unknown): value is InterchangeFormat {
-  return value === 'otio' || value === 'fcpxml' || value === 'edl';
-}
+export { INTERCHANGE_FILE_TYPES, INTERCHANGE_FORMATS, isInterchangeFormat } from './formats';
 
 /** The format of a timeline file, from its name and then its content; null when it is none of them. */
 export function detectInterchangeFormat(text: string, fileName = ''): InterchangeFormat | null {

@@ -334,8 +334,9 @@ function VirtualClipBlockImpl({
           {clip.kind === 'video' ? (
             <div className={`timeline-thumbs${isLoadingThumbs ? ' is-loading' : ''}`}>
               {isSequence && <span className="timeline-sequence-icon" aria-hidden="true">▣</span>}
-              {thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null}
-              {(showVideoWaveform || hasRateCurve) && displayWaves && (
+              {/* An offline clip has no media: the cached strips (keyed by id) would be stale. */}
+              {clip.offline ? null : (thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null)}
+              {!clip.offline && (showVideoWaveform || hasRateCurve) && displayWaves && (
                 <div className="timeline-video-waveform">
                   <WaveformCanvas peaks={displayWaves} height={40} remapCurve={remapCurve} />
                 </div>
@@ -350,7 +351,7 @@ function VirtualClipBlockImpl({
             </div>
           ) : (
             <div className={`timeline-waveform${isLoadingWave ? ' is-loading' : ''}`}>
-              {displayWaves ? (
+              {displayWaves && !clip.offline ? (
                 <WaveformCanvas peaks={displayWaves} height={54} remapCurve={remapCurve} />
               ) : (
                 <span className="waveform-loading-icon">♫</span>

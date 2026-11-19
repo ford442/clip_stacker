@@ -8,6 +8,7 @@ import { PRESETS } from './helpers';
 import { InspectorSection } from './InspectorSection';
 import { LIMITER_LIMITS, normalizeMasterLimiter, type MasterLimiterSettings } from '../../audio/audioEffects';
 import { LoudnessTargetFields } from '../audio/LoudnessTargetFields';
+import { ProjectTimecodeFields } from '../interchange/ProjectTimecodeFields';
 
 interface InspectorExportTabProps {
   exportSettings: ExportSettings;
@@ -208,6 +209,13 @@ export function InspectorExportTab({
           Faster preset = quicker encode, slightly larger file.
         </p>
 
+      </InspectorSection>
+
+      <InspectorSection id="export.project" title="Project timecode" defaultOpen={false}>
+        <ProjectTimecodeFields />
+        <p className="inspector-hint">
+          Where frame 0 sits in exported timelines (EDL / OTIO / FCPXML) and in the stems&apos; BWF TimeReference.
+        </p>
       </InspectorSection>
 
       <InspectorSection id="export.loudness" title="Loudness">

@@ -142,3 +142,19 @@ describe('applyProjectOps', () => {
     expect(api.getState().clips.find((c) => c.id === a)!.trimEnd).toBe(4);
   });
 });
+
+describe('window.clipStacker.project (lazy install)', () => {
+  it('installs at once with the version and loads the implementation on the first call', async () => {
+    const { installProjectApi, PROJECT_API_VERSION_AT_INSTALL } = await import('../projectApiInstall');
+    const { PROJECT_API_VERSION } = await import('./schema');
+    expect(PROJECT_API_VERSION_AT_INSTALL).toBe(PROJECT_API_VERSION);
+    const uninstall = installProjectApi(window);
+    expect(window.clipStacker?.api?.version).toBe(PROJECT_API_VERSION);
+    await twoClips();
+    const state = await window.clipStacker!.project!.getState();
+    expect(state.clips).toHaveLength(3);
+    expect((await window.clipStacker!.project!.validate({ op: 'nope' })).ok).toBe(false);
+    uninstall();
+    expect(window.clipStacker?.project).toBeUndefined();
+  });
+});

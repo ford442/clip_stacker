@@ -1,0 +1,73 @@
+/* Toolbar File menu (timeline interchange, stems, relink). */
+.file-menu {
+  position: relative;
+  display: inline-block;
+}
+.file-menu > summary {
+  list-style: none;
+  cursor: pointer;
+  padding: var(--ws-btn-pad-y, 0.4rem) var(--ws-btn-pad-x, 0.8rem);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  user-select: none;
+}
+.file-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.file-menu-items {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 16rem;
+  display: flex;
+  flex-direction: column;
+  padding: 0.25rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.file-menu-items > button,
+.file-menu-items > a {
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  color: inherit;
+}
+.file-menu-items > button:hover,
+.file-menu-items > a:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+.offline-badge {
+  border-color: #ffc400;
+  color: #ffc400;
+}
+.interchange-dialog {
+  max-width: min(44rem, calc(100vw - 2rem));
+}
+.relink-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.relink-table th,
+.relink-table td {
+  text-align: left;
+  padding: 0.3rem 0.4rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  overflow-wrap: anywhere;
+}
+.relink-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
+}
