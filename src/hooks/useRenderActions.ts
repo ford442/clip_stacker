@@ -172,7 +172,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
           forceReencode,
           outputColor: colorManagement.outputColor,
           mediaRecorderAvailable: typeof MediaRecorder !== "undefined",
-          captionMode: captions.length > 0 ? captionExportMode : undefined,
+          ...(captions.length > 0 && { captionMode: captionExportMode }),
         },
       );
       setRenderPlan(plan);

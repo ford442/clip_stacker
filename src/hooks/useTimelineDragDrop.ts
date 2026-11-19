@@ -157,11 +157,11 @@ export function useTimelineDragDrop({
           const x = e.clientX - rect.left + scroll.scrollLeft;
           // Find the boundary that calcInsertIndex decided
           let boundaryX = 0;
-          if (insertBefore < clipLayouts.length) {
-            const layout = clipLayouts[insertBefore];
+          const layout = clipLayouts[insertBefore];
+          const last = clipLayouts[clipLayouts.length - 1];
+          if (layout) {
             boundaryX = layout.start + layout.width / 2; // midpoint used by calcInsertIndex
-          } else if (clipLayouts.length > 0) {
-            const last = clipLayouts[clipLayouts.length - 1];
+          } else if (last) {
             boundaryX = last.start + last.width;
           }
           preferSlot = Math.abs(x - boundaryX) <= Math.max(thresholdPx * 1.5, 24);
@@ -211,6 +211,7 @@ export function useTimelineDragDrop({
   const handleTouchMoveOnTrack = (e: React.TouchEvent) => {
     if (touchDragRef.current === null) return;
     const touch = e.touches[0];
+    if (!touch) return;
     if (lastTouchPos.current) {
       const dx = Math.abs(touch.clientX - lastTouchPos.current.x);
       const dy = Math.abs(touch.clientY - lastTouchPos.current.y);

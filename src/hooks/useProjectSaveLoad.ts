@@ -144,8 +144,7 @@ export function useProjectSaveLoad({
           invalidColorWarnings,
           mediaDownloadWarnings,
         } = await applyProjectData(parsed, clips);
-        const selectedId =
-          updatedClips.length > 0 ? updatedClips[updatedClips.length - 1].id : null;
+        const selectedId = updatedClips.at(-1)?.id ?? null;
         resetHistory({
           clips: updatedClips,
           tracks: loadedTracks,
@@ -235,7 +234,7 @@ export function useProjectSaveLoad({
         );
         setStatus(
           clips.length > 0
-            ? `Uploading clip 1/${clips.length}: ${clips[0].file.name} (0%)`
+            ? `Uploading clip 1/${clips.length}: ${clips[0]?.file.name} (0%)`
             : "Saving project to remote storage...",
         );
         const project = await serializeProjectWithMedia(currentProjectSnapshot(), {
@@ -324,8 +323,7 @@ export function useProjectSaveLoad({
           },
         });
 
-        const selectedId =
-          updatedClips.length > 0 ? updatedClips[updatedClips.length - 1].id : null;
+        const selectedId = updatedClips.at(-1)?.id ?? null;
         resetHistory({
           clips: updatedClips,
           tracks: loadedTracks,

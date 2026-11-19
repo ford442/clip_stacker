@@ -96,8 +96,12 @@ export function useTimelineActions({
     if (mainTrackLocked()) return;
     pushHistory();
     setClips((prev) => {
+      const above = prev[index - 1];
+      const current = prev[index];
+      if (!above || !current) return prev;
       const next = [...prev];
-      [next[index - 1], next[index]] = [next[index], next[index - 1]];
+      next[index - 1] = current;
+      next[index] = above;
       return next;
     });
     setTransitions((prev) => reindexAfterSwap(prev, index - 1, index));
@@ -108,8 +112,12 @@ export function useTimelineActions({
     pushHistory();
     setClips((prev) => {
       if (index >= prev.length - 1) return prev;
+      const current = prev[index];
+      const below = prev[index + 1];
+      if (!current || !below) return prev;
       const next = [...prev];
-      [next[index + 1], next[index]] = [next[index], next[index + 1]];
+      next[index] = below;
+      next[index + 1] = current;
       return next;
     });
     setTransitions((prev) => reindexAfterSwap(prev, index, index + 1));
@@ -219,9 +227,8 @@ export function useTimelineActions({
   const handleDeleteClip = useCallback(
     (clipId: string) => {
       // Find the clip
-      const clipIndex = clips.findIndex((c) => c.id === clipId);
-      if (clipIndex < 0) return;
-      const clipToDelete = clips[clipIndex];
+      const clipToDelete = clips.find((c) => c.id === clipId);
+      if (!clipToDelete) return;
 
       if (refuseWhenLocked(clipId, "delete this clip")) return;
 

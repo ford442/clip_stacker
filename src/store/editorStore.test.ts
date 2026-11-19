@@ -290,30 +290,30 @@ describe('lane chrome actions (#168 Phase A)', () => {
   });
 
   it('toggles mute and lock, each as its own undo step', () => {
-    const [main] = editorStore.getState().tracks;
+    const main = editorStore.getState().tracks[0]!;
 
     editorActions.toggleTrackMuted(main.id);
-    expect(editorStore.getState().tracks[0].muted).toBe(true);
+    expect(editorStore.getState().tracks[0]?.muted).toBe(true);
     editorActions.toggleTrackLocked(main.id);
-    expect(editorStore.getState().tracks[0].locked).toBe(true);
+    expect(editorStore.getState().tracks[0]?.locked).toBe(true);
 
     editorActions.undo();
-    expect(editorStore.getState().tracks[0].locked).toBeUndefined();
-    expect(editorStore.getState().tracks[0].muted).toBe(true);
+    expect(editorStore.getState().tracks[0]?.locked).toBeUndefined();
+    expect(editorStore.getState().tracks[0]?.muted).toBe(true);
 
     editorActions.toggleTrackMuted(main.id);
-    expect(editorStore.getState().tracks[0].muted).toBeUndefined();
+    expect(editorStore.getState().tracks[0]?.muted).toBeUndefined();
   });
 
   it('refuses to remove the main video lane and records no history for it', () => {
-    const main = editorStore.getState().tracks[0];
+    const main = editorStore.getState().tracks[0]!;
     editorActions.removeTrack(main.id);
-    expect(editorStore.getState().tracks[0].id).toBe(main.id);
+    expect(editorStore.getState().tracks[0]?.id).toBe(main.id);
     expect(editorStore.getState().undoDepth).toBe(0);
   });
 
   it('removes an overlay lane and restores it on undo', () => {
-    const overlay = editorStore.getState().tracks[1];
+    const overlay = editorStore.getState().tracks[1]!;
     editorActions.removeTrack(overlay.id);
     expect(editorStore.getState().tracks.some((t) => t.id === overlay.id)).toBe(false);
 
@@ -322,12 +322,12 @@ describe('lane chrome actions (#168 Phase A)', () => {
   });
 
   it('clamps lane height and renames a lane', () => {
-    const [main] = editorStore.getState().tracks;
+    const main = editorStore.getState().tracks[0]!;
     editorActions.setTrackHeight(main.id, 1000);
-    expect(editorStore.getState().tracks[0].height).toBe(160);
+    expect(editorStore.getState().tracks[0]?.height).toBe(160);
 
     editorActions.renameTrack(main.id, 'Cam A');
-    expect(editorStore.getState().tracks[0].label).toBe('Cam A');
+    expect(editorStore.getState().tracks[0]?.label).toBe('Cam A');
   });
 
   it('ignores actions for an unknown lane id', () => {

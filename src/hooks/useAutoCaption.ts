@@ -120,7 +120,7 @@ export function useAutoCaption(): UseAutoCaptionResult {
         `Transcribing ${durationSec.toFixed(1)}s of audio with ${provider.label}…`,
       );
       const cues = await provider.transcribe(audio, {
-        language: settings.autoCaptionLanguage || undefined,
+        ...(settings.autoCaptionLanguage ? { language: settings.autoCaptionLanguage } : {}),
         timeOffsetSec,
         signal: controller.signal,
         onProgress: (event) => {

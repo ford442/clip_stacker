@@ -434,7 +434,7 @@ describe('AudioPlaybackManager lifecycle', () => {
       install();
       const manager = new AudioPlaybackManager();
       expect(await manager.play(2)).toBe(true);
-      const ctx = RunningContext.made[0];
+      const ctx = RunningContext.made[0]!;
       ctx.currentTime = 11; // one second rendered since play
       // 1 s rendered, 0.12 s of it still in the device buffer.
       expect(manager.getCurrentTime()).toBeCloseTo(2 + 1 - 0.12, 9);
@@ -463,7 +463,7 @@ describe('AudioPlaybackManager lifecycle', () => {
       expect(RunningContext.made).toHaveLength(1);
       expect(getAudioContext()).toBe(RunningContext.made[0]);
       await manager.dispose();
-      expect(RunningContext.made[0].closed).not.toHaveBeenCalled();
+      expect(RunningContext.made[0]?.closed).not.toHaveBeenCalled();
       expect(getAudioContext()).toBe(RunningContext.made[0]);
     });
 
@@ -471,12 +471,12 @@ describe('AudioPlaybackManager lifecycle', () => {
       install();
       const manager = new AudioPlaybackManager();
       await manager.ensureContext();
-      const first = RunningContext.made[0];
+      const first = RunningContext.made[0]!;
       expect(first.latencyHint).toBe('interactive');
       preferAudioLatency('balanced');
       expect(await manager.play(0)).toBe(true);
       expect(RunningContext.made).toHaveLength(2);
-      const second = RunningContext.made[1];
+      const second = RunningContext.made[1]!;
       expect(second.latencyHint).toBe('balanced');
       expect(first.closed).toHaveBeenCalled();
       expect(getAudioContext()).toBe(second);

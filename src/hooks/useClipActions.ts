@@ -78,7 +78,8 @@ export function useClipActions({
     setSelectedClipId(copy.id);
     // Park the playhead on the copy's output position (the timeline clock).
     const placed = findClipTrack(result.state.tracks, copy.id);
-    if (placed) setPlayheadTime(placed.track.items[placed.itemIndex].startTime);
+    const placedItem = placed?.track.items[placed.itemIndex];
+    if (placedItem) setPlayheadTime(placedItem.startTime);
     setOutputUrl(null);
     setStatus(`Duplicated "${source.title}".`);
   }, [selectedClipId, setSelectedClipId]);
@@ -96,7 +97,8 @@ export function useClipActions({
     }
 
     const index = clips.findIndex((clip) => clip.id === selectedClipId);
-    if (index < 0) return;
+    const source = clips[index];
+    if (!source) return;
 
     // A split retimes the lane's items, so a locked lane refuses it (#168 Phase A).
     const state = editorStore.getState();
@@ -116,7 +118,6 @@ export function useClipActions({
       setStatus("Move the playhead over the selected clip to split it.");
       return;
     }
-    const source = clips[index];
     const sourcePlayhead = sourceTimeAtOutputLocal(
       source,
       wrapOutputLocalToCycle(source, currentPlayheadTime - placed.start).cycleLocalT,

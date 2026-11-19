@@ -61,8 +61,8 @@ export async function buildClipProxy(
       height: plan.height,
       durationSec: clip.duration,
       profile: plan.profile,
-      signal: options.signal,
-      onProgress: options.onProgress,
+      ...(options.signal && { signal: options.signal }),
+      ...(options.onProgress && { onProgress: options.onProgress }),
     });
     if (options.signal?.aborted) return { ok: false, reason: 'cancelled', cancelled: true };
     await deps.store.put(key, blob);

@@ -27,7 +27,7 @@ describe('editorStore captions', () => {
 
   it('enforces the minimum cue duration on write', () => {
     editorActions.setCaptions([{ id: 'z', startSec: 5, endSec: 5, text: 'Instant' }]);
-    expect(editorStore.getState().captions[0].endSec).toBeCloseTo(
+    expect(editorStore.getState().captions[0]?.endSec).toBeCloseTo(
       5 + MIN_CAPTION_DURATION_SEC,
       6,
     );

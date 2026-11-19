@@ -196,10 +196,7 @@ export function useInspectorActions({
             audioFadeIn: Number(values.audioFadeIn || 0),
             audioFadeOut: Number(values.audioFadeOut || 0),
             layerIndex: locked ? (clip.layerIndex ?? 0) : nextLayerIndex,
-            x: layout.x,
-            y: layout.y,
-            width: layout.width,
-            height: layout.height,
+            ...layout,
             opacity: Math.min(1, Math.max(0, Number(values.opacity ?? 1))),
             ...resolveOverlayKeying(values),
             volume: clampClipVolume(Number(values.volume ?? 1)),
@@ -433,8 +430,7 @@ export function useInspectorActions({
               rifeProcessed: true,
               rifeMultiplier: multiplier,
               rifeMode: mode,
-              // Preserve originalFps if it was already set (e.g. from a previous run)
-              originalFps: c.originalFps,
+              // originalFps, if already set (e.g. by a previous run), is kept by the spread.
               // New source bytes: the old proxy shows the wrong picture.
               proxy: undefined,
             };

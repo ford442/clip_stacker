@@ -45,7 +45,7 @@ function seed(): void {
   const clips = [trimmed('x', 0, 3), trimmed('y', 2, 2), trimmed('z', 2, 3)];
   const tracks: Track[] = createDefaultTracks();
   tracks[1] = {
-    ...tracks[1],
+    ...tracks[1]!,
     items: [
       { clipId: 'x', startTime: 0 },
       { clipId: 'y', startTime: 3 },
@@ -133,7 +133,7 @@ function seedBase(): void {
   const clips = [trimmed('a', 0, 3), trimmed('b', 2, 2), trimmed('c', 2, 3)];
   const tracks: Track[] = createDefaultTracks();
   tracks[0] = {
-    ...tracks[0],
+    ...tracks[0]!,
     items: [
       { clipId: 'a', startTime: 0 },
       { clipId: 'b', startTime: 3 },
@@ -160,7 +160,7 @@ describe('duplicateItem', () => {
 
   it('inserts the copy after the source on an overlay lane and ripples later items', () => {
     seed();
-    const copy = duplicateClip(editorStore.getState().clips[1]);
+    const copy = duplicateClip(editorStore.getState().clips[1]!);
     commit(duplicateItem(current(), 'y', copy, 'insert'));
     expect(lane(OVERLAY_VIDEO_TRACK_ID)).toEqual([
       { clipId: 'x', startTime: 0 },
@@ -174,7 +174,7 @@ describe('duplicateItem', () => {
 
   it('overwrites what follows on an overlay lane in overwrite mode', () => {
     seed();
-    const copy = duplicateClip(editorStore.getState().clips[1]);
+    const copy = duplicateClip(editorStore.getState().clips[1]!);
     commit(duplicateItem(current(), 'y', copy, 'overwrite'));
     const items = lane(OVERLAY_VIDEO_TRACK_ID);
     expect(items.map((i) => [i.clipId, i.startTime])).toEqual([
@@ -190,7 +190,7 @@ describe('duplicateItem', () => {
 
   it('always inserts on the base lane and keeps the xfade on the pair it joined', () => {
     seedBase();
-    const copy = duplicateClip(editorStore.getState().clips[1]);
+    const copy = duplicateClip(editorStore.getState().clips[1]!);
     // Overwrite mode still inserts on the gapless base lane.
     commit(duplicateItem(current(), 'b', copy, 'overwrite'));
     expect(lane(MAIN_VIDEO_TRACK_ID).map((i) => [i.clipId, i.startTime])).toEqual([
@@ -212,7 +212,7 @@ describe('duplicateItem', () => {
       clips: editorStore.getState().clips.map((c) => c.id),
       transitions: editorStore.getState().transitions,
     };
-    const copy = duplicateClip(editorStore.getState().clips[1]);
+    const copy = duplicateClip(editorStore.getState().clips[1]!);
     commit(duplicateItem(current(), 'b', copy, 'insert'));
     expect(editorStore.getState().undoDepth).toBe(1);
     editorActions.undo();
@@ -228,7 +228,7 @@ describe('duplicateItem', () => {
         t.id === OVERLAY_VIDEO_TRACK_ID ? { ...t, locked: true } : t,
       ),
     });
-    const copy = duplicateClip(editorStore.getState().clips[1]);
+    const copy = duplicateClip(editorStore.getState().clips[1]!);
     const result = duplicateItem(current(), 'y', copy, 'insert');
     expect(result.ok).toBe(false);
   });

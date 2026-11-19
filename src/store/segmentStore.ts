@@ -16,7 +16,7 @@ export interface SegmentSession {
   /** Latest progress / error text. */
   message: string;
   /** 0..1 while a server job reports it. */
-  progress?: number;
+  progress?: number | undefined;
   result?: ExtractedSegment;
   /** Colab: the cut segment is ready to take away; waiting for the processed file. */
   awaitingImport?: boolean;
