@@ -13,6 +13,10 @@
 // key off any lane packed before it (already processed for that frame).
 // Delay compensation pads every lane to the slowest lane chain, so lanes stay
 // sample-aligned with each other and with their keys.
+//
+// Output taps (stems): a tapped lane's tap is what it adds to the sum, run
+// through a delay line as long as the master chain + final stage look-ahead,
+// so tap frame N and output frame N are the same timeline frame.
 
 #include "effects.h"
 #include "loudness.h"
@@ -102,15 +106,21 @@ class BusGraph {
   /** CS_OK, or CS_ESTATE when the structure changed (nothing was touched). */
   int retune(const BusLayout& layout);
 
-  /** False when the graph would pass its input straight through (no stage, duck, gain or meter). */
+  /** False when the graph would pass its input straight through (no stage, duck, gain, meter or tap). */
   bool active() const { return active_; }
   int latency() const { return latency_; }
   int lane_count() const { return static_cast<int>(lanes_.size()) - 1; }
   int channels() const { return channels_; }
   bool metering() const { return meter_on_; }
+  int tap_count() const { return tap_count_; }
 
-  /** See `bus_graph_process`: `bus_count + 1` lane-major interleaved blocks in, one block out. */
-  void process(const float* lanes, float* out, int frames);
+  /**
+   * See `bus_graph_process_taps`: `bus_count + 1` lane-major interleaved
+   * blocks in, one block out, and `tap_count()` tap blocks when `taps` is
+   * non-null (a null `taps` still advances the taps' delay lines).
+   */
+  void process(const float* lanes, float* out, float* taps, int frames);
+  void process(const float* lanes, float* out, int frames) { process(lanes, out, nullptr, frames); }
 
   /** `MIX_METER_*` layout; returns the count written. Gain-reduction peaks restart. */
   int meters(double* out, int capacity);
@@ -127,10 +137,15 @@ class BusGraph {
     bool has_duck = false;
     Ducker duck;
     int key = -1;
+    /** Index of this lane's output tap, or -1. */
+    int tap = -1;
   };
   static bool valid_range(int first, int count, int effect_count);
   void restart_reduction_peaks();
   int validate(const BusLayout& layout) const;
+  /** The per-frame loop; `Taps` = the graph has output taps (`taps` may still be null). */
+  template <bool Taps>
+  void run(const float* lanes, float* out, float* taps, int frames);
 
   double sample_rate_ = 48000;
   int channels_ = 2;
@@ -145,6 +160,12 @@ class BusGraph {
   BusChain master_;
   BusChain final_;
   LoudnessMeter meter_;
+  int tap_count_ = 0;
+  /** Tap delay (frames): the master chain's and final stage's look-ahead. */
+  int tap_delay_ = 0;
+  int tap_pos_ = 0;
+  /** `tap_count_` delay lines of `tap_delay_` interleaved frames, tap-major. */
+  std::vector<float> tap_ring_;
 };
 
 }  // namespace media_engine

@@ -945,8 +945,20 @@ sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
   lanes are not buses. Entries route by `AudioScheduleEntry.trackId`.
 - **Engine rows** (`audio_mix.h`, mirrored in `mediaEngineLayout.ts`):
   `MIX_FX_STRIDE` 13 (adds HOLD, RANGE_DB, KEY), kinds 7–10 (low-pass, gate,
-  de-esser, ducker), `MIX_BUS_STRIDE` 2, `MIX_ENTRY_FX_BUS`. A ducker row in a
-  lane's range runs after the chain and delay compensation.
+  de-esser, ducker), `MIX_BUS_STRIDE` 3 (first row, row count, flags),
+  `MIX_ENTRY_FX_BUS`. A ducker row in a lane's range runs after the chain and
+  delay compensation.
+- **Output taps (stems)**: `MIX_BUS_TAP` on a lane row (and
+  `MIX_BUS_FLAG_TAP_DIRECT` for the direct input, last) taps what that lane
+  adds to the master sum — post chain, delay compensation and duck — through
+  a delay line of the master chain + final stage look-ahead, so tap frame N
+  is output frame N; with no master stage the taps sum to the master within
+  1 ulp. `bus_graph_process_taps` / `mix_bus_session_range` write them
+  (tap-major, interleaved); a tapped layout always keeps its graph; untapped
+  graphs run the original loop, bit-identical. TS: `planBusGraph(…,
+  { tapTrackIds, tapDirect })` → `TimelineMixChunk.taps` (transferred from
+  the render worker), `meterTaps` → `readTapMeters()` (one `loudness_meter_*`
+  per tap). The preview never taps (`busLayoutMessage` clears the flags).
 - **Limiter** is true peak: detection on 4× oversampled audio using the
   mixer's own polyphase sinc (`TruePeakDetector`, 32 frames of delay), a
   0.05 dB detection margin (ten times the worst overshoot the host battery
@@ -978,8 +990,9 @@ sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
   `silence_after_a_tone_stays_out_of_subnormals` guards it. Between stages
   `flush_sample` also zeroes NaN / inf, so one bad input cannot poison a
   graph (the property harness found that).
-- **Real-time safe.** `bus_graph_process` / `update` / `meters` / `reset`
-  never allocate (`rt_safety_tests` counts `operator new`): `BusChain::matches`
+- **Real-time safe.** `bus_graph_process` (and `_process_taps`) / `update` /
+  `meters` / `reset`, and a warmed-up `mix_bus_session_range` at a fixed chunk
+  size, never allocate (`rt_safety_tests` counts `operator new`): `BusChain::matches`
   compares rows in place, loudness gating is a 0.1 dB histogram (−70 … +5
   LUFS, O(1) memory and read cost — flat over a 4 h programme, within 0.1 LU
   of exact gating), and gain-reduction meters keep only the minimum linear

@@ -17,6 +17,7 @@ import { __setAudioRenderWorkerFactoryForTests, openMixStream, type MixStream } 
 import { createAudioRenderHandlers } from './audioRender.worker';
 import { PCM_PART_FRAMES, type AudioRenderProtocol } from './audioRenderProtocol';
 import { InProcessWorker } from '../workers/inProcessWorker.test.helpers';
+import { collectTapped, sameBits, worstSumUlps } from '../wasm/mediaEngineTaps.test.helpers';
 import { exposeWorker } from '../workers/workerRpc';
 
 const WASM_BASE = pathToFileURL(path.resolve(process.cwd(), 'public/wasm') + path.sep).href;
@@ -133,6 +134,71 @@ describe('export premix in the audio render worker', () => {
     const [open] = worker.sentPayloads<AudioRenderProtocol['open']['req']>('call', 'open');
     expect(open?.options.resampler).toBe('polyphase');
     expect(open?.options.baseUrl).toBe(WASM_BASE);
+  }, 60_000);
+
+  it('carries the stems (taps) and their meters across, bit for bit with the in-realm stream', async () => {
+    const seconds = 3;
+    const pcm = [tone(seconds, 220, 0.4), tone(seconds, 330, 0.3), tone(seconds, 550, 0.2)];
+    const plan = planBusGraph(tracks(), { fx: [createBusEffect('limiter')] }, {
+      tapTrackIds: ['dialogue', 'music'],
+      tapDirect: true,
+    });
+    // Two clips on their lanes, a third routed to no lane (the direct stem).
+    const entries: MediaEngineMixEntry[] = ['dialogue', 'music', 'narration'].map((id) => {
+      const bus = plan.laneIndex.get(id);
+      return {
+        clipId: id,
+        timelineStart: 0.1,
+        duration: seconds - 0.3,
+        bufferOffset: 0,
+        volume: 0.8,
+        audioFadeIn: 0.02,
+        audioFadeOut: 0.02,
+        ...(bus === undefined ? {} : { bus }),
+      };
+    });
+    const options: TimelineMixStreamOptions = {
+      baseUrl: WASM_BASE,
+      sampleRate: RATE,
+      durationSec: seconds,
+      chunkFrames: 50_000,
+      bus: plan,
+      meter: true,
+      meterTaps: true,
+    };
+    const provider = (): ClipPcmProvider => ({ acquire: (index) => pcm[index]! });
+
+    const reference = await openTimelineMixStream(entries, provider(), options);
+    expect(reference).not.toBeNull();
+    const want = await collectTapped(reference!);
+    expect(want.taps).toHaveLength(3);
+    // The master limiter never engages here (it is bit-transparent below its
+    // ceiling), so even through its look-ahead the stems sum to the master.
+    expect(worstSumUlps(want.out, want.taps)).toBeLessThanOrEqual(1);
+
+    // The worker's replies, with the transfer list each went out with.
+    const worker = new InProcessWorker();
+    const transfers: Transferable[][] = [];
+    const post = worker.scope.postMessage.bind(worker.scope);
+    worker.scope.postMessage = (message, transfer) => {
+      transfers.push(transfer);
+      post(message, transfer);
+    };
+    exposeWorker<AudioRenderProtocol>(createAudioRenderHandlers, { scope: worker.scope });
+    __setAudioRenderWorkerFactoryForTests(() => worker);
+    const stream = await openMixStream(entries, provider(), options);
+    expect(stream).not.toBeNull();
+    const got = await collectTapped(stream!);
+
+    expect(sameBits(got.out, want.out)).toBe(true);
+    expect(got.taps).toHaveLength(3);
+    got.taps.forEach((tap, t) => expect(sameBits(tap, want.taps[t]!)).toBe(true));
+    expect(got.meters).toEqual(want.meters);
+    expect(got.tapMeters).toEqual(want.tapMeters);
+    expect(got.tapMeters?.map((m) => m.trackId)).toEqual(['dialogue', 'music', null]);
+    // Every chunk moved its frames and its three taps by transfer, not by copy.
+    const chunks = Math.ceil((seconds * RATE) / 50_000);
+    expect(transfers.filter((list) => list.length === 4)).toHaveLength(chunks);
   }, 60_000);
 
   it('aborts the stream when a clip fails to decode', async () => {

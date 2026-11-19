@@ -51,24 +51,11 @@ import {
   packLimiterRow,
   sanitizedRate,
 } from './mediaEngineLayout';
+import { TapMeters, type TapMeterReading } from './mediaEngineTaps';
 
-export {  type MixMeterReading } from './mediaEngineSession';
-export {
-  
-  
-  
-  
-  
-  MIX_ENTRY_STRIDE,
-  
-  
-  MIX_FX_STRIDE,
-  
-  
-  
-  packAudioEffectRows,
-  packLimiterRow,
-} from './mediaEngineLayout';
+export { type MixMeterReading } from './mediaEngineSession';
+export { type TapMeterReading } from './mediaEngineTaps';
+export { MIX_ENTRY_STRIDE, MIX_FX_STRIDE, packAudioEffectRows, packLimiterRow } from './mediaEngineLayout';
 
 /** Default stream chunk: 240 AAC-LC frames (5.12 s at 48 kHz). */
 export const MEDIA_ENGINE_CHUNK_FRAMES = 1024 * 240;
@@ -149,6 +136,8 @@ export interface TimelineMixStreamOptions {
   bus?: BusGraphPlan | null;
   /** Run the BS.1770 meter on the output (`TimelineMixStream.readMeters`). */
   meter?: boolean;
+  /** Meter each output tap (`bus.tapTrackIds`, then direct) on its own (`readTapMeters`). */
+  meterTaps?: boolean;
 }
 
 export interface TimelineMixChunk {
@@ -157,6 +146,12 @@ export interface TimelineMixChunk {
   frameCount: number;
   /** Interleaved PCM. Reused by the next `next()` call — copy to keep it. */
   frames: Float32Array;
+  /**
+   * The `bus` plan's output taps (stems), aligned with `frames`: one
+   * interleaved block of `frameCount * channels` per tap, in
+   * `tapTrackIds` order then the direct input. Reused like `frames`.
+   */
+  taps?: Float32Array[];
 }
 
 
@@ -249,6 +244,8 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
   private position = 0;
   private closed = false;
   private readonly chunkOut: Float32Array;
+  /** One interleaved block per output tap (`fx.taps`). */
+  private readonly tapOut: Float32Array[];
   private readonly states: EntryState[];
 
   /** @internal Use `openTimelineMixStream`. */
@@ -264,9 +261,11 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
     durationSec: number,
     private readonly flags: number,
     private readonly fx: FxSession | null = null,
+    private readonly tapMeters: TapMeters | null = null,
   ) {
     this.totalFrames = Math.max(1, Math.ceil(durationSec * sampleRate));
     this.chunkOut = new Float32Array(chunkFrames * channels);
+    this.tapOut = Array.from({ length: fx?.taps ?? 0 }, () => new Float32Array(chunkFrames * channels));
     this.states = schedule.map((entry) => ({
       firstFrame: Math.floor(entry.timelineStart * sampleRate),
       endFrame: Math.ceil((entry.timelineStart + entry.duration) * sampleRate) + 1,
@@ -306,7 +305,10 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
 
     this.mixRange(begin, frameCount, busBegin, busEnd, active);
     this.position = end;
-    return { startFrame: begin, frameCount, frames: this.chunkOut.subarray(0, frameCount * this.channels) };
+    const floats = frameCount * this.channels;
+    const chunk: TimelineMixChunk = { startFrame: begin, frameCount, frames: this.chunkOut.subarray(0, floats) };
+    if (this.tapOut.length > 0) chunk.taps = this.tapOut.map((tap) => tap.subarray(0, floats));
+    return chunk;
   }
 
   /**
@@ -326,6 +328,11 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
     return values ? decodeMeterReading(values) : null;
   }
 
+  /** Per-tap loudness so far (`meterTaps` option), in tap order; null without it. */
+  readTapMeters(): TapMeterReading[] | null {
+    return this.closed || !this.tapMeters ? null : this.tapMeters.read();
+  }
+
   async *[Symbol.asyncIterator](): AsyncIterator<TimelineMixChunk> {
     for (let chunk = await this.next(); chunk; chunk = await this.next()) yield chunk;
   }
@@ -336,6 +343,7 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
     this.closed = true;
     for (let i = 0; i < this.states.length; i++) this.release(i);
     if (this.fx) this.mod._mix_fx_session_destroy?.(this.fx.handle);
+    this.tapMeters?.destroy();
   }
 
   private async acquire(index: number): Promise<ClipPcm | null> {
@@ -430,39 +438,24 @@ export class TimelineMixStream implements AsyncIterable<TimelineMixChunk> {
       }
 
       const keyCount = this.keys.length / MIX_KEY_STRIDE;
-      const status = fx
-        ? mod._mix_fx_session_range!(
-            fx.handle,
-            out,
-            frameCount,
-            begin,
-            pcm,
-            pcmFloats,
-            slices,
-            uploads.length,
-            rows,
-            uploads.length,
-            keys,
-            keyCount,
-            this.flags | MIX_FLAG_EFFECTS,
-          )
-        : mod._mix_timeline_audio_range(
-            out,
-            frameCount,
-            begin,
-            this.sampleRate,
-            this.channels,
-            pcm,
-            pcmFloats,
-            slices,
-            uploads.length,
-            rows,
-            uploads.length,
-            keys,
-            keyCount,
-            this.flags,
-          );
-      if (status === CS_STATUS.OK) this.chunkOut.set(heap.f32View(out, outFloats));
+      const sources = [pcm, pcmFloats, slices, uploads.length, rows, uploads.length, keys, keyCount] as const;
+      const fxFlags = this.flags | MIX_FLAG_EFFECTS;
+      // A tapped session writes its taps (tap-major) to a block of their own.
+      const taps = fx && fx.taps > 0 ? heap.alloc(fx.taps * outFloats * 4) : 0;
+      let status: number;
+      if (!fx) {
+        const { sampleRate, channels, flags } = this;
+        status = mod._mix_timeline_audio_range(out, frameCount, begin, sampleRate, channels, ...sources, flags);
+      } else if (taps) {
+        status = mod._mix_bus_session_range!(fx.handle, out, taps, frameCount, begin, ...sources, fxFlags);
+      } else {
+        status = mod._mix_fx_session_range!(fx.handle, out, frameCount, begin, ...sources, fxFlags);
+      }
+      if (status !== CS_STATUS.OK) return status;
+      this.chunkOut.set(heap.f32View(out, outFloats));
+      this.tapOut.forEach((tap, t) => tap.set(heap.f32View(taps + t * outFloats * 4, outFloats)));
+      // Meter the taps in place, after copying them out (a call into the module invalidates the views).
+      if (this.tapMeters && !this.tapMeters.process(taps, frameCount)) return CS_STATUS.EINVAL;
       return status;
     });
     if (rc === null) {
@@ -521,8 +514,12 @@ export async function openTimelineMixStream(
     return [first, packed.length / MIX_FX_STRIDE] as const;
   });
   const busFirst = fxValues.length / MIX_FX_STRIDE;
-  const bus = options?.bus && (options.bus.processing || options.meter) ? options.bus : null;
+  // Output taps (stems) in chunk order: the tapped lanes, then direct (null).
+  const plan = options?.bus ?? null;
+  const tapIds: Array<string | null> = plan ? [...plan.tapTrackIds, ...(plan.tapDirect ? [null] : [])] : [];
+  const bus = plan && (plan.processing || options?.meter || tapIds.length > 0) ? plan : null;
   const meter = Boolean(options?.meter && bus);
+  const meterTaps = Boolean(options?.meterTaps) && tapIds.length > 0;
   if (bus) {
     for (const v of bus.effects) fxValues.push(v);
   } else {
@@ -534,7 +531,10 @@ export async function openTimelineMixStream(
     lastMixBackend = 'unavailable';
     return null;
   }
-  if (bus && typeof mod._mix_bus_session_create !== 'function') {
+  if (
+    (bus && typeof mod._mix_bus_session_create !== 'function') ||
+    (tapIds.length > 0 && typeof mod._mix_bus_session_range !== 'function')
+  ) {
     lastMixBackend = 'unavailable';
     return null;
   }
@@ -566,12 +566,13 @@ export async function openTimelineMixStream(
   }
   // A heap that cannot hold one chunk's output will not mix: fall back now
   // rather than on the first chunk.
-  if (!withHeap(mod, (heap) => heap.alloc(chunkFrames * channels * 4) > 0)) {
+  if (!withHeap(mod, (heap) => heap.alloc(chunkFrames * channels * 4 * (1 + tapIds.length)) > 0)) {
     lastMixBackend = 'unavailable';
     return null;
   }
 
   let fx: FxSession | null = null;
+  let tapMeters: TapMeters | null = null;
   if (useFx) {
     const handle = bus
       ? createBusSession(mod, sampleRate, channels, schedule.length, fxValues, busFirst, bus, meter)
@@ -580,7 +581,20 @@ export async function openTimelineMixStream(
       lastMixBackend = 'unavailable';
       return null;
     }
-    fx = { handle, latency: mod._mix_fx_session_latency!(handle), lanes: bus ? bus.laneTrackIds.length : 0 };
+    fx = {
+      handle,
+      latency: mod._mix_fx_session_latency!(handle),
+      lanes: bus ? bus.laneTrackIds.length : 0,
+      taps: tapIds.length,
+    };
+    // The session counts its taps itself: a disagreement with the plan would mislabel the stems.
+    const tapsAgree = tapIds.length === 0 || mod._mix_bus_session_tap_count?.(handle) === tapIds.length;
+    tapMeters = tapsAgree && meterTaps ? TapMeters.create(mod, sampleRate, channels, tapIds) : null;
+    if (!tapsAgree || (meterTaps && !tapMeters)) {
+      mod._mix_fx_session_destroy?.(handle);
+      lastMixBackend = 'unavailable';
+      return null;
+    }
   }
 
   lastMixBackend = 'wasm';
@@ -596,10 +610,9 @@ export async function openTimelineMixStream(
     durationSec,
     resamplerFlags(options?.resampler),
     fx,
+    tapMeters,
   );
 }
-
-
 
 /**
  * Mix scheduled clip PCM into one interleaved buffer (streams internally).

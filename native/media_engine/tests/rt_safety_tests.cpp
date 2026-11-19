@@ -1,7 +1,8 @@
 // Real-time safety of the bus graph the preview's AudioWorklet runs: no heap
-// allocation (so, in WASM, no `memory.grow`) inside `bus_graph_process`,
-// `bus_graph_update`, `bus_graph_meters`, `bus_graph_reset` or
-// `loudness_meter_process` / `_read`. This binary replaces the global
+// allocation (so, in WASM, no `memory.grow`) inside `bus_graph_process`
+// (and `_process_taps`), `bus_graph_update`, `bus_graph_meters`,
+// `bus_graph_reset` or `loudness_meter_process` / `_read`, nor in a warmed-up
+// export session's `mix_bus_session_range`. This binary replaces the global
 // operator new / delete with counting versions, which is why it is its own
 // executable.
 //
@@ -113,7 +114,7 @@ struct Packed {
     add(fx_row(MIX_FX_PEAKING, {{MIX_FX_FREQ, 900}, {MIX_FX_GAIN_DB, -4}, {MIX_FX_Q, 1.2}}));
     add(fx_row(MIX_FX_DUCKER, {{MIX_FX_KEY, 0}, {MIX_FX_RANGE_DB, 9}, {MIX_FX_THRESHOLD_DB, -38},
                                {MIX_FX_ATTACK, 0.04}, {MIX_FX_HOLD, 0.15}, {MIX_FX_RELEASE, 0.4}}));
-    buses = {0, 5, 5, 2};
+    buses = {0, 5, 0, 5, 2, 0};
     // Master: compressor + limiter; final: limiter.
     master_first = 7;
     add(fx_row(MIX_FX_COMPRESSOR, {{MIX_FX_THRESHOLD_DB, -18}, {MIX_FX_RATIO, 2}, {MIX_FX_KNEE_DB, 6},
@@ -215,4 +216,105 @@ TEST_CASE(loudness_meter_never_allocates_after_create) {
   CHECK(n == 0);
   CHECK(std::isfinite(reading[MIX_METER_INTEGRATED]));
   loudness_meter_destroy(m);
+}
+
+namespace {
+
+/** `Packed` with both lanes tapped (the taps' delay lines are sized in build, never in process). */
+Packed tapped_layout(double comp_threshold) {
+  Packed p(comp_threshold);
+  p.buses[MIX_BUS_FLAGS] = MIX_BUS_TAP;
+  p.buses[MIX_BUS_STRIDE + MIX_BUS_FLAGS] = MIX_BUS_TAP;
+  return p;
+}
+
+constexpr int kTapFlags = MIX_BUS_FLAG_METER | MIX_BUS_FLAG_TAP_DIRECT;
+
+}  // namespace
+
+TEST_CASE(bus_graph_process_taps_never_allocates) {
+  const Packed layout = tapped_layout(-24.0);
+  const Packed retuned = tapped_layout(-30.0);
+  BusGraphHandle* g = bus_graph_create(kRate, 2, layout.effects.data(), layout.effect_count(), layout.buses.data(), 2,
+                                       layout.master_first, layout.master_count, 0.0, layout.final_first,
+                                       layout.final_count, kTapFlags);
+  CHECK(g != nullptr);
+  if (!g) return;
+  CHECK(bus_graph_tap_count(g) == 3);  // both lanes, then direct
+  std::vector<float> lanes(static_cast<size_t>(3) * kQuantum * 2);
+  std::vector<float> out(static_cast<size_t>(kQuantum) * 2);
+  std::vector<float> taps(static_cast<size_t>(3) * kQuantum * 2);
+  double meters[64];
+  long long frame = 0;
+  int failures = 0;
+  const long long n = allocations_in([&] {
+    for (int q = 0; q < 10 * kRate / kQuantum; ++q, frame += kQuantum) {
+      fill_quantum(&lanes, frame);
+      failures += bus_graph_process_taps(g, lanes.data(), out.data(), taps.data(), kQuantum) != CS_OK;
+      if (q % 19 == 0) {
+        const Packed& p = (q / 19) % 2 ? retuned : layout;
+        failures += bus_graph_update(g, p.effects.data(), p.effect_count(), p.buses.data(), 2, p.master_first,
+                                     p.master_count, 0.0, p.final_first, p.final_count) != CS_OK;
+      }
+      if (q % 37 == 0) bus_graph_meters(g, meters, 64);
+      if (q == 1500) bus_graph_reset(g);
+    }
+  });
+  CHECK(n == 0);
+  CHECK(failures == 0);
+  for (float v : taps) CHECK(std::isfinite(v));
+  bus_graph_destroy(g);
+}
+
+TEST_CASE(warmed_up_bus_session_range_never_allocates) {
+  // The export premix calls mix_bus_session_range once per chunk: after the
+  // first call has sized the lane, bus and tap buffers (and built the clip
+  // insert chains), a fixed chunk size reuses them.
+  const Packed layout = tapped_layout(-24.0);
+  constexpr int kEntries = 3;  // one clip per lane, one direct
+  MixFxSession* s = mix_bus_session_create(kRate, 2, kEntries, layout.effects.data(), layout.effect_count(),
+                                           layout.buses.data(), 2, layout.master_first, layout.master_count, 0.0,
+                                           layout.final_first, layout.final_count, kTapFlags);
+  CHECK(s != nullptr);
+  if (!s) return;
+  const int taps_n = mix_bus_session_tap_count(s);
+  CHECK(taps_n == 3);
+  const int clip_frames = 4 * kRate;
+  std::vector<float> pcm;
+  std::vector<int> meta;
+  std::vector<double> rows;
+  for (int e = 0; e < kEntries; ++e) {
+    // The third clip is 44.1 kHz, so the polyphase resampler runs too.
+    const int rate = e == 2 ? 44100 : kRate;
+    meta.insert(meta.end(), {static_cast<int>(pcm.size()), clip_frames, 2, rate, 0, clip_frames});
+    for (int c = 0; c < 2; ++c) {
+      for (int i = 0; i < clip_frames; ++i) {
+        pcm.push_back(static_cast<float>(0.3 * std::sin(2 * kPi * (200.0 + 150.0 * e + c) * i / rate)));
+      }
+    }
+    // Clip 0 carries an insert EQ (lane 1's peaking row); it routes to lane e, the last clip direct.
+    rows.insert(rows.end(), {static_cast<double>(e), 0.0, 4.0, 0.0, 0.8, 0.01, 0.01, 1.0, 0.0, 0.0, 0.0, 0.0,
+                             e == 0 ? 5.0 : 0.0, e == 0 ? 1.0 : 0.0, static_cast<double>(e), e < 2 ? e : -1.0});
+  }
+  constexpr int kChunk = 4800;
+  std::vector<float> out(static_cast<size_t>(kChunk) * 2);
+  std::vector<float> taps(static_cast<size_t>(taps_n) * kChunk * 2);
+  double meters[64];
+  auto range = [&](int chunk) {
+    return mix_bus_session_range(s, out.data(), taps.data(), kChunk, static_cast<double>(chunk) * kChunk, pcm.data(),
+                                 static_cast<int>(pcm.size()), meta.data(), kEntries, rows.data(), kEntries, nullptr, 0,
+                                 MIX_FLAG_EFFECTS);
+  };
+  CHECK(range(0) == CS_OK);  // warm-up
+  int failures = 0;
+  const long long n = allocations_in([&] {
+    for (int chunk = 1; chunk < 50; ++chunk) {
+      failures += range(chunk) != CS_OK;
+      if (chunk % 10 == 0) mix_fx_session_meters(s, meters, 64);
+    }
+  });
+  CHECK(n == 0);
+  CHECK(failures == 0);
+  for (float v : taps) CHECK(std::isfinite(v));
+  mix_fx_session_destroy(s);
 }
