@@ -30,7 +30,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 - A domain module that needs live store state reads it through a registry the store fills in, e.g. `export/exportSources.ts`, which `editorStore` / `settingsStore` register into.
 - Test files are exempt.
 
-Tests are colocated with source as `*.test.ts` or `*.test.tsx`. Browser end-to-end tests live in `e2e/` (Playwright). Static deployment assets live in `public/`; built output goes to `dist/` and should be treated as generated. `docs/history/` holds superseded design notes, kept for context only.
+Tests are colocated with source as `*.test.ts` or `*.test.tsx`. Browser end-to-end tests live in `e2e/` (Playwright). Static deployment assets live in `public/`; built output goes to `dist/` and should be treated as generated. `docs/history/` holds superseded design notes, kept for context only. `huggingface/RIFE/` is the one HuggingFace Space the app calls (`npm run deploy:rife-space`); `spaces/` parks Spaces it does not call — ESLint-ignored, never deployed (`spaces/README.md`). `.gitattributes` keeps media / wasm binary and WGSL LF. TypeScript targets ES2022 (every browser with WebGPU + WebCodecs runs it), so class fields use define semantics.
 
 Shared state worth knowing:
 
@@ -43,15 +43,17 @@ Shared state worth knowing:
 - `npm install` (or `npm ci` for a clean/CI install): install dependencies for local development.
 - `npm run dev`: start the Vite dev server with the headers needed for FFmpeg WASM.
 - `npm run typecheck`: run `tsc --noEmit`, matching CI behavior. Run this after any TypeScript change.
-- `npm run typecheck:strict`: the strictness ratchet (`tsconfig.strict.json` adds `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`). It must report 0 errors in the `strictDirs` of `scripts/strict-ratchet.json`, and the count elsewhere may not exceed its `baseline`. Test files are not counted yet. After a cleanup, `-- --update` lowers the baseline; add a directory to `strictDirs` once it is clean.
-- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint, react-hooks, boundaries). Must report 0 errors; warnings are tolerated debt.
+- `npm run typecheck:strict`: the strictness ratchets in `scripts/strict-ratchet.json` (`scripts/check-strict.mjs`). Each runs its tsconfig, fails on any error under its `strictDirs`, and may not exceed its `baseline` elsewhere; test files count like any other file.
+  - `strict` (`tsconfig.strict.json`: `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`) covers all of `src/` with a zero baseline. Give fixed-length data a tuple type (`Vec2` / `Vec3` / `Vec4` / `Rgba` / `Mat2x3` in `types/tuples.ts`) rather than reaching for `!`.
+  - `index-signature-access` (`tsconfig.strict-next.json` adds `noPropertyAccessFromIndexSignature`) is the next one: read index-signature keys as `obj['key']`. After a cleanup, `-- --update` lowers its baseline; add a directory to its `strictDirs` once it is clean.
+- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint, react-hooks, boundaries). Must report 0 problems: `--max-warnings 0`, and `no-explicit-any` and every react-hooks rule are errors (sync props to state during render or derive them; read refs in effects and handlers, not in render). The one disable is `react-hooks/incompatible-library` on `useVirtualizer` in `Timeline.tsx`.
   - Unused imports / variables and floating promises are errors.
   - So is any import that breaks the layering above.
   - Non-test `src/` files over 700 lines are an error (`max-lines`): split the module rather than raising the limit.
 - `npm run knip`: dead-code check with an empty baseline. Unused files, exports, types and dependencies fail CI. Delete them, or mark a deliberate extension point `@public` in its JSDoc. `knip.json` lists the entry points Vite cannot see (workers, the AudioWorklet, scripts, e2e).
 - `npm run check:cycles`: madge import-cycle check over `src/` (type-only imports count). Must report 0 cycles — import `getClipDuration` from `timeline/clipTiming` and `DEFAULT_CANVAS_*` from `utils/canvasDefaults`, not the `project` barrel (`src/project/index.ts`).
 - `npm test -- --run`: run the Vitest suite once, matching CI behavior.
-- `npm run test:coverage`: run tests with coverage reporting (CI runs it with `-- --run`). `vitest.config.ts` sets per-directory floors for the pure domain dirs; raise them as coverage grows, never lower one to land a change.
+- `npm run test:coverage`: run tests with coverage reporting (CI runs it with `-- --run`). `vitest.config.ts` sets per-directory floors for the domain dirs (timeline, finishing, captions, project, composition, store, audio, media, export, workers); raise them as coverage grows, never lower one to land a change.
 - `npm run e2e`: the Playwright render regression harness (see *Render regression harness* below). It builds nothing itself, so run `npm run build` first; it serves `dist/` with `npm run preview`. `npm run e2e:update-goldens` rewrites `e2e/goldens/`.
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
@@ -208,9 +210,9 @@ HDR10 compares the PQ readback, not the preview: the preview is the SDR monitor 
 
 **Smoke flows** (`e2e/smoke.spec.ts`) go through the real UI: load demo clips → split → ripple delete → undo → render; crash → reload → recovery offer.
 
-**Known bugs** are pinned with `test.fail`, so they flip to an unexpected pass when fixed:
+**Smoke flows** also cover *recover session restores the embedded clips*: embedded media comes back from its `data:` URL through `project/dataUrl.ts` (decoded locally — the production `connect-src` blocks `fetch('data:…')`, and happy-dom enforces no CSP, so `dataUrl.test.ts` makes `fetch` throw instead).
 
-- recovering an autosave drops embedded media, because the restore `fetch()`es `data:` URLs that the production `connect-src` blocks.
+**Known bugs** are pinned with `test.fail`, so they flip to an unexpected pass when fixed. None are pinned today.
 
 ## Demo clips, Export-tab sections, encoder badge
 
