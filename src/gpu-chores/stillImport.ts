@@ -88,7 +88,7 @@ function packStillResults(histJob: GpuChoreResult, thumb: GpuChoreResult): Still
   return {
     lumaHistogram: Array.from(histJob.histogram ?? []),
     lumaLevels: histJob.levels ?? { black: 0, white: 255, mean: 0 },
-    posterUrl,
+    ...(posterUrl !== undefined && { posterUrl }),
     gpuChoreBackend: histJob.backend,
     gpuChoreReason: `${histJob.reason}; thumb ${thumb.backend}`,
   };

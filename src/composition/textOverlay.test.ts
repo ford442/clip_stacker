@@ -177,9 +177,9 @@ describe("buildDrawtextFilter", () => {
 
   it("resolveFontFileForOverlay returns the virtual name for the overlay font", () => {
     expect(
-      resolveFontFileForOverlay({ font: "serif" } as any),
+      resolveFontFileForOverlay({ font: "serif" }),
     ).toBe("serif.ttf");
-    expect(resolveFontFileForOverlay({} as any)).toBe("roboto.ttf");
+    expect(resolveFontFileForOverlay({})).toBe("roboto.ttf");
   });
 });
 
@@ -192,7 +192,7 @@ describe("font registry", () => {
     const def = getBundledFont(undefined);
     expect(def.id).toBe(DEFAULT_FONT_ID);
     expect(getBundledFont("nope").id).toBe(DEFAULT_FONT_ID);
-    expect(getBundledFont(null as any).id).toBe(DEFAULT_FONT_ID);
+    expect(getBundledFont(null).id).toBe(DEFAULT_FONT_ID);
   });
 
   it("getBundledFont resolves known ids", () => {

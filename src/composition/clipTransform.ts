@@ -30,10 +30,11 @@
  * warp, on the sampled UV, exactly as they did before this module existed.
  */
 
+import type { Mat2x3, Vec2 } from '../types/tuples';
 import { IDENTITY_STAB_MATRIX, type StabMatrix } from '../wasm/videoStabilize';
 
 /** `[a, b, tx, c, d, ty]` — same layout as a stabilization matrix. */
-export type Affine2x3 = StabMatrix;
+export type Affine2x3 = Mat2x3;
 
 export const IDENTITY_AFFINE: Affine2x3 = IDENTITY_STAB_MATRIX;
 
@@ -92,7 +93,7 @@ export function isIdentityAffine(m: Affine2x3, epsilon = 0): boolean {
 }
 
 /** Apply `m` to a point (in whatever centred space the matrix is defined). */
-export function applyAffine(m: Affine2x3, x: number, y: number): [number, number] {
+export function applyAffine(m: Affine2x3, x: number, y: number): Vec2 {
   return [m[0] * x + m[1] * y + m[2], m[3] * x + m[4] * y + m[5]];
 }
 
@@ -288,8 +289,8 @@ export function transitionWarpParams(
   toWarpMasked?: boolean;
 } {
   return {
-    fromWarpMatrix: from.warpMatrix,
-    toWarpMatrix: to.warpMatrix,
+    ...(from.warpMatrix !== undefined && { fromWarpMatrix: from.warpMatrix }),
+    ...(to.warpMatrix !== undefined && { toWarpMatrix: to.warpMatrix }),
     fromWarpMasked: Boolean(from.pictureMatrix),
     toWarpMasked: Boolean(to.pictureMatrix),
   };

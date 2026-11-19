@@ -61,8 +61,8 @@ export async function extractWaveformPeaks(
     const end = Math.min(start + blockSize, totalSamples);
     let max = 0;
     for (let j = start; j < end; j++) {
-      for (let c = 0; c < numChannels; c++) {
-        const abs = Math.abs(channels[c][j]);
+      for (const channel of channels) {
+        const abs = Math.abs(channel[j] ?? 0);
         if (abs > max) max = abs;
       }
     }

@@ -65,8 +65,8 @@ export function resolveAnimatedClipLayout(
     y: sampleKeyframes(kf?.y, localTime, clip.y ?? 0),
     width: widthNorm,
     height: heightNorm,
-    videoWidth: clip.videoWidth,
-    videoHeight: clip.videoHeight,
+    ...(clip.videoWidth !== undefined && { videoWidth: clip.videoWidth }),
+    ...(clip.videoHeight !== undefined && { videoHeight: clip.videoHeight }),
   };
   const { x, y } = clampOverlayPosition(sampledClip, outputWidth, outputHeight);
   const opacity = sampleKeyframes(kf?.opacity, localTime, baseClipOpacity(clip));

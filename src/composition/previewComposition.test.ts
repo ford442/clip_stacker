@@ -64,9 +64,9 @@ describe('previewComposition', () => {
       ];
       const segments = buildClipTimelineSegments(clips, transitions, [0, 1]);
 
-      expect(segments[0].startTime).toBe(0);
-      expect(segments[1].startTime).toBe(4.5);
-      expect(segments[1].endTime).toBe(7.5);
+      expect(segments[0]?.startTime).toBe(0);
+      expect(segments[1]?.startTime).toBe(4.5);
+      expect(segments[1]?.endTime).toBe(7.5);
     });
   });
 
@@ -85,10 +85,10 @@ describe('previewComposition', () => {
 
       const layers = clipLayers(plan);
       expect(layers).toHaveLength(1);
-      expect(layers[0].clipId).toBe('b');
-      expect(layers[0].kind).toBe('base');
-      expect(layers[0].localElapsed).toBeCloseTo(1);
-      expect(layers[0].sourceTime).toBeCloseTo(1);
+      expect(layers[0]?.clipId).toBe('b');
+      expect(layers[0]?.kind).toBe('base');
+      expect(layers[0]?.localElapsed).toBeCloseTo(1);
+      expect(layers[0]?.sourceTime).toBeCloseTo(1);
     });
 
     it('maps sourceTime through playbackRate', () => {
@@ -97,8 +97,8 @@ describe('previewComposition', () => {
       const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 1);
       const layers = clipLayers(plan);
       expect(plan.totalDuration).toBeCloseTo(5);
-      expect(layers[0].localElapsed).toBeCloseTo(1);
-      expect(layers[0].sourceTime).toBeCloseTo(2);
+      expect(layers[0]?.localElapsed).toBeCloseTo(1);
+      expect(layers[0]?.sourceTime).toBeCloseTo(2);
       // Speed changes which source frame is shown. It does not scale the picture.
       const at1x = buildPreviewCompositionPlan(
         [makeClip('a', 10)],
@@ -108,7 +108,7 @@ describe('previewComposition', () => {
         undefined,
         1,
       );
-      expect(layers[0].rect).toEqual(clipLayers(at1x)[0].rect);
+      expect(layers[0]?.rect).toEqual(clipLayers(at1x)[0]?.rect);
     });
 
     it('samples a reversed clip from the end of the trim', () => {
@@ -116,10 +116,10 @@ describe('previewComposition', () => {
       const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0);
       expect(plan.totalDuration).toBeCloseTo(6);
       const layers = clipLayers(plan);
-      expect(layers[0].sourceTime).toBeGreaterThan(6.99);
-      expect(layers[0].sourceTime).toBeLessThan(7);
+      expect(layers[0]?.sourceTime).toBeGreaterThan(6.99);
+      expect(layers[0]?.sourceTime).toBeLessThan(7);
       const later = buildPreviewCompositionPlan(clips, [], [], [], undefined, 2);
-      expect(clipLayers(later)[0].sourceTime).toBeCloseTo(5);
+      expect(clipLayers(later)[0]?.sourceTime).toBeCloseTo(5);
     });
 
     it('maps sourceTime through a variable rate ramp', () => {
@@ -136,7 +136,7 @@ describe('previewComposition', () => {
       // At local t=1, rate≈2, integral ≈ 1.5 → sourceTime 1.5
       const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 1);
       const layers = clipLayers(plan);
-      expect(layers[0].sourceTime).toBeCloseTo(1.5);
+      expect(layers[0]?.sourceTime).toBeCloseTo(1.5);
     });
 
     it('wraps sourceTime back to the trim start at each loop cycle boundary', () => {
@@ -147,20 +147,20 @@ describe('previewComposition', () => {
 
       const atStart = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0);
       expect(atStart.totalDuration).toBeCloseTo(12);
-      expect(clipLayers(atStart)[0].sourceTime).toBeCloseTo(0);
+      expect(clipLayers(atStart)[0]?.sourceTime).toBeCloseTo(0);
 
       // Start of cycle 2 (global t=3) should read the same source position as t=0.
       const atCycle2Start = buildPreviewCompositionPlan(clips, [], [], [], undefined, 3);
-      expect(clipLayers(atCycle2Start)[0].sourceTime).toBeCloseTo(0);
+      expect(clipLayers(atCycle2Start)[0]?.sourceTime).toBeCloseTo(0);
 
       // Mid-way through cycle 2 (global t=3.5, 0.5s into the cycle) mirrors
       // 0.5s into cycle 1 (global t=0.5): same sourceTime, different localElapsed.
       const midCycle1 = buildPreviewCompositionPlan(clips, [], [], [], undefined, 0.5);
       const midCycle2 = buildPreviewCompositionPlan(clips, [], [], [], undefined, 3.5);
-      expect(clipLayers(midCycle2)[0].sourceTime).toBeCloseTo(
-        clipLayers(midCycle1)[0].sourceTime,
+      expect(clipLayers(midCycle2)[0]?.sourceTime).toBeCloseTo(
+        clipLayers(midCycle1)[0]!.sourceTime,
       );
-      expect(clipLayers(midCycle2)[0].localElapsed).toBeCloseTo(3.5);
+      expect(clipLayers(midCycle2)[0]?.localElapsed).toBeCloseTo(3.5);
     });
 
     it('loopCount 1 leaves sourceTime mapping unchanged from current behavior', () => {
@@ -168,8 +168,8 @@ describe('previewComposition', () => {
       const notLooped = [makeClip('a', 10, { playbackRate: 2 })];
       const planLooped = buildPreviewCompositionPlan(looped, [], [], [], undefined, 1);
       const planNotLooped = buildPreviewCompositionPlan(notLooped, [], [], [], undefined, 1);
-      expect(clipLayers(planLooped)[0].sourceTime).toBeCloseTo(
-        clipLayers(planNotLooped)[0].sourceTime,
+      expect(clipLayers(planLooped)[0]?.sourceTime).toBeCloseTo(
+        clipLayers(planNotLooped)[0]!.sourceTime,
       );
     });
 
@@ -201,13 +201,13 @@ describe('previewComposition', () => {
 
       const layers = clipLayers(plan);
       expect(layers).toHaveLength(2);
-      expect(layers[0].clipId).toBe('a');
-      expect(layers[1].clipId).toBe('b');
-      expect(layers[0].crossfade?.role).toBe('outgoing');
-      expect(layers[1].crossfade?.role).toBe('incoming');
-      expect(layers[1].crossfade?.progress).toBeCloseTo(0.5);
-      expect(layers[0].opacity).toBeCloseTo(0.5);
-      expect(layers[1].opacity).toBeCloseTo(0.5);
+      expect(layers[0]?.clipId).toBe('a');
+      expect(layers[1]?.clipId).toBe('b');
+      expect(layers[0]?.crossfade?.role).toBe('outgoing');
+      expect(layers[1]?.crossfade?.role).toBe('incoming');
+      expect(layers[1]?.crossfade?.progress).toBeCloseTo(0.5);
+      expect(layers[0]?.opacity).toBeCloseTo(0.5);
+      expect(layers[1]?.opacity).toBeCloseTo(0.5);
     });
 
     it('resolves a custom transition to its compiled shader id', () => {
@@ -232,8 +232,8 @@ describe('previewComposition', () => {
 
       const layers = clipLayers(plan);
       // The renderer keys pipelines off this id, not the stored 'custom' type.
-      expect(layers[1].crossfade?.type).toBe(customTransitionId(expression));
-      expect(getTransitionDef(layers[1].crossfade!.type)?.wgslBody).toContain(
+      expect(layers[1]?.crossfade?.type).toBe(customTransitionId(expression));
+      expect(getTransitionDef(layers[1]!.crossfade!.type)?.wgslBody).toContain(
         expression,
       );
     });
@@ -249,7 +249,7 @@ describe('previewComposition', () => {
         },
       ];
       const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
-      expect(clipLayers(plan)[1].crossfade?.type).toBe('custom');
+      expect(clipLayers(plan)[1]?.crossfade?.type).toBe('custom');
     });
 
     it('carries a stabilization matrix onto stabilized clip layers', () => {
@@ -388,7 +388,7 @@ describe('previewComposition', () => {
         { afterClipIndex: 1, type: 'filmBurn', duration: 0.5 },
       ];
       const plan = buildPreviewCompositionPlan(clips, [], transitions, [], undefined, 4.75);
-      expect(clipLayers(plan)[1].crossfade?.type).toBe('filmBurn');
+      expect(clipLayers(plan)[1]?.crossfade?.type).toBe('filmBurn');
     });
 
     it('draws PiP overlays above the base layer with a PiP rect', () => {
@@ -406,17 +406,17 @@ describe('previewComposition', () => {
 
       const layers = clipLayers(plan);
       expect(layers).toHaveLength(2);
-      expect(layers[0].clipId).toBe('base');
-      expect(layers[1].clipId).toBe('pip');
-      expect(layers[1].kind).toBe('pip');
-      expect(layers[1].zIndex).toBeGreaterThan(layers[0].zIndex);
-      expect(layers[1].rect).toEqual({
+      expect(layers[0]?.clipId).toBe('base');
+      expect(layers[1]?.clipId).toBe('pip');
+      expect(layers[1]?.kind).toBe('pip');
+      expect(layers[1]?.zIndex).toBeGreaterThan(layers[0]!.zIndex);
+      expect(layers[1]?.rect).toEqual({
         x: 12,
         y: 24,
         width: 320,
         height: 180,
       });
-      expect(layers[1].localElapsed).toBeCloseTo(2);
+      expect(layers[1]?.localElapsed).toBeCloseTo(2);
     });
 
     it('respects trim boundaries when seeking source media', () => {
@@ -429,9 +429,9 @@ describe('previewComposition', () => {
       const plan = buildPreviewCompositionPlan(clips, [], [], [], undefined, 1.5);
 
       const layer = clipLayers(plan)[0];
-      expect(layer.localElapsed).toBeCloseTo(1.5);
-      expect(layer.clipDuration).toBeCloseTo(5);
-      expect(layer.sourceTime).toBeCloseTo(3.5);
+      expect(layer?.localElapsed).toBeCloseTo(1.5);
+      expect(layer?.clipDuration).toBeCloseTo(5);
+      expect(layer?.sourceTime).toBeCloseTo(3.5);
     });
 
     it('omits clip layers outside the output duration', () => {
@@ -469,8 +469,8 @@ describe('previewComposition', () => {
       );
 
       expect(plan.layers).toHaveLength(2);
-      expect(plan.layers[0].kind).toBe('base');
-      expect(plan.layers[1].kind).toBe('text');
+      expect(plan.layers[0]?.kind).toBe('base');
+      expect(plan.layers[1]?.kind).toBe('text');
       expect((plan.layers[1] as PreviewTextLayer).x).toBe(40);
     });
 
@@ -495,7 +495,7 @@ describe('previewComposition', () => {
         undefined,
         1,
       );
-      expect(clipLayers(plan)[0].clipId).toBe('b');
+      expect(clipLayers(plan)[0]?.clipId).toBe('b');
     });
   });
 

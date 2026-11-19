@@ -108,13 +108,11 @@ export async function runRemoteConcat({
 
     // Step 1: trim each clip in timeline order (FFmpeg lossless copy).
     const clipBlobs: Blob[] = [];
-    for (let i = 0; i < timelineClips.length; i++) {
+    for (const [i, clip] of timelineClips.entries()) {
       setStatus(
         `Preparing clip ${i + 1}/${timelineClips.length} for remote concat…`,
       );
-      clipBlobs.push(
-        await extractTrimmedVideoClip(timelineClips[i], setStatus),
-      );
+      clipBlobs.push(await extractTrimmedVideoClip(clip, setStatus));
     }
 
     // Step 2: upload + stitch at one resolution on the GPU.

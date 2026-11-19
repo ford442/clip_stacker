@@ -140,7 +140,7 @@ describe('silentAudio', () => {
     const bytes = await getSilentAacUnitBytes(ffmpeg);
     expect(bytes).toEqual(unit);
     expect(ffmpeg.exec).toHaveBeenCalledTimes(1);
-    const args = (ffmpeg.exec as ReturnType<typeof vi.fn>).mock.calls[0][0] as string[];
+    const args = (ffmpeg.exec as ReturnType<typeof vi.fn>).mock.calls[0]?.[0] as string[];
     expect(args).toContain('lavfi');
     expect(args).toContain(`anullsrc=r=${SILENT_AAC_SAMPLE_RATE}:cl=stereo`);
     expect(args).toContain(String(SILENT_AAC_UNIT_SEC));

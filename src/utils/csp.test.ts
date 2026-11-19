@@ -31,6 +31,7 @@ function directives(policy: string): Map<string, string> {
     const directive = part.trim();
     if (!directive) continue;
     const [name, ...sources] = directive.split(/\s+/);
+    if (!name) continue;
     map.set(name, sources.join(' '));
   }
   return map;
@@ -48,7 +49,7 @@ describe('CONTENT_SECURITY_POLICY', () => {
   it('is what public/.htaccess sends', () => {
     const header = /Header always set Content-Security-Policy "([^"]*)"/.exec(HTACCESS);
     expect(header).not.toBeNull();
-    expect(directives(header![1])).toEqual(directives(CONTENT_SECURITY_POLICY));
+    expect(directives(header?.[1] ?? '')).toEqual(directives(CONTENT_SECURITY_POLICY));
   });
 });
 
@@ -69,13 +70,13 @@ describe('cspMetaPlugin', () => {
     const policies = metaPolicies(html);
     expect(policies).toEqual([toMetaContentSecurityPolicy(CONTENT_SECURITY_POLICY)]);
 
-    const meta = directives(policies[0]);
+    const meta = directives(policies[0] ?? '');
     expect(meta.get('script-src')).not.toContain('unsafe-inline');
     expect(policies[0]).not.toMatch(/\bws:/);
   });
 
   it('keeps every production directive except the meta-ignored ones', () => {
-    const meta = directives(metaPolicies(transformIndexHtml(INDEX_HTML, {}))[0]);
+    const meta = directives(metaPolicies(transformIndexHtml(INDEX_HTML, {}))[0] ?? '');
     for (const [name, sources] of directives(CONTENT_SECURITY_POLICY)) {
       if (name === 'frame-ancestors') continue;
       expect(meta.get(name), name).toBe(sources);

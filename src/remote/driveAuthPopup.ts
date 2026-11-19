@@ -211,21 +211,35 @@ interface PickerApi {
   Action: { PICKED: string; CANCEL: string };
 }
 
-function gisOauth2(): {
+interface GisOauth2 {
   initTokenClient(config: {
     client_id: string;
     scope: string;
     callback: (response: TokenResponse) => void;
     error_callback?: (error: TokenClientError) => void;
   }): TokenClient;
-} | undefined {
-  return (window as unknown as {
-    google?: { accounts?: { oauth2?: ReturnType<typeof gisOauth2> } };
-  }).google?.accounts?.oauth2;
+}
+
+interface GapiLoader {
+  load(api: string, options: { callback: () => void; onerror?: () => void }): void;
+}
+
+/** What the GIS and gapi scripts install on `window` (absent from lib.dom). */
+interface GoogleScriptGlobals {
+  google?: { accounts?: { oauth2?: GisOauth2 }; picker?: PickerApi };
+  gapi?: GapiLoader;
+}
+
+function googleGlobals(): GoogleScriptGlobals {
+  return window as Window & GoogleScriptGlobals;
+}
+
+function gisOauth2(): GisOauth2 | undefined {
+  return googleGlobals().google?.accounts?.oauth2;
 }
 
 function pickerApi(): PickerApi | undefined {
-  return (window as unknown as { google?: { picker?: PickerApi } }).google?.picker;
+  return googleGlobals().google?.picker;
 }
 
 /** Load GIS once and request a token. `prompt: ''` asks only the first time. */
@@ -245,7 +259,7 @@ export function requestGisToken(clientId: string, scope: string, handlers: Token
 /** Picker iframe. This page has no COEP, so docs.google.com is allowed to frame. */
 export function openGooglePicker(request: PickerRequest): Promise<void> {
   return loadScript(GAPI_SCRIPT_URL).then(() => new Promise<void>((resolve, reject) => {
-    const gapi = (window as unknown as { gapi?: { load(api: string, options: { callback: () => void; onerror?: () => void }): void } }).gapi;
+    const gapi = googleGlobals().gapi;
     if (!gapi) {
       reject(new Error('Google Picker failed to load.'));
       return;

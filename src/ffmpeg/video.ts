@@ -66,8 +66,7 @@ export function buildPipFilterComplex(
   const transformedOverlayPos = new Map<number, { x: number; y: number }>();
 
   // ── Phase 1: per-clip pre-processing ────────────────────────────────────────
-  for (let i = 0; i < clips.length; i++) {
-    const clip = clips[i];
+  for (const [i, clip] of clips.entries()) {
     // Picture transform: `scale` + `rotate` only. Keyframed transforms hold
     // their first value (this graph has no per-frame layout), and there is no
     // libvidstab, so the optical-flow warp is not composed in — the render
@@ -166,7 +165,8 @@ export function buildPipFilterComplex(
     .filter(({ c }) => (c.layerIndex ?? 0) === 0)
     .map(({ i }) => i);
 
-  if (baseIndices.length === 0) {
+  const firstBase = baseIndices[0];
+  if (firstBase === undefined) {
     throw new Error(
       "PiP compositing requires at least one base-layer clip (layerIndex = 0).",
     );
@@ -176,8 +176,8 @@ export function buildPipFilterComplex(
   let currentA: string;
 
   if (baseIndices.length === 1) {
-    currentV = `v${baseIndices[0]}`;
-    currentA = `a${baseIndices[0]}`;
+    currentV = `v${firstBase}`;
+    currentA = `a${firstBase}`;
   } else {
     // Chain the base-layer clips together, honouring crossfade/transition
     // settings between adjacent base clips, falling back to a hard concat.
@@ -187,14 +187,14 @@ export function buildPipFilterComplex(
     const transMap = new Map(activeTransitions.map((t) => [t.afterClipIndex, t]));
     const durations = clips.map(getClipDuration);
 
-    currentV = `v${baseIndices[0]}`;
-    currentA = `a${baseIndices[0]}`;
-    let accumulated = durations[baseIndices[0]];
+    currentV = `v${firstBase}`;
+    currentA = `a${firstBase}`;
+    let accumulated = durations[firstBase] ?? 0;
     let overlapSoFar = 0;
+    let prevIdx = firstBase;
 
-    for (let bi = 1; bi < baseIndices.length; bi++) {
-      const idx = baseIndices[bi];
-      const prevIdx = baseIndices[bi - 1];
+    for (const [bi, idx] of baseIndices.entries()) {
+      if (bi === 0) continue;
       // Only honour a configured transition between clips that are adjacent
       // in the original timeline order.
       const t = idx === prevIdx + 1 ? transMap.get(idx) : undefined;
@@ -219,7 +219,8 @@ export function buildPipFilterComplex(
 
       currentV = outV;
       currentA = outA;
-      accumulated += durations[idx];
+      accumulated += durations[idx] ?? 0;
+      prevIdx = idx;
     }
   }
 
@@ -233,8 +234,7 @@ export function buildPipFilterComplex(
 
   const audioStreams: string[] = [baseAudio];
 
-  for (let o = 0; o < overlayEntries.length; o++) {
-    const { c: clip, i: idx } = overlayEntries[o];
+  for (const [o, { c: clip, i: idx }] of overlayEntries.entries()) {
     if (isOverlayOffCanvas(clip, OUTPUT_WIDTH, OUTPUT_HEIGHT)) {
       onWarning?.(
         `Overlay clip ${idx + 1} is positioned fully off-canvas (x=${clip.x ?? 0}, y=${clip.y ?? 0}) and will not be visible. Its position has been clamped back into view.`,

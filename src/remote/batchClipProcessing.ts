@@ -98,8 +98,10 @@ export async function processClipBatch(
     processedBlobs = [];
     for (const [index, clip] of clips.entries()) {
       deps.onStatus(`Restoring audio for clip ${index + 1}/${clips.length}…`);
+      const rife = rifeResults[index];
+      if (!rife) throw new Error(`RIFE returned no result for clip ${index + 1}.`);
       const withAudio = await deps.muxProcessedVideoWithSourceAudio(
-        rifeResults[index].blob,
+        rife.blob,
         clip,
         deps.onStatus,
         options.outputFormat,
@@ -124,7 +126,9 @@ export async function processClipBatch(
   for (const [index, clip] of clips.entries()) {
     const baseName = clip.file.name.replace(/\.[^.]+$/, '') || 'clip';
     const prefix = options.backend === 'hf-rife' ? `rife_${options.multiplier}x_` : 'processed_';
-    const file = new File([processedBlobs[index]], `${prefix}${baseName}.${extension}`, {
+    const processed = processedBlobs[index];
+    if (!processed) throw new Error(`No processed output for clip ${index + 1}.`);
+    const file = new File([processed], `${prefix}${baseName}.${extension}`, {
       type: mimeType,
     });
     const { duration } = await deps.getMediaInfo(file);

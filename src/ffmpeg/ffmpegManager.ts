@@ -154,7 +154,7 @@ export class FfmpegManager {
     this.lastCommand = [...args];
     const filterIdx = args.indexOf('-filter_complex');
     if (filterIdx >= 0 && filterIdx + 1 < args.length) {
-      this.lastFilterComplex = args[filterIdx + 1];
+      this.lastFilterComplex = args[filterIdx + 1] ?? null;
     } else {
       this.lastFilterComplex = null;
     }

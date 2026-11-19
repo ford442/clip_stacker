@@ -59,8 +59,7 @@ export function buildCaptionLayers(
 
   const layers: PreviewCaptionLayer[] = [];
   const normalized = normalizeCaptions(captions);
-  for (let index = 0; index < normalized.length; index++) {
-    const entry = normalized[index];
+  for (const [index, entry] of normalized.entries()) {
     if (globalTime < entry.startSec || globalTime >= entry.endSec) continue;
     if (!entry.text) continue;
 

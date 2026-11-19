@@ -208,7 +208,11 @@ export async function applyCaptionsToRenderedVideo(
       ffmpeg,
       subtitleName,
       mode === 'burn'
-        ? buildAssDocument(captions, { width, height, projectStyle })
+        ? buildAssDocument(captions, {
+            width,
+            height,
+            ...(projectStyle !== undefined && { projectStyle }),
+          })
         : serializeSrt(captions),
       'caption file write',
     );

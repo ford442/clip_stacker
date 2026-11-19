@@ -37,6 +37,12 @@ function makeClip(overrides: Partial<Clip> = {}): Clip {
   };
 }
 
+/** `clip` as probed when the file reported no picture size. */
+function withoutDimensions(clip: Clip): Clip {
+  const { videoWidth: _width, videoHeight: _height, ...rest } = clip;
+  return rest;
+}
+
 describe('buildStillImageVideoFilter', () => {
   it('flattens to yuv420p with opaque padding by default', () => {
     const filter = buildStillImageVideoFilter(1280, 720);
@@ -198,7 +204,7 @@ describe('still image FFmpeg helpers', () => {
       clipHasSourceVideo(makeClip({ videoWidth: 0, videoHeight: 0 })),
     ).toBe(false);
     expect(
-      clipHasSourceVideo(makeClip({ videoWidth: undefined, videoHeight: undefined })),
+      clipHasSourceVideo(withoutDimensions(makeClip())),
     ).toBe(false);
     expect(clipHasSourceVideo(makeClip({ videoWidth: 1920, videoHeight: 1080 }))).toBe(
       true,
@@ -207,11 +213,7 @@ describe('still image FFmpeg helpers', () => {
   });
 
   it('buildSingleClipFilter synthesizes black video for audio-only mp4 sources', () => {
-    const audioOnlyMp4 = makeClip({
-      title: 'stacked.mp4',
-      videoWidth: undefined,
-      videoHeight: undefined,
-    });
+    const audioOnlyMp4 = withoutDimensions(makeClip({ title: 'stacked.mp4' }));
     const filter = buildSingleClipFilter({ ...audioOnlyMp4, kind: 'audio' });
     expect(filter).toContain('color=c=black');
     expect(filter).toContain('[0:a]');

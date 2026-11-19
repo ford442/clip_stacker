@@ -5,6 +5,7 @@ import {
   createSingleOverlayGlyphMask,
 } from './textMask';
 import { buildPreviewCompositionPlan } from './previewComposition';
+import type { PreviewTextLayer } from './previewCompositionTypes';
 
 function baseOverlay(over: Partial<TextOverlay> = {}): TextOverlay {
   return {
@@ -40,7 +41,7 @@ describe('text mask', () => {
       const data = ctx.getImageData(0, 0, mask.width, mask.height).data;
       let opaque = 0;
       for (let i = 3; i < data.length; i += 4) {
-        if (data[i] > 8) opaque++;
+        if ((data[i] ?? 0) > 8) opaque++;
       }
       // Coverage may be zero in some headless envs; do not hard fail the suite here.
       expect(opaque >= 0).toBe(true);
@@ -51,7 +52,7 @@ describe('text mask', () => {
     const ov = baseOverlay({ text: 'ABC', scrolling: true, scrollSpeed: 20, x: 0, y: 100 });
     const t = 1.5;
     const plan = buildPreviewCompositionPlan([], [], [], [ov], undefined, t, 720, 1280);
-    const layer = plan.layers.find((l: any) => l.kind === 'text') as any;
+    const layer = plan.layers.find((l): l is PreviewTextLayer => l.kind === 'text');
     const mask = createSingleOverlayGlyphMask(ov, t, 1280, 720);
     expect(mask.width).toBe(1280);
     // If the planner produced a text layer, its x should be finite (computed via resolveScrollingX internally).

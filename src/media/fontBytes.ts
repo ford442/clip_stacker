@@ -5,10 +5,10 @@ const WOFF2_MAGIC = 0x774f4632; // 'wOF2'
 
 function readUInt32BE(bytes: Uint8Array, offset = 0): number {
   return (
-    ((bytes[offset] << 24) |
-      (bytes[offset + 1] << 16) |
-      (bytes[offset + 2] << 8) |
-      bytes[offset + 3]) >>>
+    (((bytes[offset] ?? 0) << 24) |
+      ((bytes[offset + 1] ?? 0) << 16) |
+      ((bytes[offset + 2] ?? 0) << 8) |
+      (bytes[offset + 3] ?? 0)) >>>
     0
   );
 }

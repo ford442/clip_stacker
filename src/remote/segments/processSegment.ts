@@ -19,7 +19,7 @@ export interface ProcessingBackendInfo {
   hint: string;
 }
 
-export const PROCESSING_BACKENDS: ProcessingBackendInfo[] = [
+export const PROCESSING_BACKENDS: readonly [ProcessingBackendInfo, ...ProcessingBackendInfo[]] = [
   {
     id: 'browser',
     label: 'Browser FFmpeg',
@@ -97,7 +97,7 @@ async function processOnContabo(
   assertSegmentLength(result.durationSec, request.startSec, request.endSec, 'The interpolated segment');
   return {
     backend: 'contabo',
-    method: result.method,
+    ...(result.method !== undefined && { method: result.method }),
     mediaName: result.name,
     url: result.url,
     durationSec: result.durationSec,

@@ -28,8 +28,8 @@ function makeFrameSource(count: number, fps = 30, onClose?: (frame: FakeFrame) =
   let index = 0;
   return {
     async next() {
-      if (index >= frames.length) return { value: undefined, done: true };
-      return { value: frames[index++], done: false };
+      const frame = frames[index++];
+      return frame ? { value: frame, done: false } : { value: undefined, done: true };
     },
   };
 }

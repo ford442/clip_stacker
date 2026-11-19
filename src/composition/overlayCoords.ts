@@ -116,7 +116,7 @@ export function clipLayoutPixelsToNormalized(
   pixels: { x: number; y: number; width: number; height: number },
   canvas: CanvasSize,
   preserveAutoSize = false,
-): Pick<Clip, 'x' | 'y' | 'width' | 'height'> {
+): { x: number; y: number; width: number; height: number } {
   return {
     x: pixelToNormX(pixels.x, canvas.width),
     y: pixelToNormY(pixels.y, canvas.height),
@@ -169,6 +169,14 @@ export function migratePixelTextOverlay(
   };
 }
 
+export function migrateKeyframeTrackToNormalized(
+  track: Keyframe[],
+  referenceDimension: number,
+): Keyframe[];
+export function migrateKeyframeTrackToNormalized(
+  track: Keyframe[] | undefined,
+  referenceDimension: number,
+): Keyframe[] | undefined;
 export function migrateKeyframeTrackToNormalized(
   track: Keyframe[] | undefined,
   referenceDimension: number,
@@ -317,16 +325,13 @@ export function snapPixelRect(
     axis: 'x' | 'y',
     edges: { start: number; center: number; end: number },
   ): number => {
-    const candidates = [
-      { delta: targets[0].value - edges.start, target: targets[0], edge: 'start' },
-      { delta: targets[1].value - edges.center, target: targets[1], edge: 'center' },
-      { delta: targets[2].value - edges.end, target: targets[2], edge: 'end' },
-      ...targets.slice(3).map((target) => ({
-        delta: target.value - edges.center,
-        target,
-        edge: 'center',
-      })),
-    ];
+    // Targets 0 / 1 / 2 are the start edge, centre and end edge; the rest
+    // (thirds) snap the centre.
+    const candidates = targets.map((target, index) => {
+      const edge = index === 0 ? 'start' : index === 2 ? 'end' : 'center';
+      const from = edge === 'start' ? edges.start : edge === 'end' ? edges.end : edges.center;
+      return { delta: target.value - from, target, edge };
+    });
 
     let best: (typeof candidates)[number] | null = null;
     for (const candidate of candidates) {
@@ -439,7 +444,7 @@ export function clipLayoutToDisplayPixels(
 export function clipDisplayPixelsToNormalized(
   pixels: { x: number; y: number; width: number; height: number },
   canvas: CanvasSize,
-): Pick<Clip, 'x' | 'y' | 'width' | 'height'> {
+): { x: number; y: number; width: number; height: number } {
   return clipLayoutPixelsToNormalized(pixels, canvas, true);
 }
 

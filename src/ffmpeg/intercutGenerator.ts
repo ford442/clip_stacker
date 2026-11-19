@@ -147,16 +147,17 @@ function beatSyncForConfig(config: IntercutGeneratorConfig) {
 }
 
 export function planIntercutSlices(config: IntercutGeneratorConfig): IntercutSlice[] {
+  const beatSync = beatSyncForConfig(config);
   return buildIntercutSlices({
     sourceA: sourceBounds(config.clipA),
     sourceB: sourceBounds(config.clipB),
-    sourceC: config.clipC ? sourceBounds(config.clipC) : undefined,
+    ...(config.clipC && { sourceC: sourceBounds(config.clipC) }),
     automation: config.automation,
-    beatSync: beatSyncForConfig(config),
-    forceFinalClip: config.forceFinalClip,
-    tailDurationSec: config.tailDurationSec,
-    consumeMode: config.consumeMode,
-    sourceClock: config.sourceClock,
+    ...(beatSync && { beatSync }),
+    ...(config.forceFinalClip !== undefined && { forceFinalClip: config.forceFinalClip }),
+    ...(config.tailDurationSec !== undefined && { tailDurationSec: config.tailDurationSec }),
+    ...(config.consumeMode !== undefined && { consumeMode: config.consumeMode }),
+    ...(config.sourceClock !== undefined && { sourceClock: config.sourceClock }),
   });
 }
 
@@ -210,7 +211,7 @@ export function estimateIntercut(config: IntercutGeneratorConfig): IntercutEstim
       sourceClock,
       sourceA: boundsA,
       sourceB: boundsB,
-      sourceC: boundsC,
+      ...(boundsC && { sourceC: boundsC }),
     }),
     boundsA,
     boundsB,
@@ -332,7 +333,7 @@ export async function generateIntercutFromVfs(
       sourceClock,
       sourceA: boundsA,
       sourceB: boundsB,
-      sourceC: boundsC,
+      ...(boundsC && { sourceC: boundsC }),
     }),
     boundsA,
     boundsB,
@@ -388,7 +389,8 @@ export async function generateIntercutFromVfs(
     const needSec = steady
       ? outputDurationSec + 1 / INTERCUT_OUTPUT_FPS
       : (framesNeeded(audioSlices, source.slot) + 1) / INTERCUT_OUTPUT_FPS;
-    pcmBySlot[source.slot] = await extractSourcePcm(ffmpeg, source, needSec, onStatus);
+    const pcm = await extractSourcePcm(ffmpeg, source, needSec, onStatus);
+    if (pcm) pcmBySlot[source.slot] = pcm;
   }
   const audioName = 'intercut-audio.wav';
   const audioTracks: { name: string; title: string }[] = [];
@@ -470,8 +472,7 @@ export async function generateIntercutFromVfs(
       ffmpeg,
       buildIntercutRenderArgs({
         sourceInputs,
-        audioName: steady ? undefined : audioName,
-        audioTracks: steady ? audioTracks : undefined,
+        ...(steady ? { audioTracks } : { audioName }),
         filterGraph,
         totalFrames: plan.totalFrames,
         outputName,

@@ -31,7 +31,8 @@ export function createAudioContext(options: CreateAudioContextOptions = {}): Aud
   const Ctx =
     typeof window !== 'undefined'
       ? window.AudioContext ||
-        (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+        // Older Safari's prefixed constructor is not in lib.dom.
+        (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
       : typeof AudioContext !== 'undefined'
         ? AudioContext
         : undefined;

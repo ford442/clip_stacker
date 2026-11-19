@@ -98,7 +98,7 @@ describe("HuggingFaceRifeBackend", () => {
 
     expect(mockProcessClipWithRIFE).toHaveBeenCalledOnce();
     const [calledBlob, calledMult, calledMode] =
-      mockProcessClipWithRIFE.mock.calls[0];
+      mockProcessClipWithRIFE.mock.calls[0]!;
     expect(calledBlob).toBe(fakeBlob);
     expect(calledMult).toBe(2);
     expect(calledMode).toBe("interpolation");
@@ -111,7 +111,7 @@ describe("HuggingFaceRifeBackend", () => {
 
     await backend.processClip(fakeBlob, { multiplier: 4, mode: "boomerang" });
 
-    const [, mult, mode] = mockProcessClipWithRIFE.mock.calls[0];
+    const [, mult, mode] = mockProcessClipWithRIFE.mock.calls[0]!;
     expect(mult).toBe(4);
     expect(mode).toBe("boomerang");
   });

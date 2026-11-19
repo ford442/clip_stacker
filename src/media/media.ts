@@ -79,8 +79,8 @@ function loadMediaInfo(
         resolve({
           duration,
           objectUrl,
-          videoWidth,
-          videoHeight,
+          ...(videoWidth !== undefined && { videoWidth }),
+          ...(videoHeight !== undefined && { videoHeight }),
           ...(hasAudio !== undefined ? { hasAudio } : {}),
         });
       } else {

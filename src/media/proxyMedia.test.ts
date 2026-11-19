@@ -67,7 +67,10 @@ describe('planProxy', () => {
     expect(planProxy(makeClip({ kind: 'audio' })).ok).toBe(false);
     expect(planProxy(makeClip({ stillImage: true })).ok).toBe(false);
     expect(planProxy(makeClip({ videoWidth: 1280, videoHeight: 720 })).ok).toBe(false);
-    expect(planProxy(makeClip({ videoWidth: undefined, videoHeight: undefined })).ok).toBe(false);
+    const noDimensions = makeClip();
+    delete noDimensions.videoWidth;
+    delete noDimensions.videoHeight;
+    expect(planProxy(noDimensions).ok).toBe(false);
   });
 });
 

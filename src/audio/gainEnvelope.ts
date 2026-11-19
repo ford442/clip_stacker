@@ -81,7 +81,7 @@ export function applyGainEnvelope(
     duration: entry.duration,
     clipElapsed,
     playDuration,
-    keyframes: entry.volumeAutomation,
+    ...(entry.volumeAutomation !== undefined && { keyframes: entry.volumeAutomation }),
     defaultValue: volume,
     fadeIn,
     fadeOut,
@@ -127,7 +127,7 @@ export function applyPanEnvelope(
     duration,
     clipElapsed,
     playDuration,
-    keyframes: panAutomation,
+    ...(panAutomation !== undefined && { keyframes: panAutomation }),
     defaultValue: DEFAULT_CLIP_PAN,
   }).map((point) => ({
     ...point,

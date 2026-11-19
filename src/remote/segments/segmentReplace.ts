@@ -19,9 +19,9 @@ export interface SegmentMedia {
   objectUrl: string;
   /** Measured length of `file`. */
   durationSec: number;
-  videoWidth?: number;
-  videoHeight?: number;
-  hasAudio?: boolean;
+  videoWidth?: number | undefined;
+  videoHeight?: number | undefined;
+  hasAudio?: boolean | undefined;
   /** Public URL when the media already lives in the remote library. */
   remoteUrl?: string;
 }
@@ -49,6 +49,12 @@ export type SegmentReplaceOutcome =
 
 function fail(reason: string): SegmentReplaceOutcome {
   return { ok: false, reason };
+}
+
+/** `clip` out of its A/B group (a piece of a split no longer has a twin). */
+function withoutGroup(clip: Clip): Clip {
+  const { groupId: _groupId, groupVariant: _groupVariant, ...rest } = clip;
+  return rest;
 }
 
 /** Source-time window the clip currently shows. */
@@ -111,7 +117,8 @@ export function planSegmentReplacement(
     return fail('Track is locked — unlock the lane to replace a segment.');
   }
   const placed = findClipTrack(state.tracks, clipId);
-  if (!placed) return fail('The clip this segment came from is not placed on a track.');
+  const placedItem = placed?.track.items[placed.itemIndex];
+  if (!placed || !placedItem) return fail('The clip this segment came from is not placed on a track.');
 
   const length = endSec - startSec;
   if (!Number.isFinite(length) || length < MIN_CLIP_DURATION) {
@@ -149,8 +156,17 @@ export function planSegmentReplacement(
     );
   }
 
-  const trimmed = withoutDerivedMediaData(clip);
-  const swapped: Clip = {
+  // The media's own remote URL and markers replace the source clip's.
+  const {
+    remoteSourceUrl: _remoteSourceUrl,
+    syncMarkers: _syncMarkers,
+    ...trimmed
+  } = withoutDerivedMediaData(clip);
+  // Source-relative markers: keep the ones inside the window, re-based to the new media.
+  const syncMarkers = clip.syncMarkers
+    ?.filter((m) => m.time >= startSec && m.time <= endSec)
+    .map((m) => ({ ...m, time: m.time - startSec }));
+  const placedPiece: Clip = {
     ...trimmed,
     // The first piece of the lane keeps the source id so a base transition into it survives.
     id: hasLeft ? createClipId() : clip.id,
@@ -163,44 +179,34 @@ export function planSegmentReplacement(
     ...(media.videoWidth ? { videoWidth: media.videoWidth } : {}),
     ...(media.videoHeight ? { videoHeight: media.videoHeight } : {}),
     ...(media.hasAudio !== undefined ? { hasAudio: media.hasAudio } : {}),
-    remoteSourceUrl: media.remoteUrl,
-    // Source-relative markers: keep the ones inside the window, re-based to the new media.
-    syncMarkers: clip.syncMarkers
-      ?.filter((m) => m.time >= startSec && m.time <= endSec)
-      .map((m) => ({ ...m, time: m.time - startSec })),
+    ...(media.remoteUrl ? { remoteSourceUrl: media.remoteUrl } : {}),
+    ...(syncMarkers?.length ? { syncMarkers } : {}),
   };
-  if (!swapped.syncMarkers?.length) delete swapped.syncMarkers;
-  if (!swapped.remoteSourceUrl) delete swapped.remoteSourceUrl;
-  if (!whole) {
-    swapped.groupId = undefined;
-    swapped.groupVariant = undefined;
-  }
+  const swapped = whole ? placedPiece : withoutGroup(placedPiece);
 
   const pieces: Clip[] = [];
-  const itemStart = placed.track.items[placed.itemIndex].startTime;
+  const itemStart = placedItem.startTime;
   const items: Track['items'] = [];
 
   if (hasLeft) {
-    pieces.push({ ...clip, trimEnd: startSec, groupId: undefined, groupVariant: undefined });
+    pieces.push({ ...withoutGroup(clip), trimEnd: startSec });
     items.push({ clipId: clip.id, startTime: itemStart });
   }
   pieces.push(swapped);
   items.push({ clipId: swapped.id, startTime: itemStart + before });
   if (hasRight) {
     const right: Clip = {
-      ...clip,
+      ...withoutGroup(clip),
       id: createClipId(),
       title: `${clip.title} (split)`,
       trimStart: endSec,
-      groupId: undefined,
-      groupVariant: undefined,
     };
     pieces.push(right);
     items.push({ clipId: right.id, startTime: itemStart + before + length });
   }
 
   const tracks = cloneTracks(state.tracks);
-  tracks[placed.trackIndex].items.splice(placed.itemIndex, 1, ...items);
+  tracks[placed.trackIndex]?.items.splice(placed.itemIndex, 1, ...items);
 
   const clips = state.clips.flatMap((c) => (c.id === clip.id ? pieces : [c]));
   const rightPiece = hasRight ? pieces[pieces.length - 1] : undefined;
