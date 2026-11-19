@@ -7,34 +7,21 @@ import {
   loadMediaEngineModule,
 } from '../wasm/mediaEngine';
 import { TIME_STRETCH_HOP, wasmRemapPlanar } from '../wasm/timeStretch';
-import { __setTimeStretchWorkerFactoryForTests, remapPlanarOffThread, type TimeStretchWorkerLike } from './timeStretchClient';
-import { handleTimeStretchRequest, type TimeStretchRequest, type TimeStretchResponse } from './timeStretch.worker';
+import { __setTimeStretchWorkerFactoryForTests, remapPlanarOffThread } from './timeStretchClient';
+import { timeStretchHandlers, type TimeStretchProtocol } from './timeStretch.worker';
+import { InProcessWorker, flushWorkerMessages } from '../workers/inProcessWorker.test.helpers';
+import { exposeWorker } from '../workers/workerRpc';
 
 const WASM_BASE = pathToFileURL(path.resolve(process.cwd(), 'public/wasm') + path.sep).href;
 
-/** A Worker stand-in that runs the real handler in-process and detaches transferred buffers, as postMessage does. */
-class InProcessWorker implements TimeStretchWorkerLike {
-  onmessage: ((ev: MessageEvent<TimeStretchResponse>) => void) | null = null;
-  onerror: ((ev: ErrorEvent) => void) | null = null;
-  terminated = false;
-  requests: TimeStretchRequest[] = [];
-  constructor(private readonly crash = false) {}
-  postMessage(message: TimeStretchRequest, transfer: Transferable[]): void {
-    const [moved] = [structuredClone(message, { transfer })];
-    this.requests.push(moved);
-    if (this.crash) {
-      queueMicrotask(() => this.onerror?.({ message: 'boom' } as ErrorEvent));
-      return;
-    }
-    void handleTimeStretchRequest({ ...moved, baseUrl: WASM_BASE }).then((res) => {
-      const transferBack: Transferable[] = [res.input.buffer];
-      if (res.output) transferBack.push(res.output.buffer);
-      this.onmessage?.({ data: structuredClone(res, { transfer: transferBack }) } as MessageEvent<TimeStretchResponse>);
-    });
-  }
-  terminate(): void {
-    this.terminated = true;
-  }
+/** The real worker handlers, served in-process (under happy-dom the loader needs the file URL of public/wasm). */
+function inProcessWorker(): InProcessWorker {
+  const worker = new InProcessWorker();
+  exposeWorker<TimeStretchProtocol>(
+    { remap: (req, ctx) => timeStretchHandlers.remap({ ...req, baseUrl: WASM_BASE }, ctx) },
+    { scope: worker.scope },
+  );
+  return worker;
 }
 
 function job(frames: number) {
@@ -58,13 +45,13 @@ describe('time-stretch worker client', () => {
   });
 
   it('stretches in the worker, transferring the source there and back', async () => {
-    const worker = new InProcessWorker();
+    const worker = inProcessWorker();
     __setTimeStretchWorkerFactoryForTests(() => worker);
     const j = job(12_000);
     const reference = await wasmRemapPlanar(j.input, j.inFrames, 1, j.offsets, j.outFrames, { baseUrl: WASM_BASE });
     const sent = j.input;
     const result = await remapPlanarOffThread(j);
-    expect(worker.requests).toHaveLength(1);
+    expect(worker.sentPayloads('call', 'remap')).toHaveLength(1);
     expect(sent.length).toBe(0); // transferred away
     expect(result.input.length).toBe(12_000); // and back
     expect(result.output).not.toBeNull();
@@ -73,9 +60,13 @@ describe('time-stretch worker client', () => {
 
   it('gives up on a crashed worker: the job falls back, later jobs run on this thread', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const worker = new InProcessWorker(true);
+    const worker = inProcessWorker();
+    worker.hold = true;
     __setTimeStretchWorkerFactoryForTests(() => worker);
-    const first = await remapPlanarOffThread(job(4096));
+    const pending = remapPlanarOffThread(job(4096));
+    await flushWorkerMessages(1);
+    worker.crash('boom');
+    const first = await pending;
     expect(first.output).toBeNull();
     expect(first.input.length).toBe(0); // lost with the worker: the caller rebuilds it
     expect(worker.terminated).toBe(true);
@@ -83,12 +74,12 @@ describe('time-stretch worker client', () => {
     // (Under happy-dom the in-realm loader needs the file URL of public/wasm.)
     await loadMediaEngineModule({ baseUrl: WASM_BASE });
     const second = await remapPlanarOffThread(job(4096));
-    expect(worker.requests).toHaveLength(1);
+    expect(worker.sentPayloads('call', 'remap')).toHaveLength(1);
     expect(second.output).not.toBeNull();
   });
 
   it('never starts the worker under ?no_media_engine', async () => {
-    const factory = vi.fn(() => new InProcessWorker());
+    const factory = vi.fn(() => inProcessWorker());
     __setTimeStretchWorkerFactoryForTests(factory);
     __setMediaEngineKillSwitchForTests(true);
     const result = await remapPlanarOffThread(job(4096));

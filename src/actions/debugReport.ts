@@ -27,6 +27,7 @@ import { getLastEncoderColorSpace, getLastResolvedEncoderCodec } from '../export
 import { getLastDecoderAcceleration } from '../export/webcodecsDecoder';
 import { getColorDebugSnapshot, type ColorManagementSettings } from '../finishing/colorManagement';
 import { getAudioPlaybackManager } from '../playback/playbackManager';
+import { WorkerCrashedError, getWorkerCrashLog } from '../workers/workerRpc';
 
 export interface DebugReportContext {
   status: string;
@@ -182,6 +183,9 @@ export function generateDebugReport(ctx: DebugReportContext): string {
     if (typeof ctx.error === 'string') {
       lines.push(ctx.error);
     } else if (ctx.error instanceof Error) {
+      if (ctx.error instanceof WorkerCrashedError) {
+        lines.push(`- Worker: ${ctx.error.workerName} (${ctx.error.reason})`);
+      }
       lines.push('```');
       lines.push(ctx.error.message);
       if (ctx.error.stack) {
@@ -305,6 +309,19 @@ export function generateDebugReport(ctx: DebugReportContext): string {
         `[${new Date(e.timestamp).toISOString()}] (${e.realm ?? 'main'}) ${e.type}: ${e.message}`,
       );
     });
+    lines.push('```');
+  }
+
+  const workerCrashes = getWorkerCrashLog();
+  lines.push('');
+  lines.push(`## Worker crashes (last ${workerCrashes.length})`);
+  if (workerCrashes.length === 0) {
+    lines.push('(none)');
+  } else {
+    lines.push('```');
+    for (const c of workerCrashes) {
+      lines.push(`[${new Date(c.timestamp).toISOString()}] ${c.worker} (${c.reason}): ${c.message}`);
+    }
     lines.push('```');
   }
 

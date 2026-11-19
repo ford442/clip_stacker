@@ -1,24 +1,19 @@
+/**
+ * The chores worker: CPU-golden kernels off the main thread, served through
+ * the worker RPC (`src/workers/workerRpc.ts`).
+ */
+
 import { rasterizeBitmapToRgba } from '../rasterize';
 import { runCpuJob } from '../cpu/runCpuJob';
 import type { GpuChoreJob, GpuChoreJobSpec, GpuChoreResult } from '../types';
+import { exposeWorker, withTransfer } from '../../workers/workerRpc';
 
-export type ChoresWorkerRequest =
-  | { id: number; job: GpuChoreJob }
-  | {
-      id: number;
-      analyzeStill: true;
-      specs: GpuChoreJobSpec[];
-      bitmap: ImageBitmap;
-    };
-
-export type ChoresWorkerResponse =
-  | { id: number; ok: true; result: GpuChoreResult }
-  | { id: number; ok: true; results: GpuChoreResult[] }
-  | { id: number; ok: false; message: string };
-
-function postResponse(msg: ChoresWorkerResponse, transfer: Transferable[] = []): void {
-  (self as DedicatedWorkerGlobalScope).postMessage(msg, transfer);
-}
+export type GpuChoresProtocol = {
+  /** One CPU-golden job on the given pixels (transferred). */
+  job: { req: GpuChoreJob; res: GpuChoreResult };
+  /** Rasterize `bitmap` (transferred), then run every spec on its pixels. */
+  analyzeStill: { req: { specs: GpuChoreJobSpec[]; bitmap: ImageBitmap }; res: GpuChoreResult[] };
+};
 
 function resultTransferList(results: GpuChoreResult[]): Transferable[] {
   const transfer: Transferable[] = [];
@@ -44,34 +39,20 @@ function runSpecsOnPixels(
   });
 }
 
-self.onmessage = (ev: MessageEvent<ChoresWorkerRequest>) => {
-  const data = ev.data;
-  const { id } = data;
-  try {
-    if ('analyzeStill' in data && data.analyzeStill) {
-      const { pixels, width, height } = rasterizeBitmapToRgba(data.bitmap);
-      try {
-        data.bitmap.close();
-      } catch {
-        /* detached */
-      }
-      const results = runSpecsOnPixels(data.specs, pixels, width, height);
-      postResponse({ id, ok: true, results }, resultTransferList(results));
-      return;
-    }
-
-    if (!('job' in data)) {
-      throw new Error('gpu-chores worker: missing job');
-    }
-    const job = data.job;
+exposeWorker<GpuChoresProtocol>({
+  job: (job) => {
     const cpu = runCpuJob(job, 'chores worker (TS golden)');
     const result: GpuChoreResult = { ...cpu, backend: 'wasm', reason: cpu.reason };
-    postResponse({ id, ok: true, result }, resultTransferList([result]));
-  } catch (err) {
-    postResponse({
-      id,
-      ok: false,
-      message: err instanceof Error ? err.message : String(err),
-    });
-  }
-};
+    return withTransfer(result, resultTransferList([result]));
+  },
+  analyzeStill: ({ specs, bitmap }) => {
+    const { pixels, width, height } = rasterizeBitmapToRgba(bitmap);
+    try {
+      bitmap.close();
+    } catch {
+      /* detached */
+    }
+    const results = runSpecsOnPixels(specs, pixels, width, height);
+    return withTransfer(results, resultTransferList(results));
+  },
+});

@@ -1,51 +1,22 @@
 import type { FfmpegCoreURLs } from './coreSources';
 
-/** Omit that distributes over each member of a union, preserving discriminants. */
-export type DistributiveOmit<T, K extends PropertyKey> = T extends unknown
-  ? Omit<T, K>
-  : never;
-
-export type WorkerRpcRequest =
-  | {
-      id: number;
-      type: 'load';
-      /** Same-origin `/ffmpeg-core*` URLs, or blob: URLs of a CDN copy. */
-      urls: FfmpegCoreURLs;
-    }
-  | {
-      id: number;
-      type: 'exec';
-      args: string[];
-    }
-  | {
-      id: number;
-      type: 'writeFile';
-      name: string;
-      data: Uint8Array | string;
-    }
-  | {
-      id: number;
-      type: 'readFile';
-      name: string;
-    }
-  | {
-      id: number;
-      type: 'deleteFile';
-      name: string;
-    }
-  | {
-      id: number;
-      type: 'listDir';
-      path: string;
-    };
-
-export type WorkerRpcResponse =
-  | { id: number; ok: true; result?: unknown }
-  | { id: number; ok: false; error: string };
-
-export type WorkerLogMessage = { type: 'log'; message: string };
-
-export type WorkerOutboundMessage = WorkerRpcResponse | WorkerLogMessage;
+/**
+ * The FFmpeg worker's protocol (`workerFfmpegRuntime.ts` on main,
+ * `ffmpeg.worker.ts`), served through the worker RPC
+ * (`src/workers/workerRpc.ts`). Bytes travel by transfer (`transferableBytes`).
+ */
+export type FfmpegWorkerProtocol = {
+  /** Same-origin `/ffmpeg-core*` URLs, or blob: URLs of a CDN copy. */
+  load: { req: { urls: FfmpegCoreURLs }; res: void };
+  /** Rejects on a non-zero exit code. */
+  exec: { req: { args: string[] }; res: number };
+  writeFile: { req: { name: string; data: Uint8Array | string }; res: void };
+  readFile: { req: { name: string }; res: Uint8Array | string };
+  deleteFile: { req: { name: string }; res: boolean };
+  listDir: { req: { path: string }; res: { name: string; isDir: boolean }[] };
+  /** Every FFmpeg log line. */
+  log: { event: { message: string } };
+};
 
 /**
  * The bytes to post and the transfer list for them. A view over a whole,

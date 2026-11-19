@@ -17,7 +17,9 @@ import type { CaptionEntry } from '../types';
 import { segmentsToCaptions } from '../captions/captionSegments';
 import { hasCachedModel } from './whisperModelCache';
 import { resolveWhisperAssetUrl, WHISPER_GLUE_FILE } from './whisperModule';
-import type { WhisperWorkerRequest, WhisperWorkerResponse } from './whisperWorker';
+import type { WhisperProtocol } from './whisperWorker';
+import { createWhisperWorker } from '../workers/workerFactories';
+import { createWorkerClient } from '../workers/workerRpc';
 
 export const WHISPER_PROVIDER_ID = 'whisper-wasm';
 
@@ -75,77 +77,38 @@ function decodeToAudioBuffer(blob: Blob): Promise<AudioBuffer> {
   return decodeAudio(blob, { sampleRate: DECODE_SAMPLE_RATE });
 }
 
-/** Spawn the worker and run one transcription on it. */
-function runOnWorker(
+const cancelled = () => new DOMException('Transcription cancelled', 'AbortError');
+
+/** Spawn a worker, run one transcription on it, and terminate it. */
+async function runOnWorker(
   pcm: Float32Array,
   options: CaptionTranscribeOptions | undefined,
   modelUrl: string,
 ): Promise<CaptionEntry[]> {
-  return new Promise((resolve, reject) => {
-    let worker: Worker;
-    try {
-      worker = new Worker(new URL('./whisperWorker.ts', import.meta.url), {
-        type: 'module',
-      });
-    } catch (err) {
-      reject(new Error(`Could not start the transcription worker: ${(err as Error).message}`));
-      return;
-    }
-
-    const id = 1;
-    const finish = (run: () => void) => {
-      options?.signal?.removeEventListener('abort', onAbort);
-      worker.terminate();
-      run();
-    };
-    function onAbort() {
-      const cancel: WhisperWorkerRequest = { type: 'cancel', id };
-      worker.postMessage(cancel);
-      // The worker acknowledges with `cancelled`, but a run that never reaches
-      // its next progress callback would hang the UI — reject right away and
-      // let `terminate` stop the work.
-      finish(() => reject(new DOMException('Transcription cancelled', 'AbortError')));
-    }
-    options?.signal?.addEventListener('abort', onAbort, { once: true });
-
-    worker.onmessage = (event: MessageEvent<WhisperWorkerResponse>) => {
-      const message = event.data;
-      switch (message.type) {
-        case 'progress':
-          options?.onProgress?.({ progress: message.progress, stage: message.stage });
-          break;
-        case 'segments':
-          finish(() =>
-            resolve(
-              segmentsToCaptions(message.segments, {
-                timeOffsetSec: options?.timeOffsetSec,
-              }),
-            ),
-          );
-          break;
-        case 'cancelled':
-          finish(() => reject(new DOMException('Transcription cancelled', 'AbortError')));
-          break;
-        case 'error':
-          finish(() => reject(new Error(message.message)));
-          break;
-      }
-    };
-    worker.onerror = (event) => {
-      finish(() => reject(new Error(event.message || 'Transcription worker failed')));
-    };
-
-    const request: WhisperWorkerRequest = {
-      type: 'transcribe',
-      id,
-      pcm,
-      modelUrl,
-      language: options?.language,
-      threads: config.threads,
-      baseUrl: config.baseUrl,
-    };
-    worker.postMessage(request, [pcm.buffer]);
-  });
+  const client = createWorkerClient<WhisperProtocol>(createWhisperWorker, { name: 'transcription' });
+  if (!client.start()) {
+    throw new Error(`Could not start the transcription worker: ${client.failure?.detail ?? 'unknown error'}`);
+  }
+  client.on('progress', (update) => options?.onProgress?.(update));
+  const signal = options?.signal;
+  try {
+    const segments = await client.call(
+      'transcribe',
+      { pcm, modelUrl, language: options?.language, threads: config.threads, baseUrl: config.baseUrl },
+      // A run blocked in WASM never reads the cancel: the call rejects at
+      // once and `terminate` below stops the work.
+      { transfer: [pcm.buffer], signal },
+    );
+    return segmentsToCaptions(
+      segments,
+      options?.timeOffsetSec === undefined ? {} : { timeOffsetSec: options.timeOffsetSec },
+    );
+  } catch (err) {
+    if (signal?.aborted || (err instanceof Error && err.name === 'AbortError')) throw cancelled();
+    throw err;
+  } finally {
+    client.terminate();
+  }
 }
 
 export const whisperCaptionProvider: CaptionProvider = {

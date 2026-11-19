@@ -1,26 +1,22 @@
 /**
- * Typed message protocol for the off-thread WebGPU preview worker.
+ * Typed protocol for the off-thread WebGPU preview worker, served through
+ * the worker RPC (`src/workers/workerRpc.ts`).
  *
  * Startup (two-phase so the display canvas is never transferred unless the
  * worker can actually run WebGPU):
- *   1. Worker boots and posts `ready` after a GPU probe (no canvas yet).
- *   2. Main transfers OffscreenCanvas only when `webgpuAvailable: true`.
- *   3. Worker posts `initialized` once the real compositor is up.
+ *   1. Main calls `configure`; the worker answers with its GPU probe (no
+ *      canvas yet).
+ *   2. Main transfers OffscreenCanvas (`init`) only when `webgpuAvailable`.
+ *   3. `init` resolves once the real compositor is up.
  * A failed probe is a hard-fail for GPU preview — not a Canvas2D stand-in.
  *
  * Frame sourcing: the worker decodes what it can itself (`clip-media` gives it
  * the clip blobs once) and only asks main for the layers its decoder cannot
- * serve, so the happy path never touches `HTMLVideoElement.currentTime`.
- *
- * Main → Worker: init, clip-media, render, frames-ready, cancel, resize,
- *                sync-clips, pause-decoders, reset-finishing, set-scopes,
- *                chore-jobs, destroy
- * Worker → Main: ready, initialized, need-frames, render-complete,
- *                render-cancelled, scopes, chore-jobs-result, error,
- *                gpu-error, gpu-lost, gpu-recovered, gpu-recovery-failed
+ * serve (`need-frames` → `frames-ready`, the stream channel), so the happy
+ * path never touches `HTMLVideoElement.currentTime`.
  *
  * The worker owns its own `GPUDevice` (see `gpuDevice.ts`), so the `gpu-*`
- * messages are the only way main learns the preview's device died or
+ * events are the only way main learns the preview's device died or
  * misbehaved.
  */
 
@@ -163,25 +159,56 @@ export interface FrameSourceStats {
 /** How long main waits for the worker GPU probe / init before falling back. */
 export const PREVIEW_WORKER_INIT_TIMEOUT_MS = 5_000;
 
-// --------------------------------------------------------------------------
-// Main → Worker messages
-// --------------------------------------------------------------------------
+/** A `render` call: one preview frame at `globalTime`. */
+export interface PreviewRenderRequest {
+  /** Names the frame in `need-frames` / `frames-ready`. */
+  renderId: number;
+  clips: WorkerClip[];
+  clipGroups: ClipGroup[];
+  transitions: ClipTransition[];
+  textOverlays: TextOverlay[];
+  exportSettings: Pick<ExportSettings, 'outputResolution'> | undefined;
+  globalTime: number;
+  maxWidth?: number | undefined;
+  maxHeight?: number | undefined;
+  finishing?: FinishingSettings | undefined;
+  /** Output color / working space for the managed pipeline. */
+  colorManagement?: ColorManagementSettings | undefined;
+  /** @deprecated Prefer `finishing`. */
+  colorGrade?: ColorGradeSettings | undefined;
+  /** Caption cues to plan for; omitted or empty means no caption layers. */
+  captions?: CaptionEntry[] | undefined;
+  captionStyle?: Partial<TextOverlayStyle> | undefined;
+}
 
-export type PreviewWorkerInbound =
-  | {
-      /**
-       * First message, posted right after the worker is constructed: page
-       * flags resolved on main that must be set before the worker requests
-       * its device (the GPU probe waits for this).
-       */
-      type: 'configure';
+/** A completed `render` (null = cancelled, or no compositor yet). */
+export interface PreviewRenderResult {
+  plan: PreviewCompositionPlan;
+  /** Per-layer frame sourcing for this frame (decoder path vs `<video>`). */
+  frameSources: FrameSourceStats;
+  /** `?gpu_profile`: the worker's averaged GPU milliseconds per pass. */
+  gpuProfile?: Record<string, number>;
+}
+
+export type PreviewWorkerProtocol = {
+  // ---- calls ------------------------------------------------------------
+  /**
+   * First call, made right after the worker is constructed: page flags
+   * resolved on main that must be set before the worker requests its
+   * device. Answers with the GPU probe (no canvas has moved yet).
+   */
+  configure: {
+    req: {
       /** `?gpu_profile`: request `timestamp-query` and post pass timings. */
       gpuProfile: boolean;
       /** `?test_harness`: live preview may run on a software fallback adapter. */
       allowFallbackAdapter: boolean;
-    }
-  | {
-      type: 'init';
+    };
+    res: { webgpuAvailable: boolean; webgpuProbe: WebGpuProbeResult };
+  };
+  /** Bind the compositor to the transferred canvas; rejects when it cannot start. */
+  init: {
+    req: {
       canvas: OffscreenCanvas;
       width: number;
       height: number;
@@ -189,144 +216,44 @@ export type PreviewWorkerInbound =
        * Resolved on main (a worker's `location.search` is the worker script's,
        * not the page's). False keeps every layer on the `<video>` fallback.
        */
-      decoderEnabled?: boolean;
-    }
-  | {
-      /**
-       * Hand the worker the source bytes for clips it should decode itself.
-       * `Blob`/`File` is structured-cloneable by reference — no copy.
-       */
-      type: 'clip-media';
-      /** `source` says whether `blob` is the clip's proxy or its original (default). */
-      media: Array<{ clipId: string; blob: Blob; source?: PreviewMediaSource }>;
-    }
-  | {
-      type: 'render';
-      renderId: number;
-      clips: WorkerClip[];
-      clipGroups: ClipGroup[];
-      transitions: ClipTransition[];
-      textOverlays: TextOverlay[];
-      exportSettings: Pick<ExportSettings, 'outputResolution'> | undefined;
-      globalTime: number;
-      maxWidth?: number;
-      maxHeight?: number;
-      finishing?: FinishingSettings;
-      /** Output color / working space for the managed pipeline. */
-      colorManagement?: ColorManagementSettings;
-      /** @deprecated Prefer `finishing`. */
-      colorGrade?: ColorGradeSettings;
-      /** Caption cues to plan for; omitted or empty means no caption layers. */
-      captions?: CaptionEntry[];
-      captionStyle?: Partial<TextOverlayStyle>;
-    }
-  | {
-      type: 'frames-ready';
-      renderId: number;
-      frames: CapturedFrame[];
-    }
-  | {
-      type: 'cancel';
-      renderId: number;
-    }
-  | {
-      type: 'resize';
-      width: number;
-      height: number;
-    }
-  | {
-      type: 'sync-clips';
-      clips: WorkerClip[];
-    }
-  | { type: 'pause-decoders' }
-  | { type: 'reset-finishing' }
-  | { type: 'set-scopes'; scopes: ScopeSettings }
-  /** Main's `(dynamic-range: high)`: an HDR10 project previews extended on an HDR display. */
-  | { type: 'display-hdr'; hdr: boolean }
-  | {
-      type: 'chore-jobs';
-      id: number;
-      jobs: GpuChoreJobSpec[];
-      source?: ImageBitmap;
-    }
-  | { type: 'destroy' };
-
-// --------------------------------------------------------------------------
-// Worker → Main messages
-// --------------------------------------------------------------------------
-
-export type PreviewWorkerOutbound =
-  | {
-      /** An uncaptured error on the worker's device (validation / OOM / internal). */
-      type: 'gpu-error';
-      entry: GpuErrorLogEntry;
-    }
-  | {
-      /** The worker's device was lost; it is recreating one. */
-      type: 'gpu-lost';
-      message: string;
-      timestamp: number;
-    }
-  | {
-      /** The worker's compositor is running on a freshly recreated device. */
-      type: 'gpu-recovered';
-    }
-  | {
-      /** Recreating the worker's device failed — the preview cannot draw. */
-      type: 'gpu-recovery-failed';
-      message: string;
-      timestamp: number;
-    }
-  | {
-      /** GPU probe result — posted before any canvas is transferred. */
-      type: 'ready';
-      webgpuAvailable: boolean;
-      webgpuProbe: WebGpuProbeResult;
-    }
-  | {
-      /** Real compositor is bound to the transferred OffscreenCanvas. */
-      type: 'initialized';
-    }
-  | {
-      type: 'need-frames';
-      renderId: number;
-      requests: FrameRequest[];
-    }
-  | {
-      type: 'render-complete';
-      renderId: number;
-      plan: PreviewCompositionPlan;
-      /** Per-layer frame sourcing for this frame (decoder path vs `<video>`). */
-      frameSources?: FrameSourceStats;
-      /** `?gpu_profile`: the worker's averaged GPU milliseconds per pass. */
-      gpuProfile?: Record<string, number>;
-    }
-  | {
-      type: 'scopes';
-      renderId: number;
-      scopes: ScopeData;
-    }
-  | {
-      type: 'render-cancelled';
-      renderId: number;
-    }
-  | {
-      type: 'chore-jobs-result';
-      id: number;
-      ok: true;
-      results: GpuChoreResult[];
-    }
-  | {
-      type: 'chore-jobs-result';
-      id: number;
-      ok: false;
-      message: string;
-    }
-  | {
-      type: 'color-state';
-      snapshot: ColorDebugSnapshot;
-    }
-  | {
-      type: 'error';
-      message: string;
+      decoderEnabled?: boolean | undefined;
     };
+    res: void;
+  };
+  /** Abort the call to cancel the frame (the worker checks between stages). */
+  render: { req: PreviewRenderRequest; res: PreviewRenderResult | null };
+  /** gpu-chores kernels on the worker's adopted device (`source` transferred). */
+  'chore-jobs': { req: { jobs: GpuChoreJobSpec[]; source?: ImageBitmap | undefined }; res: GpuChoreResult[] };
+
+  // ---- stream channel: main → worker ------------------------------------
+  /**
+   * The source bytes for clips the worker should decode itself. `Blob`/`File`
+   * is structured-cloneable by reference — no copy. `source` says whether
+   * `blob` is the clip's proxy or its original (default).
+   */
+  'clip-media': { notify: { media: Array<{ clipId: string; blob: Blob; source?: PreviewMediaSource }> } };
+  /** Main's answer to `need-frames` (the frames are transferred). */
+  'frames-ready': { notify: { renderId: number; frames: CapturedFrame[] } };
+  resize: { notify: { width: number; height: number } };
+  'sync-clips': { notify: { clips: WorkerClip[] } };
+  'pause-decoders': { notify: void };
+  'reset-finishing': { notify: void };
+  'set-scopes': { notify: { scopes: ScopeSettings } };
+  /** Main's `(dynamic-range: high)`: an HDR10 project previews extended on an HDR display. */
+  'display-hdr': { notify: { hdr: boolean } };
+  destroy: { notify: void };
+
+  // ---- stream channel: worker → main ------------------------------------
+  /** Layers the worker's decoder cannot serve; main answers with `frames-ready`. */
+  'need-frames': { event: { renderId: number; requests: FrameRequest[] } };
+  scopes: { event: { renderId: number; scopes: ScopeData } };
+  'color-state': { event: { snapshot: ColorDebugSnapshot } };
+  /** An uncaptured error on the worker's device (validation / OOM / internal). */
+  'gpu-error': { event: { entry: GpuErrorLogEntry } };
+  /** The worker's device was lost; it is recreating one. */
+  'gpu-lost': { event: { message: string; timestamp: number } };
+  /** The worker's compositor is running on a freshly recreated device. */
+  'gpu-recovered': { event: void };
+  /** Recreating the worker's device failed — the preview cannot draw. */
+  'gpu-recovery-failed': { event: { message: string; timestamp: number } };
+};

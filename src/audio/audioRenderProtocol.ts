@@ -1,40 +1,44 @@
 /**
- * Messages between the export premix client (`audioRenderClient.ts`, main
- * thread) and `audioRender.worker.ts`. Every message names its stream, so
- * one worker can run the metering pass and the final pass back to back.
+ * The export premix worker's protocol (`audioRenderClient.ts` on main,
+ * `audioRender.worker.ts`), served through the worker RPC
+ * (`src/workers/workerRpc.ts`). Every payload names its stream, so one
+ * worker can run the metering pass and the final pass back to back.
  *
- * - main → worker: `open`, then `pull` per chunk; PCM in answer to
- *   `need-pcm` as `pcm-begin`, `pcm-part`s (one channel slice each,
- *   transferred) and `pcm-end`, or `pcm-error`; `close` at the end.
- * - worker → main: `opened`, `need-pcm` / `release` (the stream's
- *   `ClipPcmProvider` calls), `chunk` (interleaved, transferred), `done`
- *   with the output meter, or `error`.
+ * - calls: `open` (null = the media engine is unavailable there), then one
+ *   `pull` per chunk (a `chunk`, interleaved and transferred, or `done` with
+ *   the output meter). A failed mix rejects the pull.
+ * - stream channel, worker → main: `need-pcm` / `release` (the stream's
+ *   `ClipPcmProvider` calls); main → worker: the PCM in answer, as
+ *   `pcm-begin`, `pcm-part`s (one channel slice each, transferred) and
+ *   `pcm-end`, or `pcm-error`; `close` at the end.
  */
 
 import type { MediaEngineMixEntry, MixMeterReading, TimelineMixStreamOptions } from '../wasm/mediaEngine';
 
-export type RenderWorkerRequest =
-  | {
-      type: 'open';
-      id: number;
-      entries: MediaEngineMixEntry[];
-      options: TimelineMixStreamOptions;
-    }
-  | { type: 'pull'; id: number }
-  | { type: 'pcm-begin'; id: number; index: number; sampleRate: number; channels: number; frames: number }
-  | { type: 'pcm-part'; id: number; index: number; channel: number; offset: number; data: Float32Array }
-  | { type: 'pcm-end'; id: number; index: number }
-  | { type: 'pcm-error'; id: number; index: number; message: string; skip?: boolean }
-  | { type: 'close'; id: number };
+export interface RenderStreamDims {
+  totalFrames: number;
+  sampleRate: number;
+  channels: number;
+}
 
-export type RenderWorkerResponse =
-  | { type: 'opened'; id: number; totalFrames: number; sampleRate: number; channels: number }
-  | { type: 'unavailable'; id: number }
-  | { type: 'need-pcm'; id: number; index: number }
-  | { type: 'release'; id: number; index: number }
+export type RenderPullResult =
   | { type: 'chunk'; id: number; startFrame: number; frameCount: number; frames: Float32Array }
-  | { type: 'done'; id: number; meters: MixMeterReading | null }
-  | { type: 'error'; id: number; message: string };
+  | { type: 'done'; id: number; meters: MixMeterReading | null };
+
+export type AudioRenderProtocol = {
+  open: {
+    req: { id: number; entries: MediaEngineMixEntry[]; options: TimelineMixStreamOptions };
+    res: RenderStreamDims | null;
+  };
+  pull: { req: { id: number }; res: RenderPullResult };
+  close: { notify: { id: number } };
+  'pcm-begin': { notify: { id: number; index: number; sampleRate: number; channels: number; frames: number } };
+  'pcm-part': { notify: { id: number; index: number; channel: number; offset: number; data: Float32Array } };
+  'pcm-end': { notify: { id: number; index: number } };
+  'pcm-error': { notify: { id: number; index: number; message: string; skip?: boolean } };
+  'need-pcm': { event: { id: number; index: number } };
+  release: { event: { id: number; index: number } };
+};
 
 /** Frames per `pcm-part`: 1 Mi floats (4 MB) per copy, well under a 50 ms task. */
 export const PCM_PART_FRAMES = 1 << 20;
