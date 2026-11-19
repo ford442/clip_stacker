@@ -45,7 +45,7 @@ describe('chromatic aberration settings', () => {
   });
 
   it('projects saved before the pass load it disabled', () => {
-    const normalized = normalizeFinishingSettings({ sharpen: DEFAULT_FINISHING.sharpen });
+    const normalized = normalizeFinishingSettings({ sharpen: DEFAULT_FINISHING.sharpen! });
     expect(normalized.chromaticAberration).toEqual(DEFAULT_CHROMATIC_ABERRATION);
     expect(isFinishingActive(normalized)).toBe(false);
   });
@@ -107,7 +107,7 @@ describe('chromatic aberration reference', () => {
     const flat = image(W, H, () => [0.3, 0.5, 0.7]);
     for (const spectral of [true, false]) {
       const u = packChromaticAberrationUniforms(on({ radial: 0.6, angle: 20, spectral }), W, H);
-      for (const [x, y] of [[0, 0], [31, 17], [63, 35]]) {
+      for (const [x, y] of [[0, 0], [31, 17], [63, 35]] as const) {
         const p = chromaticAberrationPixel(flat, x, y, u);
         expect(p[0]).toBeCloseTo(0.3, 6);
         expect(p[1]).toBeCloseTo(0.5, 6);

@@ -31,7 +31,7 @@ function makePlate(): RgbImage {
       else if (y < 32) v = 0.5 + 0.1 * Math.sin((2 * Math.PI * x) / 8);
       else v = 0.5 + gauss() * 0.012;
       const c = [v * 0.95, v, v * 0.88];
-      for (let k = 0; k < 3; k++) data[(y * W + x) * 3 + k] = c[k];
+      for (let k = 0; k < 3; k++) data[(y * W + x) * 3 + k] = c[k]!;
     }
   }
   return { width: W, height: H, data };
@@ -40,7 +40,7 @@ function makePlate(): RgbImage {
 const plate = makePlate();
 const lumaAt = (img: RgbImage, x: number, y: number) => {
   const i = (y * W + x) * 3;
-  return 0.2126 * img.data[i] + 0.7152 * img.data[i + 1] + 0.0722 * img.data[i + 2];
+  return 0.2126 * img.data[i]! + 0.7152 * img.data[i + 1]! + 0.0722 * img.data[i + 2]!;
 };
 
 /** Sum of how far output luma leaves the input's local 5×5 [min, max] — halos + ringing. */
@@ -153,8 +153,8 @@ describe('sharpen modes (CPU reference of sharpen.wgsl)', () => {
       const s = plate.data.slice(i * 3, i * 3 + 3);
       const clipped = [...o].some((v) => v <= 0 || v >= 1);
       if (clipped) continue;
-      expect(o[0] - o[1]).toBeCloseTo(s[0] - s[1], 6);
-      expect(o[2] - o[1]).toBeCloseTo(s[2] - s[1], 6);
+      expect(o[0]! - o[1]!).toBeCloseTo(s[0]! - s[1]!, 6);
+      expect(o[2]! - o[1]!).toBeCloseTo(s[2]! - s[1]!, 6);
     }
   });
 
@@ -189,7 +189,7 @@ describe('sharpen.wgsl mirrors sharpenReference.ts', () => {
       if (!line || line.startsWith('//')) continue;
       const m = /^([A-Za-z_]\w*)\s*:\s*(f32|vec2<f32>)\s*,$/.exec(line);
       if (!m) throw new Error(`Unexpected field: ${line}`);
-      if (m[2] === 'f32') fields.push(m[1]);
+      if (m[2] === 'f32') fields.push(m[1]!);
       else fields.push(`${m[1]}.x`, `${m[1]}.y`);
     }
     expect(fields).toHaveLength(8);

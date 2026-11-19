@@ -53,7 +53,7 @@ describe('curves settings', () => {
     expect(isCurvesActive(DEFAULT_CURVES)).toBe(false);
     expect(isFinishingActive(DEFAULT_FINISHING)).toBe(false);
     expect(isCurvesActive(on())).toBe(false); // enabled but identity = no-op
-    const legacy = normalizeFinishingSettings({ sharpen: DEFAULT_FINISHING.sharpen });
+    const legacy = normalizeFinishingSettings({ sharpen: DEFAULT_FINISHING.sharpen! });
     expect(legacy.curves).toEqual(DEFAULT_CURVES);
   });
 
@@ -101,7 +101,7 @@ describe('curves settings', () => {
     const curves = on({
       amount: 0.8,
       levels: { inBlack: 0.05, inWhite: 0.9, gamma: 1.2, outBlack: 0.02, outWhite: 0.98 },
-      curves: { ...identityCurves(), master: S_CURVE, blue: CURVE_PRESETS[3].points },
+      curves: { ...identityCurves(), master: S_CURVE, blue: CURVE_PRESETS[3]!.points },
     });
     const serialized = serializeProject(createProjectSnapshot({ clips: sourceClips, finishing: {
       ...DEFAULT_FINISHING,
@@ -124,7 +124,7 @@ describe('curves settings', () => {
           fileName: 'source1.mp4',
         },
       ],
-      finishing: json.finishing,
+      finishing: json.finishing!,
     };
     const result = await applyProjectData(project, sourceClips);
     expect(result.finishing.curves).toEqual(curves);
@@ -153,9 +153,9 @@ describe('monotone cubic curve', () => {
     ];
     const samples = sampleCurve(steep, 400);
     for (let i = 1; i < samples.length; i++) {
-      expect(samples[i].y).toBeGreaterThanOrEqual(samples[i - 1].y - 1e-9);
-      expect(samples[i].y).toBeGreaterThanOrEqual(0);
-      expect(samples[i].y).toBeLessThanOrEqual(1);
+      expect(samples[i]!.y).toBeGreaterThanOrEqual(samples[i - 1]!.y - 1e-9);
+      expect(samples[i]!.y).toBeGreaterThanOrEqual(0);
+      expect(samples[i]!.y).toBeLessThanOrEqual(1);
     }
   });
 
@@ -262,8 +262,8 @@ describe('curve editor operations', () => {
   it('moves a knot but never past its neighbours', () => {
     const pts = S_CURVE;
     const moved = moveCurvePoint(pts, 1, 0.9, 1.4);
-    expect(moved[1].x).toBeCloseTo(0.74, 6);
-    expect(moved[1].y).toBe(1);
+    expect(moved[1]!.x).toBeCloseTo(0.74, 6);
+    expect(moved[1]!.y).toBe(1);
     expect(moveCurvePoint(pts, 0, -0.5, 0.1)[0]).toEqual({ x: 0, y: 0.1 });
   });
 
