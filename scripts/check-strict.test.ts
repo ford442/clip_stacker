@@ -40,13 +40,3 @@ describe('check-strict', () => {
   });
 });
 
-describe('check-strict excludeTests', () => {
-  it('reports test-file errors without counting them', () => {
-    const errors = parseTscErrors(
-      ["src/a/x.ts(1,1): error TS2532: m", "src/a/x.test.ts(1,1): error TS2532: m", "src/a/h.test.helpers.ts(1,1): error TS2532: m"].join('\n'),
-    );
-    const result = classifyErrors(errors, { strictDirs: [], excludeTests: true });
-    expect(result.elsewhere.map((e) => e.file)).toEqual(['src/a/x.ts']);
-    expect(result.tests).toBe(2);
-  });
-});

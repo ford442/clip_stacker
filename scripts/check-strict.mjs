@@ -5,8 +5,7 @@
  *   - fails on any error in a file under one of its `strictDirs`, and
  *   - fails when the errors elsewhere exceed its `baseline` (lower it as
  *     directories are cleaned; `--update` writes the current counts).
- * Test files count like any other file unless the ratchet sets
- * `"excludeTests": true` (then they are reported, not counted).
+ * Test files count like any other file.
  *
  * `strict` (tsconfig.strict.json: noUncheckedIndexedAccess +
  * exactOptionalPropertyTypes) covers all of src/ with a zero baseline. The
@@ -24,7 +23,6 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CONFIG = path.join(ROOT, 'scripts/strict-ratchet.json');
 const ERROR_RE = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.*)$/;
-const TEST_RE = /\.test\.tsx?$|\.test\.helpers\.ts$/;
 
 /** @param {string} output tsc --pretty false output */
 export function parseTscErrors(output) {
@@ -38,15 +36,13 @@ export function parseTscErrors(output) {
 
 /**
  * @param {{ file: string }[]} errors
- * @param {{ strictDirs: string[], excludeTests?: boolean }} ratchet
+ * @param {{ strictDirs: string[] }} ratchet
  */
 export function classifyErrors(errors, ratchet) {
   const inStrict = (file) => ratchet.strictDirs.some((dir) => file === dir || file.startsWith(`${dir}/`));
-  const counted = ratchet.excludeTests ? errors.filter((e) => !TEST_RE.test(e.file)) : errors;
   return {
-    strict: counted.filter((e) => inStrict(e.file)),
-    elsewhere: counted.filter((e) => !inStrict(e.file)),
-    tests: errors.length - counted.length,
+    strict: errors.filter((e) => inStrict(e.file)),
+    elsewhere: errors.filter((e) => !inStrict(e.file)),
   };
 }
 
@@ -81,15 +77,14 @@ function main() {
   let failed = false;
   for (const ratchet of config.ratchets) {
     const tag = `[${ratchet.name}]`;
-    const { strict, elsewhere, tests } = classifyErrors(runTsc(ratchet.tsconfig), ratchet);
+    const { strict, elsewhere } = classifyErrors(runTsc(ratchet.tsconfig), ratchet);
     for (const e of strict) console.error(`${e.file}(${e.line}): ${e.code} ${e.message}`);
     const dirs = countByDir(elsewhere)
       .map(([dir, n]) => `${dir} ${n}`)
       .join(', ');
     console.log(
       `${tag} ${strict.length} in strict dirs (${ratchet.strictDirs.join(', ') || 'none'}), ` +
-        `${elsewhere.length} elsewhere (baseline ${ratchet.baseline})${dirs ? `: ${dirs}` : ''}` +
-        (tests > 0 ? `; ${tests} in tests (not counted)` : ''),
+        `${elsewhere.length} elsewhere (baseline ${ratchet.baseline})${dirs ? `: ${dirs}` : ''}`,
     );
     if (update) {
       ratchet.baseline = elsewhere.length;

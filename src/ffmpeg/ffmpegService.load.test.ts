@@ -249,8 +249,7 @@ describe("FFmpeg loader", () => {
         if (orig) {
           Object.defineProperty(globalThis, 'crossOriginIsolated', orig);
         } else {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          delete (globalThis as any).crossOriginIsolated;
+          Reflect.deleteProperty(globalThis, 'crossOriginIsolated');
         }
       };
     }

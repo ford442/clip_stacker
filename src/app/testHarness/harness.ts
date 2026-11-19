@@ -583,8 +583,8 @@ export const testHarness = {
 export type TestHarness = typeof testHarness;
 
 declare global {
-  interface Window {
-    clipStacker?: { test?: TestHarness } & Record<string, unknown>;
+  interface ClipStackerGlobal {
+    test?: TestHarness;
   }
 }
 

@@ -30,12 +30,21 @@ export default defineConfig(
       globals: { ...globals.browser, ...globals.worker },
     },
     rules: {
+      // Every hook rule is an error: the tree is clean, so a warning would
+      // only be the first of a new pile. Sync props to state during render
+      // (or derive it), and read refs in effects / handlers, not in render.
       'react-hooks/rules-of-hooks': 'error',
-      'react-hooks/exhaustive-deps': 'warn',
-      // React Compiler rules that flag existing prop-to-state syncing and
-      // render-time ref reads. Warn until those components are reworked.
-      'react-hooks/set-state-in-effect': 'warn',
-      'react-hooks/refs': 'warn',
+      'react-hooks/exhaustive-deps': 'error',
+      'react-hooks/set-state-in-effect': 'error',
+      'react-hooks/refs': 'error',
+    },
+  },
+  {
+    // `any` switches type checking off for everything it touches. Use
+    // `unknown` and narrow, or type the mock (`vi.mocked`, `Partial<T>`).
+    files: ['**/*.{ts,tsx}'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'error',
     },
   },
   {

@@ -79,11 +79,15 @@ export function createFinishingPresetApi(): FinishingPresetApi {
   };
 }
 
+declare global {
+  interface ClipStackerGlobal {
+    finishing?: FinishingPresetApi;
+  }
+}
+
 /** Install `window.clipStacker.finishing` and the event listener. Returns an uninstall. */
 export function installFinishingPresetApi(target: Window = window): () => void {
   const api = createFinishingPresetApi();
-  // `Window.clipStacker` (an open record) is declared with the test harness,
-  // which hangs `test` off the same object.
   target.clipStacker = { ...(target.clipStacker ?? {}), finishing: api };
 
   const onApply = (event: Event) => {
