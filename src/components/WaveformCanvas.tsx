@@ -9,7 +9,7 @@ interface Props {
    * the speed-remap integral (output time → source offset). Each entry is
    * { outputLocalT, sourceOffset } sampled across the clip duration.
    */
-  remapCurve?: Array<{ t: number; sourceOffset: number }>;
+  remapCurve?: Array<{ t: number; sourceOffset: number }> | undefined;
 }
 
 /**
@@ -53,14 +53,14 @@ export function WaveformCanvas({ peaks, height = 54, remapCurve }: Props) {
     grad.addColorStop(1, 'rgba(201, 162, 39, 0.55)');
     ctx.fillStyle = grad;
 
-    const useRemap = remapCurve && remapCurve.length >= 2;
-    const duration = useRemap ? remapCurve[remapCurve.length - 1].t : 1;
-    const maxSource = useRemap
-      ? Math.max(1e-6, remapCurve[remapCurve.length - 1].sourceOffset)
-      : peaks.length;
+    const lastKnot =
+      remapCurve && remapCurve.length >= 2 ? remapCurve[remapCurve.length - 1] : undefined;
+    const useRemap = lastKnot !== undefined;
+    const duration = lastKnot ? lastKnot.t : 1;
+    const maxSource = lastKnot ? Math.max(1e-6, lastKnot.sourceOffset) : peaks.length;
 
     for (let i = 0; i < peaks.length; i++) {
-      const amplitude = peaks[i];
+      const amplitude = peaks[i] ?? 0;
       const barHeight = Math.max(1.5, amplitude * (cssHeight - 4) * 0.9);
 
       let x0: number;

@@ -272,7 +272,7 @@ function CaptionsPanelImpl({
             <label title="Which speech-to-text backend transcribes the audio">
               Provider
               <select
-                value={autoCaptionProviderId ?? autoCaption.providers[0].id}
+                value={autoCaptionProviderId ?? autoCaption.providers[0]?.id ?? ""}
                 onChange={(e) =>
                   settingsStore.getState().setAutoCaptionProviderId(e.target.value)
                 }

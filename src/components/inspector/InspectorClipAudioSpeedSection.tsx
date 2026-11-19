@@ -40,9 +40,9 @@ interface InspectorClipAudioSpeedSectionProps {
   setPlaybackRate: (rate: number) => void;
   setLoopCount: (count: number) => void;
   updateVolume: (value: string) => void;
-  onAutomationChange?: (automation: ClipAutomation | undefined) => void;
-  onExtractAudio?: () => void;
-  onReverseChange?: (enabled: boolean) => void;
+  onAutomationChange?: ((automation: ClipAutomation | undefined) => void) | undefined;
+  onExtractAudio?: (() => void) | undefined;
+  onReverseChange?: ((enabled: boolean) => void) | undefined;
 }
 
 export function InspectorClipAudioSpeedSection({

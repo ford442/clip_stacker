@@ -110,9 +110,11 @@ export function MasterBusDialog({ onClose }: { onClose: () => void }) {
         <BusFxChainEditor
           fx={masterBus?.fx}
           label="Master"
-          onChange={(fx, coalesce) =>
-            editorActions.setMasterBus({ ...(masterBus ?? {}), fx }, coalesce ? 'busfx:master' : undefined)
-          }
+          onChange={(fx, coalesce) => {
+            // An undefined chain clears the master FX: drop the key rather than keep the old one.
+            const { fx: _previousFx, ...rest } = masterBus ?? {};
+            editorActions.setMasterBus({ ...rest, ...(fx && { fx }) }, coalesce ? 'busfx:master' : undefined);
+          }}
         />
       </section>
     </DialogFrame>

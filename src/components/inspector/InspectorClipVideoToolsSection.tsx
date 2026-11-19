@@ -52,16 +52,18 @@ interface InspectorClipVideoToolsSectionProps {
   applyPipPreset: (corner: PipCorner) => void;
   applyLogoPreset: (corner: PipCorner) => void;
   useAsBaseLayer: () => void;
-  onStabilizeChange?: (enabled: boolean) => void;
-  onColorSpaceOverrideChange?: (override: SourceColorSpaceOverride | undefined) => void;
-  onRife?: (
-    mode: 'interpolation' | 'boomerang',
-    multiplier: 2 | 4,
-    outputFormat?: VideoOutputFormat,
-    cleanup?: CleanupOptions,
-  ) => void;
-  onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
-  onApplyKenBurns?: () => void;
+  onStabilizeChange?: ((enabled: boolean) => void) | undefined;
+  onColorSpaceOverrideChange?: ((override: SourceColorSpaceOverride | undefined) => void) | undefined;
+  onRife?:
+    | ((
+        mode: 'interpolation' | 'boomerang',
+        multiplier: 2 | 4,
+        outputFormat?: VideoOutputFormat,
+        cleanup?: CleanupOptions,
+      ) => void)
+    | undefined;
+  onKeyframesChange?: ((keyframes: ClipKeyframes | undefined) => void) | undefined;
+  onApplyKenBurns?: (() => void) | undefined;
 }
 
 export function InspectorClipVideoToolsSection({

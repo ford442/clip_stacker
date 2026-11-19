@@ -23,7 +23,7 @@ const OFFSCREEN_VIDEO_STYLE: CSSProperties = {
 
 interface Props {
   objectUrl?: string;
-  peaks?: Float32Array;
+  peaks?: Float32Array | undefined;
   trimStart: number;
   trimEnd: number;
   clipDuration: number;
@@ -69,7 +69,7 @@ function drawAudioWaveform(
   ctx.fillStyle = grad;
 
   for (let i = 0; i < peaks.length; i++) {
-    const amplitude = peaks[i];
+    const amplitude = peaks[i] ?? 0;
     const barHeight = Math.max(1.5, amplitude * (height - 4) * 0.9);
     const x = i * barW;
     const w = Math.max(1, barW - 0.5);

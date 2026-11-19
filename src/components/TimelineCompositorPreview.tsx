@@ -61,22 +61,20 @@ export interface TimelinePreviewProps {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   /** Caption cues to draw over the composite (empty when the toggle is off). */
-  captions?: CaptionEntry[];
-  captionStyle?: Partial<TextOverlayStyle>;
-  exportSettings?: ExportSettings;
-  finishing?: FinishingSettings;
-  colorManagement?: ColorManagementSettings;
-  selectedClipId?: string | null;
-  selectedTextOverlayId?: string | null;
-  onSelectClip?: (clipId: string | null) => void;
-  onSelectTextOverlay?: (overlayId: string | null) => void;
-  onClipLayoutCommit?: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
-  onTextOverlayLayoutCommit?: (
-    overlayId: string,
-    overlay: TextOverlay,
-    editedKeyframe: boolean,
-  ) => void;
-  onPreviewDragStart?: () => void;
+  captions?: CaptionEntry[] | undefined;
+  captionStyle?: Partial<TextOverlayStyle> | undefined;
+  exportSettings?: ExportSettings | undefined;
+  finishing?: FinishingSettings | undefined;
+  colorManagement?: ColorManagementSettings | undefined;
+  selectedClipId?: string | null | undefined;
+  selectedTextOverlayId?: string | null | undefined;
+  onSelectClip?: ((clipId: string | null) => void) | undefined;
+  onSelectTextOverlay?: ((overlayId: string | null) => void) | undefined;
+  onClipLayoutCommit?: ((clipId: string, clip: Clip, editedKeyframe: boolean) => void) | undefined;
+  onTextOverlayLayoutCommit?:
+    | ((overlayId: string, overlay: TextOverlay, editedKeyframe: boolean) => void)
+    | undefined;
+  onPreviewDragStart?: (() => void) | undefined;
 }
 
 export function TimelineCompositorPreview({
@@ -175,12 +173,11 @@ export function TimelineCompositorPreview({
           globalTime,
           {
             isCancelled,
-            maxHeight: size?.canvasHeight,
-            maxWidth: size?.canvasWidth,
-            finishing,
-            colorManagement,
-            captions,
-            captionStyle,
+            ...(size && { maxHeight: size.canvasHeight, maxWidth: size.canvasWidth }),
+            ...(finishing && { finishing }),
+            ...(colorManagement && { colorManagement }),
+            ...(captions && { captions }),
+            ...(captionStyle && { captionStyle }),
           },
         );
         if (isCancelled()) return;

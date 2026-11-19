@@ -58,7 +58,7 @@ describe('FinishingPresetsPanel', () => {
       'High contrast',
       'Soft',
     ]);
-    click(rows[2].querySelector('button')!);
+    click(rows[2]!.querySelector('button')!);
     expect(settingsStore.getState().finishing.curves?.enabled).toBe(true);
     expect(container.textContent).toContain('Applied "High contrast"');
     act(() => editorStore.getState().undo());
@@ -105,7 +105,7 @@ describe('FinishingPresetsPanel', () => {
     const rename = container.querySelector<HTMLInputElement>('.finishing-preset-rename')!;
     typeInto(rename, 'Renamed');
     click(button('Save name'));
-    expect(finishingPresetStore.getState().presets[0].name).toBe('Renamed');
+    expect(finishingPresetStore.getState().presets[0]?.name).toBe('Renamed');
 
     click(button('Delete'));
     click(button('Confirm delete'));

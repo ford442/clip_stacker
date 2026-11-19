@@ -65,20 +65,22 @@ export interface InspectorClipTabProps {
   applyPipPreset: (corner: PipCorner) => void;
   applyLogoPreset: (corner: PipCorner) => void;
   useAsBaseLayer: () => void;
-  onAutomationChange?: (automation: ClipAutomation | undefined) => void;
-  onAudioEffectsChange?: (clipId: string, effects: ClipAudioEffects | undefined) => void;
-  onExtractAudio?: () => void;
-  onStabilizeChange?: (enabled: boolean) => void;
-  onColorSpaceOverrideChange?: (override: SourceColorSpaceOverride | undefined) => void;
-  onReverseChange?: (enabled: boolean) => void;
-  onRife?: (
-    mode: 'interpolation' | 'boomerang',
-    multiplier: 2 | 4,
-    outputFormat?: VideoOutputFormat,
-    cleanup?: CleanupOptions,
-  ) => void;
-  onKeyframesChange?: (keyframes: ClipKeyframes | undefined) => void;
-  onApplyKenBurns?: () => void;
+  onAutomationChange?: ((automation: ClipAutomation | undefined) => void) | undefined;
+  onAudioEffectsChange?: ((clipId: string, effects: ClipAudioEffects | undefined) => void) | undefined;
+  onExtractAudio?: (() => void) | undefined;
+  onStabilizeChange?: ((enabled: boolean) => void) | undefined;
+  onColorSpaceOverrideChange?: ((override: SourceColorSpaceOverride | undefined) => void) | undefined;
+  onReverseChange?: ((enabled: boolean) => void) | undefined;
+  onRife?:
+    | ((
+        mode: 'interpolation' | 'boomerang',
+        multiplier: 2 | 4,
+        outputFormat?: VideoOutputFormat,
+        cleanup?: CleanupOptions,
+      ) => void)
+    | undefined;
+  onKeyframesChange?: ((keyframes: ClipKeyframes | undefined) => void) | undefined;
+  onApplyKenBurns?: (() => void) | undefined;
 }
 
 export function InspectorClipTab(props: InspectorClipTabProps) {

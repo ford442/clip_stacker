@@ -2,14 +2,17 @@ import { EXPORT_PRESETS, type Clip, type ClipAnimatableProp, type ExportSettings
 import type { ClipValues } from './types';
 import type { PictureTransformProp } from '../../composition/animatedLayout';
 
-export const PIP_KEYFRAME_PROPS: Array<{
+interface PipKeyframePropMeta {
   prop: ClipAnimatableProp;
   label: string;
   step: number;
   min?: number;
   max?: number;
   defaultValue: (clip: Clip) => number;
-}> = [
+}
+
+/** Non-empty: the keyframe editor falls back to its first entry. */
+export const PIP_KEYFRAME_PROPS: [PipKeyframePropMeta, ...PipKeyframePropMeta[]] = [
   { prop: 'x', label: 'X position', step: 1, defaultValue: (c) => c.x ?? 0 },
   { prop: 'y', label: 'Y position', step: 1, defaultValue: (c) => c.y ?? 0 },
   {

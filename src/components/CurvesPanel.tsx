@@ -138,6 +138,7 @@ function CurveEditor({
   const onKnotKey = (e: KeyboardEvent<SVGCircleElement>, index: number) => {
     const step = e.shiftKey ? 0.05 : 0.01;
     const p = points[index];
+    if (!p) return;
     let next: CurvePoint[] | null = null;
     if (e.key === 'ArrowUp') next = moveCurvePoint(points, index, p.x, p.y + step);
     else if (e.key === 'ArrowDown') next = moveCurvePoint(points, index, p.x, p.y - step);

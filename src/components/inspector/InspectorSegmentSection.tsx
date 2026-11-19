@@ -125,7 +125,8 @@ function SegmentForm({ clip }: { clip: Clip }) {
               const next = e.target.value as ProcessingBackendId;
               setBackend(next);
               const ops = backendInfo(next).operations;
-              if (!ops.includes(operation)) setOperation(ops[0]);
+              const fallback = ops[0];
+              if (!ops.includes(operation) && fallback) setOperation(fallback);
             }}
           >
             {PROCESSING_BACKENDS.map((b) => (

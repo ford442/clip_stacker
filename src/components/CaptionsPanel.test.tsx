@@ -72,9 +72,9 @@ describe('CaptionsPanel', () => {
     const el = mount();
     const items = el.querySelectorAll('.captions-list-item');
     expect(items).toHaveLength(2);
-    expect(items[0].textContent).toContain('00:00:01,000');
-    expect(items[0].textContent).toContain('00:00:02,000');
-    expect(items[0].textContent).toContain('Hello');
+    expect(items[0]?.textContent).toContain('00:00:01,000');
+    expect(items[0]?.textContent).toContain('00:00:02,000');
+    expect(items[0]?.textContent).toContain('Hello');
   });
 
   it('expands an editor for the selected cue only', () => {
@@ -107,7 +107,7 @@ describe('CaptionsPanel', () => {
     expect(el.textContent).toContain('mov_text');
     const selects = Array.from(el.querySelectorAll<HTMLSelectElement>('select'));
     const modeSelect = selects[selects.length - 1];
-    expect(modeSelect.value).toBe('soft');
+    expect(modeSelect?.value).toBe('soft');
     expect(el.textContent).toContain('Soft subtitle track');
   });
 });

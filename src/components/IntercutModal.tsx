@@ -11,6 +11,7 @@ import {
   parseSliceIntervalList,
   sliceIntervalListSum,
   secondsPerCutToHz,
+  type FrequencyAutomationConfig,
   type IntercutConsumeMode,
   type IntercutFinalClip,
   type IntercutSourceClock,
@@ -108,20 +109,33 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
   const sourceIds = [clipA?.id, clipB?.id, clipC?.id].filter((id): id is string => !!id);
   const hasDuplicateSources = new Set(sourceIds).size !== sourceIds.length;
 
+  const automation = useMemo((): FrequencyAutomationConfig => {
+    const easing = easingFromName(easingName);
+    return {
+      totalDurationSec: consumeMode === 'entireSources' ? 0 : swapDurationSec,
+      startFrequencyHz,
+      endFrequencyHz,
+      ...(intervalTimingEnabled && { sliceIntervalsSec: parsedIntervalList }),
+      ...(easing !== undefined && { easing }),
+    };
+  }, [
+    consumeMode,
+    swapDurationSec,
+    startFrequencyHz,
+    endFrequencyHz,
+    intervalTimingEnabled,
+    parsedIntervalList,
+    easingName,
+  ]);
+
   const estimate = useMemo(() => {
     if (!clipA || !clipB || clipA.id === clipB.id) return null;
     if (clipC && (clipC.id === clipA.id || clipC.id === clipB.id)) return null;
     return estimateIntercut({
       clipA,
       clipB,
-      clipC: clipC ?? undefined,
-      automation: {
-        totalDurationSec: consumeMode === 'entireSources' ? 0 : swapDurationSec,
-        startFrequencyHz,
-        endFrequencyHz,
-        sliceIntervalsSec: intervalTimingEnabled ? parsedIntervalList : undefined,
-        easing: easingFromName(easingName),
-      },
+      ...(clipC && { clipC }),
+      automation,
       audioPolicy,
       snapCutsToBeats: intervalTimingEnabled ? false : snapCutsToBeats,
       forceFinalClip,
@@ -133,18 +147,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
     clipA,
     clipB,
     clipC,
-    cutTimingMode,
-    intervalListText,
-    repeatIntervalList,
-    parsedIntervalList,
-    intervalListDurationSec,
+    automation,
     intervalTimingEnabled,
-    isPlayOnceIntervalMode,
-    swapDurationSec,
-    totalDurationSec,
-    startFrequencyHz,
-    endFrequencyHz,
-    easingName,
     audioPolicy,
     snapCutsToBeats,
     forceFinalClip,
@@ -444,9 +448,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
                     aria-describedby="intercut-interval-summary"
                   >
                     {parsedIntervalList.map((intervalSec, index) => {
-                      const slot = clipC
-                        ? (['A', 'B', 'C'] as const)[index % 3]
-                        : (['A', 'B'] as const)[index % 2];
+                      const slots = clipC ? (['A', 'B', 'C'] as const) : (['A', 'B'] as const);
+                      const slot = slots[index % slots.length] ?? 'A';
                       return (
                         <div
                           key={`${index}-${intervalSec}`}
@@ -595,14 +598,8 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
               void onGenerate({
                 clipA,
                 clipB,
-                clipC: clipC ?? undefined,
-                automation: {
-                  totalDurationSec: consumeMode === 'entireSources' ? 0 : swapDurationSec,
-                  startFrequencyHz,
-                  endFrequencyHz,
-                  sliceIntervalsSec: intervalTimingEnabled ? parsedIntervalList : undefined,
-                  easing: easingFromName(easingName),
-                },
+                ...(clipC && { clipC }),
+                automation: { ...automation },
                 audioPolicy,
                 snapCutsToBeats: intervalTimingEnabled ? false : snapCutsToBeats,
                 forceFinalClip,
