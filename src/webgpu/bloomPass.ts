@@ -5,7 +5,7 @@
  * model). Every draw shares one command encoder with the rest of the chain.
  */
 
-import bloomShader from './shaders/bloom.wgsl?raw';
+import bloomShaderSource from './shaders/bloom.wgsl?raw';
 import { shaderForSceneLinear } from '../finishing/colorManagement';
 import type { BloomPass } from '../finishing/finishing';
 import {
@@ -16,6 +16,15 @@ import {
   planBloom,
   type BloomLevelSize,
 } from '../finishing/bloom';
+import { spliceUniformStructs } from './uniformLayout';
+import { BLOOM_UNIFORMS } from './uniformSpecs';
+
+const BLOOMSHADER_SOURCE = spliceUniformStructs(bloomShaderSource, BLOOM_UNIFORMS);
+
+/** `bloom.wgsl` as compiled: its uniform struct spliced in, scene-linear when asked. */
+export function bloomShaderCode(sceneLinear = false): string {
+  return shaderForSceneLinear(BLOOMSHADER_SOURCE, sceneLinear);
+}
 
 const LEVEL_FORMAT: GPUTextureFormat = 'rgba16float';
 
@@ -46,7 +55,7 @@ export class BloomGpuPass {
 
   static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): BloomGpuPass {
     const module = device.createShaderModule({
-      code: shaderForSceneLinear(bloomShader, sceneLinear),
+      code: bloomShaderCode(sceneLinear),
     });
     const sampler = device.createSampler({
       magFilter: 'linear',
@@ -171,7 +180,7 @@ export class BloomGpuPass {
     while (this.uniformBuffers.length <= index) {
       this.uniformBuffers.push(
         device.createBuffer({
-          size: BLOOM_UNIFORM_FLOATS * 4,
+          size: BLOOM_UNIFORMS.byteSize,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         }),
       );

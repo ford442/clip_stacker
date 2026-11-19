@@ -11,20 +11,7 @@
 const SCENE_LINEAR: bool = false;
 const BLOOM_LINEAR_CLAMP: f32 = 64.0;
 
-struct BloomUniforms {
-  // vec4 0: source texel size, threshold, knee
-  srcTexel: vec2<f32>,
-  threshold: f32,
-  knee: f32,
-  // vec4 1: upsample weight, mode (0 bloom / 1 light wrap), gain, norm
-  weight: f32,
-  mode: f32,
-  gain: f32,
-  norm: f32,
-  // vec4 2: tint, pad
-  tint: vec3<f32>,
-  _pad: f32,
-};
+// @uniforms BloomUniforms
 
 struct VertexOutput {
   @builtin(position) pos: vec4<f32>,

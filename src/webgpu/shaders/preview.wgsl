@@ -2,57 +2,7 @@
 @group(0) @binding(1) var videoTexture: texture_external;
 @group(0) @binding(2) var<uniform> u: Uniforms;
 
-struct Uniforms {
-  fadeIn: f32,
-  fadeOut: f32,
-  duration: f32,
-  elapsed: f32,
-  opacity: f32,
-  uvScaleX: f32,
-  uvScaleY: f32,
-  uvOffsetX: f32,
-  uvOffsetY: f32,
-  destX: f32,
-  destY: f32,
-  destW: f32,
-  destH: f32,
-  // Audio-reactive (from WASM FFT analysis); zeros when disabled
-  bass: f32,
-  mid: f32,
-  treble: f32,
-  beat: f32,
-  // Layer warp: one inverse 2x3 affine in the dest rect's normalized UV,
-  // centred on the rect — stabilization composed with the authored picture
-  // transform (src/utils/clipTransform.ts). Identity (1,0,0, 0,1,0) when the
-  // clip is neither stabilized nor transformed.
-  warpA: f32,
-  warpB: f32,
-  warpTx: f32,
-  warpC: f32,
-  warpD: f32,
-  warpTy: f32,
-  // Chroma / luma key (see src/utils/overlayKey.ts — keyPixel() is the same
-  // function in TypeScript and is what the unit tests pin down).
-  // keyMode: 0 = none, 1 = chroma, 2 = luma.
-  keyMode: f32,
-  keyR: f32,
-  keyG: f32,
-  keyB: f32,
-  keySimilarity: f32,
-  keyBlend: f32,
-  // 1 when an authored picture transform can move the picture outside its
-  // rect: the quad below is drawn instead of dest, and samples that land
-  // outside the picture are masked. 0 keeps the dest-rect quad untouched.
-  warpMask: f32,
-  quadX: f32,
-  quadY: f32,
-  quadW: f32,
-  quadH: f32,
-  // 1 when the source was imported as encoded Display P3 (colour management
-  // on): the key reads the sRGB view of the pixel, as it was authored.
-  keySourceP3: f32,
-  _pad1: f32,
-};
+// @uniforms Uniforms
 
 // BT.601 luma — the `Y` plane FFmpeg's lumakey reads.
 fn lumaBt601(c: vec3<f32>) -> f32 {

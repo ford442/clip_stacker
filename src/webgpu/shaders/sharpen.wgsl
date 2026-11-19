@@ -4,18 +4,7 @@
 
 const SCENE_LINEAR: bool = false;
 
-struct SharpenUniforms {
-  // vec4 0
-  amount: f32,
-  radius: f32,
-  threshold: f32,
-  midtoneDetail: f32,
-  // vec4 1
-  texelSize: vec2<f32>,
-  // 0 = classic unsharp, 1 = edge-aware, 2 = multi-scale.
-  mode: f32,
-  _pad1: f32,
-};
+// @uniforms SharpenUniforms
 
 struct VertexOutput {
   @builtin(position) pos: vec4<f32>,

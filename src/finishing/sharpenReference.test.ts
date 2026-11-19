@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import sharpenShader from '../webgpu/shaders/sharpen.wgsl?raw';
 import {
   SHARPEN_EDGE_SIGMA,
-  SHARPEN_MODE_SLOT,
   SHARPEN_MS_MEDIUM_GAIN,
   SHARPEN_MS_MIDTONE_GAIN,
   SHARPEN_MS_SIGMA_RATIO,
@@ -178,21 +177,5 @@ describe('sharpen.wgsl mirrors sharpenReference.ts', () => {
     expect(constant('SHARPEN_MS_MEDIUM_GAIN')).toBe(SHARPEN_MS_MEDIUM_GAIN);
     expect(constant('SHARPEN_MS_MIDTONE_GAIN')).toBe(SHARPEN_MS_MIDTONE_GAIN);
     expect(constant('SHARPEN_MS_WINDOW')).toBe(SHARPEN_MS_WINDOW);
-  });
-
-  it('keeps mode at the packed slot', () => {
-    const body = /struct SharpenUniforms \{([\s\S]*?)\n\};/.exec(sharpenShader)?.[1];
-    if (!body) throw new Error('SharpenUniforms not found');
-    const fields: string[] = [];
-    for (const raw of body.split('\n')) {
-      const line = raw.trim();
-      if (!line || line.startsWith('//')) continue;
-      const m = /^([A-Za-z_]\w*)\s*:\s*(f32|vec2<f32>)\s*,$/.exec(line);
-      if (!m) throw new Error(`Unexpected field: ${line}`);
-      if (m[2] === 'f32') fields.push(m[1]);
-      else fields.push(`${m[1]}.x`, `${m[1]}.y`);
-    }
-    expect(fields).toHaveLength(8);
-    expect(fields[SHARPEN_MODE_SLOT]).toBe('mode');
   });
 });

@@ -4,7 +4,10 @@
  * device actually adopted `shader-f16`.
  */
 
-import colorShader from './shaders/colorManagement.wgsl?raw';
+import colorShaderSource from './shaders/colorManagement.wgsl?raw';
+
+/** `colorManagement.wgsl` as compiled (the f32 variant every device can run). */
+export const COLOR_MANAGEMENT_SHADER: string = colorShaderSource;
 import {
   COLOR_XFORM_UNIFORM_FLOATS,
   type ColorXformModeId,
@@ -23,7 +26,7 @@ const APPLY_MATRIX_F16 = `fn applyMatrix(row0: vec4<f32>, row1: vec4<f32>, row2:
   return vec3<f32>(dot(r0, cf), dot(r1, cf), dot(r2, cf));
 }`;
 
-export function colorManagementShaderF16(code: string = colorShader): string {
+export function colorManagementShaderF16(code: string = COLOR_MANAGEMENT_SHADER): string {
   return `enable f16;\n${code.replace(APPLY_MATRIX_F32, APPLY_MATRIX_F16)}`;
 }
 
@@ -31,7 +34,7 @@ function shaderForDevice(device: GPUDevice): string {
   if (device.features?.has?.('shader-f16' as GPUFeatureName)) {
     return colorManagementShaderF16();
   }
-  return colorShader;
+  return COLOR_MANAGEMENT_SHADER;
 }
 
 export class ColorManagementGpuPass {
@@ -56,7 +59,7 @@ export class ColorManagementGpuPass {
     try {
       shaderModule = device.createShaderModule({ code });
     } catch {
-      code = colorShader;
+      code = COLOR_MANAGEMENT_SHADER;
       shaderModule = device.createShaderModule({ code });
     }
     const sampler = device.createSampler({
@@ -95,7 +98,7 @@ export class ColorManagementGpuPass {
         primitive: { topology: 'triangle-list' },
       });
     } catch {
-      const fallbackModule = device.createShaderModule({ code: colorShader });
+      const fallbackModule = device.createShaderModule({ code: COLOR_MANAGEMENT_SHADER });
       pipeline = device.createRenderPipeline({
         layout: device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
         vertex: { module: fallbackModule, entryPoint: 'vs_main' },

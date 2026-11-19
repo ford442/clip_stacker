@@ -3,37 +3,7 @@
 @group(0) @binding(2) var<uniform> u: GrainUniforms;
 @group(0) @binding(3) var blurredTex: texture_2d<f32>;
 
-struct GrainUniforms {
-  // vec4 0
-  amount: f32,
-  size: f32,
-  softness: f32,
-  monochrome: f32,
-  // vec4 1
-  vignetteAmount: f32,
-  vignetteMidpoint: f32,
-  vignetteRoundness: f32,
-  frameSeed: f32,
-  // vec4 2
-  halationAmount: f32,
-  halationThreshold: f32,
-  halationRadius: f32,
-  bloomAmount: f32,
-  // vec4 3
-  texelSize: vec2<f32>,
-  blurAxis: f32,
-  _pad1: f32,
-  // vec4 4 — film quality mode (all zero = classic, the pre-film behaviour)
-  quality: f32,
-  monochromeBias: f32,
-  temporalCoherence: f32,
-  _pad2: f32,
-  // vec4 5 — film response curve (grain gain at luma 0 / 0.5 / 1)
-  responseShadows: f32,
-  responseMidtones: f32,
-  responseHighlights: f32,
-  _pad3: f32,
-};
+// @uniforms GrainUniforms
 
 struct VertexOutput {
   @builtin(position) pos: vec4<f32>,

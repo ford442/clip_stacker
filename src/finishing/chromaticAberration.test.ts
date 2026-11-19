@@ -146,20 +146,12 @@ describe('chromatic aberration reference', () => {
 });
 
 describe('chromaticAberration.wgsl mirrors chromaticAberration.ts', () => {
-  it('shares the spectral constants and the uniform layout', () => {
+  it('shares the spectral constants', () => {
     expect(/const CA_SPECTRAL_TAPS: i32 = (\d+);/.exec(caShader)?.[1]).toBe(
       String(CA_SPECTRAL_TAPS),
     );
     expect(Number(/const CA_SPECTRAL_SIGMA: f32 = ([0-9.]+);/.exec(caShader)?.[1])).toBe(
       CA_SPECTRAL_SIGMA,
     );
-    const body = /struct ChromaticAberrationUniforms \{([\s\S]*?)\n\};/.exec(caShader)?.[1] ?? '';
-    const fields = body
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('//'))
-      .map((l) => /^(\w+)\s*:\s*f32,$/.exec(l)?.[1]);
-    expect(fields).toHaveLength(CHROMATIC_ABERRATION_UNIFORM_FLOATS);
-    expect(fields.slice(0, 4)).toEqual(['radialK', 'dirX', 'dirY', 'spectral']);
   });
 });

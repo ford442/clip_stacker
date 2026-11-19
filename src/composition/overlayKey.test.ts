@@ -6,9 +6,10 @@ import {
   applyKeyToImageData,
   keyPixel,
   layerKeyEntry,
-  packKeyUniforms,
+  keyUniformValues,
   resolveLayerKey,
 } from './overlayKey';
+import { KEY_UNIFORM_FIELDS, PREVIEW_LAYER_UNIFORMS } from '../webgpu/uniformSpecs';
 
 function clip(overrides: Partial<Clip>): Clip {
   return {
@@ -153,10 +154,9 @@ describe('keyPixel — none', () => {
   });
 });
 
-describe('packKeyUniforms', () => {
-  it('writes the six floats in shader order', () => {
-    const target = new Float32Array(10).fill(-1);
-    packKeyUniforms(target, 2, {
+describe('keyUniformValues', () => {
+  it('maps the key onto the layer-uniform key block, packed in shader order', () => {
+    const values = keyUniformValues({
       mode: KEY_MODE.luma,
       keyR: 0.25,
       keyG: 0.5,
@@ -164,18 +164,26 @@ describe('packKeyUniforms', () => {
       similarity: 0.3,
       blend: 0.1,
     });
-    expect(Array.from(target.slice(2, 8))).toEqual([
+    expect(values).toEqual({
+      keyMode: 2,
+      keyR: 0.25,
+      keyG: 0.5,
+      keyB: 0.75,
+      keySimilarity: 0.3,
+      keyBlend: 0.1,
+    });
+    const at = PREVIEW_LAYER_UNIFORMS.offsets.keyMode;
+    const packed = new Float32Array(PREVIEW_LAYER_UNIFORMS.floats);
+    KEY_UNIFORM_FIELDS.forEach((field, i) => {
+      packed[at + i] = values[field.name];
+    });
+    expect(Array.from(packed.slice(at, at + 6))).toEqual([
       2, 0.25, 0.5, 0.75, 0.30000001192092896, 0.10000000149011612,
     ]);
-    // Neighbours untouched.
-    expect(target[1]).toBe(-1);
-    expect(target[8]).toBe(-1);
   });
 
-  it('writes the no-key defaults for an absent key', () => {
-    const target = new Float32Array(6).fill(-1);
-    packKeyUniforms(target, 0, undefined);
-    expect(Array.from(target)).toEqual([0, 0, 0, 0, 0, 0]);
+  it('is the no-key block for an absent key', () => {
+    expect(Object.values(keyUniformValues(undefined))).toEqual([0, 0, 0, 0, 0, 0]);
   });
 });
 

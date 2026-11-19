@@ -32,11 +32,11 @@ import {
 } from "../wasm/audioReactiveUniforms";
 import {
   packLayerUniforms,
-  UNIFORM_FLOATS,
   type LayerDraw,
   type LayerRenderParams,
 } from "./previewLayerUniforms";
 import { buildPreviewDeviceResources } from "./previewDeviceResources";
+import { PREVIEW_LAYER_UNIFORMS } from "./uniformSpecs";
 import { canvasConfiguration } from "./canvasConfiguration";
 import { OverlayBlitter, ScopeTextureCopy } from "./previewCanvasCopies";
 import { Hdr10FrameReader, type PackedFrameInit } from "./hdr10FrameReader";
@@ -79,7 +79,7 @@ export class PreviewEngine {
   private pipeline: GPURenderPipeline;
   private sampler: GPUSampler;
   private uniformBuffer: GPUBuffer;
-  private uniformData = new Float32Array(UNIFORM_FLOATS);
+  private uniformData = new Float32Array(PREVIEW_LAYER_UNIFORMS.floats);
   private extraLayerUniformBuffers: GPUBuffer[] = [];
   private transitionUniformBuffer: GPUBuffer;
   private transitionUniformData = new Float32Array(TRANSITION_UNIFORM_FLOATS);
@@ -619,7 +619,7 @@ export class PreviewEngine {
     while (this.extraLayerUniformBuffers.length <= extraIndex) {
       this.extraLayerUniformBuffers.push(
         this.device.createBuffer({
-          size: UNIFORM_FLOATS * 4,
+          size: PREVIEW_LAYER_UNIFORMS.byteSize,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         }),
       );

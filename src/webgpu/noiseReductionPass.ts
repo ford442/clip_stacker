@@ -3,13 +3,22 @@
  * Runs first in the finishing chain (before primary color / LUT).
  */
 
-import denoiseShader from './shaders/denoise.wgsl?raw';
+import denoiseShaderSource from './shaders/denoise.wgsl?raw';
 import { shaderForSceneLinear } from '../finishing/colorManagement';
 import type { NoiseReductionPass } from '../finishing/finishing';
 import {
   NOISE_REDUCTION_UNIFORM_FLOATS,
   packNoiseReductionUniforms,
 } from '../finishing/noiseReduction';
+import { spliceUniformStructs } from './uniformLayout';
+import { NOISE_REDUCTION_UNIFORMS } from './uniformSpecs';
+
+const DENOISESHADER_SOURCE = spliceUniformStructs(denoiseShaderSource, NOISE_REDUCTION_UNIFORMS);
+
+/** `denoise.wgsl` as compiled: its uniform struct spliced in, scene-linear when asked. */
+export function denoiseShaderCode(sceneLinear = false): string {
+  return shaderForSceneLinear(DENOISESHADER_SOURCE, sceneLinear);
+}
 
 export class NoiseReductionGpuPass {
   private readonly pipeline: GPURenderPipeline;
@@ -35,7 +44,7 @@ export class NoiseReductionGpuPass {
 
   static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): NoiseReductionGpuPass {
     const shaderModule = device.createShaderModule({
-      code: shaderForSceneLinear(denoiseShader, sceneLinear),
+      code: denoiseShaderCode(sceneLinear),
     });
     const sampler = device.createSampler({
       magFilter: 'linear',
@@ -44,7 +53,7 @@ export class NoiseReductionGpuPass {
       addressModeV: 'clamp-to-edge',
     });
     const uniformBuffer = device.createBuffer({
-      size: NOISE_REDUCTION_UNIFORM_FLOATS * 4,
+      size: NOISE_REDUCTION_UNIFORMS.byteSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 

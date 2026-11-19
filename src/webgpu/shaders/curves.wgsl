@@ -8,16 +8,7 @@
 const SCENE_LINEAR: bool = false;
 const CURVE_MAX_POINTS: i32 = 16;
 
-struct CurvesUniforms {
-  // inBlack, inWhite, gamma, outBlack
-  levels0: vec4<f32>,
-  // outWhite, amount, pad, pad
-  levels1: vec4<f32>,
-  // knot counts: master, red, green, blue (0 = identity)
-  counts: vec4<f32>,
-  // 4 curves × 16 knots: (x, y, slope, pad)
-  knots: array<vec4<f32>, 64>,
-};
+// @uniforms CurvesUniforms
 
 struct VertexOutput {
   @builtin(position) pos: vec4<f32>,

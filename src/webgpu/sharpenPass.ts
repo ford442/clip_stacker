@@ -3,13 +3,22 @@
  * Full-frame pass after creative LUT, before film grain.
  */
 
-import sharpenShader from './shaders/sharpen.wgsl?raw';
+import sharpenShaderSource from './shaders/sharpen.wgsl?raw';
 import { shaderForSceneLinear } from '../finishing/colorManagement';
 import type { SharpenPass } from '../finishing/finishing';
 import {
   SHARPEN_UNIFORM_FLOATS,
   packSharpenUniforms,
 } from '../finishing/sharpen';
+import { spliceUniformStructs } from './uniformLayout';
+import { SHARPEN_UNIFORMS } from './uniformSpecs';
+
+const SHARPENSHADER_SOURCE = spliceUniformStructs(sharpenShaderSource, SHARPEN_UNIFORMS);
+
+/** `sharpen.wgsl` as compiled: its uniform struct spliced in, scene-linear when asked. */
+export function sharpenShaderCode(sceneLinear = false): string {
+  return shaderForSceneLinear(SHARPENSHADER_SOURCE, sceneLinear);
+}
 
 export class SharpenGpuPass {
   private readonly pipeline: GPURenderPipeline;
@@ -32,14 +41,14 @@ export class SharpenGpuPass {
 
   static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): SharpenGpuPass {
     const shaderModule = device.createShaderModule({
-      code: shaderForSceneLinear(sharpenShader, sceneLinear),
+      code: sharpenShaderCode(sceneLinear),
     });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
     });
     const uniformBuffer = device.createBuffer({
-      size: SHARPEN_UNIFORM_FLOATS * 4,
+      size: SHARPEN_UNIFORMS.byteSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 

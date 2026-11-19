@@ -30,6 +30,7 @@
  */
 
 import { clamp, clamp01, finiteOr } from '../utils/math';
+import { BLOOM_UNIFORMS } from '../webgpu/uniformSpecs';
 
 export type BloomMode = 'bloom' | 'lightWrap';
 
@@ -48,7 +49,7 @@ export interface BloomSettings {
   tint: [number, number, number];
 }
 
-export const BLOOM_UNIFORM_FLOATS = 12;
+export const BLOOM_UNIFORM_FLOATS = BLOOM_UNIFORMS.floats;
 /** Glow gain at amount 1. */
 export const BLOOM_GAIN = 4;
 export const BLOOM_SPREAD_MIN = 0.01;
@@ -170,12 +171,7 @@ export function planBloom(radius: number, width: number, height: number): BloomP
   };
 }
 
-/**
- * Pack one draw's uniforms (WGSL `BloomUniforms`, 3 × vec4):
- *   [0..1] source texel size, [2] threshold, [3] knee
- *   [4] upsample weight, [5] mode (0 bloom / 1 light wrap), [6] gain, [7] norm
- *   [8..10] tint, [11] pad
- */
+/** Pack one draw's uniforms (WGSL `BloomUniforms`, `BLOOM_UNIFORMS`). */
 export function packBloomUniforms(
   pass: BloomSettings,
   srcWidth: number,
@@ -187,20 +183,24 @@ export function packBloomUniforms(
   const wrap = pass.mode === 'lightWrap';
   const threshold = wrap ? 0 : clamp01(finiteOr(pass.threshold, DEFAULT_BLOOM_PARAMS.threshold));
   const softness = clamp01(finiteOr(pass.softness, DEFAULT_BLOOM_PARAMS.softness));
-  out[0] = 1 / Math.max(1, srcWidth);
-  out[1] = 1 / Math.max(1, srcHeight);
-  out[2] = threshold;
-  out[3] = threshold * softness;
-  out[4] = weight;
-  out[5] = wrap ? 1 : 0;
-  out[6] = (pass.enabled ? clamp01(finiteOr(pass.amount, 0)) : 0) * (wrap ? 1 : BLOOM_GAIN);
-  out[7] = norm;
   const tint = pass.tint ?? DEFAULT_BLOOM_PARAMS.tint;
-  out[8] = clamp(finiteOr(tint[0], 1), 0, 2);
-  out[9] = clamp(finiteOr(tint[1], 1), 0, 2);
-  out[10] = clamp(finiteOr(tint[2], 1), 0, 2);
-  out[11] = 0;
-  return out;
+  return BLOOM_UNIFORMS.pack(
+    {
+      srcTexel: [1 / Math.max(1, srcWidth), 1 / Math.max(1, srcHeight)],
+      threshold,
+      knee: threshold * softness,
+      weight,
+      mode: wrap ? 1 : 0,
+      gain: (pass.enabled ? clamp01(finiteOr(pass.amount, 0)) : 0) * (wrap ? 1 : BLOOM_GAIN),
+      norm,
+      tint: [
+        clamp(finiteOr(tint[0], 1), 0, 2),
+        clamp(finiteOr(tint[1], 1), 0, 2),
+        clamp(finiteOr(tint[2], 1), 0, 2),
+      ],
+    },
+    out,
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -5,18 +5,7 @@
 @group(0) @binding(1) var inputTex: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> u: ChromaticAberrationUniforms;
 
-struct ChromaticAberrationUniforms {
-  // vec4 0
-  radialK: f32,
-  dirX: f32,
-  dirY: f32,
-  spectral: f32,
-  // vec4 1
-  _pad0: f32,
-  _pad1: f32,
-  _pad2: f32,
-  _pad3: f32,
-};
+// @uniforms ChromaticAberrationUniforms
 
 const CA_SPECTRAL_TAPS: i32 = 7;
 const CA_SPECTRAL_SIGMA: f32 = 0.45;
