@@ -127,8 +127,8 @@ int sinc_prepare(const float* rows, double pos, float* coeff) {
 }
 
 float sinc_read(const SourceSlice& slice, int base, const float* coeff) {
-  const int first_tap = base - kSincHalfTaps + 1;
-  const int offset = first_tap - slice.first_frame;
+  const long long first_tap = static_cast<long long>(base) - kSincHalfTaps + 1;
+  const long long offset = first_tap - slice.first_frame;
   if (offset >= 0 && offset + kSincTaps <= slice.frame_count) {
     return dot_taps(coeff, slice.data + offset);
   }

@@ -3,7 +3,8 @@ name: Nightly native DSP
 # The long native battery PRs skip (`ctest -L nightly`: Tech 3341 / 3342
 # conformance over minutes of audio, the true-peak limiter sweep, two-pass
 # loudness normalization, the subnormal soak, the FX property soak) under both
-# compilers' sanitizers, plus a longer libFuzzer run of the effect rows.
+# compilers' sanitizers, plus a 10 minute libFuzzer run of each target (the
+# effect rows, the timeline mix's bounds checks, the stabilizer API).
 
 on:
   schedule:
@@ -37,13 +38,18 @@ jobs:
         run: bash scripts/test-native.sh
 
   fuzz:
-    name: Fuzz the effect rows (10 min)
+    name: Fuzz ${{ matrix.target }} (10 min)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [fx_fuzz, mix_fuzz, stab_fuzz]
     steps:
       - uses: actions/checkout@v4
 
       - name: libFuzzer
         env:
+          FUZZ_TARGETS: ${{ matrix.target }}
           FUZZ_SECONDS: 600
         run: bash scripts/fuzz-native.sh
 
@@ -51,6 +57,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: fuzz-crashes
+          name: fuzz-crashes-${{ matrix.target }}
           path: native/build-fuzz/crash-*
           if-no-files-found: ignore
