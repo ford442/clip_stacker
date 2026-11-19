@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { Clip } from '../types';
 import {
   editorActions,
@@ -33,6 +33,10 @@ const MASTER_TARGET_ID = 'master';
 /** Taps older than this start a fresh measurement. */
 const TAP_RESET_SEC = 3;
 
+function overrideText(bpm: number | undefined): string {
+  return bpm != null ? String(bpm) : '';
+}
+
 function setStatus(message: string): void {
   renderJobStore.getState().setStatus(message);
 }
@@ -61,11 +65,20 @@ export function BeatmatchPanel({ clip, playbackRate, onPlaybackRateChange }: Pro
   const tracks = useEditorTracks();
   const masterAudio = useEditorMasterAudio();
   const [targetId, setTargetId] = useState<string | null>(null);
-  const [overrideDraft, setOverrideDraft] = useState('');
-  const tapsRef = useRef<number[]>([]);
+  const [overrideDraft, setOverrideDraft] = useState(() => overrideText(clip.bpmOverride));
+  /** Tap times, tagged with the selection they were tapped in. */
+  const tapsRef = useRef<{ selection: number; times: number[] }>({ selection: 0, times: [] });
   const [tapCount, setTapCount] = useState(0);
-  const clipOverrideRef = useRef(clip.bpmOverride);
-  clipOverrideRef.current = clip.bpmOverride;
+
+  // Reset the local edit buffers when the selection changes. The draft is not
+  // resynced from the clip while editing, so a partially typed "0." survives.
+  // The tap buffer is dropped lazily, on the first tap for the new clip.
+  const [selection, setSelection] = useState({ clipId: clip.id, count: 0 });
+  if (selection.clipId !== clip.id) {
+    setSelection({ clipId: clip.id, count: selection.count + 1 });
+    setOverrideDraft(overrideText(clip.bpmOverride));
+    setTapCount(0);
+  }
 
   const targets = useMemo(
     () => buildBeatmatchTargets(masterAudio, clips, tracks, clip.id),
@@ -82,14 +95,6 @@ export function BeatmatchPanel({ clip, playbackRate, onPlaybackRateChange }: Pro
 
   const followerBpm = getClipBpm(clip);
   const detected = clip.bpmEstimate;
-
-  // Reset the local edit buffers when the selection changes. The draft is not
-  // resynced from the clip while editing, so a partially typed "0." survives.
-  useEffect(() => {
-    setOverrideDraft(clipOverrideRef.current != null ? String(clipOverrideRef.current) : '');
-    tapsRef.current = [];
-    setTapCount(0);
-  }, [clip.id]);
 
   const updateClip = (mutate: (next: Clip) => void) => {
     editorActions.pushHistoryDebounced(`beatmatch:${clip.id}`);
@@ -119,7 +124,10 @@ export function BeatmatchPanel({ clip, playbackRate, onPlaybackRateChange }: Pro
 
   const handleTap = () => {
     const now = Date.now() / 1000;
-    const taps = tapsRef.current;
+    if (tapsRef.current.selection !== selection.count) {
+      tapsRef.current = { selection: selection.count, times: [] };
+    }
+    const taps = tapsRef.current.times;
     const last = taps[taps.length - 1];
     if (last != null && now - last > TAP_RESET_SEC) taps.length = 0;
     taps.push(now);

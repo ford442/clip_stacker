@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ClipTransition } from "../types";
 import {
   MIN_TRANSITION_DURATION,
@@ -57,18 +57,22 @@ export function TransitionEditor({
   const [customShader, setCustomShader] = useState(
     transition.customShader ?? DEFAULT_CUSTOM_EXPRESSION,
   );
-  const [shaderError, setShaderError] = useState<string | null>(null);
+  /** The sandboxed compile's verdict, for the shader text it compiled. */
+  const [compiled, setCompiled] = useState<{ shader: string; error: string | null } | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
   const activeDef = type !== "none" ? getTransitionDef(type) : undefined;
   const paramDefs = activeDef?.params ?? [];
 
-  useEffect(() => {
+  // A new transition from the parent re-seeds the form (adjusted during render).
+  const [seededFrom, setSeededFrom] = useState(transition);
+  if (seededFrom !== transition) {
+    setSeededFrom(transition);
     setType(transition.type);
     setDuration(transition.duration);
     setParams(transition.params ?? {});
     setCustomShader(transition.customShader ?? DEFAULT_CUSTOM_EXPRESSION);
-  }, [transition]);
+  }
 
   /**
    * Validate the WGSL out of band: the static check runs immediately, then a
@@ -76,17 +80,23 @@ export function TransitionEditor({
    * surfaces the driver's own diagnostics. The compiled module is discarded —
    * the render path builds its own pipeline.
    */
+  const isCustom = type === CUSTOM_TRANSITION_TYPE;
+  const staticCheck = useMemo(
+    () => (isCustom ? validateCustomExpression(customShader) : null),
+    [isCustom, customShader],
+  );
+  // A compile verdict only stands for the text it compiled, while still custom.
+  if (compiled && (!isCustom || compiled.shader !== customShader)) setCompiled(null);
+  const shaderError = !staticCheck
+    ? null
+    : !staticCheck.ok
+      ? (staticCheck.error ?? "Invalid expression.")
+      : compiled?.shader === customShader
+        ? compiled.error
+        : null;
+  const staticOk = staticCheck?.ok === true;
   useEffect(() => {
-    if (type !== CUSTOM_TRANSITION_TYPE) {
-      setShaderError(null);
-      return;
-    }
-    const staticCheck = validateCustomExpression(customShader);
-    if (!staticCheck.ok) {
-      setShaderError(staticCheck.error ?? "Invalid expression.");
-      return;
-    }
-    setShaderError(null);
+    if (!staticOk) return;
     const device = peekGpuDevice();
     if (!device) return;
 
@@ -94,14 +104,17 @@ export function TransitionEditor({
     const timer = setTimeout(() => {
       void compileCustomTransition(device, customShader).then((res) => {
         if (cancelled) return;
-        setShaderError(res.ok ? null : (res.error ?? "WGSL compilation failed."));
+        setCompiled({
+          shader: customShader,
+          error: res.ok ? null : (res.error ?? "WGSL compilation failed."),
+        });
       });
     }, 350);
     return () => {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [type, customShader]);
+  }, [staticOk, customShader]);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {

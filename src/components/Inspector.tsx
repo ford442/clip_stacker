@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, useMemo } from 'react';
-import type { ClipAnimatableProp, CleanupOptions, ExportSettings } from '../types';
+import type { Clip, ClipAnimatableProp, CleanupOptions, ExportSettings } from '../types';
 import { RESOLUTION_PRESETS, type ResolutionPreset } from '../types';
 import { resolveClipLocalTimeAtGlobal } from '../composition/previewComposition';
 import { usePlayheadTime } from '../hooks/usePlayheadTime';
@@ -20,6 +20,7 @@ import { isOverlayOffCanvas } from '../project';
 import {
   clipLayoutToDisplayPixels,
   layoutPixelToNormValue,
+  type CanvasSize,
 } from '../composition/overlayCoords';
 import { clipHasExtractableAudio, extractWaveformPeaks } from '../media/waveform';
 import { clampClipVolume } from '../audio/audioVolume';
@@ -63,6 +64,33 @@ const InspectorExportTab = lazyNamed(
   () => import('./inspector/InspectorExportTab'),
   'InspectorExportTab',
 );
+
+/** The inspector form's fields for `clip`, with the layout in display pixels. */
+function clipFormValues(clip: Clip, layoutCanvas: CanvasSize): ClipValues {
+  const layout = clipLayoutToDisplayPixels(clip, layoutCanvas);
+  return {
+    title: clip.title,
+    trimStart: String(clip.trimStart),
+    trimEnd: Number.isFinite(clip.trimEnd) ? String(clip.trimEnd) : '',
+    videoFadeIn: String(clip.videoFadeIn),
+    videoFadeOut: String(clip.videoFadeOut),
+    audioFadeIn: String(clip.audioFadeIn),
+    audioFadeOut: String(clip.audioFadeOut),
+    layerIndex: String(clip.layerIndex ?? 0),
+    x: String(layout.x),
+    y: String(layout.y),
+    width: String(layout.width),
+    height: String(layout.height),
+    opacity: String(clip.opacity ?? 1),
+    overlayBlend: clip.overlayBlend ?? '',
+    chromaColor: clip.chromaKey?.color ?? DEFAULT_CHROMA_KEY.color,
+    chromaSimilarity: String(clip.chromaKey?.similarity ?? DEFAULT_CHROMA_KEY.similarity),
+    chromaBlend: String(clip.chromaKey?.blend ?? DEFAULT_CHROMA_KEY.blend),
+    volume: String(clip.volume ?? 1),
+    playbackRate: String(clip.playbackRate ?? 1),
+    loopCount: String(clip.loopCount ?? 1),
+  };
+}
 
 function InspectorImpl({
   onChange,
@@ -155,52 +183,26 @@ function InspectorImpl({
     [exportSettings.outputResolution],
   );
 
-  useEffect(() => {
-    if (!clip) return;
-    const layout = clipLayoutToDisplayPixels(clip, layoutCanvas);
-    setValues({
-      title: clip.title,
-      trimStart: String(clip.trimStart),
-      trimEnd: Number.isFinite(clip.trimEnd) ? String(clip.trimEnd) : '',
-      videoFadeIn: String(clip.videoFadeIn),
-      videoFadeOut: String(clip.videoFadeOut),
-      audioFadeIn: String(clip.audioFadeIn),
-      audioFadeOut: String(clip.audioFadeOut),
-      layerIndex: String(clip.layerIndex ?? 0),
-      x: String(layout.x),
-      y: String(layout.y),
-      width: String(layout.width),
-      height: String(layout.height),
-      opacity: String(clip.opacity ?? 1),
-      overlayBlend: clip.overlayBlend ?? '',
-      chromaColor: clip.chromaKey?.color ?? DEFAULT_CHROMA_KEY.color,
-      chromaSimilarity: String(clip.chromaKey?.similarity ?? DEFAULT_CHROMA_KEY.similarity),
-      chromaBlend: String(clip.chromaKey?.blend ?? DEFAULT_CHROMA_KEY.blend),
-      volume: String(clip.volume ?? 1),
-      playbackRate: String(clip.playbackRate ?? 1),
-      loopCount: String(clip.loopCount ?? 1),
-    });
-    setAdvancedOpen(
-      hasAdvancedLayoutValues({
-        layerIndex: String(clip.layerIndex ?? 0),
-        x: String(layout.x),
-        y: String(layout.y),
-        width: String(layout.width),
-        height: String(layout.height),
-        opacity: String(clip.opacity ?? 1),
-      }),
-    );
-  }, [clip, layoutCanvas]);
+  // Re-seed the form whenever the clip or the layout canvas changes (adjusted
+  // during render, so the form never paints one frame of the previous clip).
+  const [formSource, setFormSource] = useState<{
+    clip: typeof clip;
+    layoutCanvas: typeof layoutCanvas | null;
+  }>({ clip: null, layoutCanvas: null });
+  if (formSource.clip !== clip || formSource.layoutCanvas !== layoutCanvas) {
+    setFormSource({ clip, layoutCanvas });
+    if (clip) {
+      const next = clipFormValues(clip, layoutCanvas);
+      setValues(next);
+      setAdvancedOpen(hasAdvancedLayoutValues(next));
+    }
+  }
 
   useEffect(() => {
     if (!clip) return;
-    if (clip.kind === 'video') {
-      if (clip.stillImage) {
-        if (clip.posterUrl) {
-          setThumbMap((prev) => ({ ...prev, [clip.id]: [clip.posterUrl!] }));
-          completedThumbs.current.add(clip.id);
-        }
-      } else if (
+    // A still image's thumbnail is its poster (derived below, not extracted).
+    if (clip.kind === 'video' && !clip.stillImage) {
+      if (
         clip.source?.type !== 'sequence' &&
         !completedThumbs.current.has(clip.id) &&
         !generatingThumbs.current.has(clip.id)
@@ -395,7 +397,9 @@ function InspectorImpl({
   const clipPreviewDuration = Math.max(MIN_CLIP_DURATION, trimEnd - trimStart);
   const trimStartPct = (trimStart / trimDuration) * 100;
   const trimEndPct = (trimEnd / trimDuration) * 100;
-  const currentThumbs = clip ? thumbMap[clip.id] : undefined;
+  const stillPoster = clip?.kind === 'video' && clip.stillImage ? clip.posterUrl : undefined;
+  const stillThumbs = useMemo(() => (stillPoster ? [stillPoster] : undefined), [stillPoster]);
+  const currentThumbs = clip ? (stillThumbs ?? thumbMap[clip.id]) : undefined;
   const currentWave = clip ? waveMap[clip.id] : undefined;
   const volumeValue = clampClipVolume(parseNumber(values.volume, 1));
   const volumePercent = Math.round(volumeValue * 100);

@@ -25,35 +25,34 @@ export function MasterAudioTrack({
   contentWidth,
 }: Props) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [peaks, setPeaks] = useState<Float32Array | null>(null);
-  const [loading, setLoading] = useState(false);
+  /** The last waveform loaded, and the file it belongs to. */
+  const [waveform, setWaveform] = useState<{ url: string; peaks: Float32Array } | null>(null);
   const [masterFxOpen, setMasterFxOpen] = useState(false);
   const [meterOpen, toggleMeter] = useLoudnessMeterOpen();
   const masterFxCount = activeBusEffectCount(useEditorMasterBus()?.fx);
 
-  useEffect(() => {
-    if (!masterAudio) {
-      setPeaks(null);
-      return;
-    }
+  const masterUrl = masterAudio?.objectUrl;
+  // Removing the master track drops its waveform; a new file keeps showing the
+  // previous one (dimmed) until its own peaks arrive.
+  if (!masterUrl && waveform) setWaveform(null);
+  const peaks = masterUrl ? (waveform?.peaks ?? null) : null;
+  const loading = masterUrl !== undefined && waveform?.url !== masterUrl;
 
+  useEffect(() => {
+    if (!masterUrl) return;
     let cancelled = false;
-    setLoading(true);
-    extractWaveformPeaks(masterAudio.objectUrl, 240)
+    extractWaveformPeaks(masterUrl, 240)
       .then((data) => {
-        if (!cancelled) setPeaks(data);
+        if (!cancelled) setWaveform({ url: masterUrl, peaks: data });
       })
       .catch(() => {
-        if (!cancelled) setPeaks(new Float32Array(0));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) setWaveform({ url: masterUrl, peaks: new Float32Array(0) });
       });
 
     return () => {
       cancelled = true;
     };
-  }, [masterAudio?.objectUrl]);
+  }, [masterUrl]);
 
   const handleFile = useCallback(async (file: File) => {
     if (!file.type.startsWith('audio/') && !/\.(mp3|wav|m4a|aac|ogg|flac)$/i.test(file.name)) {

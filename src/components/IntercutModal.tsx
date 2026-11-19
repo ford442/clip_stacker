@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import type { Clip } from '../types';
 import {
   estimateIntercut,
@@ -68,19 +68,31 @@ export function IntercutModal({ isOpen, onClose, onGenerate, generating }: Props
   const [consumeMode, setConsumeMode] = useState<IntercutConsumeMode>('targetDuration');
   const [sourceClock, setSourceClock] = useState<IntercutSourceClock>('freezeHidden');
 
-  useEffect(() => {
-    if (!isOpen) return;
-    const pair = defaultIntercutPair(clips, clipGroups, selectedClipId);
-    setClipAId(pair.clipAId ?? '');
-    setClipBId(pair.clipBId ?? '');
-    setClipCId(pair.clipCId ?? '');
-  }, [isOpen, clips, clipGroups, selectedClipId]);
-
-  useEffect(() => {
-    if (!clipCId && forceFinalClip === 'C') {
-      setForceFinalClip('B');
+  // Re-pick the default sources whenever the modal opens or the library /
+  // selection changes while it is open (adjusted during render, not in an effect).
+  const [pairSource, setPairSource] = useState<{
+    isOpen: boolean;
+    clips: typeof clips;
+    clipGroups: typeof clipGroups;
+    selectedClipId: typeof selectedClipId;
+  } | null>(null);
+  if (
+    pairSource?.isOpen !== isOpen ||
+    pairSource.clips !== clips ||
+    pairSource.clipGroups !== clipGroups ||
+    pairSource.selectedClipId !== selectedClipId
+  ) {
+    setPairSource({ isOpen, clips, clipGroups, selectedClipId });
+    if (isOpen) {
+      const pair = defaultIntercutPair(clips, clipGroups, selectedClipId);
+      setClipAId(pair.clipAId ?? '');
+      setClipBId(pair.clipBId ?? '');
+      setClipCId(pair.clipCId ?? '');
     }
-  }, [clipCId, forceFinalClip]);
+  }
+
+  // Landing on C needs a clip C.
+  if (!clipCId && forceFinalClip === 'C') setForceFinalClip('B');
 
   const clipA = videoClips.find((c) => c.id === clipAId) ?? null;
   const clipB = videoClips.find((c) => c.id === clipBId) ?? null;
