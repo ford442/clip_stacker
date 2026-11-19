@@ -288,8 +288,8 @@ export function transitionWarpParams(
   toWarpMasked?: boolean;
 } {
   return {
-    fromWarpMatrix: from.warpMatrix,
-    toWarpMatrix: to.warpMatrix,
+    ...(from.warpMatrix !== undefined && { fromWarpMatrix: from.warpMatrix }),
+    ...(to.warpMatrix !== undefined && { toWarpMatrix: to.warpMatrix }),
     fromWarpMasked: Boolean(from.pictureMatrix),
     toWarpMasked: Boolean(to.pictureMatrix),
   };

@@ -166,7 +166,7 @@ export function resolveScrollingX(
  * FFmpeg drawtext:fontfile=. Falls back to the default Roboto when
  * the overlay omits the font field or specifies an unknown id.
  */
-export function resolveFontFileForOverlay(overlay: TextOverlay): string {
+export function resolveFontFileForOverlay(overlay: Pick<TextOverlay, 'font'>): string {
   const font = getBundledFont(overlay.font);
   return getFontVirtualName(font);
 }

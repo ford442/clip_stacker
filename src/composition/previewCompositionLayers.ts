@@ -50,6 +50,8 @@ function buildCrossfadeForSegment(
   if (scheduleIndex <= 0) return null;
 
   const segment = segments[scheduleIndex];
+  const outgoing = segments[scheduleIndex - 1];
+  if (!segment || !outgoing) return null;
   const transition = transitions.find(
     (item) => item.afterClipIndex === scheduleIndex,
   );
@@ -77,10 +79,10 @@ function buildCrossfadeForSegment(
     startTime: overlapStart,
     duration: transition.duration,
     progress,
-    outgoingClipId: segments[scheduleIndex - 1].clip.id,
+    outgoingClipId: outgoing.clip.id,
     incomingClipId: segment.clip.id,
     role: 'incoming',
-    params: transition.params,
+    ...(transition.params !== undefined && { params: transition.params }),
   };
 }
 
@@ -92,6 +94,7 @@ function isInMorphOverlap(
 ): boolean {
   if (scheduleIndex <= 0) return false;
   const segment = segments[scheduleIndex];
+  if (!segment) return false;
   const overlapStart = segment.startTime;
   return (
     globalTime >= overlapStart &&
@@ -315,10 +318,11 @@ export function collectScheduledClipLayers(
       transitions,
     );
 
-    if (crossfade && segment.scheduleIndex > 0) {
+    const previousSegment = segments[segment.scheduleIndex - 1];
+    if (crossfade && previousSegment && segment.scheduleIndex > 0) {
       clipLayers.push(
         buildOutgoingCrossfadeLayer(
-          segments[segment.scheduleIndex - 1],
+          previousSegment,
           crossfade,
           globalTime,
           geom,

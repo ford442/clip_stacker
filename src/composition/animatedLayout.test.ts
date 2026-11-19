@@ -78,8 +78,8 @@ describe('animatedLayout', () => {
 
   it('creates Ken Burns UV keyframes spanning clip duration', () => {
     const kf = createKenBurnsKeyframes(4);
-    expect(kf.uvScaleX?.[1].value).toBeLessThan(1);
-    expect(kf.uvOffsetX?.[1].t).toBe(4);
+    expect(kf.uvScaleX?.[1]?.value).toBeLessThan(1);
+    expect(kf.uvOffsetX?.[1]?.t).toBe(4);
   });
 });
 
