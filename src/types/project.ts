@@ -13,6 +13,31 @@ export const PROJECT_SCHEMA_VERSION = 3;
 /** First schema that stores layout as fractions of the output (not pixels). */
 export const NORMALIZED_LAYOUT_SCHEMA_VERSION = 2;
 
+/**
+ * Timecode / sequence rates timeline interchange is written at
+ * (`interchange/timecode.ts`). `30` is the export grid.
+ */
+export type TimecodeRateId =
+  | '23.976'
+  | '24'
+  | '25'
+  | '29.97'
+  | '29.97df'
+  | '30'
+  | '50'
+  | '59.94'
+  | '59.94df'
+  | '60';
+
+/** Where frame 0 of the timeline sits in timecode (EDL, OTIO, FCPXML, BWF stems). */
+export interface ProjectTimecode {
+  /** `HH:MM:SS:FF` (`;` before the frames for drop frame). Default `01:00:00:00`. */
+  start: string;
+  rate: TimecodeRateId;
+}
+
+export const DEFAULT_PROJECT_TIMECODE: ProjectTimecode = { start: '01:00:00:00', rate: '30' };
+
 /** External reference music track for lip-sync visual anchoring (serialized). */
 export interface SerializedMasterAudio {
   fileName: string;
@@ -103,4 +128,11 @@ export interface Project {
    * `textOverlays` are the root sequence; omitted when there are none.
    */
   sequences?: SerializedSequence[];
+  /**
+   * Timecode of the timeline's first frame (`HH:MM:SS:FF`). Omitted = the
+   * default `01:00:00:00`, so older projects load unchanged.
+   */
+  timecodeStart?: string;
+  /** Rate interchange and BWF stems count frames at. Omitted = `30`. */
+  timecodeRate?: TimecodeRateId;
 }

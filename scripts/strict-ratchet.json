@@ -19,6 +19,7 @@
         "src/context",
         "src/export",
         "src/ffmpeg",
+        "src/interchange",
         "src/media",
         "src/playback",
         "src/store",

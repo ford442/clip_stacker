@@ -116,6 +116,23 @@ export interface ClipStabilization {
   smoothRadius: number;
 }
 
+/**
+ * A clip whose media is not loaded (`Clip.offline`): an imported timeline
+ * named a file the library does not have, or saved media is gone. The clip
+ * keeps its timing; preview draws a slate, export refuses while it sits on
+ * an unmuted lane, and *Relink media…* swaps a file in.
+ */
+export interface ClipOffline {
+  /** File name the clip was cut from (what relinking looks for). */
+  fileName: string;
+  /** Where the media was last seen (an interchange URL or path). */
+  url?: string;
+  /** `fingerprintMedia` hash, when known. */
+  hash?: string;
+  /** Google Drive file id, when the clip came from Drive. */
+  driveId?: string;
+}
+
 export interface Clip {
   id: string;
   file: File;
@@ -302,6 +319,11 @@ export interface Clip {
    * does nothing.
    */
   nested?: NestedSequenceContent;
+  /**
+   * Present while the clip has no media (`ClipOffline`). Its `file` is an
+   * empty placeholder named after the original and `objectUrl` is `''`.
+   */
+  offline?: ClipOffline | undefined;
 }
 
 export interface SerializedClip {
@@ -387,6 +409,8 @@ export interface SerializedClip {
   proxy?: ClipProxy;
   /** Plays a nested sequence (no media). Old clients load it as a missing-media clip. */
   source?: SequenceClipSource;
+  /** The clip had no media when saved; it loads offline unless the media is found. */
+  offline?: ClipOffline;
 }
 
 /** A group of up to two variants (A = original, B = edited) for A/B comparison. */

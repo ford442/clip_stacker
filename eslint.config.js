@@ -5,6 +5,36 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+const ZIP_ONLY_MESSAGE = 'Build zip archives with createZipBundle (src/export/container/zipBundle.ts), the only fflate import.';
+const XML_ONLY_MESSAGE = 'Parse or build XML through src/interchange/xml.ts, the only fast-xml-parser import.';
+const RESTRICTED_LIBRARIES = [
+  { name: 'fflate', message: ZIP_ONLY_MESSAGE, owner: 'src/export/container/zipBundle.ts' },
+  { name: 'fast-xml-parser', message: XML_ONLY_MESSAGE, owner: 'src/interchange/xml.ts' },
+];
+const TEST_FILES = ['src/**/*.test.{ts,tsx}', 'src/**/*.test.helpers.ts'];
+
+/** `no-restricted-imports` blocks: every library is off-limits except in its owner (and tests). */
+function restrictedImportBlocks() {
+  const rule = (libraries) => [
+    'error',
+    {
+      paths: libraries.map(({ name, message }) => ({ name, message })),
+      patterns: libraries.map(({ name, message }) => ({ group: [`${name}/*`], message })),
+    },
+  ];
+  return [
+    {
+      files: ['src/**/*.{ts,tsx}'],
+      ignores: [...RESTRICTED_LIBRARIES.map(({ owner }) => owner), ...TEST_FILES],
+      rules: { 'no-restricted-imports': rule(RESTRICTED_LIBRARIES) },
+    },
+    ...RESTRICTED_LIBRARIES.map(({ owner }) => ({
+      files: [owner],
+      rules: { 'no-restricted-imports': rule(RESTRICTED_LIBRARIES.filter((library) => library.owner !== owner)) },
+    })),
+  ];
+}
+
 export default defineConfig(
   globalIgnores([
     'dist/',
@@ -77,7 +107,7 @@ export default defineConfig(
         {
           type: 'core',
           partialMatch: false,
-          pattern: 'src/{utils,export,timeline,finishing,captions,project,media,composition,remote,audio,webgpu,wasm,ffmpeg,gpu-chores,workers}/**',
+          pattern: 'src/{utils,export,timeline,finishing,captions,project,media,composition,remote,audio,webgpu,wasm,ffmpeg,gpu-chores,workers,interchange}/**',
         },
         { type: 'store', partialMatch: false, pattern: 'src/store/**' },
         { type: 'actions', partialMatch: false, pattern: 'src/{actions,playback}/**' },
@@ -162,36 +192,21 @@ export default defineConfig(
         },
         {
           selector: 'ImportExpression[source.value=/^fflate($|\\u002f)/]',
-          message: 'Build zip archives with createZipBundle (src/export/container/zipBundle.ts), the only fflate import.',
+          message: ZIP_ONLY_MESSAGE,
         },
-      ],
-    },
-  },
-  {
-    // fflate is the zip writer behind src/export/container/zipBundle.ts, as
-    // Mediabunny is the container library behind the rest of that directory.
-    files: ['src/**/*.{ts,tsx}'],
-    ignores: ['src/export/container/zipBundle.ts', 'src/**/*.test.{ts,tsx}', 'src/**/*.test.helpers.ts'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
         {
-          paths: [
-            {
-              name: 'fflate',
-              message: 'Build zip archives with createZipBundle (src/export/container/zipBundle.ts), the only fflate import.',
-            },
-          ],
-          patterns: [
-            {
-              group: ['fflate/*'],
-              message: 'Build zip archives with createZipBundle (src/export/container/zipBundle.ts), the only fflate import.',
-            },
-          ],
+          selector: 'ImportExpression[source.value=/^fast-xml-parser($|\\u002f)/]',
+          message: XML_ONLY_MESSAGE,
         },
       ],
     },
   },
+  // fflate is the zip writer behind src/export/container/zipBundle.ts, as
+  // Mediabunny is the container library behind the rest of that directory;
+  // fast-xml-parser is the XML reader / writer behind src/interchange/xml.ts.
+  // ESLint replaces a rule's options per block rather than merging them, so
+  // each wrapper is exempt from its own library and nothing else.
+  ...restrictedImportBlocks(),
   {
     // Split a module before it passes 700 lines (tests are exempt): files
     // grew past this unnoticed when it was only a convention.
