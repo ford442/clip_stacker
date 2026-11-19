@@ -24,26 +24,26 @@ describe('segmentsToCaptions', () => {
   });
 
   it('offsets every cue onto the output timeline', () => {
-    const [cue] = segmentsToCaptions([{ startSec: 1, endSec: 2, text: 'hi' }], {
+    const cue = segmentsToCaptions([{ startSec: 1, endSec: 2, text: 'hi' }], {
       timeOffsetSec: 10,
       createId: ids(),
-    });
+    })[0]!;
     expect(cue.startSec).toBe(11);
     expect(cue.endSec).toBe(12);
   });
 
   it('never emits a negative start after offsetting', () => {
-    const [cue] = segmentsToCaptions([{ startSec: 1, endSec: 2, text: 'hi' }], {
+    const cue = segmentsToCaptions([{ startSec: 1, endSec: 2, text: 'hi' }], {
       timeOffsetSec: -5,
       createId: ids(),
-    });
+    })[0]!;
     expect(cue.startSec).toBe(0);
   });
 
   it('enforces a minimum cue duration', () => {
-    const [cue] = segmentsToCaptions([{ startSec: 4, endSec: 4, text: 'blip' }], {
+    const cue = segmentsToCaptions([{ startSec: 4, endSec: 4, text: 'blip' }], {
       createId: ids(),
-    });
+    })[0]!;
     expect(cue.endSec).toBeCloseTo(4 + MIN_CAPTION_DURATION_SEC, 6);
   });
 
@@ -63,10 +63,10 @@ describe('segmentsToCaptions', () => {
   });
 
   it('collapses runs of spaces but keeps line breaks', () => {
-    const [cue] = segmentsToCaptions(
+    const cue = segmentsToCaptions(
       [{ startSec: 0, endSec: 1, text: '  hello   there \n  second line  ' }],
       { createId: ids() },
-    );
+    )[0]!;
     expect(cue.text).toBe('hello there\nsecond line');
   });
 });
