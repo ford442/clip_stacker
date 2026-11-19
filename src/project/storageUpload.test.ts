@@ -121,7 +121,7 @@ describe('uploadMediaChunked', () => {
 
       const statusMatch = url.match(/\/upload\/([^/]+)\/status$/);
       if (statusMatch && method === 'GET') {
-        const session = sessions.get(statusMatch[1]);
+        const session = sessions.get(statusMatch[1]!);
         if (!session) {
           return { ok: false, status: 404, json: async () => ({}) };
         }
@@ -139,7 +139,7 @@ describe('uploadMediaChunked', () => {
 
       const chunkMatch = url.match(/\/upload\/([^/]+)\/(\d+)$/);
       if (chunkMatch && method === 'PUT') {
-        const uploadId = chunkMatch[1];
+        const uploadId = chunkMatch[1]!;
         const chunkIndex = Number(chunkMatch[2]);
         const session = sessions.get(uploadId);
         if (!session) {
@@ -171,7 +171,7 @@ describe('uploadMediaChunked', () => {
 
       const completeMatch = url.match(/\/upload\/([^/]+)\/complete$/);
       if (completeMatch && method === 'POST') {
-        const session = sessions.get(completeMatch[1]);
+        const session = sessions.get(completeMatch[1]!);
         if (!session) {
           return { ok: false, status: 404, json: async () => ({}) };
         }
@@ -287,7 +287,7 @@ describe('uploadMediaChunked', () => {
     );
     // Only chunk 1 should be uploaded.
     expect(putCalls).toHaveLength(1);
-    expect(String(putCalls[0][0])).toContain('/upload/upload-resume/1');
+    expect(String(putCalls[0]![0])).toContain('/upload/upload-resume/1');
     expect(
       fetchImpl.mock.calls.some(([input]) => String(input).endsWith('/upload/init')),
     ).toBe(false);

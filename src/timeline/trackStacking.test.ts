@@ -47,8 +47,8 @@ function makeClip(id: string, duration: number, overrides: Partial<Clip> = {}): 
 /** Default lanes with `base` on V1 and `overlay` on V2 at `overlayStart`. */
 function twoLaneTracks(overlayStart: number): Track[] {
   const tracks = createDefaultTracks();
-  tracks[0] = { ...tracks[0], items: [{ clipId: 'base', startTime: 0 }] };
-  tracks[1] = { ...tracks[1], items: [{ clipId: 'overlay', startTime: overlayStart }] };
+  tracks[0] = { ...tracks[0]!, items: [{ clipId: 'base', startTime: 0 }] };
+  tracks[1] = { ...tracks[1]!, items: [{ clipId: 'overlay', startTime: overlayStart }] };
   return tracks;
 }
 
@@ -57,7 +57,7 @@ describe('buildVideoStack', () => {
     let tracks = twoLaneTracks(0);
     tracks = addTrack(tracks, 'video');
     tracks = tracks.map((t) =>
-      t.id === videoTracks(tracks)[2].id
+      t.id === videoTracks(tracks)[2]!.id
         ? { ...t, items: [{ clipId: 'top', startTime: 2 }] }
         : t,
     );
@@ -78,7 +78,7 @@ describe('buildVideoStack', () => {
     tracks = tracks.map((t) =>
       t.kind === 'audio' ? { ...t, items: [{ clipId: 'bed', startTime: 0 }] } : t,
     );
-    tracks[0].items.push({ clipId: 'ghost', startTime: 9 });
+    tracks[0]!.items.push({ clipId: 'ghost', startTime: 9 });
 
     const stack = buildVideoStack(tracks, [makeClip('base', 10), makeClip('overlay', 4)]);
     expect(stack.map((p) => p.clip.id)).toEqual(['base', 'overlay']);
@@ -186,10 +186,10 @@ describe('lane chrome', () => {
   it('adds video lanes above the existing ones and audio lanes at the end', () => {
     const tracks = addTrack(createDefaultTracks(), 'video');
     expect(tracks.map((t) => t.kind)).toEqual(['video', 'video', 'video', 'audio']);
-    expect(tracks[2].label).toBe('Video 3');
+    expect(tracks[2]!.label).toBe('Video 3');
 
     const withAudio = addTrack(tracks, 'audio');
-    expect(withAudio[withAudio.length - 1].label).toBe('Audio 2');
+    expect(withAudio[withAudio.length - 1]!.label).toBe('Audio 2');
     expect(nextTrackLabel(withAudio, 'text')).toBe('Titles 1');
   });
 
@@ -230,10 +230,10 @@ describe('lane chrome', () => {
 
   it('clamps lane height and renames lanes', () => {
     const tracks = createDefaultTracks();
-    expect(setTrackHeight(tracks, MAIN_VIDEO_TRACK_ID, 4)[0].height).toBe(MIN_TRACK_HEIGHT);
-    expect(setTrackHeight(tracks, MAIN_VIDEO_TRACK_ID, 9999)[0].height).toBe(MAX_TRACK_HEIGHT);
-    expect(renameTrack(tracks, MAIN_VIDEO_TRACK_ID, '  Cam A  ')[0].label).toBe('Cam A');
-    expect(renameTrack(tracks, MAIN_VIDEO_TRACK_ID, '   ')[0].label).toBe('Video 1');
+    expect(setTrackHeight(tracks, MAIN_VIDEO_TRACK_ID, 4)[0]!.height).toBe(MIN_TRACK_HEIGHT);
+    expect(setTrackHeight(tracks, MAIN_VIDEO_TRACK_ID, 9999)[0]!.height).toBe(MAX_TRACK_HEIGHT);
+    expect(renameTrack(tracks, MAIN_VIDEO_TRACK_ID, '  Cam A  ')[0]!.label).toBe('Cam A');
+    expect(renameTrack(tracks, MAIN_VIDEO_TRACK_ID, '   ')[0]!.label).toBe('Video 1');
   });
 
   it('reports a clip as locked via its holding lane', () => {
@@ -249,11 +249,11 @@ describe('drop rules', () => {
 
   it('rejects a clip whose kind the lane cannot hold', () => {
     const tracks = twoLaneTracks(0);
-    expect(acceptsClipKind(tracks[2], 'audio')).toBe(true);
-    expect(acceptsClipKind(tracks[2], 'video')).toBe(false);
-    expect(acceptsClipKind(tracks[0], 'audio')).toBe(false);
+    expect(acceptsClipKind(tracks[2]!, 'audio')).toBe(true);
+    expect(acceptsClipKind(tracks[2]!, 'video')).toBe(false);
+    expect(acceptsClipKind(tracks[0]!, 'audio')).toBe(false);
 
-    expect(moveClipBetweenTracks(tracks, 'base', tracks[2].id, 1, clips)).toBe(tracks);
+    expect(moveClipBetweenTracks(tracks, 'base', tracks[2]!.id, 1, clips)).toBe(tracks);
   });
 
   it('rejects a move onto or off a locked lane', () => {
@@ -284,7 +284,7 @@ describe('moveClipToVideoLayer', () => {
     const moved = moveClipToVideoLayer(twoLaneTracks(5), 'overlay', 3, clips);
 
     expect(videoTracks(moved).length).toBe(4);
-    expect(videoTracks(moved)[3].items).toEqual([{ clipId: 'overlay', startTime: 5 }]);
+    expect(videoTracks(moved)[3]!.items).toEqual([{ clipId: 'overlay', startTime: 5 }]);
     expect(toLegacyTimelineView(moved, clips).find((c) => c.id === 'overlay')?.layerIndex).toBe(3);
   });
 
@@ -299,7 +299,7 @@ describe('visibleTextOverlays', () => {
 
   it('hides only overlays placed on a muted titles lane', () => {
     let tracks = addTrack(createDefaultTracks(), 'text');
-    const laneId = tracks[tracks.length - 1].id;
+    const laneId = tracks[tracks.length - 1]!.id;
     tracks = tracks.map((t) =>
       t.id === laneId ? { ...t, items: [{ clipId: 'o1', startTime: 0 }] } : t,
     );

@@ -76,7 +76,7 @@ describe('snapThresholdForZoom', () => {
 describe('collectSnapTargets', () => {
   it('gathers edges, beats, markers and caption edges in output time', () => {
     const tracks = createDefaultTracks();
-    tracks[1] = { ...tracks[1], items: [{ clipId: 'o', startTime: 5 }, { clipId: 'moving', startTime: 0 }] };
+    tracks[1] = { ...tracks[1]!, items: [{ clipId: 'o', startTime: 5 }, { clipId: 'moving', startTime: 0 }] };
     const clips = [
       makeClip('o', { trimStart: 1, trimEnd: 5, beatTimestamps: [2, 3, 7] }),
       makeClip('moving'),

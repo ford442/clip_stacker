@@ -48,7 +48,7 @@ describe('ContaboStorageManagerClient jobs', () => {
     const created = await new ContaboStorageManagerClient(`${ENDPOINT}/`, 'tok').createJob(request);
 
     expect(created.status).toBe('queued');
-    const [url, init] = fetchMock.mock.calls[0];
+    const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe(`${ENDPOINT}/jobs`);
     expect(init.method).toBe('POST');
     expect(init.headers).toEqual({ 'content-type': 'application/json', authorization: 'Bearer tok' });
@@ -59,8 +59,8 @@ describe('ContaboStorageManagerClient jobs', () => {
     const fetchMock = vi.fn().mockResolvedValue(respond(job()));
     vi.stubGlobal('fetch', fetchMock);
     await new ContaboStorageManagerClient(ENDPOINT).getJob('abc');
-    expect(fetchMock.mock.calls[0][1].headers).toBeUndefined();
-    expect(fetchMock.mock.calls[0][0]).toBe(`${ENDPOINT}/jobs/abc`);
+    expect(fetchMock.mock.calls[0]![1].headers).toBeUndefined();
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${ENDPOINT}/jobs/abc`);
   });
 
   it('cancels via POST /jobs/{id}/cancel', async () => {
@@ -68,8 +68,8 @@ describe('ContaboStorageManagerClient jobs', () => {
     vi.stubGlobal('fetch', fetchMock);
     const result = await new ContaboStorageManagerClient(ENDPOINT).cancelJob('abc');
     expect(result.status).toBe('cancelled');
-    expect(fetchMock.mock.calls[0][0]).toBe(`${ENDPOINT}/jobs/abc/cancel`);
-    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+    expect(fetchMock.mock.calls[0]![0]).toBe(`${ENDPOINT}/jobs/abc/cancel`);
+    expect(fetchMock.mock.calls[0]![1].method).toBe('POST');
   });
 
   it('turns FastAPI string and validation errors into readable messages', async () => {

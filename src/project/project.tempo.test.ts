@@ -24,14 +24,14 @@ describe('project tempo metadata roundtrip', () => {
     clip.bpmOverride = 128;
 
     const serialized = serializeProject(createProjectSnapshot({ clips: [clip] }));
-    expect(serialized.clips[0].bpmOverride).toBe(128);
-    expect(serialized.clips[0].bpmConfidence).toBe(0.82);
+    expect(serialized.clips[0]!.bpmOverride).toBe(128);
+    expect(serialized.clips[0]!.bpmConfidence).toBe(0.82);
 
     const result = await applyProjectData(serialized, [createTestClip('a', 5, 'Clip A')]);
-    expect(result.clips[0].bpmEstimate).toBe(120);
-    expect(result.clips[0].bpmConfidence).toBe(0.82);
-    expect(result.clips[0].bpmOverride).toBe(128);
-    expect(result.clips[0].beatTimestamps).toEqual([0.5, 1, 1.5, 2]);
+    expect(result.clips[0]!.bpmEstimate).toBe(120);
+    expect(result.clips[0]!.bpmConfidence).toBe(0.82);
+    expect(result.clips[0]!.bpmOverride).toBe(128);
+    expect(result.clips[0]!.beatTimestamps).toEqual([0.5, 1, 1.5, 2]);
   });
 
   it('omits the tempo fields when the clip has none', () => {

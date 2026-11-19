@@ -44,9 +44,9 @@ function makePlates(): { clean: RgbImage; noisy: RgbImage } {
       const lumaNoise = gauss() * 0.05;
       for (let k = 0; k < 3; k++) {
         const i = (y * W + x) * 3 + k;
-        clean[i] = c[k];
+        clean[i] = c[k]!;
         // Shared luma noise + independent per-channel (chroma) noise.
-        noisy[i] = Math.min(1, Math.max(0, c[k] + lumaNoise + gauss() * 0.02));
+        noisy[i] = Math.min(1, Math.max(0, c[k]! + lumaNoise + gauss() * 0.02));
       }
     }
   }
@@ -59,22 +59,28 @@ function makePlates(): { clean: RgbImage; noisy: RgbImage } {
 const { clean, noisy } = makePlates();
 
 const lumaAt = (d: Float32Array, i: number) =>
-  0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
+  0.2126 * d[i]! + 0.7152 * d[i + 1]! + 0.0722 * d[i + 2]!;
 
 /** RMS luma error vs the clean plate in three regions, plus chroma RMS. */
 function errors(img: RgbImage) {
-  const acc = { flat: [0, 0], edge: [0, 0], line: [0, 0], chroma: [0, 0] };
+  type Sum = [sumSq: number, count: number];
+  const acc: Record<'flat' | 'edge' | 'line' | 'chroma', Sum> = {
+    flat: [0, 0],
+    edge: [0, 0],
+    line: [0, 0],
+    chroma: [0, 0],
+  };
   for (let y = 4; y < H - 4; y++) {
     for (let x = 4; x < W - 4; x++) {
       const i = (y * W + x) * 3;
       const e = lumaAt(img.data, i) - lumaAt(clean.data, i);
       for (let k = 0; k < 3; k++) {
         const c =
-          img.data[i + k] - lumaAt(img.data, i) - (clean.data[i + k] - lumaAt(clean.data, i));
+          img.data[i + k]! - lumaAt(img.data, i) - (clean.data[i + k]! - lumaAt(clean.data, i));
         acc.chroma[0] += c * c;
         acc.chroma[1]++;
       }
-      let bucket: number[] | null = null;
+      let bucket: Sum | null = null;
       if (y === LINE_Y && Math.abs(x - EDGE_X) > 6) bucket = acc.line;
       else if (Math.abs(x - EDGE_X) <= 1 && y < LINE_Y - 4) bucket = acc.edge;
       else if (Math.abs(x - EDGE_X) > 6 && Math.abs(y - LINE_Y) > 6 && y < 56) bucket = acc.flat;
@@ -84,7 +90,7 @@ function errors(img: RgbImage) {
       }
     }
   }
-  const rms = ([s, n]: number[]) => Math.sqrt(s / n);
+  const rms = ([s, n]: Sum) => Math.sqrt(s / n);
   return {
     flat: rms(acc.flat),
     edge: rms(acc.edge),
@@ -221,7 +227,7 @@ describe('denoise.wgsl mirrors denoiseReference.ts', () => {
       const m = /^([A-Za-z_]\w*)\s*:\s*(f32|vec2<f32>|vec4<f32>)\s*,$/.exec(line);
       if (!m) throw new Error(`Unexpected field: ${line}`);
       const width = m[2] === 'f32' ? 1 : m[2] === 'vec2<f32>' ? 2 : 4;
-      for (let k = 0; k < width; k++) fields.push(width === 1 ? m[1] : `${m[1]}.${k}`);
+      for (let k = 0; k < width; k++) fields.push(width === 1 ? m[1]! : `${m[1]}.${k}`);
     }
     expect(fields).toHaveLength(16);
     expect(fields[NR_QUALITY_SLOT]).toBe('quality');

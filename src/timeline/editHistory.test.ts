@@ -48,9 +48,9 @@ describe('editHistory', () => {
       masterAudio: null,
     });
 
-    snapshot.clips[0].title = 'changed';
+    snapshot.clips[0]!.title = 'changed';
     expect(clip.title).toBe('a');
-    expect(snapshot.clips[0].file).toBe(clip.file);
+    expect(snapshot.clips[0]!.file).toBe(clip.file);
   });
 
   it('mergeClipUrls reuses existing object URLs for the same clip id', () => {
@@ -58,8 +58,8 @@ describe('editHistory', () => {
     const restored = [{ ...current, trimStart: 2, objectUrl: 'blob:stale' }];
 
     const merged = mergeClipUrls(restored, [current]);
-    expect(merged[0].objectUrl).toBe('blob:live');
-    expect(merged[0].trimStart).toBe(2);
+    expect(merged[0]!.objectUrl).toBe('blob:live');
+    expect(merged[0]!.trimStart).toBe(2);
   });
 
   it('mergeClipUrls recreates object URLs for restored clips', () => {
@@ -67,8 +67,8 @@ describe('editHistory', () => {
     const restored = [makeClip('a', 'blob:dead')];
 
     const merged = mergeClipUrls(restored, []);
-    expect(createSpy).toHaveBeenCalledWith(restored[0].file);
-    expect(merged[0].objectUrl).toBe('blob:new');
+    expect(createSpy).toHaveBeenCalledWith(restored[0]!.file);
+    expect(merged[0]!.objectUrl).toBe('blob:new');
   });
 
   it('revokeOrphanedUrls revokes URLs only for removed clips', () => {
@@ -92,8 +92,8 @@ describe('editHistory', () => {
     ];
 
     const synced = syncClipGroups(groups, [clip]);
-    expect(synced[0].variants.A?.title).toBe('a');
-    expect(synced[0].variants.A).toBe(clip);
+    expect(synced[0]!.variants.A?.title).toBe('a');
+    expect(synced[0]!.variants.A).toBe(clip);
   });
 
   it('trimHistoryStack keeps only the newest entries', () => {

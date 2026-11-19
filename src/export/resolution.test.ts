@@ -10,6 +10,9 @@ import {
   usesFixedOutputResolution,
 } from './resolution';
 
+/** Export settings saved before resolution presets existed. */
+const { resolutionPreset: _preset, ...WITHOUT_PRESET } = DEFAULT_EXPORT_SETTINGS;
+
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
     id: 'clip-1',
@@ -33,8 +36,7 @@ describe('resolution helpers', () => {
     expect(usesFixedOutputResolution(DEFAULT_EXPORT_SETTINGS)).toBe(true);
     expect(
       usesFixedOutputResolution({
-        ...DEFAULT_EXPORT_SETTINGS,
-        resolutionPreset: undefined,
+        ...WITHOUT_PRESET,
         outputResolution: '1920x1080',
       }),
     ).toBe(true);
@@ -78,8 +80,7 @@ describe('resolution helpers', () => {
 
     it('uses the fixed output resolution when one is configured', () => {
       const settings = {
-        ...DEFAULT_EXPORT_SETTINGS,
-        resolutionPreset: undefined,
+        ...WITHOUT_PRESET,
         outputResolution: '1920x1080',
       };
       const clips = [makeClip({ videoWidth: 640, videoHeight: 480 })];
@@ -100,7 +101,7 @@ describe('resolution helpers', () => {
     });
 
     it('falls back to the default canvas when no clip exposes dimensions', () => {
-      const clips = [makeClip({ videoWidth: undefined, videoHeight: undefined })];
+      const clips = [makeClip()];
       expect(resolveTargetResolution(clips, autoSettings)).toEqual({ width: 1280, height: 720 });
     });
   });

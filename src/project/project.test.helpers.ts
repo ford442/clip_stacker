@@ -23,7 +23,7 @@ export function createTestClip(
     videoFadeOut: 0,
     audioFadeIn: 0,
     audioFadeOut: 0,
-    groupId,
-    groupVariant,
+    ...(groupId !== undefined ? { groupId } : {}),
+    ...(groupVariant !== undefined ? { groupVariant } : {}),
   };
 }

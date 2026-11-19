@@ -27,7 +27,7 @@ describe('buildVariableSpeedSegments', () => {
   it('returns one segment for constant rate', () => {
     const segments = buildVariableSpeedSegments(makeClip({ playbackRate: 2 }), 8);
     expect(segments.length).toBeGreaterThanOrEqual(1);
-    expect(segments[0].rate).toBeCloseTo(2, 1);
+    expect(segments[0]!.rate).toBeCloseTo(2, 1);
   });
 
   it('splits at automation keyframes', () => {

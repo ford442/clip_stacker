@@ -69,8 +69,8 @@ describe('hevcCodecString / av1CodecString', () => {
   });
 
   it('feeds the resolution-aware strings into codecCandidates', () => {
-    expect(codecCandidates('hevc', 3840, 2160)[0].codec).toBe('hvc1.1.6.L150.B0');
-    expect(codecCandidates('av1', 3840, 2160)[0].codec).toBe('av01.0.12M.08');
+    expect(codecCandidates('hevc', 3840, 2160)[0]!.codec).toBe('hvc1.1.6.L150.B0');
+    expect(codecCandidates('av1', 3840, 2160)[0]!.codec).toBe('av01.0.12M.08');
     expect(codecCandidates(undefined, 3840, 2160, 'hdr10').map((c) => c.codec)).toEqual([
       'hvc1.2.4.L150.B0',
       'av01.0.12M.10',
@@ -306,7 +306,7 @@ describe('resolveEncoderCodec', () => {
     const resolved = await resolveEncoderCodec('h264', 1920, 1080, 8_000_000, 'hdr10');
     expect(resolved.codec).toBe(HEVC_MAIN10_CODEC);
     expect(isConfigSupported).toHaveBeenCalledTimes(1);
-    const probed = isConfigSupported.mock.calls[0][0] as { colorSpace?: { transfer?: string } };
+    const probed = isConfigSupported.mock.calls[0]![0] as { colorSpace?: { transfer?: string } };
     expect(probed.colorSpace?.transfer).toBe('pq');
   });
 

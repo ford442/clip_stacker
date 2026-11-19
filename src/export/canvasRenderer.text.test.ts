@@ -93,12 +93,12 @@ describe('drawTextOverlays', () => {
     const calls = draw([overlay({ text: 'Hi', scrolling: true })], 1);
     const text = calls.filter((c) => c[0] === 'fillText');
     expect(text).toHaveLength(1);
-    expect(text[0][4]).toBe(1044); // x argument
+    expect(text[0]![4]).toBe(1044); // x argument
 
     // Later in playback the ticker has moved further left.
     const later = draw([overlay({ text: 'Hi', scrolling: true })], 2);
     const laterText = later.filter((c) => c[0] === 'fillText');
-    expect(laterText[0][4]).toBe(1280 + 20 - 2 * 1280 * 0.2); // 788
+    expect(laterText[0]![4]).toBe(1280 + 20 - 2 * 1280 * 0.2); // 788
   });
 
   it('animates keyframed x position via the composition plan', () => {
@@ -118,7 +118,7 @@ describe('drawTextOverlays', () => {
     const text = calls.filter((c) => c[0] === 'fillText');
     expect(text).toHaveLength(1);
     // Linear midpoint at t=1 between 100 and 200.
-    expect(text[0][4]).toBe(150);
+    expect(text[0]![4]).toBe(150);
   });
 
   it('draws a background box with its color alpha applied', () => {

@@ -38,7 +38,7 @@ describe("project - ContaboStorageManagerClient", () => {
 
       // Verify the call was made with the correct endpoint
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const callArgs = fetchMock.mock.calls[0];
+      const callArgs = fetchMock.mock.calls[0]!;
       expect(callArgs[0]).toBe("https://example.com/api/media");
       
       // The authorization header should be present and contain "Bearer"
@@ -147,7 +147,7 @@ describe("project - ContaboStorageManagerClient", () => {
 
       expect(url).toBe("https://example.com/large.mp4");
       expect(chunkedSpy).toHaveBeenCalledTimes(1);
-      const callArg = chunkedSpy.mock.calls[0][0];
+      const callArg = chunkedSpy.mock.calls[0]![0];
       expect(callArg.mediaEndpoint).toBe("https://example.com/api/media");
       expect(callArg.name).toBe("large.bin");
       // authHeader should be defined and be a string

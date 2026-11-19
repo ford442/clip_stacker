@@ -206,7 +206,7 @@ describe('built-in presets', () => {
   });
 
   it('Film look leaves identity channel curves untouched', () => {
-    const film = resolvePresetFinishing(BUILT_IN_FINISHING_PRESETS[1], DEFAULT_FINISHING);
+    const film = resolvePresetFinishing(BUILT_IN_FINISHING_PRESETS[1]!, DEFAULT_FINISHING);
     expect(film.curves?.curves.red).toEqual(identityCurves().red);
   });
 });
@@ -219,10 +219,10 @@ describe('JSON Schema for agents', () => {
     const passes = schema.properties.finishing.properties;
     expect(Object.keys(passes)).toEqual(FINISHING_PASS_KEYS);
     for (const key of FINISHING_PASS_KEYS) {
-      expect(passes[key].additionalProperties).toBe(false);
+      expect(passes[key]!.additionalProperties).toBe(false);
       const spec = FINISHING_PASS_SPECS[key];
       expect(spec.type).toBe('object');
-      if (spec.type === 'object') expect(Object.keys(passes[key].properties)).toEqual(Object.keys(spec.fields));
+      if (spec.type === 'object') expect(Object.keys(passes[key]!.properties)).toEqual(Object.keys(spec.fields));
     }
   });
 
