@@ -47,6 +47,7 @@ export function decodeDataUrl(url: string): Blob {
   } catch (error) {
     throw new Error(
       `Embedded media is corrupt (${error instanceof Error ? error.message : String(error)})`,
+      { cause: error },
     );
   }
   return new Blob([bytes], mediaType ? { type: mediaType } : {});

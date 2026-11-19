@@ -217,7 +217,7 @@ describe("SelfHostedRifeBackend", () => {
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      const [predictUrl, predictOpts] = fetchMock.mock.calls[0];
+      const [predictUrl, predictOpts] = fetchMock.mock.calls[0]!;
       expect(predictUrl).toBe(`${ENDPOINT}/predict`);
       expect(predictOpts.method).toBe("POST");
       expect(result.blob).toBe(outputBlob);
@@ -280,7 +280,7 @@ describe("SelfHostedRifeBackend", () => {
       });
 
       // Verify FormData fields include boomerang=true and multiplier=4
-      const [, opts] = fetchMock.mock.calls[0];
+      const [, opts] = fetchMock.mock.calls[0]!;
       const formData = opts.body as FormData;
       expect(formData.get("boomerang")).toBe("true");
       expect(formData.get("multiplier")).toBe("4");
