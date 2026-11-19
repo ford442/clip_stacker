@@ -11,10 +11,10 @@
  * that the Canvas2D export (plain source-over) does not have.
  */
 
+import type { Rgba } from '../types/tuples';
+
 /** Destination `premultipliedAlpha` for the overlay upload. Must stay true. */
 export const OVERLAY_TEXTURE_PREMULTIPLIED = true;
-
-export type Rgba = readonly [number, number, number, number];
 
 /**
  * What `copyExternalImageToTexture` stores for one canvas pixel, given the
@@ -27,7 +27,8 @@ export function overlayTexel(straight: Rgba, premultipliedAlpha: boolean): Rgba 
 
 /** Bilinear mix of two texels (the sampler is linear), as the GPU filters. */
 export function mixTexels(t0: Rgba, t1: Rgba, w: number): Rgba {
-  return [0, 1, 2, 3].map((i) => t0[i]! * (1 - w) + t1[i]! * w) as unknown as Rgba;
+  const mix = (i: 0 | 1 | 2 | 3) => t0[i] * (1 - w) + t1[i] * w;
+  return [mix(0), mix(1), mix(2), mix(3)];
 }
 
 /** The overlay pipeline's blend: premultiplied source-over onto an opaque frame. */

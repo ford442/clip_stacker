@@ -13,11 +13,11 @@ import {
 import { spliceUniformStructs } from './uniformLayout';
 import { NOISE_REDUCTION_UNIFORMS } from './uniformSpecs';
 
-const DENOISESHADER_SOURCE = spliceUniformStructs(denoiseShaderSource, NOISE_REDUCTION_UNIFORMS);
+const DENOISE_SOURCE = spliceUniformStructs(denoiseShaderSource, NOISE_REDUCTION_UNIFORMS);
 
 /** `denoise.wgsl` as compiled: its uniform struct spliced in, scene-linear when asked. */
 export function denoiseShaderCode(sceneLinear = false): string {
-  return shaderForSceneLinear(DENOISESHADER_SOURCE, sceneLinear);
+  return shaderForSceneLinear(DENOISE_SOURCE, sceneLinear);
 }
 
 export class NoiseReductionGpuPass {

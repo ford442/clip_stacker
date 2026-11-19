@@ -190,13 +190,13 @@ export function applyKeyToImageData(
   key: LayerKeyUniforms,
 ): void {
   if (key.mode === KEY_MODE.none) return;
-  for (let i = 0; i < data.length; i += 4) {
+  for (let i = 0; i + 3 < data.length; i += 4) {
     const alpha = keyPixel(
-      data[i] / 255,
-      data[i + 1] / 255,
-      data[i + 2] / 255,
+      (data[i] ?? 0) / 255,
+      (data[i + 1] ?? 0) / 255,
+      (data[i + 2] ?? 0) / 255,
       key,
     );
-    if (alpha < 1) data[i + 3] = Math.round(data[i + 3] * alpha);
+    if (alpha < 1) data[i + 3] = Math.round((data[i + 3] ?? 0) * alpha);
   }
 }

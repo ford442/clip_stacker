@@ -110,6 +110,7 @@ export class PreviewEngine {
   };
 
   private constructor(
+    canvas: HTMLCanvasElement | OffscreenCanvas,
     device: GPUDevice,
     context: GPUCanvasContext,
     pipeline: GPURenderPipeline,
@@ -134,7 +135,7 @@ export class PreviewEngine {
     this.overlaySampler = overlaySampler;
     this.format = format;
     this.preferredFormat = format;
-    this.canvas = { width: 0, height: 0 } as unknown as OffscreenCanvas;
+    this.canvas = canvas;
   }
 
   /**
@@ -163,6 +164,7 @@ export class PreviewEngine {
     const built = buildPreviewDeviceResources(device, format);
 
     const engine = new PreviewEngine(
+      canvas,
       device,
       context,
       built.pipeline,
@@ -175,7 +177,6 @@ export class PreviewEngine {
       built.overlaySampler,
       format,
     );
-    engine.canvas = canvas;
     engine.surface = options.surface ?? "display";
     adoptGpuDevice(device);
     engine.unsubscribeRecovered = onGpuDeviceRecovered((ctx) => engine.handleDeviceRecovered(ctx));
@@ -508,7 +509,7 @@ export class PreviewEngine {
     settings: FinishingSettings,
     opts?: {
       frameIndex?: number;
-      colorManagement?: ColorManagementSettings;
+      colorManagement?: ColorManagementSettings | undefined;
       /** HDR10: this frame's titles / captions (see `FinishingApplyOptions`). */
       graphicsOverlay?: GraphicsOverlaySource;
     },
@@ -616,15 +617,17 @@ export class PreviewEngine {
   private uniformBufferForLayer(index: number): GPUBuffer {
     if (index === 0) return this.uniformBuffer;
     const extraIndex = index - 1;
-    while (this.extraLayerUniformBuffers.length <= extraIndex) {
+    let buffer = this.extraLayerUniformBuffers[extraIndex];
+    while (!buffer) {
       this.extraLayerUniformBuffers.push(
         this.device.createBuffer({
           size: PREVIEW_LAYER_UNIFORMS.byteSize,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         }),
       );
+      buffer = this.extraLayerUniformBuffers[extraIndex];
     }
-    return this.extraLayerUniformBuffers[extraIndex];
+    return buffer;
   }
 
   private encodeLayerDraw(

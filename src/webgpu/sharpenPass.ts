@@ -13,11 +13,11 @@ import {
 import { spliceUniformStructs } from './uniformLayout';
 import { SHARPEN_UNIFORMS } from './uniformSpecs';
 
-const SHARPENSHADER_SOURCE = spliceUniformStructs(sharpenShaderSource, SHARPEN_UNIFORMS);
+const SHARPEN_SOURCE = spliceUniformStructs(sharpenShaderSource, SHARPEN_UNIFORMS);
 
 /** `sharpen.wgsl` as compiled: its uniform struct spliced in, scene-linear when asked. */
 export function sharpenShaderCode(sceneLinear = false): string {
-  return shaderForSceneLinear(SHARPENSHADER_SOURCE, sceneLinear);
+  return shaderForSceneLinear(SHARPEN_SOURCE, sceneLinear);
 }
 
 export class SharpenGpuPass {

@@ -15,11 +15,11 @@ import {
 import { spliceUniformStructs } from './uniformLayout';
 import { CURVES_UNIFORMS } from './uniformSpecs';
 
-const CURVESSHADER_SOURCE = spliceUniformStructs(curvesShaderSource, CURVES_UNIFORMS);
+const CURVES_SOURCE = spliceUniformStructs(curvesShaderSource, CURVES_UNIFORMS);
 
 /** `curves.wgsl` as compiled: its uniform struct spliced in, scene-linear when asked. */
 export function curvesShaderCode(sceneLinear = false): string {
-  return shaderForSceneLinear(CURVESSHADER_SOURCE, sceneLinear);
+  return shaderForSceneLinear(CURVES_SOURCE, sceneLinear);
 }
 
 export class CurvesGpuPass {

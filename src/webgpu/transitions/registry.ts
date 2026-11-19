@@ -420,7 +420,7 @@ export function listTransitionOptions(): Array<{
   value: string;
   label: string;
   description: string;
-  params?: TransitionParamDef[];
+  params?: TransitionParamDef[] | undefined;
 }> {
   return REGISTRY_LIST.map(({ id, label, description, params }) => ({
     value: id,

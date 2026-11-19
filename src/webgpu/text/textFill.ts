@@ -88,9 +88,9 @@ export function mapColorsToUniformSlots(
 
 export interface TextFillOptions {
   time: number;
-  shaderId?: string;
-  params?: Record<string, number>;
-  colors?: Record<string, string>;
+  shaderId?: string | undefined;
+  params?: Record<string, number> | undefined;
+  colors?: Record<string, string> | undefined;
   /** Target size; if omitted, derived from mask. */
   width?: number;
   height?: number;
@@ -229,7 +229,7 @@ export class TextFillRenderer {
     // stored straight but coverage² if the upload premultiplied it. The
     // shader writes premultiplied colour itself.
     this.device.queue.copyExternalImageToTexture(
-      { source: mask as unknown as GPUCopyExternalImageSource },
+      { source: mask },
       { texture: this.maskTex, premultipliedAlpha: false },
       { width, height },
     );

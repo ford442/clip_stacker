@@ -76,7 +76,10 @@ const GPU_QUEUE_LABEL = 'clip_stacker-preview-queue';
  * adapter actually reports — requesting more than `adapter.limits.<key>`
  * throws, so we never ask for more than the hardware advertises.
  */
-const DESIRED_LIMITS: Record<string, number> = {
+/** A `GPUSupportedLimits` member (the type's nominal brand aside). */
+type GpuLimitName = Exclude<keyof GPUSupportedLimits, '__brand'>;
+
+const DESIRED_LIMITS: Partial<Record<GpuLimitName, number>> = {
   maxTextureDimension2D: 16384,
   maxBufferSize: 512 * 1024 * 1024,
   maxStorageBufferBindingSize: 512 * 1024 * 1024,
@@ -145,10 +148,10 @@ export const MAX_DEVICE_RECOVERY_ATTEMPTS = 5;
 const STABLE_DEVICE_MS = 30_000;
 
 function resolveRequiredLimits(adapter: GPUAdapter): Record<string, number> {
-  const limits = adapter.limits as unknown as Record<string, number>;
   const required: Record<string, number> = {};
-  for (const [key, desired] of Object.entries(DESIRED_LIMITS)) {
-    const supported = limits[key];
+  for (const [key, desired] of Object.entries(DESIRED_LIMITS) as [GpuLimitName, number][]) {
+    // Typed `number`, but adapters (and test fakes) may lack a newer limit.
+    const supported: unknown = adapter.limits[key];
     if (typeof supported === 'number') {
       required[key] = Math.min(desired, supported);
     }

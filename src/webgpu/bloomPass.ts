@@ -19,11 +19,11 @@ import {
 import { spliceUniformStructs } from './uniformLayout';
 import { BLOOM_UNIFORMS } from './uniformSpecs';
 
-const BLOOMSHADER_SOURCE = spliceUniformStructs(bloomShaderSource, BLOOM_UNIFORMS);
+const BLOOM_SOURCE = spliceUniformStructs(bloomShaderSource, BLOOM_UNIFORMS);
 
 /** `bloom.wgsl` as compiled: its uniform struct spliced in, scene-linear when asked. */
 export function bloomShaderCode(sceneLinear = false): string {
-  return shaderForSceneLinear(BLOOMSHADER_SOURCE, sceneLinear);
+  return shaderForSceneLinear(BLOOM_SOURCE, sceneLinear);
 }
 
 const LEVEL_FORMAT: GPUTextureFormat = 'rgba16float';
@@ -154,16 +154,25 @@ export class BloomGpuPass {
       pass.end();
     };
 
+    const level = (k: number): { texture: GPUTexture; size: BloomLevelSize } => {
+      const texture = this.levels[k];
+      const size = plan.sizes[k];
+      if (!texture || !size) throw new Error(`bloom level ${k} is not allocated`);
+      return { texture, size };
+    };
     const last = plan.sizes.length - 1;
-    run(this.prefilter, inputTexture, { width, height }, this.levels[0].createView(), 'clear', 1);
+    const top = level(0);
+    run(this.prefilter, inputTexture, { width, height }, top.texture.createView(), 'clear', 1);
     for (let k = 1; k <= last; k++) {
-      run(this.down, this.levels[k - 1], plan.sizes[k - 1], this.levels[k].createView(), 'clear', 1);
+      const src = level(k - 1);
+      run(this.down, src.texture, src.size, level(k).texture.createView(), 'clear', 1);
     }
     for (let k = last - 1; k >= 0; k--) {
       const weight = k === last - 1 ? plan.deepestWeight : 1;
-      run(this.up, this.levels[k + 1], plan.sizes[k + 1], this.levels[k].createView(), 'load', weight);
+      const src = level(k + 1);
+      run(this.up, src.texture, src.size, level(k).texture.createView(), 'load', weight);
     }
-    run(this.composite, this.levels[0], plan.sizes[0], outputView, 'clear', 1, inputTexture);
+    run(this.composite, top.texture, top.size, outputView, 'clear', 1, inputTexture);
 
     if (!commandEncoder) device.queue.submit([encoder.finish()]);
   }
@@ -177,15 +186,17 @@ export class BloomGpuPass {
   }
 
   private uniformBuffer(device: GPUDevice, index: number): GPUBuffer {
-    while (this.uniformBuffers.length <= index) {
+    let buffer = this.uniformBuffers[index];
+    while (!buffer) {
       this.uniformBuffers.push(
         device.createBuffer({
           size: BLOOM_UNIFORMS.byteSize,
           usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         }),
       );
+      buffer = this.uniformBuffers[index];
     }
-    return this.uniformBuffers[index];
+    return buffer;
   }
 
   /** The whole chain for this frame size; a plan draws into a prefix of it. */

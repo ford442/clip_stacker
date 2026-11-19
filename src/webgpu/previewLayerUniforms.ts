@@ -37,7 +37,7 @@ export interface LayerRenderParams {
    * Chroma / luma key for this layer. Omit for unkeyed layers — the shader
    * then samples the source as-is.
    */
-  key?: LayerKeyUniforms;
+  key?: LayerKeyUniforms | undefined;
   /** Destination rectangle on the canvas in normalized 0–1 coordinates. */
   destRect?: NormalizedDestRect;
   /** When true, clears the canvas before drawing this layer. */

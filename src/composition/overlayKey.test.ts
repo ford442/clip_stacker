@@ -106,7 +106,7 @@ describe('keyPixel — chroma', () => {
     expect(alphas[1]).toBeLessThan(1);
     // A blend this wide ramps well past red's UV distance, so red is nearly —
     // but, as in FFmpeg, not exactly — opaque.
-    expect(alphas[2]).toBeGreaterThan(alphas[1]);
+    expect(alphas[2]).toBeGreaterThan(alphas[1]!);
     expect(alphas[2]).toBeGreaterThan(0.9);
   });
 
