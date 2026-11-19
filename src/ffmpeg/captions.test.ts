@@ -72,7 +72,7 @@ describe('buildSoftSubtitleArgs', () => {
 
   it('maps both inputs so the existing streams survive', () => {
     const maps = args.reduce<string[]>(
-      (acc, arg, i) => (arg === '-map' ? [...acc, args[i + 1]] : acc),
+      (acc, arg, i) => (arg === '-map' ? [...acc, args[i + 1] ?? ''] : acc),
       [],
     );
     expect(maps).toEqual(['0', '1']);

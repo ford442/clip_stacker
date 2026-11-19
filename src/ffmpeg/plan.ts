@@ -75,17 +75,22 @@ export function calculateRenderPlan(
     clips,
     transitions,
     textOverlays,
-    finishing: context.finishing,
-    forceFFmpeg: context.forceFFmpeg,
-    useCanvas: context.useCanvasRenderer,
-    webGpuAvailable: context.webGpuAvailable,
-    webCodecsAvailable: context.webCodecsAvailable,
-    mediaRecorderAvailable: context.mediaRecorderAvailable,
+    ...(context.finishing !== undefined && { finishing: context.finishing }),
+    ...(context.forceFFmpeg !== undefined && { forceFFmpeg: context.forceFFmpeg }),
+    ...(context.useCanvasRenderer !== undefined && { useCanvas: context.useCanvasRenderer }),
+    // The estimate leaves the runtime probes unset (undefined = not probed).
+    ...(context.webGpuAvailable !== undefined && { webGpuAvailable: context.webGpuAvailable }),
+    ...(context.webCodecsAvailable !== undefined && {
+      webCodecsAvailable: context.webCodecsAvailable,
+    }),
+    ...(context.mediaRecorderAvailable !== undefined && {
+      mediaRecorderAvailable: context.mediaRecorderAvailable,
+    }),
     willReencode:
       plan.willReencode ||
       context.forceReencode === true ||
       clipsNeedResolutionNormalization(clips, settings),
-    outputColor: context.outputColor,
+    ...(context.outputColor !== undefined && { outputColor: context.outputColor }),
     burnCaptions: context.captionMode === 'burn',
   });
   const encoderIntent = decision.path;
