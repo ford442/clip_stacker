@@ -22,6 +22,23 @@ A web app for stacking video and audio clips into one merged MP4, powered by FFm
 - Save/load projects locally as JSON with embedded source media
 - Save/load projects remotely via a contabo_storage_manager-compatible HTTP endpoint with uploaded source media ([ford442/contabo_storage_manager](https://github.com/ford442/contabo_storage_manager))
 
+## Timeline interchange, stems and scripting
+
+- **File → Import / Export timeline**: OpenTimelineIO (`.otio`), FCPXML 1.11
+  and CMX 3600 EDL, for Resolve, Premiere, Final Cut Pro and Avid. Media is
+  relinked by file name, content hash or Drive id; anything missing comes in
+  as an **offline clip** (a slate) until *File → Relink media…* finds it.
+- **File → Export stems…**: one Broadcast WAV per lane plus the master,
+  rendered by the same bus graph as the mix, stamped with the project
+  timecode (`bext` `TimeReference`) so a DAW places them at the right time.
+- **`window.clipStacker.project`**, the **`cs` CLI** (`npm run cs -- render
+  project.json --media ./media --out out.mp4`) and an **MCP server**
+  (`scripts/cs/mcp.mjs`): read, edit (`ProjectOp`s, one undo step), import,
+  export, stems and render without the UI.
+
+Details: [`docs/interchange.md`](docs/interchange.md) and
+[`docs/project-api.md`](docs/project-api.md).
+
 ## Rendering Strategy
 
 When you click "Render", the app automatically decides whether to use **lossless concat** (fast) or **re-encoding** (necessary for effects). The render plan is displayed before and during rendering so you know what to expect:

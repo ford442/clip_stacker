@@ -36,6 +36,7 @@ export default defineConfig({
         'src/media/**': { lines: 57, statements: 56, functions: 66, branches: 54 },
         'src/export/**': { lines: 53, statements: 53, functions: 63, branches: 53 },
         'src/workers/**': { lines: 89, statements: 86, functions: 83, branches: 73 },
+        'src/interchange/**': { lines: 88, statements: 84, functions: 82, branches: 69 },
       },
     },
   },

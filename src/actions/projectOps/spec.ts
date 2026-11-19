@@ -222,6 +222,5 @@ export const PROJECT_OPS: Readonly<Record<string, OpSpec>> = {
   },
 };
 
-export type ProjectOpName = keyof typeof PROJECT_OPS;
 /** A scripted edit: `{ op: <name>, …fields }` (see `PROJECT_OPS`). */
 export type ProjectOp = { op: string } & Record<string, unknown>;

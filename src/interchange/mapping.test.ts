@@ -37,3 +37,26 @@ describe('detectInterchangeFormat', () => {
     expect(() => importTimeline('hello')).toThrow(/Not a timeline file/);
   });
 });
+
+describe('docs/interchange.md', () => {
+  it('carries the mapping table as INTERCHANGE_MAPPING has it', async () => {
+    const { readFileSync, writeFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const file = resolve(process.cwd(), 'docs/interchange.md');
+    const cell = (text: string) => text.replace(/\|/g, '\\|');
+    const table = [
+      '| Clip Stacker | OTIO | FCPXML | CMX 3600 EDL | Notes |',
+      '|---|---|---|---|---|',
+      ...INTERCHANGE_MAPPING.map((row) => `| ${[row.concept, row.otio, row.fcpxml, row.edl, row.note].map(cell).join(' | ')} |`),
+    ].join('\n');
+    const doc = readFileSync(file, 'utf8');
+    const start = doc.indexOf('-->', doc.indexOf('<!-- mapping:start')) + 3;
+    const end = doc.indexOf('<!-- mapping:end -->');
+    const generated = `${doc.slice(0, start)}\n${table}\n${doc.slice(end)}`;
+    if (process.env['UPDATE_INTERCHANGE_DOC']) {
+      writeFileSync(file, generated);
+      return;
+    }
+    expect(doc).toBe(generated);
+  });
+});

@@ -79,7 +79,7 @@ export async function openSession({ gpu = false, media = null, log = () => {}, h
   const dist = path.join(REPO_ROOT, 'dist', 'index.html');
   if (!existsSync(dist)) throw new Error('No production build: run `npm run build` first (cs serves dist/ like `npm run preview`).');
   const { preview } = await import('vite');
-  const { chromium } = await import('playwright');
+  const { chromium } = await import('@playwright/test');
   const server = await preview({
     root: REPO_ROOT,
     configFile: path.join(REPO_ROOT, 'vite.config.ts'),

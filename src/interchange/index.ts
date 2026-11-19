@@ -20,7 +20,7 @@ export type { InterchangeFormat } from './mapping';
 export type { MediaFacts, ToInterchangeOptions } from './toInterchange';
 export type { MediaReference } from './model';
 
-export { INTERCHANGE_FILE_TYPES, INTERCHANGE_FORMATS, isInterchangeFormat } from './formats';
+export { INTERCHANGE_FILE_TYPES, isInterchangeFormat } from './formats';
 
 /** The format of a timeline file, from its name and then its content; null when it is none of them. */
 export function detectInterchangeFormat(text: string, fileName = ''): InterchangeFormat | null {

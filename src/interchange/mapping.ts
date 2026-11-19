@@ -34,7 +34,7 @@ export const INTERCHANGE_MAPPING: readonly MappingRow[] = [
     concept: 'Overlay video lanes',
     otio: 'further video Tracks (bottom to top)',
     fcpxml: 'connected clips, lane 1…n',
-    edl: 'not written (one video track); listed as comments',
+    edl: 'not written (one video track)',
     note: 'role `overlay`; overlapping items spill into extra tracks tagged with the same lane id',
   },
   {
@@ -49,7 +49,7 @@ export const INTERCHANGE_MAPPING: readonly MappingRow[] = [
     otio: 'video Track of Clips with a `GeneratorReference` (`clip_stacker.title`)',
     fcpxml: '`title` (Basic Title) connected above the overlays',
     edl: 'not written',
-    note: 'role `titles`; a title runs from its placement to the end of the programme',
+    note: 'role `titles`; titles are not time-gated, so each spans the programme; its lane placement rides in metadata',
   },
   {
     concept: 'Lane mute',
@@ -75,7 +75,7 @@ export const INTERCHANGE_MAPPING: readonly MappingRow[] = [
   {
     concept: 'Speed curve (`automation.playbackRate`)',
     otio: 'sampled points in metadata (`LinearTimeWarp` carries the average)',
-    fcpxml: '`timeMap` sampled at every keyframe and each second',
+    fcpxml: '`timeMap` with a point at each end and at every rate keyframe',
     edl: '`M2` at the average speed',
     note: '`timeMap`',
   },
