@@ -248,7 +248,10 @@ export async function runContaboJob(
   const onAbort = () => void client.cancelJob(created.jobId).catch(() => {});
   options.signal?.addEventListener('abort', onAbort, { once: true });
   try {
-    const finished = await client.waitForJob(created.jobId, { signal: options.signal, onUpdate: options.onJob });
+    const finished = await client.waitForJob(created.jobId, {
+      ...(options.signal && { signal: options.signal }),
+      ...(options.onJob && { onUpdate: options.onJob }),
+    });
     if (finished.status === 'succeeded' && finished.result) return finished.result;
     if (finished.status === 'cancelled') throw new DOMException('Aborted', 'AbortError');
     throw new SegmentError(finished.error || `The processing job ${finished.status}.`);
@@ -274,7 +277,7 @@ async function extractOnContabo(request: SegmentRequest, deps: SegmentDeps, opti
   assertSegmentLength(result.durationSec, request.startSec, request.endSec, 'The server’s segment');
   return {
     backend: 'contabo',
-    method: result.method,
+    ...(result.method !== undefined && { method: result.method }),
     mediaName: result.name,
     url: result.url,
     durationSec: result.durationSec,

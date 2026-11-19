@@ -85,7 +85,7 @@ describe('startDriveAuthPopup', () => {
       post: (message) => posted.push(message),
       readConfig: async () => ({ clientId: 'client', apiKey: 'key', appId: '9' }),
       requestToken,
-      showPicker,
+      ...(showPicker && { showPicker }),
       setStatus: (text) => statuses.push(text),
       onNeedsGesture: (again) => {
         retry = again;
@@ -160,10 +160,10 @@ describe('startDriveAuthPopup', () => {
     });
     await flush();
     expect(picked).toHaveLength(1);
-    expect(picked[0].accessToken).toBe('tok-1');
-    expect(picked[0].apiKey).toBe('key');
-    expect(picked[0].mimeTypes).toContain('video/mp4');
-    expect(picked[0].mimeTypes).toContain('audio/mpeg');
+    expect(picked[0]?.accessToken).toBe('tok-1');
+    expect(picked[0]?.apiKey).toBe('key');
+    expect(picked[0]?.mimeTypes).toContain('video/mp4');
+    expect(picked[0]?.mimeTypes).toContain('audio/mpeg');
     expect(withConsent.posted.at(-1)).toEqual({
       state: 's1',
       type: 'picked',

@@ -119,7 +119,7 @@ export function getMorphNeighborClips(
   if (index < 1 || index >= timelineClips.length) return null;
   const clipA = timelineClips[index - 1];
   const clipB = timelineClips[index];
-  if (clipA.kind !== 'video' || clipB.kind !== 'video') return null;
+  if (!clipA || !clipB || clipA.kind !== 'video' || clipB.kind !== 'video') return null;
   if (getClipDuration(clipA) <= 0 || getClipDuration(clipB) <= 0) return null;
   return { clipA, clipB };
 }

@@ -113,7 +113,7 @@ export class HuggingFaceRifeBackend implements VideoProcessingBackend {
         onProgress({
           stage: event.stage,
           progress: event.progress,
-          message: event.message,
+          ...(event.message !== undefined && { message: event.message }),
         });
       };
     }

@@ -70,7 +70,7 @@ describe('extractSegment (browser route)', () => {
     const result = await extractSegment(localReq(), deps);
     expect(result).toMatchObject({ backend: 'browser', method: 'copy', url: 'blob:result', durationSec: 10, width: 640, height: 360 });
     expect(deps.cutInBrowser).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(deps.cutInBrowser).mock.calls[0].slice(1, 4)).toEqual([10, 20, 'copy']);
+    expect(vi.mocked(deps.cutInBrowser).mock.calls[0]?.slice(1, 4)).toEqual([10, 20, 'copy']);
   });
 
   it('re-cuts exactly when the copy comes out the wrong length', async () => {
@@ -105,7 +105,7 @@ describe('extractSegment (browser route)', () => {
 
   it('rejects ranges that make no sense before touching any media', async () => {
     const { deps } = makeDeps();
-    for (const [s, e] of [[5, 5], [8, 2], [-1, 3], [NaN, 3], [0, 0.01]]) {
+    for (const [s, e] of [[5, 5], [8, 2], [-1, 3], [NaN, 3], [0, 0.01]] as const) {
       await expect(extractSegment(localReq({ startSec: s, endSec: e }), deps)).rejects.toThrow(SegmentError);
     }
     await expect(extractSegment(localReq({ startSec: 50, endSec: 90 }), deps)).rejects.toThrow(/only 60\.00s long/);
