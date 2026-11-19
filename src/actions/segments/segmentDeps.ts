@@ -36,7 +36,7 @@ export function fetchSegmentBlob(url: string): Promise<Blob> {
 async function fetchDriveFile(item: DriveMediaItem, token: string, signal?: AbortSignal): Promise<File> {
   const response = await fetch(`${DRIVE_FILES_API}/${encodeURIComponent(item.fileId)}?alt=media&supportsAllDrives=true`, {
     headers: { authorization: `Bearer ${token}` },
-    signal,
+    signal: signal ?? null,
   });
   if (!response.ok) {
     throw new Error(

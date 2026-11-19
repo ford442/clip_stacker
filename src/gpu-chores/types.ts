@@ -32,29 +32,29 @@ export interface LumaLevels {
 
 export interface GpuChoreJob {
   op: GpuChoreOp;
-  prefer?: GpuChorePrefer;
+  prefer?: GpuChorePrefer | undefined;
   /** RGBA8 tightly packed. Required for CPU/Worker; optional for WebGPU if `source` is set. */
-  pixels?: Uint8ClampedArray | Uint8Array;
+  pixels?: Uint8ClampedArray | Uint8Array | undefined;
   width: number;
   height: number;
   /**
    * GPU-ingestible bitmap. When a device is adopted, histogram/downsample can
    * upload this without a full CPU ImageData copy.
    */
-  source?: ImageBitmap | HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | HTMLImageElement;
+  source?: ImageBitmap | HTMLCanvasElement | OffscreenCanvas | HTMLVideoElement | HTMLImageElement | undefined;
   /** downsample_2d destination size. */
-  outWidth?: number;
-  outHeight?: number;
+  outWidth?: number | undefined;
+  outHeight?: number | undefined;
   /** separable_blur radius in pixels (integer ≥ 1). */
-  radius?: number;
+  radius?: number | undefined;
   /** vectorscope_uv bin grid edge length (default VECTORSCOPE_SIZE). */
-  binSize?: number;
+  binSize?: number | undefined;
   /**
    * Already-resident GPU texture to read instead of uploading `pixels`/`source`
    * (preview scopes read the composed frame copy). Caller keeps ownership — the
    * WebGPU path never destroys it. WebGPU-only; ignored by CPU/worker backends.
    */
-  texture?: GPUTexture;
+  texture?: GPUTexture | undefined;
 }
 
 /** Job fields that can be posted to the preview worker (bitmap transferred separately). */

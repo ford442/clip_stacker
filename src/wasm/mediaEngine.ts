@@ -193,7 +193,7 @@ function resamplerFlags(choice: TimelineMixStreamOptions['resampler']): number {
 }
 
 export async function loadMediaEngineModule(options?: {
-  baseUrl?: string;
+  baseUrl?: string | undefined;
 }): Promise<WasmModule | null> {
   return loadEmscriptenModule<WasmModule>(MEDIA_ENGINE_MODULE, MEDIA_ENGINE_FACTORY, options);
 }

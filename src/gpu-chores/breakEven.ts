@@ -44,9 +44,9 @@ export function selectBackend(options: {
   prefer: GpuChorePrefer;
   width: number;
   height: number;
-  outWidth?: number;
-  outHeight?: number;
-  radius?: number;
+  outWidth?: number | undefined;
+  outHeight?: number | undefined;
+  radius?: number | undefined;
   gpuAvailable: boolean;
   workerAvailable: boolean;
 }): BackendSelection {
@@ -101,9 +101,9 @@ function meetsGpuBreakEven(
   options: {
     width: number;
     height: number;
-    outWidth?: number;
-    outHeight?: number;
-    radius?: number;
+    outWidth?: number | undefined;
+    outHeight?: number | undefined;
+    radius?: number | undefined;
   },
 ): boolean {
   const pixels = pixelCount(options.width, options.height);

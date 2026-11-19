@@ -50,7 +50,7 @@ export function toMetaContentSecurityPolicy(policy: string): string {
     .map((directive) => directive.trim())
     .filter((directive) => {
       const name = directive.split(/\s+/, 1)[0]?.toLowerCase();
-      return Boolean(name) && !META_IGNORED_DIRECTIVES.has(name);
+      return name !== undefined && name !== '' && !META_IGNORED_DIRECTIVES.has(name);
     })
     .join('; ');
 }

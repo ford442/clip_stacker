@@ -11,9 +11,9 @@ import {
 } from './audioAnalysis';
 
 export interface OfflineAnalysisOptions {
-  fftSize?: number;
+  fftSize?: number | undefined;
   /** Directory URL for WASM assets (tests / non-root deploy). */
-  baseUrl?: string;
+  baseUrl?: string | undefined;
   /**
    * Peak threshold for recording a beat timestamp from the envelope.
    * Default 0.85 — captures onset impulses from the WASM detector.

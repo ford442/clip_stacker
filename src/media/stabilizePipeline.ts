@@ -189,12 +189,13 @@ function createAnalysisCanvas(width: number, height: number): AnalysisCanvas | n
     ctx = canvas.getContext('2d', { willReadFrequently: true });
   }
   if (!ctx) return null;
+  const context = ctx;
 
   return {
     drawFrame(frame: VideoFrame): Uint8ClampedArray | null {
       try {
-        ctx!.drawImage(frame as unknown as CanvasImageSource, 0, 0, width, height);
-        return ctx!.getImageData(0, 0, width, height).data;
+        context.drawImage(frame, 0, 0, width, height);
+        return context.getImageData(0, 0, width, height).data;
       } catch {
         return null;
       }
