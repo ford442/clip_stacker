@@ -59,6 +59,11 @@ endif()
 # GZIP_BUDGET: per-module override (0 = no check). THREADS: -pthread.
 # EXCEPTIONS: link C++ throw support for third-party code that throws
 # (whisper.cpp); catching stays off, so a throw still aborts the module.
+# -Werror (as in host.cmake): an emcc-only warning fails the build like a
+# host one. It covers the target's own sources only (whisper.cpp's libraries
+# are upstream targets); a vendored file inside a module silences its
+# warnings per file (kissfft in audio_analysis). Warning flags never change
+# the emitted bytes.
 function(clip_stacker_wasm_module target)
   cmake_parse_arguments(ARG "THREADS;EXCEPTIONS"
     "EXPORT_NAME;INITIAL_MEMORY;MAXIMUM_MEMORY;GZIP_BUDGET"
@@ -87,6 +92,7 @@ function(clip_stacker_wasm_module target)
     -ffp-contract=off
     -Wall
     -Wextra
+    -Werror
     $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
   )
   if(NOT ARG_EXCEPTIONS)
@@ -193,6 +199,7 @@ function(clip_stacker_standalone_wasm target)
     -ffp-contract=off
     -Wall
     -Wextra
+    -Werror
     $<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>
     $<$<COMPILE_LANGUAGE:CXX>:-fno-exceptions>
   )
