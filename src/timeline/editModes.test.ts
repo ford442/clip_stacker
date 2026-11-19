@@ -55,7 +55,7 @@ function overlayState(
 ): EditState {
   const tracks = createDefaultTracks();
   tracks[1] = {
-    ...tracks[1],
+    ...tracks[1]!,
     items: items.map((i) => ({ clipId: i.id, startTime: i.start })),
   };
   return { tracks, clips, transitions };
@@ -64,7 +64,7 @@ function overlayState(
 function baseState(clips: Clip[], transitions: ClipTransition[] = []): EditState {
   const tracks = createDefaultTracks();
   tracks[0] = {
-    ...tracks[0],
+    ...tracks[0]!,
     items: clips.map((c, i) => ({ clipId: c.id, startTime: i * 100 })),
   };
   return {
@@ -120,7 +120,7 @@ describe('overwriteEdit', () => {
     const next = ok(overwriteEdit(state, 'n', OVERLAY_VIDEO_TRACK_ID, 2));
     const items = lane(next, OVERLAY_VIDEO_TRACK_ID);
     expect(items.map(([, t]) => t)).toEqual([0, 2, 4]);
-    const tail = clip(next, items[2][0]);
+    const tail = clip(next, items[2]![0]);
     expect(tail.id).not.toBe('x');
     expect(tail.file).toBe(clip(state, 'x').file);
     expect(tail.trimStart).toBeCloseTo(4);
@@ -169,8 +169,8 @@ describe('insertEdit', () => {
     const next = ok(insertEdit(state, 'n', OVERLAY_VIDEO_TRACK_ID, 1));
     const items = lane(next, OVERLAY_VIDEO_TRACK_ID);
     expect(items.map(([, t]) => t)).toEqual([0, 1, 3, 6]);
-    expect(items[1][0]).toBe('n');
-    expect(clip(next, items[2][0]).trimStart).toBeCloseTo(1);
+    expect(items[1]![0]).toBe('n');
+    expect(clip(next, items[2]![0]).trimStart).toBeCloseTo(1);
     expect(clip(next, 'x').trimEnd).toBeCloseTo(1);
   });
 
@@ -390,7 +390,7 @@ describe('slideClip', () => {
     const next = ok(slideClip(state, 'b', 1));
     const ordered = ['a', 'b', 'c'].map((id) => clip(next, id));
     const durations = ordered.map(getClipDuration);
-    expect(durations[0] + durations[1] + durations[2]).toBeCloseTo(12);
+    expect(durations[0]! + durations[1]! + durations[2]!).toBeCloseTo(12);
     expect(lane(next, MAIN_VIDEO_TRACK_ID)).toEqual([['a', 0], ['b', 4], ['c', 8]]);
   });
 });
@@ -422,7 +422,7 @@ describe('lock guards', () => {
   it('a linked ripple is blocked by a locked neighbour lane with items after the edit', () => {
     let s = state();
     s = { ...s, tracks: addTrack(s.tracks, 'video') };
-    const v3 = s.tracks.filter((t) => t.kind === 'video')[2];
+    const v3 = s.tracks.filter((t) => t.kind === 'video')[2]!;
     s = {
       ...s,
       clips: [...s.clips, trimmed('w', 0, 1)],

@@ -61,8 +61,8 @@ describe('trackModel', () => {
     const tracks = migrateLegacyClipsToTracks(clips, []);
     const overlay = tracks.find((t) => t.id === OVERLAY_VIDEO_TRACK_ID);
     expect(overlay?.items).toHaveLength(1);
-    expect(overlay?.items[0].clipId).toBe('pip');
-    expect(overlay?.items[0].startTime).toBe(0);
+    expect(overlay?.items[0]!.clipId).toBe('pip');
+    expect(overlay?.items[0]!.startTime).toBe(0);
   });
 
   it('toLegacyTimelineView preserves layerIndex semantics', () => {
@@ -73,8 +73,8 @@ describe('trackModel', () => {
     const tracks = migrateLegacyClipsToTracks(clips, []);
     const legacy = toLegacyTimelineView(tracks, clips);
     expect(legacy.map((c) => c.id)).toEqual(['base', 'pip']);
-    expect(legacy[0].layerIndex ?? 0).toBe(0);
-    expect(legacy[1].layerIndex).toBe(1);
+    expect(legacy[0]!.layerIndex ?? 0).toBe(0);
+    expect(legacy[1]!.layerIndex).toBe(1);
   });
 });
 
@@ -127,7 +127,7 @@ describe('project migration', () => {
     const clips = [makeClip('a', 5)];
     let tracks = migrateLegacyClipsToTracks(clips, []);
     tracks = addTrack(tracks, 'text');
-    const titlesId = tracks[tracks.length - 1].id;
+    const titlesId = tracks[tracks.length - 1]!.id;
     tracks = tracks.map((t) =>
       t.id === titlesId ? { ...t, items: [{ clipId: 'overlay-1', startTime: 2 }] } : t,
     );

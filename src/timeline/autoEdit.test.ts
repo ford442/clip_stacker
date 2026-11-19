@@ -29,7 +29,7 @@ function makeClip(id: string, duration: number, overrides: Partial<Clip> = {}): 
 
 function tracksWith(clipId: string): Track[] {
   const tracks = createDefaultTracks();
-  tracks[0] = { ...tracks[0], items: [{ clipId, startTime: 0 }] };
+  tracks[0] = { ...tracks[0]!, items: [{ clipId, startTime: 0 }] };
   return tracks;
 }
 

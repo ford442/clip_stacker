@@ -28,7 +28,7 @@ describe('planAddClip', () => {
     const plan = planAddClip([], tracks, [], clip);
 
     expect(plan.clips).toHaveLength(1);
-    expect(plan.clips[0].id).toBe('a');
+    expect(plan.clips[0]!.id).toBe('a');
     expect(plan.tracks).toBeDefined();
     const videoTrack = plan.tracks!.find((t) => t.kind === 'video');
     expect(videoTrack?.items.some((item) => item.clipId === 'a')).toBe(true);
@@ -43,8 +43,8 @@ describe('planAddClip', () => {
 
     expect(plan.clips).toHaveLength(2);
     expect(plan.clipGroups).toHaveLength(1);
-    expect(plan.clipGroups![0].variants.A?.id).toBe('a');
-    expect(plan.clipGroups![0].variants.B?.id).toBe('b');
+    expect(plan.clipGroups![0]!.variants.A?.id).toBe('a');
+    expect(plan.clipGroups![0]!.variants.B?.id).toBe('b');
     expect(plan.tracks).toBeUndefined();
   });
 });

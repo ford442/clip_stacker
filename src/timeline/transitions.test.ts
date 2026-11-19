@@ -184,9 +184,9 @@ describe("timeline/transitions", () => {
       const result = reindexTransitions(transitions, 2);
       expect(result).toHaveLength(2);
       // afterClipIndex 1 stays the same
-      expect(result[0].afterClipIndex).toBe(1);
+      expect(result[0]!.afterClipIndex).toBe(1);
       // afterClipIndex 3 becomes 2
-      expect(result[1].afterClipIndex).toBe(2);
+      expect(result[1]!.afterClipIndex).toBe(2);
     });
 
     it("should adjust indices after removed clip", () => {
@@ -196,9 +196,9 @@ describe("timeline/transitions", () => {
       ];
       const result = reindexTransitions(transitions, 0);
       // afterClipIndex 1 becomes 0
-      expect(result[0].afterClipIndex).toBe(0);
+      expect(result[0]!.afterClipIndex).toBe(0);
       // afterClipIndex 2 becomes 1
-      expect(result[1].afterClipIndex).toBe(1);
+      expect(result[1]!.afterClipIndex).toBe(1);
     });
 
     it("should not adjust indices before removed clip", () => {
@@ -208,8 +208,8 @@ describe("timeline/transitions", () => {
       ];
       const result = reindexTransitions(transitions, 5);
       expect(result).toHaveLength(2);
-      expect(result[0].afterClipIndex).toBe(1);
-      expect(result[1].afterClipIndex).toBe(2);
+      expect(result[0]!.afterClipIndex).toBe(1);
+      expect(result[1]!.afterClipIndex).toBe(2);
     });
   });
 
@@ -220,8 +220,8 @@ describe("timeline/transitions", () => {
         { afterClipIndex: 2, type: "motion", duration: 0.5 },
       ];
       const result = shiftTransitionsForInsert(transitions, 2);
-      expect(result[0].afterClipIndex).toBe(1);
-      expect(result[1].afterClipIndex).toBe(3);
+      expect(result[0]!.afterClipIndex).toBe(1);
+      expect(result[1]!.afterClipIndex).toBe(3);
     });
   });
 

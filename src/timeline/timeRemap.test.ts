@@ -98,7 +98,7 @@ describe('timeRemap', () => {
 
   describe('loopCount', () => {
     function loopedClip(loopCount?: number): Clip {
-      return makeClip({ trimStart: 0, trimEnd: 6, playbackRate: 2, loopCount });
+      return makeClip({ trimStart: 0, trimEnd: 6, playbackRate: 2, ...(loopCount !== undefined ? { loopCount } : {}) });
     }
 
     it('multiplies one cycle by loopCount for total output duration', () => {
