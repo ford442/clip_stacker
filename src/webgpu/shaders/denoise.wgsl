@@ -107,7 +107,7 @@ fn bilateralLuma(uv: vec2<f32>, centerRgb: vec3<f32>) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// Quality tiers — mirror `src/utils/denoiseReference.ts` (the tested
+// Quality tiers — mirror `src/finishing/denoiseReference.ts` (the tested
 // reference). They read exact texels with textureLoad (clamp-to-edge), so
 // they need no uniform control flow and match the CPU reference.
 

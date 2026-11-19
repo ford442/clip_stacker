@@ -29,7 +29,7 @@ fn srgbOetf(c: vec3<f32>) -> vec3<f32> {
 }
 
 // Display P3 → Rec.709, linear light (DISPLAY_P3_TO_REC709 in
-// src/finishing/colorManagement.ts; previewUniformLayout.test.ts pins it).
+// src/finishing/colorManagement.ts; previewShader.test.ts pins it).
 const P3_TO_709_ROW0 = vec3<f32>(1.2249402, -0.2249402, 0.0);
 const P3_TO_709_ROW1 = vec3<f32>(-0.0420570, 1.0420570, 0.0);
 const P3_TO_709_ROW2 = vec3<f32>(-0.0196376, -0.0786360, 1.0982736);

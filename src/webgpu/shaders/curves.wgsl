@@ -1,4 +1,4 @@
-// Curves & levels — mirrors `curvesPixel` in `src/utils/curves.ts` (the
+// Curves & levels — mirrors `curvesPixel` in `src/finishing/curves.ts` (the
 // tested reference). Levels → master curve → channel curve, mixed by amount.
 
 @group(0) @binding(0) var inputSampler: sampler;

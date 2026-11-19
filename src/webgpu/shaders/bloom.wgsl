@@ -1,4 +1,4 @@
-// Bloom / light wrap pyramid — mirrors `bloomImage` in `src/utils/bloom.ts`
+// Bloom / light wrap pyramid — mirrors `bloomImage` in `src/finishing/bloom.ts`
 // (the tested reference). Entry points: fs_prefilter (frame → level 0),
 // fs_down (level k → k+1), fs_up (tent of level k+1, added onto level k by
 // the pipeline's additive blend) and fs_composite (glow over the frame).

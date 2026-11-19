@@ -88,7 +88,7 @@ fn midtoneWeight(y: f32) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// Edge-aware / multi-scale modes — mirror `src/utils/sharpenReference.ts`
+// Edge-aware / multi-scale modes — mirror `src/finishing/sharpenReference.ts`
 // (the tested reference). Exact texels via textureLoad (clamp-to-edge).
 
 const SHARPEN_EDGE_SIGMA: f32 = 0.08;

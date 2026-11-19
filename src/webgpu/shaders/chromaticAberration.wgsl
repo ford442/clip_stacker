@@ -1,5 +1,5 @@
 // Chromatic aberration — mirrors `chromaticAberrationPixel` in
-// `src/utils/chromaticAberration.ts` (the tested reference).
+// `src/finishing/chromaticAberration.ts` (the tested reference).
 
 @group(0) @binding(0) var inputSampler: sampler;
 @group(0) @binding(1) var inputTex: texture_2d<f32>;

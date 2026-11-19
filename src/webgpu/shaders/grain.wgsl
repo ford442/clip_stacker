@@ -54,7 +54,7 @@ fn hash23(p: vec2<f32>) -> vec3<f32> {
 }
 
 // ---------------------------------------------------------------------------
-// Film quality grain — mirrors `src/utils/filmGrain.ts` (the tested reference).
+// Film quality grain — mirrors `src/finishing/filmGrain.ts` (the tested reference).
 
 const FILM_GRAIN_NORM: f32 = 2.0;
 const FILM_GRAIN_RMS: f32 = 0.046;

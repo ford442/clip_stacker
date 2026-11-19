@@ -148,6 +148,9 @@ Playwright runs against `npm run preview`, on Chromium with WebGPU on SwiftShade
 - `decodeFrame(blob, t)` decodes one frame of a file.
 - `compare` returns PSNR + SSIM (`imageMetrics.ts`).
 - `crash()` makes `App` throw, for `RootErrorBoundary`.
+- `listShaders()` returns every WGSL module as its pass assembles it (`webgpu/shaderCatalog.ts`).
+
+Under `?test_harness` the timeline export (`encodeTimelineComposite`) also copies its frame 0 and throws when it is black although the plan draws a visible clip.
 
 **Goldens** (`e2e/goldens.spec.ts`, cases in `e2e/fixtures.ts`). Each case renders at 320x180 and asserts:
 
@@ -158,7 +161,9 @@ Sample times sit on the 30 fps export grid. A new finishing case needs settings 
 
 HDR10 compares the PQ readback, not the preview: the preview is the SDR monitor view. The export may refuse where no 10-bit encoder exists, as in CI's Chromium.
 
-**Colour** (`e2e/color.spec.ts`): an HDR10 ramp (a custom transition drawing `uv.x^2.6`, +3 EV, 1280x720) must pack to I420P10 / BT.2020 PQ / limited range with > 600 distinct Y codes (it lands 638; an 8-bit path caps at ~250), and the file keeps them where a 10-bit encoder exists; the P3 chart keeps the P3 primaries where Rec.709 clips them; a Display P3 export's frame 0 is not black.
+**Colour** (`e2e/color.spec.ts`): an HDR10 ramp (a custom transition drawing `uv.x^2.6`, +3 EV, 1280x720) must pack to I420P10 / BT.2020 PQ / limited range with > 600 distinct Y codes (it lands 638; an 8-bit path caps at ~250), and the file keeps them where a 10-bit encoder exists; the P3 chart keeps the P3 primaries where Rec.709 clips them; frame 0 is not black for a Display P3 export (per-clip and timeline compositor) or an HDR10 PQ readback.
+
+**Shaders** (`e2e/shaders.spec.ts`): every assembled shader (each file in `src/webgpu/shaders/`, its scene-linear and shader-f16 variants, every registered transition through the template) compiles on the device with no error or warning.
 
 **Smoke flows** (`e2e/smoke.spec.ts`) go through the real UI: load demo clips → split → ripple delete → undo → render; crash → reload → recovery offer.
 
@@ -241,13 +246,41 @@ secondary → LUT → sharpen → CA → bloom → grain. Primary color is untou
   "Curves & levels" (FFmpeg's `curves` / `colorlevels` could give
   best-effort parity later); Canvas2D does not apply finishing.
 
+## Shader uniform contracts (one spec per struct)
+
+A uniform struct is declared once, in `src/webgpu/uniformSpecs.ts`, as a
+`defineUniformLayout(structName, fields)` spec (`src/webgpu/uniformLayout.ts`;
+field types `f32` / `u32` / `vec2` / `vec3` / `vec4`, `vec4` arrays via
+`count`, `_`-prefixed fields are padding). The spec gives:
+
+- `wgsl` — the struct text. A shader carries the line `// @uniforms <StructName>`
+  where it goes; the pass builds its code with `spliceUniformStructs(raw, spec)`
+  (throws unless the line is there exactly once), so `?raw` imports stay.
+- `pack(values, out?, offset?)` — a packer typed from the spec (`vec2` → `Vec2`
+  etc.; padding packs 0, `u32` bit-exact).
+- `byteSize` / `floats` / `offsets` — WGSL alignment (vec2 8, vec3 / vec4 /
+  arrays 16, size rounded to 16). Slots a CPU reference reads
+  (`SHARPEN_MODE_SLOT`, `NR_QUALITY_SLOT`) or a pass pokes per draw (grain's
+  `blurAxis`) are `offsets.<field>`, never literals.
+
+Ported: grain, sharpen, denoise, curves, bloom, chromatic aberration, the
+overlay key block and the preview layer uniforms (`PREVIEW_LAYER_UNIFORMS`).
+The finishing modules keep the maths (clamps, defaults) and fill
+`SPEC.pack({...})`. The packed bytes are unchanged (a fuzzing parity test
+against the hand-written packers ran before they were deleted), which keeps
+the classic / standard modes byte-identical. `uniformLayout.test.ts` is the
+table test: each spec's size, the slots other code relies on, and that every
+assembled shader that binds it contains its struct. Append fields; do not
+reorder. Every assembled shader is listed in `webgpu/shaderCatalog.ts` and
+compiled by `e2e/shaders.spec.ts`; a new shader file or variant goes there.
+
 ## Noise reduction quality tiers (first finishing pass)
 
 `NoiseReductionGpuPass` (`src/webgpu/noiseReductionPass.ts` +
 `shaders/denoise.wgsl`) runs first in the finishing chain (noise → primary →
 curves → secondary → LUT → sharpen → CA → bloom → grain). The spatial stage
-has three tiers, picked by `NoiseReductionSettings.quality` (uniform slot 10;
-the layout stays 16 floats). Temporal blending and its motion gate are the
+has three tiers, picked by `NoiseReductionSettings.quality` (the `quality`
+field of `NOISE_REDUCTION_UNIFORMS`, see *Shader uniform contracts*). Temporal blending and its motion gate are the
 same in every tier, and still reset on seek (`resetTemporal`).
 
 - **`standard`** (omitted = standard) — the original 5×5 luma bilateral. Its
@@ -272,8 +305,8 @@ same in every tier, and still reset on seek (`resetTemporal`).
 ## Sharpen modes (after LUT, before CA)
 
 `SharpenGpuPass` (`src/webgpu/sharpenPass.ts` + `shaders/sharpen.wgsl`) has
-three modes, picked by `SharpenSettings.mode` (uniform slot 6; the layout
-stays 8 floats). Amount, radius, threshold and midtone detail mean the same
+three modes, picked by `SharpenSettings.mode` (the `mode` field of
+`SHARPEN_UNIFORMS`, see *Shader uniform contracts*). Amount, radius, threshold and midtone detail mean the same
 in all of them.
 
 - **`classic`** (omitted = classic) — the original unsharp mask. Its output
@@ -376,7 +409,7 @@ colour), so nothing later softens it. `GrainSettings.quality` picks the model:
   the shader only reads uniforms. Optical settings and coherence are kept.
 - Grain size is relative to frame height and grains stay round on any aspect,
   so a smaller preview canvas shows the same grain as the export.
-- Uniform layout (24 floats) is pinned by `grainUniformLayout.test.ts`.
+- The uniform layout is `GRAIN_UNIFORMS` (*Shader uniform contracts*).
   FFmpeg remains best-effort `noise` (no blue noise, coherence or response).
 
 ## Text overlay fonts
@@ -728,8 +761,9 @@ blend mode there, not in one backend.
   `overlayKey.test.ts`. Chroma follows `vf_chromakey.c` (normalized BT.601
   limited-range UV distance, ramped from `similarity` over `blend`); luma
   follows `vf_lumakey.c` as `buildOverlayAlphaFilters` configures it.
-- `preview.wgsl`'s `keyAlpha()` is the same function in WGSL, driven by six
-  uniforms at `KEY_UNIFORM_OFFSET` (packed by `packKeyUniforms`). It runs on
+- `preview.wgsl`'s `keyAlpha()` is the same function in WGSL, driven by the
+  key block of the layer uniforms (`KEY_UNIFORM_FIELDS` in
+  `PREVIEW_LAYER_UNIFORMS`, filled by `keyUniformValues`). It runs on
   the sampled colour *before* opacity and the fades, so a soft edge is not
   squashed by them.
 - `applyKeyToImageData` is the Canvas2D export path (`drawClipLayer` pre-keys
@@ -757,7 +791,7 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 - `src/wasm/offlineAnalysis.ts` — full-buffer / clip-load analysis → `beatTimestamps` / `bpmEstimate` on `Clip`
 - `src/wasm/audioAnalysisWorker.ts` + `audioAnalysisClient.ts` — Worker offload (keep main-thread long tasks < 16 ms)
 - `src/wasm/audioReactiveUniforms.ts` — shared `AudioReactive` uniform shape + WGSL snippet docs
-- `src/webgpu/previewEngine.ts` — `setAudioReactive({ bass, mid, treble, beat })`; `packLayerUniforms` (`previewLayerUniforms.ts`) writes them to uniform slots 13–16
+- `src/webgpu/previewEngine.ts` — `setAudioReactive({ bass, mid, treble, beat })`; `packLayerUniforms` (`previewLayerUniforms.ts`) writes them to the `bass` … `beat` fields of `PREVIEW_LAYER_UNIFORMS` (`webgpu/uniformSpecs.ts`)
 - `src/webgpu/shaders/preview.wgsl` — `Uniforms.bass|mid|treble|beat` + optional warm lift
 - `src/timeline/beatMarkers.ts` + Timeline ruler — read-only beat overlay when metadata is present
 - `src/export/canvasRenderer.ts` — `setWasmBassLevel()` for export parity with the same analysis source
