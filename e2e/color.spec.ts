@@ -115,17 +115,52 @@ test('Display P3: a P3 chart keeps its primaries end to end', async ({ page }) =
   expect(sdr[0]![1]!, 'Rec.709 output clips P3 red').toBeGreaterThan(25);
 });
 
-test('Display P3 export frame 0 is not black', async ({ page }) => {
+// One clip exports through the per-clip compositor; a PiP makes it a
+// timeline composite (`encodeTimelineComposite`), which under ?test_harness
+// also checks its own frame 0 and throws when it is black.
+for (const [name, clips] of [
+  ['one clip', [{ demo: 'b', trimEnd: 1 }]],
+  ['timeline compositor', [{ demo: 'b', trimEnd: 1 }, { demo: 'a', trimEnd: 1, layer: 1, x: 0.5, y: 0.5, width: 0.4, height: 0.4 }]],
+] as const) {
+  test(`Display P3 export frame 0 is not black (${name})`, async ({ page }) => {
+    await openHarness(page);
+    const mean = await page.evaluate(async (fixtureClips) => {
+      const h = window.clipStacker!.test!;
+      await h.buildProject({
+        clips: fixtureClips,
+        resolution: '320x180',
+        colorManagement: { outputColor: 'display-p3' },
+      } as never);
+      const blob = await h.exportProject();
+      return h.meanRgb(await h.decodeFrame(blob, 0));
+    }, clips);
+    expect(Math.max(...mean), 'frame 0 mean RGB').toBeGreaterThan(10);
+  });
+}
+
+test('HDR10 frame 0 is not black (PQ readback and export)', async ({ page }) => {
   await openHarness(page);
-  const mean = await page.evaluate(async () => {
+  const result = await page.evaluate(async () => {
     const h = window.clipStacker!.test!;
     await h.buildProject({
       clips: [{ demo: 'b', trimEnd: 1 }],
       resolution: '320x180',
-      colorManagement: { outputColor: 'display-p3' },
+      colorManagement: { outputColor: 'hdr10' },
     } as never);
-    const blob = await h.exportProject();
-    return h.meanRgb(await h.decodeFrame(blob, 0));
+    // A fresh engine, so frame 0 is the first frame its managed chain draws.
+    h.disposePreviewEngine();
+    const pq = h.meanRgb(await h.renderPqFrame(0));
+    h.disposePreviewEngine();
+    // Under ?test_harness the export checks its own frame 0 and throws when
+    // it is black; it may also refuse where no 10-bit encoder exists (CI).
+    let exportError: string | null = null;
+    try {
+      await h.exportProject();
+    } catch (error) {
+      exportError = error instanceof Error ? error.message : String(error);
+    }
+    return { pq, exportError };
   });
-  expect(Math.max(...mean), 'frame 0 mean RGB').toBeGreaterThan(10);
+  expect(Math.max(...result.pq), 'PQ frame 0 mean RGB').toBeGreaterThan(10);
+  if (result.exportError !== null) expect(result.exportError, 'HDR10 export refusal').toMatch(NO_10BIT_ENCODER);
 });

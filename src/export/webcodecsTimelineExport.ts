@@ -19,6 +19,8 @@ import {
   buildPreviewCompositionPlan,
   type CaptionPlanOptions,
 } from '../composition/previewComposition';
+import type { PreviewCompositionPlan } from '../composition/previewCompositionTypes';
+import { isTestHarnessPage } from '../webgpu/previewDecodeFlags';
 import { renderTextOverlaysAsync } from './canvasRenderer';
 import { TimelineDecoderFrameProvider } from '../media/decoderFrameProvider';
 import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
@@ -43,6 +45,91 @@ import {
 } from './webcodecsCodec';
 import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecsMux';
 
+/** Below this peak (8-bit scale) a frame counts as black. */
+const BLACK_FRAME_PEAK = 10;
+
+/**
+ * Peak picture level of a frame on an 8-bit scale (0 = black … 255), from a
+ * copy of its first plane: the max R/G/B of an RGB frame, or the Y plane
+ * mapped from limited range (8-bit 16–235, 10-bit 64–940). Null for a pixel
+ * format it does not read. `format` is a string because the DOM typings'
+ * `VideoPixelFormat` lacks the 10-bit formats (`I420P10`, …).
+ */
+export function framePeakLevel(
+  format: string | null,
+  data: Uint8Array,
+  plane: PlaneLayout,
+  width: number,
+  height: number,
+): number | null {
+  let peak = 0;
+  switch (format) {
+    case 'RGBA':
+    case 'RGBX':
+    case 'BGRA':
+    case 'BGRX':
+      for (let y = 0; y < height; y++) {
+        const row = plane.offset + y * plane.stride;
+        for (let x = 0; x < width; x++) {
+          const at = row + x * 4;
+          peak = Math.max(peak, data[at] ?? 0, data[at + 1] ?? 0, data[at + 2] ?? 0);
+        }
+      }
+      return peak;
+    case 'I420':
+    case 'I420A':
+    case 'I422':
+    case 'I444':
+    case 'NV12':
+      for (let y = 0; y < height; y++) {
+        const row = plane.offset + y * plane.stride;
+        for (let x = 0; x < width; x++) peak = Math.max(peak, data[row + x] ?? 0);
+      }
+      return Math.max(0, ((peak - 16) * 255) / 219);
+    case 'I420P10':
+    case 'I420AP10':
+    case 'I422P10':
+    case 'I444P10': {
+      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+      for (let y = 0; y < height; y++) {
+        const row = plane.offset + y * plane.stride;
+        for (let x = 0; x < width; x++) peak = Math.max(peak, view.getUint16(row + x * 2, true));
+      }
+      return Math.max(0, ((peak - 64) * 255) / 876);
+    }
+    default:
+      return null;
+  }
+}
+
+/** Whether frame 0 of `plan` should show a picture: a clip layer at least half visible. */
+export function planExpectsPicture(plan: PreviewCompositionPlan): boolean {
+  return plan.layers.some((layer) => (layer.kind === 'base' || layer.kind === 'pip') && layer.opacity >= 0.5);
+}
+
+/**
+ * `?test_harness` only: fail the export when its first frame is black
+ * although the plan draws a visible clip — the managed-colour (Display P3 /
+ * HDR10) "frame 0 is black" regression (#373). One copy of frame 0, never
+ * on a normal load.
+ */
+async function assertFirstFrameNotBlack(frame: VideoFrame, plan: PreviewCompositionPlan): Promise<void> {
+  if (!planExpectsPicture(plan)) return;
+  const data = new Uint8Array(frame.allocationSize());
+  const layout = await frame.copyTo(data);
+  const plane = layout[0];
+  if (!plane) return;
+  const width = frame.visibleRect?.width ?? frame.codedWidth;
+  const height = frame.visibleRect?.height ?? frame.codedHeight;
+  const peak = framePeakLevel(frame.format, data, plane, width, height);
+  if (peak !== null && peak < BLACK_FRAME_PEAK) {
+    throw new Error(
+      `test harness: frame 0 of the export is black (${frame.format}, peak level ${peak.toFixed(1)}) ` +
+        'although the plan draws a visible clip — the first managed-colour frame regression.',
+    );
+  }
+}
+
 export async function encodeTimelineComposite(
   clips: Clip[],
   clipGroups: ClipGroup[],
@@ -59,6 +146,7 @@ export async function encodeTimelineComposite(
   colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
 ): Promise<Blob> {
   onStatus(`WebGPU timeline export (${width}x${height})...`);
+  const checkFirstFrame = isTestHarnessPage();
   onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode, progress: 0, indeterminate: false });
 
   const timelineClips = getTimelineClips(clips, clipGroups);
@@ -163,7 +251,11 @@ export async function encodeTimelineComposite(
 
   // HDR10 frames read back through the engine's three-slot ring: frame N
   // maps while N+1 and N+2 compose. Encoded strictly in order.
-  const pendingHdr: Array<{ frame: Promise<VideoFrame>; frameIndex: number }> = [];
+  const pendingHdr: Array<{
+    frame: Promise<VideoFrame>;
+    frameIndex: number;
+    plan: PreviewCompositionPlan;
+  }> = [];
   const encodeOldestHdr = async () => {
     const next = pendingHdr.shift();
     if (!next) return;
@@ -176,6 +268,14 @@ export async function encodeTimelineComposite(
         `HDR10 frame readback failed (${message}). This browser may not build I420P10 video frames; ` +
           'the file was not written.',
       );
+    }
+    if (checkFirstFrame && next.frameIndex === 0) {
+      try {
+        await assertFirstFrameNotBlack(frame, next.plan);
+      } catch (err) {
+        frame.close();
+        throw err;
+      }
     }
     encodeAndClose(videoEncoder, frame, { keyFrame: next.frameIndex % 60 === 0 });
   };
@@ -214,7 +314,7 @@ export async function encodeTimelineComposite(
         // Awaited in order by encodeOldestHdr; this only keeps an early
         // rejection from being reported as unhandled in the meantime.
         void frame.catch(() => undefined);
-        pendingHdr.push({ frame, frameIndex });
+        pendingHdr.push({ frame, frameIndex, plan });
         pendingRender = frameIndex + 1 < totalFrames ? renderTimelineFrame(frameIndex + 1) : null;
       } else {
         await flushCaptureThenScheduleNext(
@@ -245,6 +345,14 @@ export async function encodeTimelineComposite(
               timestamp: timelineFrameTimestampUs(frameIndex, TIMELINE_EXPORT_FPS),
               duration: frameDurationUs,
             });
+            if (checkFirstFrame && frameIndex === 0) {
+              try {
+                await assertFirstFrameNotBlack(frame, plan);
+              } catch (err) {
+                frame.close();
+                throw err;
+              }
+            }
             encodeAndClose(videoEncoder, frame, { keyFrame: frameIndex % 60 === 0 });
           },
           frameIndex + 1 < totalFrames
