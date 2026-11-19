@@ -5,13 +5,19 @@
  * Bloom / halation use a separable Gaussian (H then V) matching the old 17×17 kernel.
  */
 
-import grainShader from './shaders/grain.wgsl?raw';
+import grainShaderSource from './shaders/grain.wgsl?raw';
 import type { GrainPass } from '../finishing/finishing';
 import {
   GRAIN_UNIFORM_FLOATS,
   grainWantsOpticalBlur,
   packGrainUniforms,
 } from '../finishing/grain';
+import { spliceUniformStructs } from './uniformLayout';
+import { GRAIN_UNIFORMS } from './uniformSpecs';
+
+/** `grain.wgsl` with `GrainUniforms` spliced in, as compiled. */
+export const GRAIN_SHADER = spliceUniformStructs(grainShaderSource, GRAIN_UNIFORMS);
+const BLUR_AXIS_SLOT = GRAIN_UNIFORMS.offsets.blurAxis;
 
 export class GrainGpuPass {
   private readonly grainPipeline: GPURenderPipeline;
@@ -46,7 +52,7 @@ export class GrainGpuPass {
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): GrainGpuPass {
-    const shaderModule = device.createShaderModule({ code: grainShader });
+    const shaderModule = device.createShaderModule({ code: GRAIN_SHADER });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
@@ -54,15 +60,15 @@ export class GrainGpuPass {
       addressModeV: 'clamp-to-edge',
     });
     const uniformBuffer = device.createBuffer({
-      size: GRAIN_UNIFORM_FLOATS * 4,
+      size: GRAIN_UNIFORMS.byteSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const blurUniformH = device.createBuffer({
-      size: GRAIN_UNIFORM_FLOATS * 4,
+      size: GRAIN_UNIFORMS.byteSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const blurUniformV = device.createBuffer({
-      size: GRAIN_UNIFORM_FLOATS * 4,
+      size: GRAIN_UNIFORMS.byteSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -199,7 +205,7 @@ export class GrainGpuPass {
     axis: 0 | 1,
   ): void {
     const buffer = axis === 0 ? this.blurUniformH : this.blurUniformV;
-    this.uniformData[14] = axis;
+    this.uniformData[BLUR_AXIS_SLOT] = axis;
     device.queue.writeBuffer(buffer, 0, this.uniformData);
 
     const bindGroup = device.createBindGroup({
@@ -239,7 +245,7 @@ export class GrainGpuPass {
     frameSeed: number,
   ): void {
     packGrainUniforms(settings, width, height, frameSeed, this.uniformData);
-    this.uniformData[14] = 0;
+    this.uniformData[BLUR_AXIS_SLOT] = 0;
     device.queue.writeBuffer(this.uniformBuffer, 0, this.uniformData);
 
     const bindGroup = device.createBindGroup({

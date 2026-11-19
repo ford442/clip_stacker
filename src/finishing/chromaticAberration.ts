@@ -19,8 +19,9 @@
  */
 
 import { clamp01, finiteOr } from '../utils/math';
+import { CHROMATIC_ABERRATION_UNIFORMS } from '../webgpu/uniformSpecs';
 
-export const CHROMATIC_ABERRATION_UNIFORM_FLOATS = 8;
+export const CHROMATIC_ABERRATION_UNIFORM_FLOATS = CHROMATIC_ABERRATION_UNIFORMS.floats;
 
 /** Fringe width at amount 1, as a fraction of frame height (≈ 8.6 px at 1080p). */
 export const CA_MAX_SHIFT = 0.008;
@@ -88,29 +89,18 @@ export function chromaticAberrationOffsets(
   };
 }
 
-/**
- * Pack into WGSL `ChromaticAberrationUniforms` (2 × vec4):
- *   [0] radialK, dirX, dirY, spectral
- *   [1] pad × 4
- */
+/** Pack into WGSL `ChromaticAberrationUniforms` (`CHROMATIC_ABERRATION_UNIFORMS`). */
 export function packChromaticAberrationUniforms(
   pass: ChromaticAberrationSettings,
   width: number,
   height: number,
   out: Float32Array = new Float32Array(CHROMATIC_ABERRATION_UNIFORM_FLOATS),
 ): Float32Array {
-  if (out.length < CHROMATIC_ABERRATION_UNIFORM_FLOATS) {
-    throw new Error(
-      `Chromatic aberration uniform buffer needs ${CHROMATIC_ABERRATION_UNIFORM_FLOATS} floats`,
-    );
-  }
   const o = chromaticAberrationOffsets(pass, width, height);
-  out.fill(0);
-  out[0] = o.radialK;
-  out[1] = o.dirX;
-  out[2] = o.dirY;
-  out[3] = o.spectral ? 1 : 0;
-  return out;
+  return CHROMATIC_ABERRATION_UNIFORMS.pack(
+    { radialK: o.radialK, dirX: o.dirX, dirY: o.dirY, spectral: o.spectral ? 1 : 0 },
+    out,
+  );
 }
 
 export function normalizeChromaticAberrationPass(

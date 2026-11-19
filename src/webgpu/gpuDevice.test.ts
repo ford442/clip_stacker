@@ -299,7 +299,7 @@ describe('gpuDevice registry', () => {
 
     // Automatic recreate: a fresh context with a different device.
     expect(recoveredListener).toHaveBeenCalledTimes(1);
-    const recovered = recoveredListener.mock.calls[0][0];
+    const recovered = recoveredListener.mock.calls[0]![0];
     expect(recovered.device).toBe(deviceB);
     expect(recovered).not.toBe(ctx);
 
@@ -326,7 +326,7 @@ describe('gpuDevice registry', () => {
 
     const log = getGpuErrorLog();
     expect(log.map((e) => e.type)).toEqual(['validation', 'out-of-memory', 'internal']);
-    expect(log[0].message).toBe('bad bind group');
+    expect(log[0]!.message).toBe('bad bind group');
   });
 
   it('retries a failed recreate with a growing backoff, then reports failure once', async () => {
@@ -417,6 +417,6 @@ describe('gpuDevice registry', () => {
 
     const log = getGpuErrorLog();
     expect(log.length).toBeLessThanOrEqual(20);
-    expect(log[log.length - 1].message).toBe('err-29');
+    expect(log.at(-1)!.message).toBe('err-29');
   });
 });

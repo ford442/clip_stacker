@@ -277,17 +277,6 @@ describe('curves.wgsl mirrors curves.ts', () => {
   it('has the packed layout: 3 header vec4s and 4 × 16 knot vec4s', () => {
     expect(CURVES_UNIFORM_FLOATS).toBe(12 + 4 * CURVE_MAX_POINTS * 4);
     expect((CURVES_UNIFORM_FLOATS * 4) % 16).toBe(0);
-    const body = /struct CurvesUniforms \{([\s\S]*?)\n\};/.exec(curvesShader)?.[1] ?? '';
-    const fields = body
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('//'));
-    expect(fields).toEqual([
-      'levels0: vec4<f32>,',
-      'levels1: vec4<f32>,',
-      'counts: vec4<f32>,',
-      `knots: array<vec4<f32>, ${4 * CURVE_MAX_POINTS}>,`,
-    ]);
     expect(/const CURVE_MAX_POINTS: i32 = (\d+);/.exec(curvesShader)?.[1]).toBe(
       String(CURVE_MAX_POINTS),
     );

@@ -110,6 +110,7 @@ export class WorkerTimelineRenderer {
       }
 
       const layer = clipLayers[index];
+      if (!layer) continue;
       const nextLayer = clipLayers[index + 1];
 
       // GPU transition pair: outgoing + incoming layers share a crossfade.

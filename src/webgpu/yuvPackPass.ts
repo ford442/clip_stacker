@@ -5,13 +5,16 @@
  * texture changes, so a steady export allocates nothing per frame.
  */
 
-import shader from './shaders/yuvPack.wgsl?raw';
+import yuvPackShaderSource from './shaders/yuvPack.wgsl?raw';
 import {
   i420Layout,
   YUV_PACK_MODE_ID,
   type I420Layout,
   type YuvPackMode,
 } from '../finishing/yuvPack';
+
+/** `yuvPack.wgsl` as compiled. */
+export const YUV_PACK_SHADER: string = yuvPackShaderSource;
 
 const WORKGROUP_SIZE = 64;
 const MAX_WORKGROUPS_PER_DIM = 65535;
@@ -50,7 +53,7 @@ export class YuvPackPass {
   ) {}
 
   static create(device: GPUDevice, mode: YuvPackMode): YuvPackPass {
-    const module = device.createShaderModule({ code: shader });
+    const module = device.createShaderModule({ code: YUV_PACK_SHADER });
     const pipeline = device.createComputePipeline({
       layout: 'auto',
       compute: { module, entryPoint: 'main' },

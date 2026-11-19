@@ -5,8 +5,11 @@
  * overlay texture is reallocated only when the frame size changes.
  */
 
-import shader from './shaders/graphicsOverlay.wgsl?raw';
+import graphicsOverlayShaderSource from './shaders/graphicsOverlay.wgsl?raw';
 import { REC709_TO_REC2020 } from '../finishing/colorManagement';
+
+/** `graphicsOverlay.wgsl` as compiled. */
+export const GRAPHICS_OVERLAY_SHADER: string = graphicsOverlayShaderSource;
 
 /** What the HDR graphics pass can upload: a transparent 2D text canvas. */
 export type GraphicsOverlaySource = HTMLCanvasElement | OffscreenCanvas | ImageBitmap;
@@ -42,7 +45,7 @@ export class GraphicsOverlayPass {
   ) {}
 
   static create(device: GPUDevice, targetFormat: GPUTextureFormat): GraphicsOverlayPass {
-    const module = device.createShaderModule({ code: shader });
+    const module = device.createShaderModule({ code: GRAPHICS_OVERLAY_SHADER });
     const pipeline = device.createRenderPipeline({
       layout: 'auto',
       vertex: { module, entryPoint: 'vs_main' },

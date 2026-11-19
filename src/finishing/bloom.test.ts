@@ -236,25 +236,8 @@ describe('bloom reference', () => {
 });
 
 describe('bloom.wgsl mirrors bloom.ts', () => {
-  it('has the packed uniform layout', () => {
+  it('shares the prefilter clamp', () => {
     expect(BLOOM_UNIFORM_FLOATS).toBe(12);
-    const body = /struct BloomUniforms \{([\s\S]*?)\n\};/.exec(bloomShader)?.[1] ?? '';
-    const fields = body
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('//'))
-      .map((l) => l.replace(/,$/, ''));
-    expect(fields).toEqual([
-      'srcTexel: vec2<f32>',
-      'threshold: f32',
-      'knee: f32',
-      'weight: f32',
-      'mode: f32',
-      'gain: f32',
-      'norm: f32',
-      'tint: vec3<f32>',
-      '_pad: f32',
-    ]);
     expect(Number(/const BLOOM_LINEAR_CLAMP: f32 = ([0-9.]+);/.exec(bloomShader)?.[1])).toBe(
       BLOOM_LINEAR_CLAMP,
     );

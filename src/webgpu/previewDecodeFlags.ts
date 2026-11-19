@@ -53,6 +53,13 @@ export function isGpuProfileRequestedByPage(
   return pageParams(search).has('gpu_profile');
 }
 
+/** The page was opened with `?test_harness` (the e2e render harness). */
+export function isTestHarnessPage(
+  search: string = typeof location !== 'undefined' ? location.search : '',
+): boolean {
+  return pageParams(search).has('test_harness');
+}
+
 /**
  * `?test_harness` runs on SwiftShader, a fallback adapter: only then may live
  * preview use one (`allowFallbackAdapterForPreview`).
@@ -60,7 +67,7 @@ export function isGpuProfileRequestedByPage(
 export function isFallbackAdapterAllowedByPage(
   search: string = typeof location !== 'undefined' ? location.search : '',
 ): boolean {
-  return pageParams(search).has('test_harness');
+  return isTestHarnessPage(search);
 }
 
 export function __setPreviewDecoderOverrideForTests(value: boolean | null): void {

@@ -8,6 +8,11 @@ import { shaderForSceneLinear } from '../finishing/colorManagement';
 import type { LutData } from '../finishing/lut';
 import { uploadLutTexture } from '../finishing/lut';
 
+/** `lut.wgsl` as compiled, scene-linear when asked. */
+export function lutShaderCode(sceneLinear = false): string {
+  return shaderForSceneLinear(lutShader, sceneLinear);
+}
+
 const LUT_UNIFORM_FLOATS = 4;
 
 export class LutPass {
@@ -33,7 +38,7 @@ export class LutPass {
 
   static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): LutPass {
     const shaderModule = device.createShaderModule({
-      code: shaderForSceneLinear(lutShader, sceneLinear),
+      code: lutShaderCode(sceneLinear),
     });
     const sampler = device.createSampler({
       magFilter: 'linear',

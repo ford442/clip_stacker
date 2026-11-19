@@ -11,6 +11,11 @@ import {
   packSecondaryColorUniforms,
 } from '../finishing/secondaryColor';
 
+/** `secondaryColor.wgsl` as compiled, scene-linear when asked. */
+export function secondaryColorShaderCode(sceneLinear = false): string {
+  return shaderForSceneLinear(secondaryColorShader, sceneLinear);
+}
+
 export class SecondaryColorGpuPass {
   private readonly pipeline: GPURenderPipeline;
   private readonly sampler: GPUSampler;
@@ -32,7 +37,7 @@ export class SecondaryColorGpuPass {
 
   static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): SecondaryColorGpuPass {
     const shaderModule = device.createShaderModule({
-      code: shaderForSceneLinear(secondaryColorShader, sceneLinear),
+      code: secondaryColorShaderCode(sceneLinear),
     });
     const sampler = device.createSampler({
       magFilter: 'linear',

@@ -3,14 +3,21 @@
  * and the pipelines / samplers / buffers it rebuilds after a device loss.
  */
 
-import previewShader from "./shaders/preview.wgsl?raw";
+import previewShaderSource from "./shaders/preview.wgsl?raw";
 import overlayShader from "./shaders/overlay.wgsl?raw";
 import {
   createTransitionPipelineCache,
   TRANSITION_UNIFORM_FLOATS,
 } from "./transitions/transitionPass";
 import { FinishingPassChain } from "./finishingPassChain";
-import { UNIFORM_FLOATS } from "./previewLayerUniforms";
+import { spliceUniformStructs } from "./uniformLayout";
+import { PREVIEW_LAYER_UNIFORMS } from "./uniformSpecs";
+
+/** `preview.wgsl` with its `Uniforms` struct spliced in from the spec. */
+export const PREVIEW_SHADER = spliceUniformStructs(previewShaderSource, PREVIEW_LAYER_UNIFORMS);
+
+/** `overlay.wgsl` (the text / caption blit), as compiled. */
+export const OVERLAY_SHADER: string = overlayShader;
 
 const PREMULTIPLIED_BLEND: GPUBlendState = {
   color: {
@@ -32,8 +39,8 @@ const PREMULTIPLIED_BLEND: GPUBlendState = {
  * of leaving this engine's GPU objects bound to a destroyed one.
  */
 export function buildPreviewDeviceResources(device: GPUDevice, format: GPUTextureFormat) {
-  const shaderModule = device.createShaderModule({ code: previewShader });
-  const overlayModule = device.createShaderModule({ code: overlayShader });
+  const shaderModule = device.createShaderModule({ code: PREVIEW_SHADER });
+  const overlayModule = device.createShaderModule({ code: OVERLAY_SHADER });
 
   const sampler = device.createSampler({
     magFilter: "linear",
@@ -41,7 +48,7 @@ export function buildPreviewDeviceResources(device: GPUDevice, format: GPUTextur
   });
 
   const uniformBuffer = device.createBuffer({
-    size: UNIFORM_FLOATS * 4,
+    size: PREVIEW_LAYER_UNIFORMS.byteSize,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
 

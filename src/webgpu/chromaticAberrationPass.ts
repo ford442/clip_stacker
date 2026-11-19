@@ -4,13 +4,21 @@
  * and the managed float working space (no scene-linear variant needed).
  */
 
-import chromaticAberrationShader from './shaders/chromaticAberration.wgsl?raw';
+import chromaticAberrationShaderSource from './shaders/chromaticAberration.wgsl?raw';
 import type { ChromaticAberrationPass } from '../finishing/finishing';
 import {
   CHROMATIC_ABERRATION_UNIFORM_FLOATS,
   isChromaticAberrationNeutral,
   packChromaticAberrationUniforms,
 } from '../finishing/chromaticAberration';
+import { spliceUniformStructs } from './uniformLayout';
+import { CHROMATIC_ABERRATION_UNIFORMS } from './uniformSpecs';
+
+/** `chromaticAberration.wgsl` with its uniform struct spliced in, as compiled. */
+export const CHROMATIC_ABERRATION_SHADER = spliceUniformStructs(
+  chromaticAberrationShaderSource,
+  CHROMATIC_ABERRATION_UNIFORMS,
+);
 
 export class ChromaticAberrationGpuPass {
   private readonly pipeline: GPURenderPipeline;
@@ -29,7 +37,7 @@ export class ChromaticAberrationGpuPass {
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): ChromaticAberrationGpuPass {
-    const shaderModule = device.createShaderModule({ code: chromaticAberrationShader });
+    const shaderModule = device.createShaderModule({ code: CHROMATIC_ABERRATION_SHADER });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
@@ -39,7 +47,7 @@ export class ChromaticAberrationGpuPass {
       addressModeV: 'mirror-repeat',
     });
     const uniformBuffer = device.createBuffer({
-      size: CHROMATIC_ABERRATION_UNIFORM_FLOATS * 4,
+      size: CHROMATIC_ABERRATION_UNIFORMS.byteSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const bindGroupLayout = device.createBindGroupLayout({

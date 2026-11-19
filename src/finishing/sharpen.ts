@@ -6,9 +6,9 @@
  */
 
 import { clamp, clamp01, finiteOr } from '../utils/math';
-import { SHARPEN_MODE_SLOT } from './sharpenReference';
+import { SHARPEN_UNIFORMS } from '../webgpu/uniformSpecs';
 
-export const SHARPEN_UNIFORM_FLOATS = 8;
+export const SHARPEN_UNIFORM_FLOATS = SHARPEN_UNIFORMS.floats;
 
 /** Soft-cap hint in UI — amounts above this tend to look digital. */
 export const SHARPEN_AMOUNT_SOFT_CAP = 0.3;
@@ -85,39 +85,25 @@ export function isSharpenNeutral(pass: SharpenSettings | undefined): boolean {
   return amount <= 1e-6 && midtone <= 1e-6;
 }
 
-/**
- * Pack SharpenSettings into a Float32Array matching WGSL SharpenUniforms.
- *
- * Layout (2 × vec4):
- *   [0] amount, radius, threshold, midtoneDetail
- *   [1] texelSize.x, texelSize.y, mode (0 classic / 1 edge / 2 multiscale), pad
- */
+/** Pack SharpenSettings into WGSL `SharpenUniforms` (`SHARPEN_UNIFORMS`). */
 export function packSharpenUniforms(
   pass: SharpenSettings,
   texelWidth: number,
   texelHeight: number,
   out: Float32Array = new Float32Array(SHARPEN_UNIFORM_FLOATS),
 ): Float32Array {
-  if (out.length < SHARPEN_UNIFORM_FLOATS) {
-    throw new Error(`Sharpen uniform buffer needs ${SHARPEN_UNIFORM_FLOATS} floats`);
-  }
   const d = DEFAULT_SHARPEN_PARAMS;
-  const amount = pass.enabled ? clamp01(pass.amount ?? 0) : 0;
-  const midtone = pass.enabled
-    ? clamp01(finiteOr(pass.midtoneDetail, d.midtoneDetail))
-    : 0;
-
-  out[0] = amount;
-  out[1] = clamp(finiteOr(pass.radius, d.radius), SHARPEN_RADIUS_MIN, SHARPEN_RADIUS_MAX);
-  out[2] = clamp01(finiteOr(pass.threshold, d.threshold));
-  out[3] = midtone;
-
-  out[4] = texelWidth > 0 ? 1 / texelWidth : 0;
-  out[5] = texelHeight > 0 ? 1 / texelHeight : 0;
-  out[SHARPEN_MODE_SLOT] = isSharpenMode(pass.mode) ? SHARPEN_MODE_CODE[pass.mode] : 0;
-  out[7] = 0;
-
-  return out;
+  return SHARPEN_UNIFORMS.pack(
+    {
+      amount: pass.enabled ? clamp01(pass.amount ?? 0) : 0,
+      radius: clamp(finiteOr(pass.radius, d.radius), SHARPEN_RADIUS_MIN, SHARPEN_RADIUS_MAX),
+      threshold: clamp01(finiteOr(pass.threshold, d.threshold)),
+      midtoneDetail: pass.enabled ? clamp01(finiteOr(pass.midtoneDetail, d.midtoneDetail)) : 0,
+      texelSize: [texelWidth > 0 ? 1 / texelWidth : 0, texelHeight > 0 ? 1 / texelHeight : 0],
+      mode: isSharpenMode(pass.mode) ? SHARPEN_MODE_CODE[pass.mode] : 0,
+    },
+    out,
+  );
 }
 
 /** Normalize raw / partial sharpen fields onto defaults. */

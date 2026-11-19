@@ -7,8 +7,10 @@
  * Images are RGB in [0, 1], row-major, top row first (texture order).
  */
 
+import { SHARPEN_UNIFORMS } from '../webgpu/uniformSpecs';
+
 /** Uniform slot holding the mode (see `SHARPEN_MODE_CODE`). */
-export const SHARPEN_MODE_SLOT = 6;
+export const SHARPEN_MODE_SLOT = SHARPEN_UNIFORMS.offsets.mode;
 
 /**
  * Range sigma (luma) of the edge-aware blur: steps well above it stay in the

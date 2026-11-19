@@ -16,8 +16,9 @@ import {
   type GrainFilmStockId,
   type GrainResponseCurve,
 } from './filmGrain';
+import { GRAIN_UNIFORMS } from '../webgpu/uniformSpecs';
 
-export const GRAIN_UNIFORM_FLOATS = 24;
+export const GRAIN_UNIFORM_FLOATS = GRAIN_UNIFORMS.floats;
 
 /**
  * `classic` is the original hash grain (and what an omitted field means, so
@@ -240,15 +241,9 @@ export function grainMonochromeBias(pass: GrainSettings): number {
 }
 
 /**
- * Pack GrainSettings into a Float32Array matching WGSL GrainUniforms.
- *
- * Layout (6 × vec4):
- *   [0] amount, size, softness, monochrome
- *   [1] vignetteAmount, vignetteMidpoint, vignetteRoundness, frameSeed
- *   [2] halationAmount,halationThreshold,halationRadius, bloomAmount
- *   [3] texelSize.x, texelSize.y, blurAxis (set per draw), pad
- *   [4] quality (0 classic / 1 film), monochromeBias, temporalCoherence, pad
- *   [5] response shadows, midtones, highlights, pad
+ * Pack GrainSettings into WGSL `GrainUniforms` (`GRAIN_UNIFORMS` in
+ * `webgpu/uniformSpecs.ts`). `blurAxis` packs as 0; `GrainGpuPass` sets it
+ * per draw.
  */
 export function packGrainUniforms(
   pass: GrainSettings,
@@ -257,48 +252,38 @@ export function packGrainUniforms(
   frameSeed: number,
   out: Float32Array = new Float32Array(GRAIN_UNIFORM_FLOATS),
 ): Float32Array {
-  if (out.length < GRAIN_UNIFORM_FLOATS) {
-    throw new Error(`Grain uniform buffer needs ${GRAIN_UNIFORM_FLOATS} floats`);
-  }
   const d = DEFAULT_GRAIN_PARAMS;
   const enabled = Boolean(pass.enabled);
   const amount = enabled ? clamp01(pass.amount ?? 0) : 0;
   const vignette = pass.vignette ?? d.vignette;
   const halation = pass.halation ?? d.halation;
-
-  out[0] = amount;
-  out[1] = clamp01(finiteOr(pass.size, d.size));
-  out[2] = clamp01(finiteOr(pass.softness, d.softness));
-  out[3] = pass.monochrome !== false ? 1 : 0;
-
-  out[4] =
-    enabled && vignette.enabled ? clamp01(finiteOr(vignette.amount, 0)) : 0;
-  out[5] = clamp01(finiteOr(vignette.midpoint, d.vignette.midpoint));
-  out[6] = clamp01(finiteOr(vignette.roundness, d.vignette.roundness));
-  out[7] = Number.isFinite(frameSeed) ? Math.max(0, Math.floor(frameSeed)) : 0;
-
-  out[8] =
-    enabled && halation.enabled ? clamp01(finiteOr(halation.amount, 0)) : 0;
-  out[9] = clamp01(finiteOr(halation.threshold, d.halation.threshold));
-  out[10] = clamp(finiteOr(halation.radius, d.halation.radius), 0.5, 32);
-  out[11] = enabled ? clamp01(finiteOr(pass.bloomAmount, d.bloomAmount)) : 0;
-
-  out[12] = texelWidth > 0 ? 1 / texelWidth : 0;
-  out[13] = texelHeight > 0 ? 1 / texelHeight : 0;
-  out[14] = 0;
-  out[15] = 0;
-
   const response = normalizeGrainResponse(pass.response);
-  out[16] = pass.quality === 'film' ? 1 : 0;
-  out[17] = grainMonochromeBias(pass);
-  out[18] = clamp01(finiteOr(pass.temporalCoherence, 0));
-  out[19] = 0;
-  out[20] = response.shadows;
-  out[21] = response.midtones;
-  out[22] = response.highlights;
-  out[23] = 0;
 
-  return out;
+  return GRAIN_UNIFORMS.pack(
+    {
+      amount,
+      size: clamp01(finiteOr(pass.size, d.size)),
+      softness: clamp01(finiteOr(pass.softness, d.softness)),
+      monochrome: pass.monochrome !== false ? 1 : 0,
+      vignetteAmount: enabled && vignette.enabled ? clamp01(finiteOr(vignette.amount, 0)) : 0,
+      vignetteMidpoint: clamp01(finiteOr(vignette.midpoint, d.vignette.midpoint)),
+      vignetteRoundness: clamp01(finiteOr(vignette.roundness, d.vignette.roundness)),
+      frameSeed: Number.isFinite(frameSeed) ? Math.max(0, Math.floor(frameSeed)) : 0,
+      halationAmount: enabled && halation.enabled ? clamp01(finiteOr(halation.amount, 0)) : 0,
+      halationThreshold: clamp01(finiteOr(halation.threshold, d.halation.threshold)),
+      halationRadius: clamp(finiteOr(halation.radius, d.halation.radius), 0.5, 32),
+      bloomAmount: enabled ? clamp01(finiteOr(pass.bloomAmount, d.bloomAmount)) : 0,
+      texelSize: [texelWidth > 0 ? 1 / texelWidth : 0, texelHeight > 0 ? 1 / texelHeight : 0],
+      blurAxis: 0,
+      quality: pass.quality === 'film' ? 1 : 0,
+      monochromeBias: grainMonochromeBias(pass),
+      temporalCoherence: clamp01(finiteOr(pass.temporalCoherence, 0)),
+      responseShadows: response.shadows,
+      responseMidtones: response.midtones,
+      responseHighlights: response.highlights,
+    },
+    out,
+  );
 }
 
 /**

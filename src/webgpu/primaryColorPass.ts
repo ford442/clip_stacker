@@ -3,12 +3,15 @@
  * Full-frame pass after denoise, before secondary color and creative LUT.
  */
 
-import primaryColorShader from './shaders/primaryColor.wgsl?raw';
+import primaryColorShaderSource from './shaders/primaryColor.wgsl?raw';
 import type { PrimaryColorPass } from '../finishing/finishing';
 import {
   PRIMARY_COLOR_UNIFORM_FLOATS,
   packPrimaryColorUniforms,
 } from '../finishing/primaryColor';
+
+/** `primaryColor.wgsl` as compiled. */
+export const PRIMARY_COLOR_SHADER: string = primaryColorShaderSource;
 
 export class PrimaryColorGpuPass {
   private readonly pipeline: GPURenderPipeline;
@@ -30,7 +33,7 @@ export class PrimaryColorGpuPass {
   }
 
   static create(device: GPUDevice, format: GPUTextureFormat): PrimaryColorGpuPass {
-    const shaderModule = device.createShaderModule({ code: primaryColorShader });
+    const shaderModule = device.createShaderModule({ code: PRIMARY_COLOR_SHADER });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',

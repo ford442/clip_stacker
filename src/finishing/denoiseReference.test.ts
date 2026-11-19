@@ -8,7 +8,6 @@ import {
   NR_NLM_H_MAX,
   NR_NLM_H_MIN,
   NR_NLM_MAX_SEARCH,
-  NR_QUALITY_SLOT,
   denoiseImage,
   tukey,
   type RgbImage,
@@ -215,22 +214,5 @@ describe('denoise.wgsl mirrors denoiseReference.ts', () => {
     expect(constant('NR_NLM_H_MIN')).toBe(NR_NLM_H_MIN);
     expect(constant('NR_NLM_H_MAX')).toBe(NR_NLM_H_MAX);
     expect(constant('NR_NLM_MAX_SEARCH')).toBe(NR_NLM_MAX_SEARCH);
-  });
-
-  it('keeps quality at the packed slot', () => {
-    const body = /struct NoiseReductionUniforms \{([\s\S]*?)\n\};/.exec(denoiseShader)?.[1];
-    if (!body) throw new Error('NoiseReductionUniforms not found');
-    const fields: string[] = [];
-    for (const raw of body.split('\n')) {
-      const line = raw.trim();
-      if (!line || line.startsWith('//')) continue;
-      const m = /^([A-Za-z_]\w*)\s*:\s*(f32|vec2<f32>|vec4<f32>)\s*,$/.exec(line);
-      if (!m) throw new Error(`Unexpected field: ${line}`);
-      const width = m[2] === 'f32' ? 1 : m[2] === 'vec2<f32>' ? 2 : 4;
-      for (let k = 0; k < width; k++) fields.push(width === 1 ? m[1]! : `${m[1]}.${k}`);
-    }
-    expect(fields).toHaveLength(16);
-    expect(fields[NR_QUALITY_SLOT]).toBe('quality');
-    expect(fields[7]).toBe('hasPrev');
   });
 });

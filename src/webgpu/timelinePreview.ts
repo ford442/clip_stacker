@@ -198,6 +198,7 @@ export class TimelinePreviewEngine implements TimelineCompositor {
       }
 
       const layer = clipLayers[index];
+      if (!layer) continue;
       const nextLayer = clipLayers[index + 1];
 
       if (

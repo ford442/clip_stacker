@@ -12,25 +12,7 @@ fn clip01(c: vec3<f32>) -> vec3<f32> {
   return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-struct NoiseReductionUniforms {
-  // vec4 0
-  amount: f32,
-  spatialStrength: f32,
-  spatialRadius: f32,
-  temporalStrength: f32,
-  // vec4 1
-  temporalMotionThreshold: f32,
-  lumaOnly: f32,
-  draft: f32,
-  hasPrev: f32,
-  // vec4 2
-  texelSize: vec2<f32>,
-  // 0 = standard (original bilateral), 1 = high (guided bilateral), 2 = nlm.
-  quality: f32,
-  _pad1: f32,
-  // vec4 3
-  _pad2: vec4<f32>,
-};
+// @uniforms NoiseReductionUniforms
 
 struct VertexOutput {
   @builtin(position) pos: vec4<f32>,
@@ -125,7 +107,7 @@ fn bilateralLuma(uv: vec2<f32>, centerRgb: vec3<f32>) -> f32 {
 }
 
 // ---------------------------------------------------------------------------
-// Quality tiers — mirror `src/utils/denoiseReference.ts` (the tested
+// Quality tiers — mirror `src/finishing/denoiseReference.ts` (the tested
 // reference). They read exact texels with textureLoad (clamp-to-edge), so
 // they need no uniform control flow and match the CPU reference.
 

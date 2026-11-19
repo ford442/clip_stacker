@@ -48,7 +48,7 @@ describe('webgpu/transitions/registry', () => {
     expect(TRANSITION_IDS.length).toBeGreaterThanOrEqual(10);
     for (const id of TRANSITION_IDS) {
       expect(TRANSITION_REGISTRY[id]).toBeDefined();
-      expect(TRANSITION_REGISTRY[id].wgslBody.length).toBeGreaterThan(0);
+      expect(TRANSITION_REGISTRY[id]!.wgslBody.length).toBeGreaterThan(0);
     }
   });
 
@@ -159,8 +159,8 @@ describe('webgpu/transitions smoke render', () => {
       expect(shader).toContain(def.wgslBody.trim());
       expect(shader).toContain('fn transitionEffect');
       // from/to external textures, uniforms, and the wipe mask are all bound.
-      expect(gpu.bindGroups[0].map((e) => e.binding)).toEqual([0, 1, 2, 3, 4]);
-      expect(gpu.writtenUniforms[0][0]).toBe(0.5);
+      expect(gpu.bindGroups[0]!.map((e) => e.binding)).toEqual([0, 1, 2, 3, 4]);
+      expect(gpu.writtenUniforms[0]![0]).toBe(0.5);
     });
   }
 
@@ -179,7 +179,7 @@ describe('webgpu/transitions smoke render', () => {
       centerY: 0.8,
       feather: 0.1,
     });
-    const uniforms = gpu.writtenUniforms[0];
+    const uniforms = gpu.writtenUniforms[0]!;
     expect(uniforms[0]).toBeCloseTo(0.25);
     expect(uniforms[15]).toBeCloseTo(0.2);
     expect(uniforms[16]).toBeCloseTo(0.8);
@@ -190,7 +190,7 @@ describe('webgpu/transitions smoke render', () => {
     const gpu = createFakeGpu();
     const cache = createTransitionPipelineCache(gpu.device, 'bgra8unorm');
     // The default diagonal ramp is created up front so lumaWipe works untouched.
-    expect(gpu.textureDescriptors[0].format).toBe('rgba8unorm');
+    expect(gpu.textureDescriptors[0]!.format).toBe('rgba8unorm');
     expect(cache.getMaskView()).toBeDefined();
 
     cache.setMaskImage({ width: 8, height: 8 } as ImageBitmap);

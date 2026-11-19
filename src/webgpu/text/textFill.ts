@@ -16,11 +16,14 @@
  * (`ctx.drawImage(canvas, ...)` works against a WebGPU-backed canvas).
  */
 
-import textFillShader from '../shaders/textFill.wgsl?raw';
+import textFillShaderSource from '../shaders/textFill.wgsl?raw';
 import { acquireGpuContext, onGpuDeviceLost, onGpuDeviceRecovered } from '../gpuDevice';
 import { canvasConfiguration } from '../canvasConfiguration';
 import { ffmpegColorToRgb01 } from '../../composition/color';
 import { getTextShader, resolveShaderColors, resolveShaderParams } from './registry';
+
+/** `textFill.wgsl` as compiled. */
+export const TEXT_FILL_SHADER: string = textFillShaderSource;
 
 export interface UniformSlots {
   p0: number;
@@ -85,9 +88,9 @@ export function mapColorsToUniformSlots(
 
 export interface TextFillOptions {
   time: number;
-  shaderId?: string;
-  params?: Record<string, number>;
-  colors?: Record<string, string>;
+  shaderId?: string | undefined;
+  params?: Record<string, number> | undefined;
+  colors?: Record<string, string> | undefined;
   /** Target size; if omitted, derived from mask. */
   width?: number;
   height?: number;
@@ -142,7 +145,7 @@ export class TextFillRenderer {
   static async create(): Promise<TextFillRenderer> {
     const { device, format } = await acquireGpuContext();
 
-    const shaderModule = device.createShaderModule({ code: textFillShader });
+    const shaderModule = device.createShaderModule({ code: TEXT_FILL_SHADER });
 
     const sampler = device.createSampler({
       magFilter: 'linear',
@@ -226,7 +229,7 @@ export class TextFillRenderer {
     // stored straight but coverage² if the upload premultiplied it. The
     // shader writes premultiplied colour itself.
     this.device.queue.copyExternalImageToTexture(
-      { source: mask as unknown as GPUCopyExternalImageSource },
+      { source: mask },
       { texture: this.maskTex, premultipliedAlpha: false },
       { width, height },
     );
