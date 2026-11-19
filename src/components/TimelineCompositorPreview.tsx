@@ -3,7 +3,7 @@ import {
   playbackStore,
   setPlayheadTime,
 } from '../store/playbackStore';
-import { usePlayheadTime } from '../hooks/usePlayheadTime';
+import { useHeldPlayheadTime, usePlayheadTime } from '../hooks/usePlayheadTime';
 import type {
   CaptionEntry,
   Clip,
@@ -61,22 +61,20 @@ export interface TimelinePreviewProps {
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
   /** Caption cues to draw over the composite (empty when the toggle is off). */
-  captions?: CaptionEntry[];
-  captionStyle?: Partial<TextOverlayStyle>;
-  exportSettings?: ExportSettings;
-  finishing?: FinishingSettings;
-  colorManagement?: ColorManagementSettings;
-  selectedClipId?: string | null;
-  selectedTextOverlayId?: string | null;
-  onSelectClip?: (clipId: string | null) => void;
-  onSelectTextOverlay?: (overlayId: string | null) => void;
-  onClipLayoutCommit?: (clipId: string, clip: Clip, editedKeyframe: boolean) => void;
-  onTextOverlayLayoutCommit?: (
-    overlayId: string,
-    overlay: TextOverlay,
-    editedKeyframe: boolean,
-  ) => void;
-  onPreviewDragStart?: () => void;
+  captions?: CaptionEntry[] | undefined;
+  captionStyle?: Partial<TextOverlayStyle> | undefined;
+  exportSettings?: ExportSettings | undefined;
+  finishing?: FinishingSettings | undefined;
+  colorManagement?: ColorManagementSettings | undefined;
+  selectedClipId?: string | null | undefined;
+  selectedTextOverlayId?: string | null | undefined;
+  onSelectClip?: ((clipId: string | null) => void) | undefined;
+  onSelectTextOverlay?: ((overlayId: string | null) => void) | undefined;
+  onClipLayoutCommit?: ((clipId: string, clip: Clip, editedKeyframe: boolean) => void) | undefined;
+  onTextOverlayLayoutCommit?:
+    | ((overlayId: string, overlay: TextOverlay, editedKeyframe: boolean) => void)
+    | undefined;
+  onPreviewDragStart?: (() => void) | undefined;
 }
 
 export function TimelineCompositorPreview({
@@ -99,6 +97,8 @@ export function TimelineCompositorPreview({
   onPreviewDragStart,
 }: TimelinePreviewProps) {
   const playheadTime = usePlayheadTime();
+  // What the transport shows: the playhead, or the last time it held.
+  const displayTime = useHeldPlayheadTime();
   const audioPlayback = useTimelineAudioPlayback(
     timelineClips,
     clipGroups,
@@ -113,7 +113,10 @@ export function TimelineCompositorPreview({
   // a readback per composed frame.
   const [showWaveform, setShowWaveform] = useState(false);
   const [showVectorscope, setShowVectorscope] = useState(false);
-  const [scopeData, setScopeData] = useState<ScopeData | null>(null);
+  /** Scope bins, tagged with the compositor session they came from. */
+  const [scopeState, setScopeState] = useState<{ session: string; data: ScopeData } | null>(
+    null,
+  );
   const schedulerRef = useRef<ReturnType<typeof createRenderScheduler> | null>(
     null,
   );
@@ -148,7 +151,10 @@ export function TimelineCompositorPreview({
     outputWidth > 0 && outputHeight > 0 ? outputWidth / outputHeight : 16 / 9;
   const previewSize = usePreviewSize(wrapperRef, timelineAspectRatio, DEFAULT_PREVIEW_CONSTRAINTS);
   const previewSizeRef = useRef(previewSize);
-  previewSizeRef.current = previewSize;
+  // Declared before the effects that render, so a render they start sees it.
+  useEffect(() => {
+    previewSizeRef.current = previewSize;
+  });
   const lastRenderedTimeRef = useRef<number | null>(null);
 
   const renderAt = useCallback(
@@ -175,12 +181,11 @@ export function TimelineCompositorPreview({
           globalTime,
           {
             isCancelled,
-            maxHeight: size?.canvasHeight,
-            maxWidth: size?.canvasWidth,
-            finishing,
-            colorManagement,
-            captions,
-            captionStyle,
+            ...(size && { maxHeight: size.canvasHeight, maxWidth: size.canvasWidth }),
+            ...(finishing && { finishing }),
+            ...(colorManagement && { colorManagement }),
+            ...(captions && { captions }),
+            ...(captionStyle && { captionStyle }),
           },
         );
         if (isCancelled()) return;
@@ -251,9 +256,17 @@ export function TimelineCompositorPreview({
     };
   }, [renderAt]);
 
+  // The compositor is built once per canvas (below), from the timeline as it
+  // is at that moment; later edits reach it through `syncClips` / renders.
+  const initInputsRef = useRef({ timelineClips, textOverlays, renderAt });
+  useEffect(() => {
+    initInputsRef.current = { timelineClips, textOverlays, renderAt };
+  });
+
   useEffect(() => {
     let alive = true;
     let engine: TimelineCompositor | null = null;
+    const { timelineClips, textOverlays, renderAt } = initInputsRef.current;
 
     async function init() {
       const canvas = canvasRef.current;
@@ -353,7 +366,6 @@ export function TimelineCompositorPreview({
       setBackend('unavailable');
     };
     // Re-run when canvasGeneration bumps after a neutered-canvas remount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canvasGeneration]);
 
   // Watch the device *this* compositor draws with — the worker's own device
@@ -409,17 +421,19 @@ export function TimelineCompositorPreview({
 
   // Only the worker-backed WebGPU compositor can produce scopes: they are read
   // from the composed GPU texture, which the Canvas2D path does not have.
+  // Bins only stand for the session that sent them, and are dropped when both
+  // scopes turn off (adjusted during render).
+  const scopeSession = `${backend}:${canvasGeneration}`;
+  const scopesOn = showWaveform || showVectorscope;
+  if (scopeState && (scopeState.session !== scopeSession || !scopesOn)) setScopeState(null);
+  const scopeData = scopeState?.data ?? null;
   useEffect(() => {
     const engine = engineRef.current;
-    if (!(engine instanceof PreviewWorkerAdapter)) {
-      setScopeData(null);
-      return;
-    }
+    if (!(engine instanceof PreviewWorkerAdapter)) return;
     engine.setScopes({ waveform: showWaveform, vectorscope: showVectorscope }, (data) =>
-      setScopeData(data),
+      setScopeState({ session: scopeSession, data }),
     );
-    if (!showWaveform && !showVectorscope) setScopeData(null);
-  }, [showWaveform, showVectorscope, backend, canvasGeneration]);
+  }, [showWaveform, showVectorscope, scopeSession]);
 
   // A proxy becoming ready (or the proxy toggle flipping) changes which bytes
   // a layer decodes, so it re-syncs clip media like a clip edit does.
@@ -537,7 +551,6 @@ export function TimelineCompositorPreview({
     setIsPlaying(true);
   };
 
-  const displayTime = playheadTime ?? globalTimeRef.current;
   const meter = usePlaybackAnalyserLevels(audioPlayback, isPlaying && audioClockActive);
 
   return (

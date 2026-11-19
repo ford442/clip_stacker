@@ -68,11 +68,11 @@ describe('CurvesPanel editor', () => {
     pointerAt('pointermove', 0.62, 0.4, svg);
     pointerAt('pointerup', 0.62, 0.4, svg);
     const knot = latest.curves.master[1];
-    expect(knot.x).toBeCloseTo(0.62, 2);
-    expect(knot.y).toBeCloseTo(0.4, 2);
+    expect(knot?.x).toBeCloseTo(0.62, 2);
+    expect(knot?.y).toBeCloseTo(0.4, 2);
     // Further moves after release do nothing.
     pointerAt('pointermove', 0.9, 0.9, svg);
-    expect(latest.curves.master[1].y).toBeCloseTo(0.4, 2);
+    expect(latest.curves.master[1]?.y).toBeCloseTo(0.4, 2);
   });
 
   it('double-click removes a knot, arrows nudge it, the end knots stay', () => {
@@ -82,15 +82,15 @@ describe('CurvesPanel editor', () => {
     const knots = () => container.querySelectorAll('circle.curves-editor-knot');
     expect(knots()).toHaveLength(3);
     act(() => {
-      knots()[1].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
+      knots()[1]?.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }));
     });
-    expect(latest.curves.master[1].y).toBeCloseTo(0.51, 6);
+    expect(latest.curves.master[1]?.y).toBeCloseTo(0.51, 6);
     act(() => {
-      knots()[1].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      knots()[1]?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     });
     expect(latest.curves.master).toHaveLength(2);
     act(() => {
-      knots()[0].dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+      knots()[0]?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
     });
     expect(latest.curves.master).toHaveLength(2);
   });

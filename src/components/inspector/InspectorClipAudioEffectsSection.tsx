@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   COMPRESSOR_LIMITS,
   DEFAULT_COMPRESSOR,
@@ -33,34 +33,42 @@ export function InspectorClipAudioEffectsSection({
 }: InspectorClipAudioEffectsSectionProps) {
   const [draft, setDraft] = useState<ClipAudioEffects | undefined>(effects);
   const onChangeRef = useRef(onChange);
-  onChangeRef.current = onChange;
+  useEffect(() => {
+    onChangeRef.current = onChange;
+  });
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Carries its own clip id: a commit still pending when the selection moves
   // must land on the clip it was made for.
   const pending = useRef<{ clipId: string; effects: ClipAudioEffects | undefined } | null>(null);
+  // Mirrors `pending !== null` for render (refs are not read during render).
+  const [hasPending, setHasPending] = useState(false);
 
-  const flush = () => {
+  const flush = useCallback(() => {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
     const next = pending.current;
     pending.current = null;
+    setHasPending(false);
     if (next) onChangeRef.current(next.clipId, next.effects);
-  };
+  }, []);
 
-  // Mirror store changes (undo, load, another clip) unless a commit is pending.
-  useEffect(() => {
-    if (pending.current === null) setDraft(effects);
-  }, [effects]);
-  useEffect(() => {
+  // Mirror store changes (undo, load) unless a commit is pending; a new clip
+  // always resets the draft. Adjusted during render, not in an effect.
+  const [mirrored, setMirrored] = useState({ clipId, effects });
+  if (mirrored.clipId !== clipId) {
+    setMirrored({ clipId, effects });
     setDraft(effects);
-    return flush;
-    // Only on selection change; `effects` is handled above.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clipId]);
+  } else if (mirrored.effects !== effects) {
+    setMirrored({ clipId, effects });
+    if (!hasPending) setDraft(effects);
+  }
+  // A commit still pending when the selection moves (or on unmount) lands now.
+  useEffect(() => flush, [clipId, flush]);
 
   const commit = (next: ClipAudioEffects | undefined, immediate = false) => {
     setDraft(next);
     pending.current = { clipId, effects: next };
+    setHasPending(true);
     if (timer.current !== null) clearTimeout(timer.current);
     if (immediate) {
       flush();

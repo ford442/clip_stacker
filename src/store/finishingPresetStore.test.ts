@@ -59,7 +59,7 @@ describe('user finishing presets', () => {
     settingsStore.setState({ finishing: withSharpen() });
     saveCurrentFinishingAsPreset('Persisted');
     __reloadFinishingPresetsForTests();
-    const preset = finishingPresetStore.getState().presets[0];
+    const preset = finishingPresetStore.getState().presets[0]!;
     expect(preset.name).toBe('Persisted');
     expect(normalizeFinishingSettings(preset.finishing as never)).toEqual(withSharpen());
   });
@@ -73,7 +73,8 @@ describe('user finishing presets', () => {
     expect(saveCurrentFinishingAsPreset('ONE', { overwrite: true }).ok).toBe(true);
     expect(finishingPresetStore.getState().presets).toHaveLength(1);
     saveCurrentFinishingAsPreset('Two');
-    const [one, two] = finishingPresetStore.getState().presets;
+    const one = finishingPresetStore.getState().presets[0]!;
+    const two = finishingPresetStore.getState().presets[1]!;
     expect(renameFinishingPreset(two.id, 'one').ok).toBe(false);
     expect(renameFinishingPreset(two.id, 'Second').ok).toBe(true);
     deleteFinishingPreset(one.id);
@@ -86,7 +87,7 @@ describe('user finishing presets', () => {
     const names = listFinishingPresets().map((p) => p.doc.name);
     expect(names.filter((n) => n === 'Film look')).toHaveLength(1);
     expect(listFinishingPresets().find((p) => p.doc.name === 'Film look')?.builtIn).toBe(false);
-    deleteFinishingPreset(finishingPresetStore.getState().presets[0].id);
+    deleteFinishingPreset(finishingPresetStore.getState().presets[0]!.id);
     expect(listFinishingPresets().find((p) => p.doc.name === 'Film look')?.builtIn).toBe(true);
   });
 
@@ -129,7 +130,7 @@ describe('applying presets with undo', () => {
   it('applying is one undo step; redo re-applies', () => {
     settingsStore.setState({ finishing: withSharpen() });
     const before = finishing();
-    applyFinishingPresetDocument(BUILT_IN_FINISHING_PRESETS[1]);
+    applyFinishingPresetDocument(BUILT_IN_FINISHING_PRESETS[1]!);
     const after = finishing();
     expect(after.grain?.enabled).toBe(true);
     expect(after.sharpen?.enabled).toBe(false); // replace: omitted passes off
@@ -152,7 +153,7 @@ describe('applying presets with undo', () => {
   });
 
   it('undo after a preset then a timeline edit restores in order', () => {
-    applyFinishingPresetDocument(BUILT_IN_FINISHING_PRESETS[0]);
+    applyFinishingPresetDocument(BUILT_IN_FINISHING_PRESETS[0]!);
     const clean = finishing();
     editorStore.getState().addTrack('video');
     editorStore.getState().undo(); // the track

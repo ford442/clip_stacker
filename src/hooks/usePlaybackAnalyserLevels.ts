@@ -15,12 +15,11 @@ export function usePlaybackAnalyserLevels(
   fps = 30,
 ): AnalyserLevels {
   const [levels, setLevels] = useState<AnalyserLevels>(ZERO_ANALYSER_LEVELS);
+  // Meters drop to zero while inactive (adjusted during render).
+  if (!active && levels !== ZERO_ANALYSER_LEVELS) setLevels(ZERO_ANALYSER_LEVELS);
 
   useEffect(() => {
-    if (!active) {
-      setLevels(ZERO_ANALYSER_LEVELS);
-      return;
-    }
+    if (!active) return;
 
     let raf = 0;
     let last = 0;

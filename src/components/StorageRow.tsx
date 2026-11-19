@@ -26,9 +26,9 @@ interface Props {
     total: number;
     progress: number;
     status: "pending" | "uploading" | "uploaded" | "failed" | "skipped";
-    error?: string;
-    chunkIndex?: number;
-    chunkTotal?: number;
+    error?: string | undefined;
+    chunkIndex?: number | undefined;
+    chunkTotal?: number | undefined;
   }[];
   pendingRemoteUploadError: {
     fileName: string;

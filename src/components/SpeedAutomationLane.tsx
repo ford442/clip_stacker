@@ -5,7 +5,6 @@
 
 import {
   useCallback,
-  useEffect,
   useId,
   useMemo,
   useRef,
@@ -290,11 +289,10 @@ export function SpeedAutomationLane({
     [commitTrack, duration],
   );
 
-  useEffect(() => {
-    if (selectedIndex != null && selectedIndex >= track.length) {
-      setSelectedIndex(track.length > 0 ? track.length - 1 : null);
-    }
-  }, [selectedIndex, track.length]);
+  // Keep the selection on a key that exists (clamped during render).
+  if (selectedIndex != null && selectedIndex >= track.length) {
+    setSelectedIndex(track.length > 0 ? track.length - 1 : null);
+  }
 
   const pathD = curve
     .map((p, i) => {

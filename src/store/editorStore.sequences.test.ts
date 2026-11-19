@@ -108,7 +108,13 @@ describe('editorStore — nested sequences', () => {
     editorActions.exitToRootSequence();
     expect(state().sequencePath).toEqual([]);
     expect(baseLaneOrder(state().tracks)).toEqual(['a', 'b', 'c']);
-    editorActions.resetHistory({ ...state(), selectedClipId: null, masterAudio: null });
+    const { masterBus, ...body } = state();
+    editorActions.resetHistory({
+      ...body,
+      ...(masterBus && { masterBus }),
+      selectedClipId: null,
+      masterAudio: null,
+    });
     // resetHistory without sequences = a project that has none.
     editorActions.resetHistory({
       clips: [],

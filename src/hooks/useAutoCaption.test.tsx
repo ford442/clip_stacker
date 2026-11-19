@@ -72,6 +72,24 @@ describe('useAutoCaption', () => {
     expect(hook!.unavailableReason).toBeNull();
   });
 
+  it('is probing until the probe answers, and again on refresh', async () => {
+    let answer: (available: boolean) => void = () => undefined;
+    registerCaptionProvider({
+      ...makeProvider(async () => []),
+      isAvailable: () => new Promise<boolean>((resolve) => (answer = resolve)),
+    });
+    await mount();
+    expect(hook!.probing).toBe(true);
+    await act(async () => answer(true));
+    expect(hook!.probing).toBe(false);
+    expect(hook!.providers).toHaveLength(1);
+
+    await act(async () => hook!.refresh());
+    expect(hook!.probing).toBe(true);
+    await act(async () => answer(true));
+    expect(hook!.probing).toBe(false);
+  });
+
   it('explains itself when no provider can run', async () => {
     await mount();
     expect(hook!.providers).toHaveLength(0);

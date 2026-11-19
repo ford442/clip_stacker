@@ -53,31 +53,31 @@ describe('CaptionLane', () => {
     const el = mount();
     const chips = el.querySelectorAll<HTMLElement>('.caption-chip');
     expect(chips).toHaveLength(2);
-    expect(chips[0].style.left).toBe(`${1 * PIXELS_PER_SECOND}px`);
-    expect(chips[0].style.width).toBe(`${2 * PIXELS_PER_SECOND}px`);
-    expect(chips[1].style.left).toBe(`${4 * PIXELS_PER_SECOND}px`);
+    expect(chips[0]?.style.left).toBe(`${1 * PIXELS_PER_SECOND}px`);
+    expect(chips[0]?.style.width).toBe(`${2 * PIXELS_PER_SECOND}px`);
+    expect(chips[1]?.style.left).toBe(`${4 * PIXELS_PER_SECOND}px`);
   });
 
   it('flattens multi-line cue text into a single-line chip label', () => {
     const el = mount();
     const labels = el.querySelectorAll('.caption-chip-text');
-    expect(labels[0].textContent).toBe('Hello');
-    expect(labels[1].textContent).toBe('Multi ⏎ line');
+    expect(labels[0]?.textContent).toBe('Hello');
+    expect(labels[1]?.textContent).toBe('Multi ⏎ line');
   });
 
   it('marks the selected cue for both styling and assistive tech', () => {
     const el = mount({ selectedCaptionId: 'b' });
     const chips = el.querySelectorAll<HTMLElement>('.caption-chip');
-    expect(chips[0].className).not.toContain('caption-chip--selected');
-    expect(chips[1].className).toContain('caption-chip--selected');
-    expect(chips[1].getAttribute('aria-pressed')).toBe('true');
+    expect(chips[0]?.className).not.toContain('caption-chip--selected');
+    expect(chips[1]?.className).toContain('caption-chip--selected');
+    expect(chips[1]?.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('selects a cue when its chip is pressed', () => {
     const selected: (string | null)[] = [];
     const el = mount({ onSelect: (id) => selected.push(id) });
     act(() => {
-      el.querySelectorAll<HTMLElement>('.caption-chip')[0].dispatchEvent(
+      el.querySelectorAll<HTMLElement>('.caption-chip')[0]?.dispatchEvent(
         new PointerEvent('pointerdown', { bubbles: true }),
       );
     });

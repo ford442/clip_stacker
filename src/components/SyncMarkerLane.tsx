@@ -27,7 +27,10 @@ export default function SyncMarkerLane({
 
   // --- Math Helpers ---
   const timeToX = (time: number) => (time / duration) * width;
-  const xToTime = (x: number) => Math.max(0, Math.min(duration, (x / width) * duration));
+  const xToTime = useCallback(
+    (x: number) => Math.max(0, Math.min(duration, (x / width) * duration)),
+    [duration, width],
+  );
 
   // --- Interaction Handlers ---
   const handleDoubleClick = (e: React.MouseEvent) => {
@@ -79,7 +82,7 @@ export default function SyncMarkerLane({
     ).sort((a, b) => a.time - b.time);
     
     onUpdateMarkers(updatedMarkers);
-  }, [draggedId, markers, duration, width, onUpdateMarkers]);
+  }, [draggedId, markers, xToTime, onUpdateMarkers]);
 
   const handlePointerUp = useCallback(() => {
     setDraggedId(null);

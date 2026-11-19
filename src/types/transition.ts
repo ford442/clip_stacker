@@ -26,11 +26,11 @@ export interface ClipTransition {
   /** Overlap duration in seconds (0 for hard cut). */
   duration: number;
   /** Per-transition shader uniforms (keys match registry param defs). */
-  params?: Record<string, number>;
+  params?: Record<string, number> | undefined;
   /** WGSL expression for `type: 'custom'` — substituted into the transition shader template. */
-  customShader?: string;
+  customShader?: string | undefined;
   /** Populated for `type: 'morph'` after RIFE generates the in-between segment. */
-  morphSegment?: MorphTransitionSegment;
+  morphSegment?: MorphTransitionSegment | undefined;
 }
 
 export interface SerializedTransition {

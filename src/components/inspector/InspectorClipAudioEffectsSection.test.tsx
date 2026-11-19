@@ -64,4 +64,31 @@ describe('InspectorClipAudioEffectsSection', () => {
     expect(onChange).toHaveBeenCalledWith('a', { eq: [{ ...DEFAULT_EQ_BAND, gainDb: -6 }] });
     expect(container.querySelector('input[type="range"]')).toBeNull();
   });
+
+  it('mirrors store changes, except over a drag that is still pending', () => {
+    const onChange = vi.fn();
+    const gain = () => container.querySelector<HTMLInputElement>('input[type="range"]')!;
+    render(<InspectorClipAudioEffectsSection clipId="a" effects={{ eq: [DEFAULT_EQ_BAND] }} onChange={onChange} />);
+    // An undo / load while idle replaces the draft.
+    const undone: ClipAudioEffects = { eq: [{ ...DEFAULT_EQ_BAND, gainDb: 2 }] };
+    render(<InspectorClipAudioEffectsSection clipId="a" effects={undone} onChange={onChange} />);
+    expect(gain().value).toBe('2');
+
+    // While a drag is pending, a store change does not clobber it...
+    setRange(gain(), '-3');
+    render(
+      <InspectorClipAudioEffectsSection
+        clipId="a"
+        effects={{ eq: [{ ...DEFAULT_EQ_BAND, gainDb: 5 }] }}
+        onChange={onChange}
+      />,
+    );
+    expect(gain().value).toBe('-3');
+    void act(() => vi.advanceTimersByTime(AUDIO_EFFECTS_COMMIT_DEBOUNCE_MS));
+    expect(onChange).toHaveBeenLastCalledWith('a', { eq: [{ ...DEFAULT_EQ_BAND, gainDb: -3 }] });
+
+    // ...and once it has landed, the next store change shows again.
+    render(<InspectorClipAudioEffectsSection clipId="a" effects={undone} onChange={onChange} />);
+    expect(gain().value).toBe('2');
+  });
 });

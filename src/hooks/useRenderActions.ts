@@ -172,7 +172,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
           forceReencode,
           outputColor: colorManagement.outputColor,
           mediaRecorderAvailable: typeof MediaRecorder !== "undefined",
-          captionMode: captions.length > 0 ? captionExportMode : undefined,
+          ...(captions.length > 0 && { captionMode: captionExportMode }),
         },
       );
       setRenderPlan(plan);
@@ -289,13 +289,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         console.warn("Error during FFmpeg cleanup:", err);
       });
     }
-  }, [
-    effectiveClips,
-    clips,
-    clipGroups,
-    transitions,
-    textOverlays,
-  ]);
+  }, [effectiveClips, clipGroups, transitions, textOverlays]);
 
   const handleMerge = useCallback(async () => {
     // Check if high memory usage is detected based on actual timeline clips

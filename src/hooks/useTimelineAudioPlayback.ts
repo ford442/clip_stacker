@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import type { Clip, ClipGroup, ClipTransition, Track } from '../types';
 import {
   disposeAudioPlaybackManager,
@@ -19,13 +19,12 @@ export function useTimelineAudioPlayback(
   transitions: ClipTransition[],
   tracks: Track[] = [],
 ): AudioPlaybackManager {
-  const managerRef = useRef(getAudioPlaybackManager());
+  // The shared manager (lazily created; a new one after the last dispose).
+  const manager = getAudioPlaybackManager();
   const masterBus = useEditorMasterBus();
 
   useEffect(() => {
-    const manager = getAudioPlaybackManager();
-    managerRef.current = manager;
-    manager.syncTimeline(clips, groups, transitions, tracks, masterBus).catch((err: unknown) => {
+    getAudioPlaybackManager().syncTimeline(clips, groups, transitions, tracks, masterBus).catch((err: unknown) => {
       // A failed decode / schedule leaves the previous timeline playing; log it
       // rather than surfacing an unhandled rejection on every edit.
       console.warn('[audio] timeline sync failed', err);
@@ -40,5 +39,5 @@ export function useTimelineAudioPlayback(
     };
   }, []);
 
-  return managerRef.current;
+  return manager;
 }

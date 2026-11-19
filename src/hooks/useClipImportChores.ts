@@ -40,7 +40,7 @@ export function useClipImportChores(
                 ...c,
                 lumaHistogram: stats.lumaHistogram,
                 lumaLevels: stats.lumaLevels,
-                posterUrl: stats.posterUrl ?? c.posterUrl,
+                ...(stats.posterUrl !== undefined && { posterUrl: stats.posterUrl }),
                 gpuChoreBackend: stats.gpuChoreBackend,
                 gpuChoreReason: stats.gpuChoreReason,
               };

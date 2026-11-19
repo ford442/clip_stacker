@@ -2,17 +2,19 @@ import {
   Component,
   Suspense,
   lazy,
-  type ComponentType,
   type LazyExoticComponent,
   type ReactNode,
 } from 'react';
+
+// React.lazy's own bound on the component it loads (`ComponentType<any>`),
+// read off its signature: any props are accepted, as `lazy` itself does.
+type LazyComponentBound = Awaited<ReturnType<Parameters<typeof lazy>[0]>>['default'];
 
 /**
  * `React.lazy` for a named export, so split panels keep their named exports
  * (and their direct imports in tests) instead of growing default exports.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- mirrors React.lazy's own bound
-export function lazyNamed<K extends string, M extends Record<K, ComponentType<any>>>(
+export function lazyNamed<K extends string, M extends Record<K, LazyComponentBound>>(
   load: () => Promise<M>,
   name: K,
 ): LazyExoticComponent<M[K]> {

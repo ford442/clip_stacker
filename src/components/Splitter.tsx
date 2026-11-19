@@ -17,7 +17,7 @@ export interface SplitterProps {
   /** id of the region this splitter sizes. */
   controls?: string;
   /** Current size for assistive tech; omitted while it is the natural (unset) size. */
-  value?: number;
+  value?: number | undefined;
   min: number;
   max: number;
   className?: string;
