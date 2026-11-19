@@ -7,6 +7,7 @@ if(CLIP_STACKER_HOST_TESTS)
   clip_stacker_host_test(video_stabilize_tests tests/video_stabilize_tests.cpp video_stabilize_dsp)
   # stab_math.h is an anonymous-namespace header; tests use only part of it.
   target_compile_options(video_stabilize_tests PRIVATE -Wno-unused-function)
+  clip_stacker_host_fuzz(stab_fuzz tests/stab_fuzz.cpp video_stabilize_dsp)
   return()
 endif()
 
