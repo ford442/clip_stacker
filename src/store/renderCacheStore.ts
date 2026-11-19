@@ -5,9 +5,12 @@ import {
   DEFAULT_RENDER_CACHE_CONFIG,
   onRenderCacheUsage,
   registerRenderCacheConfigSource,
-  sharedRenderCache,
 } from '../export/renderCache/renderCacheConfig';
-import type { RenderCacheUsage } from '../export/renderCache/renderCache';
+
+/** The cache classes stay out of the entry chunk until something needs them. */
+const sharedRenderCache = async () =>
+  (await import('../export/renderCache/sharedRenderCache')).sharedRenderCache();
+import type { RenderCacheUsage } from '../export/renderCache/renderCacheConfig';
 
 /**
  * Render cache, smart render and preview cache settings, per browser

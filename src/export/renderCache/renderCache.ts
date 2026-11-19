@@ -17,6 +17,7 @@
  */
 
 import type { CacheBackend } from './cacheBackend';
+import { DEFAULT_RENDER_CACHE_BUDGET, type RenderCacheUsage } from './renderCacheConfig';
 import {
   decodeSegmentRecord,
   decoderConfigIdentity,
@@ -27,8 +28,6 @@ import {
 export const INDEX_PATH = 'index.json';
 const INDEX_VERSION = 1;
 
-/** Default budget: 2 GiB. */
-export const DEFAULT_RENDER_CACHE_BUDGET = 2 * 1024 ** 3;
 
 export interface RenderCacheEntry {
   bytes: number;
@@ -39,13 +38,6 @@ export interface RenderCacheEntry {
   config: string;
 }
 
-export interface RenderCacheUsage {
-  bytes: number;
-  entries: number;
-  budgetBytes: number;
-  persistent: boolean;
-  backend: CacheBackend['kind'];
-}
 
 interface IndexFile {
   v: number;

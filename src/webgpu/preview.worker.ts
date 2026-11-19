@@ -45,10 +45,14 @@ import { VECTORSCOPE_SIZE } from '../gpu-chores/cpu/vectorscope';
 import type { GpuChoreResult } from '../gpu-chores/types';
 import { WorkerTimelineRenderer, type CapturedFrameEntry } from './workerTimelineRenderer';
 import { PreviewDecoderSource } from './previewDecoderSource';
+import { WorkerFrameKeys, cacheFrameNumber, snapToCacheGrid } from './previewWorkerCache';
+import { PREVIEW_CACHE_FPS } from '../composition/previewCacheGrid';
+import { quantizePlan } from '../export/renderKey';
 import type {
   CapturedFrame,
   FrameRequest,
   FrameSourceStats,
+  PreviewCacheStatusRequest,
   PreviewRenderResult,
   PreviewWorkerProtocol,
   ScopeData,
@@ -73,6 +77,12 @@ interface PendingRender {
   decoded: CapturedFrame[];
   /** How many of `decoded` were read from a preview proxy. */
   proxyDecoded: number;
+  /** RAM preview: store the drawn frame under this key (null = not cached). */
+  cacheKey: string | null;
+  /** Frame number (30 fps grid) `cacheKey` stands for. */
+  cacheFrame: number;
+  /** Background fill: present this cached frame again after storing. */
+  restoreKey: string | null;
 }
 /** Renders waiting on main's `frames-ready`, by render id. */
 const awaitingFrames = new Map<number, (frames: CapturedFrame[]) => void>();
@@ -178,6 +188,18 @@ async function completeRender(
 
   if (cancelled()) return null;
 
+  // RAM preview: keep the frame (only when the worker decoded every layer
+  // itself — a `<video>` capture has no key) in the task that drew it.
+  let cache: PreviewRenderResult['cache'] = 'off';
+  if (pending.cacheKey && elementFrames.length === 0) {
+    cache = renderer.storeCachedFrame(pending.cacheKey, pending.cacheFrame) ? 'miss' : 'off';
+  }
+  if (pending.restoreKey) {
+    // Background fill: put the frame being shown back before the canvas presents.
+    renderer.presentCachedFrame(pending.restoreKey);
+    return { plan: pending.plan, frameSources, cache };
+  }
+
   // Grab the scope copy before yielding — the swapchain texture is only valid
   // in the task that drew it.
   const scopeTexture =
@@ -192,8 +214,49 @@ async function completeRender(
   return {
     plan: pending.plan,
     frameSources,
+    cache,
     ...(isGpuProfilingRequested() ? { gpuProfile: getGpuProfileSnapshot() } : {}),
   };
+}
+
+/** The plan for a preview request at `globalTime` (snapped + quantized when the cache is on). */
+function planFor(req: PreviewCacheStatusRequest, globalTime: number, cacheOn: boolean): PreviewCompositionPlan {
+  // buildPreviewCompositionPlan is pure math — safe to run in a worker.
+  // WorkerClip is Clip with the non-serializable `file` field stripped;
+  // the function never reads `.file`.
+  const plan = buildPreviewCompositionPlan(
+    req.clips as Clip[],
+    req.clipGroups,
+    req.transitions,
+    req.textOverlays,
+    req.exportSettings,
+    cacheOn ? snapToCacheGrid(globalTime) : globalTime,
+    req.maxHeight,
+    req.maxWidth,
+    {
+      ...(req.captions ? { captions: req.captions } : {}),
+      ...(req.captionStyle ? { captionStyle: req.captionStyle } : {}),
+    },
+  );
+  return cacheOn ? quantizePlan(plan) : plan;
+}
+
+const frameKeys = new WorkerFrameKeys((clipId) => decoderSource?.mediaFor(clipId));
+
+function cacheKeyFor(
+  req: PreviewCacheStatusRequest,
+  plan: PreviewCompositionPlan,
+  finishing: FinishingSettings | undefined,
+): string | null {
+  const clipsById = new Map<string, Clip>(withNestedInstances(req.clips as Clip[]).map((c) => [c.id, c]));
+  return frameKeys.keyFor({ plan, clipsById, finishing, colorManagement: req.colorManagement, displayHdr });
+}
+
+function requestFinishing(req: PreviewCacheStatusRequest): FinishingSettings | undefined {
+  return resolveTimelineFinishing({
+    ...(req.finishing ? { finishing: req.finishing } : {}),
+    ...(req.colorGrade ? { colorGrade: req.colorGrade } : {}),
+  });
 }
 
 /** Run the enabled scope kernels on the composed-frame copy and post the bins. */
@@ -289,33 +352,31 @@ function previewHandlers(port: Port): WorkerHandlers<PreviewWorkerProtocol> {
     render: async (req, ctx) => {
       if (!renderer) return null;
       const cancelled = () => ctx.signal.aborted;
-      const { renderId, clips, clipGroups, transitions, textOverlays, exportSettings, globalTime } = req;
-
-      const resolvedFinishing = resolveTimelineFinishing({
-        ...(req.finishing ? { finishing: req.finishing } : {}),
-        ...(req.colorGrade ? { colorGrade: req.colorGrade } : {}),
-      });
-
+      const { renderId } = req;
+      const layerClips = req.clips as Clip[];
+      const resolvedFinishing = requestFinishing(req);
       if (cancelled()) return null;
 
-      // buildPreviewCompositionPlan is pure math — safe to run in a worker.
-      // WorkerClip is Clip with the non-serializable `file` field stripped;
-      // the function never reads `.file`.
-      const layerClips = clips as Clip[];
-      const plan = buildPreviewCompositionPlan(
-        layerClips,
-        clipGroups,
-        transitions,
-        textOverlays,
-        exportSettings,
-        globalTime,
-        req.maxHeight,
-        req.maxWidth,
-        {
-          ...(req.captions ? { captions: req.captions } : {}),
-          ...(req.captionStyle ? { captionStyle: req.captionStyle } : {}),
-        },
-      );
+      const cacheOn = req.previewCache === true;
+      const plan = planFor(req, req.globalTime, cacheOn);
+      const cacheKey = cacheOn ? cacheKeyFor(req, plan, resolvedFinishing) : null;
+      let restoreKey: string | null = null;
+      if (req.prerender) {
+        // Fill only behind a frame we can put back, so nothing flickers.
+        restoreKey = cacheKeyFor(req, planFor(req, req.prerender.restoreTime, true), resolvedFinishing);
+        if (!cacheKey || !restoreKey || !renderer.hasCachedFrame(restoreKey)) return null;
+        if (renderer.hasCachedFrame(cacheKey)) {
+          return { plan, frameSources: { decoder: 0, element: 0 }, cache: 'hit' };
+        }
+      } else if (cacheKey) {
+        renderer.resizeCanvas(plan.canvasWidth, plan.canvasHeight);
+        if (renderer.presentCachedFrame(cacheKey)) {
+          const scopeTexture =
+            scopeSettings.waveform || scopeSettings.vectorscope ? renderer.captureScopeTexture() : null;
+          if (scopeTexture) void postScopes(port, renderId, scopeTexture, renderer.scopeTextureSize);
+          return { plan, frameSources: { decoder: 0, element: 0 }, cache: 'hit' };
+        }
+      }
 
       if (cancelled()) return null;
 
@@ -351,6 +412,9 @@ function previewHandlers(port: Port): WorkerHandlers<PreviewWorkerProtocol> {
         colorManagement: req.colorManagement,
         decoded,
         proxyDecoded,
+        cacheKey,
+        cacheFrame: cacheFrameNumber(plan.globalTime),
+        restoreKey,
       };
 
       if (cancelled()) {
@@ -395,8 +459,23 @@ function previewHandlers(port: Port): WorkerHandlers<PreviewWorkerProtocol> {
       }
     },
 
+    'cache-status': (req) => {
+      if (!renderer) return null;
+      const finishing = requestFinishing(req);
+      const frames: number[] = [];
+      for (const [key, frame] of renderer.cachedFrames()) {
+        if (cacheKeyFor(req, planFor(req, frame / PREVIEW_CACHE_FPS, true), finishing) === key) frames.push(frame);
+      }
+      return { frames, ...renderer.frameCacheStats() };
+    },
+
+    'clear-preview-cache': () => {
+      renderer?.clearFrameCache();
+    },
+
     'clip-media': ({ media }) => {
       for (const { clipId, blob, source } of media) {
+        frameKeys.noteMedia(blob);
         if (decoderSource) decoderSource.setClipMedia(clipId, blob, source);
         else stagedMedia.set(clipId, { blob, source });
       }

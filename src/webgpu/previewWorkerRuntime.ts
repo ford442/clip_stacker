@@ -42,6 +42,9 @@ import {
   type CapturedFrame,
   type FrameRequest,
   type FrameSourceStats,
+  type PreviewCacheStatus,
+  type PreviewCacheStatusRequest,
+  type PreviewRenderResult,
   type PreviewWorkerProtocol,
   type ScopeData,
   type ScopeSettings,
@@ -88,6 +91,10 @@ export interface RenderTimelineParams {
   colorGrade?: ColorGradeSettings | undefined;
   captions?: CaptionEntry[] | undefined;
   captionStyle?: Partial<TextOverlayStyle> | undefined;
+  /** RAM preview on (see `PreviewRenderRequest.previewCache`). */
+  previewCache?: boolean | undefined;
+  /** Background fill (see `PreviewRenderRequest.prerender`). */
+  prerender?: { restoreTime: number } | undefined;
 }
 
 /**
@@ -119,6 +126,7 @@ export class PreviewWorkerRuntime {
   private scopesListener: ((scopes: ScopeData) => void) | null = null;
   private lastFrameSources: FrameSourceStats = { decoder: 0, element: 0 };
   private lastGpuProfile: Record<string, number> | null = null;
+  private lastCache: NonNullable<PreviewRenderResult['cache']> = 'off';
   private readonly deviceListeners = new Set<
     (state: PreviewDeviceState, message?: string) => void
   >();
@@ -284,10 +292,13 @@ export class PreviewWorkerRuntime {
           colorManagement: params.colorManagement,
           captions: params.captions,
           captionStyle: params.captionStyle,
+          previewCache: params.previewCache,
+          prerender: params.prerender,
         },
         { signal: pending.controller.signal },
       );
       if (!result) return null;
+      this.lastCache = result.cache ?? 'off';
       this.lastFrameSources = result.frameSources;
       if (result.gpuProfile) this.lastGpuProfile = result.gpuProfile;
       return result.plan;
@@ -315,6 +326,22 @@ export class PreviewWorkerRuntime {
    */
   get frameSources(): FrameSourceStats {
     return this.lastFrameSources;
+  }
+
+  /** How the last completed frame used the RAM preview. */
+  get cacheResult(): NonNullable<PreviewRenderResult['cache']> {
+    return this.lastCache;
+  }
+
+  /** Which frames of the timeline `req` describes are in the worker's RAM preview. */
+  async cacheStatus(req: PreviewCacheStatusRequest): Promise<PreviewCacheStatus | null> {
+    if (this.destroyed) return null;
+    return this.client.call('cache-status', req);
+  }
+
+  clearPreviewCache(): void {
+    if (this.destroyed) return;
+    this.client.notify('clear-preview-cache');
   }
 
   /** `?gpu_profile`: the worker's latest per-pass GPU averages (null when off). */

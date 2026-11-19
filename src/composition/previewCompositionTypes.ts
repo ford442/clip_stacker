@@ -176,6 +176,21 @@ export interface TimelineRenderOptions {
    * composited in the working space before the PQ output transform.
    */
   graphicsOverlay?: HTMLCanvasElement | OffscreenCanvas;
+  /** Worker backend: use the RAM preview (`webgpu/previewFrameCache.ts`). */
+  previewCache?: boolean;
+  /**
+   * Worker backend, RAM preview: fill the cache with this frame while the
+   * canvas keeps showing the (cached) frame at `restoreTime`.
+   */
+  prerender?: { restoreTime: number };
+}
+
+/** What the RAM preview holds for the current timeline (frame numbers on the 30 fps grid). */
+export interface PreviewCacheSnapshot {
+  frames: number[];
+  entries: number;
+  bytes: number;
+  budgetBytes: number;
 }
 
 /** Caption inputs for `buildPreviewCompositionPlan`. */
@@ -246,6 +261,17 @@ export interface TimelineCompositor {
    * (WebGPU backends only).
    */
   setDisplayHdr?(hdr: boolean): void;
+  /** RAM preview contents for this timeline (worker backend only; null when unknown). */
+  previewCacheStatus?(
+    clips: Clip[],
+    groups: ClipGroup[],
+    transitions: ClipTransition[],
+    overlays: TextOverlay[],
+    settings: Pick<ExportSettings, 'outputResolution'> | undefined,
+    options?: TimelineRenderOptions,
+  ): Promise<PreviewCacheSnapshot | null>;
+  /** Drop the RAM preview (worker backend only). */
+  clearPreviewCache?(): void;
   destroy(): void;
 }
 

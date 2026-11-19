@@ -50,7 +50,8 @@ import {
   renderSettingsHash,
   RENDER_KEY_VERSION,
 } from './renderKey';
-import { renderCacheConfig, sharedRenderCache } from './renderCache/renderCacheConfig';
+import { renderCacheConfig } from './renderCache/renderCacheConfig';
+import { sharedRenderCache } from './renderCache/sharedRenderCache';
 import {
   runSegmentedExport,
   SegmentConfigMismatchError,
@@ -477,7 +478,13 @@ async function encodeSegmented(
       : null,
     encodeRange: (start, end, onFrame) =>
       encodeFreshRange(session, encoderConfig, muxer, width, height, start, end, onFrame),
-    probeEncoderConfig: () => probeEncoderConfig(encoderConfig, width, height),
+    probeEncoderConfig: () =>
+      probeEncoderConfig(encoderConfig, width, height).catch((err: unknown) => {
+        // An encoder that will not take the probe frame cannot be planned against: encode continuously.
+        throw new SegmentConfigMismatchError(
+          `the encoder probe failed (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }),
     sink: muxer,
     onProgress: run.progress,
     onStatus: run.onStatus,

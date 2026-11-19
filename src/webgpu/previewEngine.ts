@@ -481,6 +481,24 @@ export class PreviewEngine {
     );
   }
 
+  /** The device this engine draws with (the preview frame cache shares it). */
+  get gpuDevice(): GPUDevice {
+    return this.device;
+  }
+
+  /**
+   * The swapchain texture being drawn this frame, or null once destroyed.
+   * Valid only in the task that drew it (see `captureScopeTexture`).
+   */
+  currentCanvasTexture(): GPUTexture | null {
+    if (this.destroyed) return null;
+    try {
+      return this.context.getCurrentTexture();
+    } catch {
+      return null;
+    }
+  }
+
   /** Size of the texture `captureScopeTexture` returns. */
   get scopeTextureSize(): { width: number; height: number } {
     return this.scopeCopy.size;

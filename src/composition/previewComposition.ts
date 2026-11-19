@@ -47,6 +47,7 @@ export type {
   CaptionPlanOptions,
   PreviewCompositionPlan,
   PreviewDeviceState,
+  PreviewCacheSnapshot,
   TimelineCompositor,
 } from './previewCompositionTypes';
 export { captionPlanOptions } from './previewCompositionTypes';

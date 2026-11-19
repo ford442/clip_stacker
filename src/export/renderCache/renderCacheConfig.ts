@@ -1,5 +1,6 @@
 /**
- * Render-cache settings as export reads them, and the process-wide cache.
+ * Render-cache settings as export reads them (the cache itself is opened
+ * lazily by `sharedRenderCache.ts`, so this stays out of the entry chunk).
  *
  * The settings are per-browser view state (`store/renderCacheStore.ts`
  * persists them and registers itself here), never part of a project: the
@@ -8,8 +9,16 @@
  * off for the page (resolved on main).
  */
 
-import { openOpfsCacheBackend, createMemoryCacheBackend } from './cacheBackend';
-import { DEFAULT_RENDER_CACHE_BUDGET, RenderCache, type RenderCacheUsage } from './renderCache';
+export interface RenderCacheUsage {
+  bytes: number;
+  entries: number;
+  budgetBytes: number;
+  persistent: boolean;
+  backend: 'opfs' | 'memory';
+}
+
+/** Default budget: 2 GiB. */
+export const DEFAULT_RENDER_CACHE_BUDGET = 2 * 1024 ** 3;
 
 export interface RenderCacheConfig {
   /** Reuse cached segments and store newly rendered ones. */
@@ -41,30 +50,21 @@ function killSwitch(): boolean {
 }
 
 /** The settings this export runs with (the kill switch applied). */
+/** The registered settings (no kill switch): what the shared cache sizes itself by. */
+export function registeredRenderCacheConfig(): RenderCacheConfig {
+  return source();
+}
+
 export function renderCacheConfig(): RenderCacheConfig {
   const config = source();
   return killSwitch() ? { ...config, enabled: false, smartRender: false } : config;
 }
 
-let shared: Promise<RenderCache> | null = null;
 const usageListeners = new Set<(usage: RenderCacheUsage) => void>();
 
-/**
- * The process-wide cache: OPFS when this browser has writable OPFS files,
- * else memory (it then lasts until the tab closes). Opened on first use.
- */
-export function sharedRenderCache(): Promise<RenderCache> {
-  shared ??= (async () => {
-    const backend = (await openOpfsCacheBackend()) ?? createMemoryCacheBackend();
-    const cache = new RenderCache(backend, { budgetBytes: source().budgetBytes });
-    cache.onChange((usage) => {
-      for (const listener of usageListeners) listener(usage);
-    });
-    await cache.ready();
-    for (const listener of usageListeners) listener(cache.usage());
-    return cache;
-  })();
-  return shared;
+/** Report the shared cache's usage (`sharedRenderCache.ts`). */
+export function emitRenderCacheUsage(usage: RenderCacheUsage): void {
+  for (const listener of usageListeners) listener(usage);
 }
 
 /** Follow the shared cache's usage (fires once it opens, then on every change). */

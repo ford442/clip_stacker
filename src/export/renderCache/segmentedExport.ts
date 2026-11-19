@@ -286,7 +286,9 @@ export async function runSegmentedExport(deps: SegmentedExportDeps): Promise<Seg
     // -- 4. Parameter sets: one sample entry for the whole track ------------
     const identities = new Set<string>();
     let probe: SegmentDecoderConfig | null = null;
-    if (pieces.some((piece) => piece.kind === 'render')) {
+    // Only needed to plan against copies / hits: rendered pieces alone all come
+    // from this encoder, and the mux check below still guards them.
+    if (pieces.some((piece) => piece.kind === 'render') && pieces.some((piece) => piece.kind !== 'render')) {
       probe = await deps.probeEncoderConfig();
       identities.add(decoderConfigIdentity(probe));
     }
@@ -308,7 +310,7 @@ export async function runSegmentedExport(deps: SegmentedExportDeps): Promise<Seg
     } else if (identities.size > 1) {
       report.parameterSets = 'in-band';
       reasons.push(
-        'Copied and re-encoded spans use different H.264 parameter sets: the track is written avc3 with SPS / PPS before every key frame',
+        'Spans with different H.264 parameter sets (two sources, or a copy next to re-encoded frames): the track is written avc3 with SPS / PPS before every key frame',
       );
     }
     const inBand = report.parameterSets === 'in-band';

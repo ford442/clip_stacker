@@ -7,6 +7,7 @@ import {
   timelineContentWidth,
   timelineTimeAtOffset,
 } from '../timeline/timelineLayout';
+import { PreviewCacheBar } from './PreviewCacheBar';
 
 interface RulerProps {
   totalDuration: number;
@@ -75,6 +76,7 @@ export function TimelineRuler({ totalDuration, pixelsPerSecond, beatMarkers = []
           <span className="ruler-tick-label">{formatTimelineTime(tick)}</span>
         </span>
       ))}
+      <PreviewCacheBar pixelsPerSecond={pixelsPerSecond} />
       {beatMarkers.map((m) => (
         <span
           key={`${m.clipId}-${m.sourceTime}`}

@@ -124,6 +124,11 @@ export class PreviewDecoderSource {
     return this.media.has(clipId);
   }
 
+  /** The bytes this source decodes for `clipId` (and whether they are its proxy). */
+  mediaFor(clipId: string): { blob: Blob; source: PreviewMediaSource } | undefined {
+    return this.media.get(clipId);
+  }
+
   /** Drop media + cursors for clips no longer on the timeline. */
   pruneExcept(clipIds: Set<string>): void {
     for (const id of [...this.media.keys()]) {
