@@ -5,6 +5,7 @@ import { App } from "./App";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { initCaptionProviders } from "./app/captionProviderBootstrap";
 import { installFinishingPresetApi } from "./actions/finishingPresetApi";
+import { installProjectApi } from "./actions/projectApi";
 import { testHarnessRequested } from "./app/harnessBindings";
 import { allowFallbackAdapterForPreview } from "./webgpu/gpuDevice";
 import { requestGpuProfiling } from "./webgpu/gpuProfiler";
@@ -27,6 +28,11 @@ initCaptionProviders();
 // `window.clipStacker.finishing` + the apply-preset event, for tools and AI
 // agents running in this page (docs/finishing-presets.md).
 installFinishingPresetApi();
+
+// `window.clipStacker.project` (+ `clipStacker.api.version`): read, edit,
+// interchange, stems and render — what `cs` and the MCP server drive
+// (docs/project-api.md).
+installProjectApi();
 
 // `?test_harness` (e2e/): `window.clipStacker.test`. A separate chunk, never
 // loaded — or present on `window` — without the query parameter.

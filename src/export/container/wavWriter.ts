@@ -103,8 +103,12 @@ export interface WavWriter {
   readonly frames: number;
   /** Appends interleaved samples; the length must be a whole number of frames. */
   write(chunk: Float32Array): void;
-  /** Ends the file and returns its parts. Call once; `write` throws afterwards. */
-  finish(): WavFile;
+  /**
+   * Ends the file and returns its parts. Call once; `write` throws afterwards.
+   * `loudness` fills a version 2 `bext` measured while writing (the writer
+   * must have been created with `bext.loudness`, so the chunk is version 2).
+   */
+  finish(final?: { loudness?: BextLoudness }): WavFile;
 }
 
 const WAVE_FORMAT_PCM = 1;
@@ -134,6 +138,9 @@ interface WavLayout {
   header: Uint8Array<ArrayBuffer>;
   factFramesOffset: number | null;
   dataSizeOffset: number;
+  /** Offset of the `bext` payload in `header`, and whether it is version 2. */
+  bextOffset: number;
+  bextVersion2: boolean;
 }
 
 /**
@@ -194,8 +201,12 @@ export function createWavWriter(options: WavWriterOptions = {}): WavWriter {
       }
       dataBytes += bytes;
     },
-    finish() {
+    finish(final) {
       if (finished) throw new Error('WavWriter: finish() called twice');
+      if (final?.loudness) {
+        if (!layout.bextVersion2) throw new Error('WavWriter: loudness at finish() needs a version 2 bext (pass bext.loudness at create)');
+        writeBextLoudness(new DataView(layout.header.buffer), layout.bextOffset, final.loudness);
+      }
       finished = true;
       if (block !== null && used > 0) {
         // A mostly empty last block is trimmed rather than kept alive whole.
@@ -268,15 +279,27 @@ function resolveLayout(options: WavWriterOptions): WavLayout {
   writeFourCc(header, 8, 'WAVE');
   let offset = 12;
   let factFramesOffset: number | null = null;
+  let bextOffset = 0;
   for (const [id, payload] of chunks) {
     writeFourCc(header, offset, id);
     view.setUint32(offset + 4, payload.length, true);
     header.set(payload, offset + 8);
     if (id === 'fact') factFramesOffset = offset + 8;
+    if (id === 'bext') bextOffset = offset + 8;
     offset += 8 + payload.length + (payload.length % 2);
   }
   writeFourCc(header, offset, 'data');
-  return { channels, format, bytesPerSample, blockAlign, header, factFramesOffset, dataSizeOffset: offset + 4 };
+  return {
+    channels,
+    format,
+    bytesPerSample,
+    blockAlign,
+    header,
+    factFramesOffset,
+    dataSizeOffset: offset + 4,
+    bextOffset,
+    bextVersion2: Boolean(options.bext?.loudness),
+  };
 }
 
 function patchHeader(layout: WavLayout, dataBytes: number): Uint8Array<ArrayBuffer> {
@@ -388,15 +411,18 @@ function bextPayload(meta: ChunkContext, bext: BextOptions): Uint8Array<ArrayBuf
   view.setUint32(342, Math.floor(meta.timeReference / UINT32_RANGE), true);
   view.setUint16(346, bext.loudness ? 2 : 1, true);
   // 348: UMID, 64 zero bytes (none assigned).
-  if (bext.loudness) {
-    const { integrated, range, maxTruePeak, maxMomentary, maxShortTerm } = bext.loudness;
-    [integrated, range, maxTruePeak, maxMomentary, maxShortTerm].forEach((value, i) => {
-      view.setInt16(BEXT_LOUDNESS_OFFSET + i * 2, loudnessField(value), true);
-    });
-  }
+  if (bext.loudness) writeBextLoudness(view, 0, bext.loudness);
   // 422: 180 reserved zero bytes.
   writeAscii(bytes, BEXT_FIXED_BYTES, history.length, history, true);
   return bytes;
+}
+
+/** The five v2 loudness fields of a `bext` payload starting at `bextOffset` in `view`. */
+function writeBextLoudness(view: DataView, bextOffset: number, loudness: BextLoudness): void {
+  const { integrated, range, maxTruePeak, maxMomentary, maxShortTerm } = loudness;
+  [integrated, range, maxTruePeak, maxMomentary, maxShortTerm].forEach((value, i) => {
+    view.setInt16(bextOffset + BEXT_LOUDNESS_OFFSET + i * 2, loudnessField(value), true);
+  });
 }
 
 function loudnessField(value: number | undefined): number {

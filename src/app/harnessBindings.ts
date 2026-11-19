@@ -3,11 +3,9 @@
  * (`testHarness/harness.ts`). Empty on a normal load.
  */
 export const harnessBindings: {
-  performRender: (() => Promise<void>) | null;
   /** Make `App` throw on its next render, so `RootErrorBoundary` takes over. */
   crash: ((error: Error) => void) | null;
 } = {
-  performRender: null,
   crash: null,
 };
 

@@ -31,8 +31,7 @@ import { renderJobStore } from '../../store/renderJobStore';
 import { playbackStore } from '../../store/playbackStore';
 import { fetchDemoClips, DEMO_CLIPS } from '../../media/demoClips';
 import { createClipId, getMediaInfo } from '../../media/media';
-import { applyProjectData, serializeProject } from '../../project';
-import { selectProjectSnapshot } from '../../project/snapshot';
+import { applyProjectData } from '../../project';
 import type { ColorManagementSettings } from '../../finishing/colorManagement';
 import { buildFixture, type HarnessFixtureSpec } from './fixtureBuilder';
 import { visibleTextOverlays } from '../../timeline/trackModel';
@@ -42,6 +41,8 @@ import { getClipDuration } from '../../timeline/clipTiming';
 import { readAutoSaveSession } from '../../project/autoSave';
 import { DecoderFrameCursor } from '../../media/decoderCursor';
 import { harnessBindings } from '../harnessBindings';
+import { renderBinding } from '../../actions/renderBinding';
+import { createProjectApi } from '../../actions/projectApi';
 import { compareImages, meanRgb, type ImageComparison } from './imageMetrics';
 import {
   P3_CHART_PATCHES,
@@ -95,8 +96,11 @@ async function buildProject(spec: HarnessFixtureSpec): Promise<void> {
   await buildFixture(spec, async (demo) => clipFromFile(await demoFile(demo)));
 }
 
+/** The harness is a thin layer over the supported API (`window.clipStacker.project`). */
+const project = createProjectApi();
+
 function snapshotProject(): Project {
-  return serializeProject(selectProjectSnapshot(editorStore.getState(), settingsStore.getState()));
+  return project.getState();
 }
 
 /** Load a saved project; its clips resolve against the demo clips by file name. */
@@ -324,23 +328,23 @@ export interface ExportOptions {
 
 /** Run the app's Render action and return the produced file. */
 async function exportProject(options: ExportOptions = {}): Promise<Blob> {
-  if (!harnessBindings.performRender) throw new Error('App has not bound its render action yet');
+  if (!renderBinding.performRender) throw new Error('App has not bound its render action yet');
   const settings = settingsStore.getState();
   const previous = { forceReencode: settings.forceReencode, forceFFmpeg: settings.forceFFmpeg };
   settings.setForceReencode(options.forceReencode ?? true);
   settings.setForceFFmpeg(options.forceFFmpeg ?? false);
+  let report: Awaited<ReturnType<typeof project.render>>;
   try {
     // performRender closes over the clips React last rendered; let a fixture
     // built just now commit (and the binding effect re-run) first.
     await settle();
-    await harnessBindings.performRender();
+    report = await project.render();
   } finally {
     settings.setForceReencode(previous.forceReencode);
     settings.setForceFFmpeg(previous.forceFFmpeg);
   }
-  const { outputUrl, status } = renderJobStore.getState();
-  if (!outputUrl) throw new Error(`Render produced no output: ${status}`);
-  return (await fetch(outputUrl)).blob();
+  if (!report.url) throw new Error(`Render produced no output: ${report.status}`);
+  return (await fetch(report.url)).blob();
 }
 
 /** The exported file's frame at `t` (seconds), decoded with WebCodecs. */
@@ -434,6 +438,8 @@ export const testHarness = {
   autoSaveSummary,
   crash,
   listShaders: listAssembledShaders,
+  /** `window.clipStacker.project`, for the interchange / stems / ops specs. */
+  project,
   toPng,
   fromPng,
   compare: (a: ImageData, b: ImageData): ImageComparison => compareImages(a, b),

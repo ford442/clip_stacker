@@ -28,6 +28,7 @@ import { useAppKeyboardShortcuts } from "./hooks/useAppKeyboardShortcuts";
 import { AppShell } from "./components/AppShell";
 import { renderJobActions } from './store/renderJobStore';
 import { harnessBindings } from './app/harnessBindings';
+import { renderBinding } from './actions/renderBinding';
 
 /**
  * Composition root. All business state lives in the Zustand stores under
@@ -150,7 +151,7 @@ export function App() {
   // `?test_harness` drives the real Render action (src/app/testHarness) and
   // can crash this tree on purpose, to exercise RootErrorBoundary recovery.
   useEffect(() => {
-    harnessBindings.performRender = renderActions.performRender;
+    renderBinding.performRender = renderActions.performRender;
   }, [renderActions.performRender]);
   const [harnessCrash, setHarnessCrash] = useState<Error | null>(null);
   useEffect(() => {

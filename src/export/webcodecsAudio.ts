@@ -198,7 +198,8 @@ function entryPlaybackRate(entry: AudioScheduleEntry): number {
   return 1;
 }
 
-function toMixEntries(
+/** Schedule entries as media-engine mix entries, routed to `plan`'s lane buses. */
+export function toMixEntries(
   entries: AudioScheduleEntry[],
   fullSchedule: AudioScheduleEntry[],
   plan: BusGraphPlan | null = null,
@@ -226,7 +227,7 @@ function toMixEntries(
  * Decoding itself goes through `decodeAudio` (`ClipAudioCache`), at 48 kHz
  * like the mix.
  */
-function createBufferContext(): OfflineAudioContext {
+export function createBufferContext(): OfflineAudioContext {
   return new OfflineAudioContext(AAC_CHANNELS, 1, AAC_SAMPLE_RATE);
 }
 
@@ -235,7 +236,7 @@ function createBufferContext(): OfflineAudioContext {
  * With `evict`, a clip's decoded buffer is dropped once every entry that uses
  * it has been mixed, so a long show only holds the clips under the playhead.
  */
-function createSchedulePcmProvider(
+export function createSchedulePcmProvider(
   entries: AudioScheduleEntry[],
   cache: ClipAudioCache,
   ctx: BaseAudioContext,
@@ -467,3 +468,8 @@ export async function renderTimelineAudioMixWav(
 }
 
 export { timelineHasAudioAutomation };
+
+/** True when the media engine can stream this schedule (no clip needs the OfflineAudioContext mix). */
+export function scheduleCanStream(entries: AudioScheduleEntry[]): boolean {
+  return !scheduleNeedsOfflineAudioMix(entries);
+}

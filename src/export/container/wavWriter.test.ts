@@ -434,3 +434,25 @@ describe('timeReferenceSamples', () => {
     expect(() => timeReferenceSamples(1, 0)).toThrow(RangeError);
   });
 });
+
+describe('loudness measured while writing', () => {
+  it('patches the version 2 bext loudness fields at finish', () => {
+    const writer = createWavWriter({ trackName: 'Dialog', bext: { originationDate: '2026-01-02', originationTime: '03:04:05', loudness: {} } });
+    writer.write(new Float32Array([0.5, -0.5]));
+    const file = writer.finish({ loudness: { integrated: -23.04, range: 6.5, maxTruePeak: -1.2 } });
+    const header = file.parts[0]!;
+    const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+    const bext = 12 + 8 + 16 + 8; // RIFF/WAVE, fmt chunk (16 bytes), bext chunk header
+    expect(String.fromCharCode(...header.subarray(bext - 8, bext - 4))).toBe('bext');
+    expect(view.getUint16(bext + 346, true)).toBe(2);
+    expect(view.getInt16(bext + 412, true)).toBe(-2304);
+    expect(view.getInt16(bext + 414, true)).toBe(650);
+    expect(view.getInt16(bext + 416, true)).toBe(-120);
+    expect(view.getInt16(bext + 418, true)).toBe(0x7fff);
+  });
+
+  it('refuses loudness at finish for a version 1 bext', () => {
+    const writer = createWavWriter({ bext: { originationDate: '2026-01-02', originationTime: '03:04:05' } });
+    expect(() => writer.finish({ loudness: { integrated: -23 } })).toThrow(/version 2 bext/);
+  });
+});
