@@ -68,7 +68,7 @@ export default defineConfig(
         {
           type: 'core',
           partialMatch: false,
-          pattern: 'src/{utils,export,timeline,finishing,captions,project,media,composition,remote,audio,webgpu,wasm,ffmpeg,gpu-chores}/**',
+          pattern: 'src/{utils,export,timeline,finishing,captions,project,media,composition,remote,audio,webgpu,wasm,ffmpeg,gpu-chores,workers}/**',
         },
         { type: 'store', partialMatch: false, pattern: 'src/store/**' },
         { type: 'actions', partialMatch: false, pattern: 'src/{actions,playback}/**' },
@@ -133,6 +133,22 @@ export default defineConfig(
               message: 'core / types modules must not import React or zustand (they run in workers and tests without a DOM)',
             },
           ],
+        },
+      ],
+    },
+  },
+  {
+    // Every worker goes through the typed RPC (src/workers/workerRpc.ts);
+    // the literal `new Worker(new URL(...))` Vite needs lives in
+    // src/workers/workerFactories.ts.
+    files: ['src/**/*.{ts,tsx}'],
+    ignores: ['src/workers/**', 'src/**/*.test.{ts,tsx}', 'src/**/*.test.helpers.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "NewExpression[callee.name='Worker']",
+          message: 'Create workers in src/workers/workerFactories.ts and talk to them through createWorkerClient (src/workers/workerRpc.ts).',
         },
       ],
     },

@@ -1,32 +1,35 @@
 /**
- * Main-thread proxy around the audio analysis worker.
+ * Main-thread proxy around the audio analysis worker
+ * (`audioAnalysisWorker.ts`, through the worker RPC).
  */
 
 import type { AudioBandEnergies } from './audioAnalysis';
 import { getWasmPublicBaseUrl } from './emscriptenLoader';
 import type { OfflineAnalysisResult } from './offlineAnalysis';
-import type {
-  AnalysisWorkerRequest,
-  AnalysisWorkerResponse,
-} from './audioAnalysisWorker';
+import type { AudioAnalysisProtocol } from './audioAnalysisWorker';
+import { createAudioAnalysisWorker } from '../workers/workerFactories';
+import { WorkerCrashedError, createWorkerClient, type WorkerClient } from '../workers/workerRpc';
 
-type Pending = {
-  resolve: (value: AnalysisWorkerResponse) => void;
-  reject: (err: Error) => void;
-};
+function unavailableResult(reason: string, pcm: Float32Array, sampleRate: number): OfflineAnalysisResult {
+  return {
+    available: false,
+    reason,
+    beatTimestamps: [],
+    sampleRate,
+    durationSec: pcm.length / sampleRate,
+  };
+}
 
 export class AudioAnalysisWorkerClient {
-  private worker: Worker | null = null;
-  private nextId = 1;
-  private pending = new Map<number, Pending>();
+  private client: WorkerClient<AudioAnalysisProtocol> | null = null;
   private failedReason: string | null = null;
 
   get available(): boolean {
-    return this.failedReason == null && this.worker != null;
+    return this.failedReason == null && this.client?.available === true;
   }
 
   get failureReason(): string | null {
-    return this.failedReason;
+    return this.failedReason ?? this.client?.failure?.message ?? null;
   }
 
   /**
@@ -34,53 +37,30 @@ export class AudioAnalysisWorkerClient {
    * Returns false when Worker construction fails (feature disabled).
    */
   start(): boolean {
-    if (this.worker) return true;
-    try {
-      this.worker = new Worker(new URL('./audioAnalysisWorker.ts', import.meta.url), {
-        type: 'module',
-      });
-      this.worker.onmessage = (ev: MessageEvent<AnalysisWorkerResponse>) => {
-        const msg = ev.data;
-        const p = this.pending.get(msg.id);
-        if (!p) return;
-        this.pending.delete(msg.id);
-        p.resolve(msg);
-      };
-      this.worker.onerror = (err) => {
-        this.failedReason = err.message || 'Worker error';
-        for (const [, p] of this.pending) {
-          p.reject(new Error(this.failedReason!));
-        }
-        this.pending.clear();
-      };
-      return true;
-    } catch (err) {
-      this.failedReason = (err as Error)?.message || String(err);
-      this.worker = null;
+    if (this.client?.available) return true;
+    if (this.failedReason != null) return false;
+    const client = createWorkerClient<AudioAnalysisProtocol>(createAudioAnalysisWorker, {
+      name: 'audio analysis',
+      onCrash: (err) => {
+        this.failedReason = err.detail || err.message;
+      },
+    });
+    if (!client.start()) {
+      this.failedReason = client.failure?.detail || client.failure?.message || 'Worker unavailable';
       return false;
     }
-  }
-
-  private post(msg: AnalysisWorkerRequest, transfer?: Transferable[]): Promise<AnalysisWorkerResponse> {
-    if (!this.worker) {
-      return Promise.reject(new Error(this.failedReason || 'Worker not started'));
-    }
-    return new Promise((resolve, reject) => {
-      this.pending.set(msg.id, { resolve, reject });
-      this.worker!.postMessage(msg, transfer ?? []);
-    });
+    this.client = client;
+    return true;
   }
 
   async init(sampleRate: number, fftSize = 2048, baseUrl?: string): Promise<boolean> {
-    if (!this.start()) return false;
-    const id = this.nextId++;
-    const wasmBase = baseUrl ?? getWasmPublicBaseUrl();
-    const resp = await this.post({ type: 'init', id, sampleRate, fftSize, baseUrl: wasmBase });
-    if (resp.type === 'unavailable') {
+    if (!this.start() || !this.client) return false;
+    const resp = await this.client.call('init', { sampleRate, fftSize, baseUrl: baseUrl ?? getWasmPublicBaseUrl() });
+    if (!resp.ok) {
       this.failedReason = resp.reason;
       return false;
     }
-    return resp.type === 'ready';
+    return true;
   }
 
   async analyzeOffline(
@@ -89,67 +69,47 @@ export class AudioAnalysisWorkerClient {
     fftSize = 2048,
     baseUrl?: string,
   ): Promise<OfflineAnalysisResult> {
-    if (!this.start()) {
-      return {
-        available: false,
-        reason: this.failedReason || 'Worker unavailable',
-        beatTimestamps: [],
-        sampleRate,
-        durationSec: pcm.length / sampleRate,
-      };
+    if (!this.start() || !this.client) {
+      return unavailableResult(this.failureReason || 'Worker unavailable', pcm, sampleRate);
     }
-    const id = this.nextId++;
     const copy = pcm.slice();
-    const wasmBase = baseUrl ?? getWasmPublicBaseUrl();
-    const resp = await this.post(
-      { type: 'analyzeOffline', id, pcm: copy, sampleRate, fftSize, baseUrl: wasmBase },
-      [copy.buffer],
-    );
-    if (resp.type === 'offlineResult') return resp.result;
-    if (resp.type === 'error') {
-      return {
-        available: false,
-        reason: resp.message,
-        beatTimestamps: [],
-        sampleRate,
-        durationSec: pcm.length / sampleRate,
-      };
+    try {
+      return await this.client.call(
+        'analyzeOffline',
+        { pcm: copy, sampleRate, fftSize, baseUrl: baseUrl ?? getWasmPublicBaseUrl() },
+        { transfer: [copy.buffer] },
+      );
+    } catch (err) {
+      // A dead worker rejects; an analysis that failed in the worker is "unavailable".
+      if (err instanceof WorkerCrashedError) throw err;
+      return unavailableResult(err instanceof Error ? err.message : String(err), pcm, sampleRate);
     }
-    return {
-      available: false,
-      reason: 'Unexpected worker response',
-      beatTimestamps: [],
-      sampleRate,
-      durationSec: pcm.length / sampleRate,
-    };
   }
 
   async analyzeFrame(pcm: Float32Array): Promise<AudioBandEnergies | null> {
-    if (!this.worker || this.failedReason) return null;
-    const id = this.nextId++;
+    if (!this.client || !this.available) return null;
     const copy = pcm.slice();
-    const resp = await this.post({ type: 'analyzeFrame', id, pcm: copy }, [copy.buffer]);
-    if (resp.type === 'frameResult') return resp.energies;
-    return null;
+    try {
+      return await this.client.call('analyzeFrame', { pcm: copy }, { transfer: [copy.buffer] });
+    } catch (err) {
+      if (err instanceof WorkerCrashedError) throw err;
+      return null;
+    }
   }
 
   reset(): void {
-    if (!this.worker) return;
-    const id = this.nextId++;
-    void this.post({ type: 'reset', id });
+    if (this.client?.available) this.client.notify('reset');
   }
 
   destroy(): void {
-    if (this.worker) {
-      const id = this.nextId++;
+    if (this.client) {
       try {
-        this.worker.postMessage({ type: 'destroy', id } satisfies AnalysisWorkerRequest);
+        if (this.client.available) this.client.notify('destroy');
       } catch {
         /* ignore */
       }
-      this.worker.terminate();
-      this.worker = null;
+      this.client.terminate();
+      this.client = null;
     }
-    this.pending.clear();
   }
 }

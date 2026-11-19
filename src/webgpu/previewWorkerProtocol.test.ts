@@ -6,6 +6,7 @@ import {
   toWorkerClip,
   PREVIEW_WORKER_INIT_TIMEOUT_MS,
   type FrameRequest,
+  type PreviewWorkerProtocol,
 } from './previewWorkerProtocol';
 import { isCanvasTransferred } from './previewWorkerRuntime';
 
@@ -51,26 +52,25 @@ describe('previewWorkerProtocol', () => {
 
     const groups = groupFrameRequestsByMedia(requests);
     expect(groups).toHaveLength(4);
-    expect(groups[0].map((r) => r.role)).toEqual(['base', 'outgoing']);
-    expect(groups[0].every((r) => r.clipId === 'a')).toBe(true);
-    expect(groups[1].map((r) => r.clipId)).toEqual(['b']);
-    expect(frameCaptureGroupKey(requests[3])).toBe('c::blob:morph');
-    expect(frameCaptureGroupKey(requests[4])).toBe('c');
+    expect(groups[0]!.map((r) => r.role)).toEqual(['base', 'outgoing']);
+    expect(groups[0]!.every((r) => r.clipId === 'a')).toBe(true);
+    expect(groups[1]!.map((r) => r.clipId)).toEqual(['b']);
+    expect(frameCaptureGroupKey(requests[3]!)).toBe('c::blob:morph');
+    expect(frameCaptureGroupKey(requests[4]!)).toBe('c');
   });
 
   it('exports a finite worker init timeout', () => {
     expect(PREVIEW_WORKER_INIT_TIMEOUT_MS).toBeGreaterThan(0);
   });
 
-  it('ready payload includes structured webgpuProbe plus webgpuAvailable', () => {
+  it('the configure answer carries the structured webgpuProbe plus webgpuAvailable', () => {
     const webgpuProbe = {
       ok: false,
       browser: 'Edge',
       reason: 'requestAdapter returned null',
       adapter: null,
     };
-    const ready = {
-      type: 'ready' as const,
+    const ready: PreviewWorkerProtocol['configure']['res'] = {
       webgpuAvailable: webgpuProbe.ok,
       webgpuProbe,
     };

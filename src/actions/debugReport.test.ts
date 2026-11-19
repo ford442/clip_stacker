@@ -8,6 +8,8 @@ import {
   FfmpegManager,
 } from '../ffmpeg/ffmpegManager';
 import { clearGpuErrorLog, __resetGpuContextForTests } from '../webgpu/gpuDevice';
+import { WorkerCrashedError, __clearWorkerCrashLogForTests, createWorkerClient } from '../workers/workerRpc';
+import { InProcessWorker } from '../workers/inProcessWorker.test.helpers';
 
 function makeClip(overrides: Partial<Clip> = {}): Clip {
   return {
@@ -93,5 +95,30 @@ describe('generateDebugReport', () => {
     expect(report).toContain('(none captured)');
 
     vi.unstubAllGlobals();
+  });
+  it('labels a worker crash and lists recent worker crashes', async () => {
+    __clearWorkerCrashLogForTests();
+    const worker = new InProcessWorker();
+    const client = createWorkerClient<{ run: { req: void; res: void } }>(() => worker, { name: 'audio render' });
+    const pending = client.call('run');
+    worker.crash('out of memory');
+    const error = await pending.catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(WorkerCrashedError);
+
+    const report = generateDebugReport({
+      status: 'Render failed',
+      renderPlan: null,
+      encoderPath: 'webcodecs',
+      clips: [],
+      clipGroups: [],
+      transitions: [],
+      textOverlays: [],
+      exportSettings: DEFAULT_EXPORT_SETTINGS,
+      error,
+    });
+    expect(report).toContain('- Worker: audio render (crashed)');
+    expect(report).toContain('## Worker crashes (last 1)');
+    expect(report).toMatch(/audio render \(crashed\): audio render worker failed: out of memory/);
+    __clearWorkerCrashLogForTests();
   });
 });

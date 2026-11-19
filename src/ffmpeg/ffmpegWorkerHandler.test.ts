@@ -5,8 +5,7 @@ import {
   type FfmpegCoreFactory,
   type FfmpegCoreModule,
 } from './ffmpegCoreHost';
-import { describeWorkerError, handleFfmpegWorkerRequest } from './ffmpegWorkerHandler';
-import type { DistributiveOmit, WorkerRpcRequest } from './ffmpegWorkerProtocol';
+import { createFfmpegWorkerHandlers, describeWorkerError } from './ffmpegWorkerHandler';
 
 class FakeErrnoError extends Error {
   readonly errno: number;
@@ -23,12 +22,12 @@ function fakeCore() {
   let logger: (log: { type: string; message: string }) => void = () => {};
   const core = {
     ret: -1,
-    exec: vi.fn((...args: string[]) => {
+    exec: vi.fn((...args: string[]): number => {
       logger({ type: 'stderr', message: `ran ${args.join(' ')}` });
       core.ret = args.includes('--fail') ? 1 : 0;
       return core.ret;
     }),
-    reset: vi.fn(() => {
+    reset: vi.fn((): void => {
       core.ret = -1;
     }),
     setLogger: vi.fn((next: typeof logger) => {
@@ -52,20 +51,18 @@ function fakeCore() {
       stat: vi.fn((path: string) => ({ mode: path.endsWith('/.') || path.endsWith('/..') ? 0o40000 : 0o100000 })),
       isDir: vi.fn((mode: number) => (mode & 0o170000) === 0o40000),
     },
-  };
+  } satisfies FfmpegCoreModule;
   return core;
 }
 
 function setup() {
   const core = fakeCore();
-  const factory = vi.fn<FfmpegCoreFactory>(async () => core as unknown as FfmpegCoreModule);
+  const factory = vi.fn<FfmpegCoreFactory>(async () => core);
   const importCore = vi.fn(async () => factory);
   const onLog = vi.fn();
   const host = new FfmpegCoreHost(onLog, importCore);
-  let nextId = 0;
-  const send = (request: DistributiveOmit<WorkerRpcRequest, 'id'>) =>
-    handleFfmpegWorkerRequest(host, { id: ++nextId, ...request } as WorkerRpcRequest);
-  return { core, factory, importCore, onLog, host, send };
+  const handlers = createFfmpegWorkerHandlers(host);
+  return { core, factory, importCore, onLog, host, handlers };
 }
 
 const URLS = {
@@ -76,10 +73,8 @@ const URLS = {
 
 describe('FfmpegCoreHost + worker handler', () => {
   it('imports the core by URL and hands it the wasm / worker URLs on mainScriptUrlOrBlob', async () => {
-    const { importCore, factory, send } = setup();
-    const reply = await send({ type: 'load', urls: URLS });
-
-    expect(reply.response).toEqual({ id: 1, ok: true, result: undefined });
+    const { importCore, factory, handlers } = setup();
+    await expect(handlers.load({ urls: URLS })).resolves.toBeUndefined();
     expect(importCore).toHaveBeenCalledWith(URLS.coreURL);
     const [{ mainScriptUrlOrBlob }] = factory.mock.calls[0]!;
     expect(mainScriptUrlOrBlob).toBe(buildMainScriptUrl(URLS));
@@ -98,91 +93,68 @@ describe('FfmpegCoreHost + worker handler', () => {
   });
 
   it('forwards core log lines', async () => {
-    const { onLog, send } = setup();
-    await send({ type: 'load', urls: URLS });
-    await send({ type: 'exec', args: ['-i', 'a.mp4', 'b.mp4'] });
+    const { onLog, handlers } = setup();
+    await handlers.load({ urls: URLS });
+    await handlers.exec({ args: ['-i', 'a.mp4', 'b.mp4'] });
     expect(onLog).toHaveBeenCalledWith('ran -i a.mp4 b.mp4');
   });
 
   it('runs exec, returns the exit code and resets the core', async () => {
-    const { core, send } = setup();
-    await send({ type: 'load', urls: URLS });
+    const { core, handlers } = setup();
+    await handlers.load({ urls: URLS });
 
-    const ok = await send({ type: 'exec', args: ['-version'] });
-    expect(ok.response).toEqual({ id: 2, ok: true, result: 0 });
+    await expect(handlers.exec({ args: ['-version'] })).resolves.toBe(0);
     expect(core.setTimeout).toHaveBeenCalledWith(-1);
     expect(core.reset).toHaveBeenCalledTimes(1);
 
-    const failed = await send({ type: 'exec', args: ['--fail'] });
-    expect(failed.response).toEqual({ id: 3, ok: false, error: 'FFmpeg exited with code 1' });
+    await expect(handlers.exec({ args: ['--fail'] })).rejects.toThrow('FFmpeg exited with code 1');
     expect(core.reset).toHaveBeenCalledTimes(2);
   });
 
   it('transfers the array FS.readFile returns, without another copy', async () => {
-    const { core, send } = setup();
-    await send({ type: 'load', urls: URLS });
-    await send({ type: 'writeFile', name: 'out.mp4', data: new Uint8Array([1, 2, 3]) });
+    const { core, handlers } = setup();
+    await handlers.load({ urls: URLS });
+    await handlers.writeFile({ name: 'out.mp4', data: new Uint8Array([1, 2, 3]) });
 
-    const reply = await send({ type: 'readFile', name: 'out.mp4' });
+    const reply = await handlers.readFile({ name: 'out.mp4' });
     const returned = core.FS.readFile.mock.results[0]!.value as Uint8Array;
-    expect(reply.response).toEqual({ id: 3, ok: true, result: returned });
-    expect((reply.response as { result: Uint8Array }).result).toBe(returned);
+    expect(reply.value).toBe(returned);
     expect(reply.transfer).toEqual([returned.buffer]);
   });
 
   it('writes, lists and deletes VFS files', async () => {
-    const { send } = setup();
-    await send({ type: 'load', urls: URLS });
-    await send({ type: 'writeFile', name: 'list.txt', data: "file 'a.mp4'" });
+    const { handlers } = setup();
+    await handlers.load({ urls: URLS });
+    await handlers.writeFile({ name: 'list.txt', data: "file 'a.mp4'" });
 
-    const listed = await send({ type: 'listDir', path: '/' });
-    expect(listed.response).toEqual({
-      id: 3,
-      ok: true,
-      result: [
-        { name: '.', isDir: true },
-        { name: '..', isDir: true },
-        { name: 'list.txt', isDir: false },
-      ],
-    });
-    expect((await send({ type: 'deleteFile', name: 'list.txt' })).response).toEqual({
-      id: 4,
-      ok: true,
-      result: true,
-    });
+    await expect(handlers.listDir({ path: '/' })).resolves.toEqual([
+      { name: '.', isDir: true },
+      { name: '..', isDir: true },
+      { name: 'list.txt', isDir: false },
+    ]);
+    await expect(handlers.deleteFile({ name: 'list.txt' })).resolves.toBe(true);
   });
 
   it('reports Emscripten FS errors with their name and errno', async () => {
-    const { send } = setup();
-    await send({ type: 'load', urls: URLS });
-    const reply = await send({ type: 'readFile', name: 'missing.mp4' });
-    expect(reply.response).toEqual({
-      id: 2,
-      ok: false,
-      error: 'ErrnoError: FS error (errno 44)',
-    });
-    expect(reply.transfer).toEqual([]);
+    const { handlers } = setup();
+    await handlers.load({ urls: URLS });
+    await expect(handlers.readFile({ name: 'missing.mp4' })).rejects.toThrow(
+      new Error('ErrnoError: FS error (errno 44)'),
+    );
   });
 
   it('refuses work before load', async () => {
-    const { send } = setup();
-    expect((await send({ type: 'exec', args: [] })).response).toEqual({
-      id: 1,
-      ok: false,
-      error: 'FFmpeg is not loaded',
-    });
+    const { handlers } = setup();
+    await expect(handlers.exec({ args: [] })).rejects.toThrow('FFmpeg is not loaded');
   });
 
   it('reports an import failure as a load error', async () => {
     const host = new FfmpegCoreHost(vi.fn(), async () => {
       throw new TypeError('Failed to fetch dynamically imported module');
     });
-    const reply = await handleFfmpegWorkerRequest(host, { id: 7, type: 'load', urls: URLS });
-    expect(reply.response).toEqual({
-      id: 7,
-      ok: false,
-      error: 'TypeError: Failed to fetch dynamically imported module',
-    });
+    await expect(createFfmpegWorkerHandlers(host).load({ urls: URLS })).rejects.toThrow(
+      new Error('TypeError: Failed to fetch dynamically imported module'),
+    );
   });
 
   it('cancels a load that terminate() overtook, and stops its threads', async () => {
@@ -197,7 +169,7 @@ describe('FfmpegCoreHost + worker handler', () => {
     const loading = host.load(URLS);
     await new Promise((resolve) => setTimeout(resolve, 0));
     host.terminate();
-    finish(core as unknown as FfmpegCoreModule);
+    finish(core);
 
     await expect(loading).rejects.toThrow('FFmpeg load cancelled');
     expect(core.PThread.terminateAllThreads).toHaveBeenCalled();
