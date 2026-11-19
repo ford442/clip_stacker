@@ -126,7 +126,7 @@ describe("remote project load progress", () => {
       onProgress,
     });
 
-    expect(onProgress.mock.calls[0][0]).toMatchObject({
+    expect(onProgress.mock.calls[0]![0]).toMatchObject({
       stage: "Fetching project manifest...",
       progress: 0,
       indeterminate: true,
@@ -165,7 +165,7 @@ describe("remote project load progress", () => {
       { mode: "cors", credentials: "omit" },
     );
     expect(result.clips).toHaveLength(1);
-    const restoredFile = mediaMocks.getMediaInfo.mock.calls[0][0] as File;
+    const restoredFile = mediaMocks.getMediaInfo.mock.calls[0]![0] as File;
     expect(restoredFile.name).toBe("remote.mp4");
     expect(restoredFile.type).toBe("video/mp4");
 
@@ -214,17 +214,17 @@ describe("remote project load progress", () => {
       createRemoteProject("remote.mp4"),
       [],
     );
-    expect(remoteResult.clips[0].remoteSourceUrl).toBe(
+    expect(remoteResult.clips[0]!.remoteSourceUrl).toBe(
       "https://example.com/media/remote.mp4",
     );
 
     const embeddedProject = createRemoteProject("embedded.mp4");
     embeddedProject.mediaMode = "embed";
-    delete embeddedProject.clips[0].sourceMediaUrl;
-    embeddedProject.clips[0].sourceMediaDataUrl =
+    delete embeddedProject.clips[0]!.sourceMediaUrl;
+    embeddedProject.clips[0]!.sourceMediaDataUrl =
       "data:video/mp4;base64,AAAA";
     const embeddedResult = await applyProjectData(embeddedProject, []);
-    expect(embeddedResult.clips[0].remoteSourceUrl).toBeUndefined();
+    expect(embeddedResult.clips[0]!.remoteSourceUrl).toBeUndefined();
   });
 
   it("falls back to indeterminate clip progress when streaming details are unavailable", async () => {
@@ -330,7 +330,7 @@ describe("remote project load progress", () => {
 
     const project = createRemoteProject("saved1.mp4");
     project.mediaMode = "remote";
-    project.clips[0].sourceMediaDataUrl = "data:video/mp4;base64,AAAA";
+    project.clips[0]!.sourceMediaDataUrl = "data:video/mp4;base64,AAAA";
 
     await applyProjectData(project, []);
 
@@ -349,9 +349,9 @@ describe("remote project load progress", () => {
 
     const project = createRemoteProject("saved1.mp4");
     project.mediaMode = "embed";
-    project.clips[0].sourceMediaDataUrl = dataUrl;
+    project.clips[0]!.sourceMediaDataUrl = dataUrl;
     // Stale remote URL left over from an earlier remote-mode save.
-    project.clips[0].sourceMediaUrl = "https://example.com/media/saved1.mp4";
+    project.clips[0]!.sourceMediaUrl = "https://example.com/media/saved1.mp4";
 
     await applyProjectData(project, []);
 

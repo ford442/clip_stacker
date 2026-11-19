@@ -6,7 +6,7 @@ import { createTestClip } from "./project.test.helpers";
 describe("project - applyProjectData (advanced)", () => {
   it("should restore keyframes and stillImage from saved project", async () => {
     const sourceClips = [createTestClip("source1", 5, "photo.jpg")];
-    sourceClips[0].file = new File([], "photo.jpg", { type: "image/jpeg" });
+    sourceClips[0]!.file = new File([], "photo.jpg", { type: "image/jpeg" });
 
     const project: Project = {
       clips: [
@@ -36,10 +36,10 @@ describe("project - applyProjectData (advanced)", () => {
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].stillImage).toBe(true);
-    expect(result.clips[0].lumaHistogram?.[10]).toBe(4);
-    expect(result.clips[0].lumaLevels?.mean).toBe(10);
-    expect(result.clips[0].keyframes?.x).toHaveLength(2);
+    expect(result.clips[0]!.stillImage).toBe(true);
+    expect(result.clips[0]!.lumaHistogram?.[10]).toBe(4);
+    expect(result.clips[0]!.lumaLevels?.mean).toBe(10);
+    expect(result.clips[0]!.keyframes?.x).toHaveLength(2);
   });
 
   it("should restore hasAudio from saved project", async () => {
@@ -57,14 +57,14 @@ describe("project - applyProjectData (advanced)", () => {
           videoFadeOut: 0,
           audioFadeIn: 0,
           audioFadeOut: 0,
-          fileName: sourceClips[0].file.name,
+          fileName: sourceClips[0]!.file.name,
           hasAudio: false,
         },
       ],
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].hasAudio).toBe(false);
+    expect(result.clips[0]!.hasAudio).toBe(false);
   });
 
   it("should restore playbackRate from saved project", async () => {
@@ -82,15 +82,15 @@ describe("project - applyProjectData (advanced)", () => {
           videoFadeOut: 0,
           audioFadeIn: 0,
           audioFadeOut: 0,
-          fileName: sourceClips[0].file.name,
+          fileName: sourceClips[0]!.file.name,
           playbackRate: 2,
         },
       ],
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].playbackRate).toBe(2);
-    expect(getClipDuration(result.clips[0])).toBe(2.5);
+    expect(result.clips[0]!.playbackRate).toBe(2);
+    expect(getClipDuration(result.clips[0]!)).toBe(2.5);
   });
 
   it("should restore loopCount from saved project and reflect it in duration", async () => {
@@ -108,15 +108,15 @@ describe("project - applyProjectData (advanced)", () => {
           videoFadeOut: 0,
           audioFadeIn: 0,
           audioFadeOut: 0,
-          fileName: sourceClips[0].file.name,
+          fileName: sourceClips[0]!.file.name,
           loopCount: 3,
         },
       ],
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].loopCount).toBe(3);
-    expect(getClipDuration(result.clips[0])).toBe(15);
+    expect(result.clips[0]!.loopCount).toBe(3);
+    expect(getClipDuration(result.clips[0]!)).toBe(15);
   });
 
   it("should default missing loopCount to 1 (old project without the field)", async () => {
@@ -134,14 +134,14 @@ describe("project - applyProjectData (advanced)", () => {
           videoFadeOut: 0,
           audioFadeIn: 0,
           audioFadeOut: 0,
-          fileName: sourceClips[0].file.name,
+          fileName: sourceClips[0]!.file.name,
         },
       ],
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].loopCount).toBeUndefined();
-    expect(getClipDuration(result.clips[0])).toBe(5);
+    expect(result.clips[0]!.loopCount).toBeUndefined();
+    expect(getClipDuration(result.clips[0]!)).toBe(5);
   });
 
   it("restores reversed and drops it when the saved clip is forward", async () => {
@@ -159,23 +159,21 @@ describe("project - applyProjectData (advanced)", () => {
           videoFadeOut: 0,
           audioFadeIn: 0,
           audioFadeOut: 0,
-          fileName: sourceClips[0].file.name,
+          fileName: sourceClips[0]!.file.name,
           reversed: true,
         },
       ],
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].reversed).toBe(true);
+    expect(result.clips[0]!.reversed).toBe(true);
     const saved = serializeProject(createProjectSnapshot({ clips: result.clips }));
-    expect(saved.clips[0].reversed).toBe(true);
+    expect(saved.clips[0]!.reversed).toBe(true);
 
-    const forward = await applyProjectData(
-      { ...project, clips: [{ ...project.clips[0], reversed: undefined }] },
-      sourceClips,
-    );
-    expect(forward.clips[0].reversed).toBeUndefined();
-    expect(serializeProject(createProjectSnapshot({ clips: forward.clips })).clips[0].reversed).toBeUndefined();
+    const { reversed: _reversed, ...forwardClip } = project.clips[0]!;
+    const forward = await applyProjectData({ ...project, clips: [forwardClip] }, sourceClips);
+    expect(forward.clips[0]!.reversed).toBeUndefined();
+    expect(serializeProject(createProjectSnapshot({ clips: forward.clips })).clips[0]!.reversed).toBeUndefined();
   });
 
   it("should restore automation lanes from saved project", async () => {
@@ -193,7 +191,7 @@ describe("project - applyProjectData (advanced)", () => {
           videoFadeOut: 0,
           audioFadeIn: 0,
           audioFadeOut: 0,
-          fileName: sourceClips[0].file.name,
+          fileName: sourceClips[0]!.file.name,
           volume: 0.75,
           automation: {
             volume: [
@@ -207,12 +205,12 @@ describe("project - applyProjectData (advanced)", () => {
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].volume).toBe(0.75);
-    expect(result.clips[0].automation?.volume).toEqual([
+    expect(result.clips[0]!.volume).toBe(0.75);
+    expect(result.clips[0]!.automation?.volume).toEqual([
       { t: 0, value: 1 },
       { t: 1, value: 0.2 },
     ]);
-    expect(result.clips[0].automation?.pan?.[0].value).toBe(0.5);
+    expect(result.clips[0]!.automation?.pan?.[0]!.value).toBe(0.5);
   });
 
   it("should clamp out-of-range automation values on load", async () => {
@@ -230,7 +228,7 @@ describe("project - applyProjectData (advanced)", () => {
           videoFadeOut: 0,
           audioFadeIn: 0,
           audioFadeOut: 0,
-          fileName: sourceClips[0].file.name,
+          fileName: sourceClips[0]!.file.name,
           automation: {
             volume: [{ t: 0, value: 9 }],
             pan: [{ t: 0, value: -3 }],
@@ -240,8 +238,8 @@ describe("project - applyProjectData (advanced)", () => {
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].automation?.volume?.[0].value).toBe(2);
-    expect(result.clips[0].automation?.pan?.[0].value).toBe(-1);
+    expect(result.clips[0]!.automation?.volume?.[0]!.value).toBe(2);
+    expect(result.clips[0]!.automation?.pan?.[0]!.value).toBe(-1);
   });
 
   it("should restore color grade from saved project", async () => {
@@ -323,7 +321,7 @@ describe("project - applyProjectData (advanced)", () => {
           fileName: "source1.mp4",
         },
       ],
-      finishing: serialized.finishing,
+      finishing: serialized.finishing!,
     };
     const result = await applyProjectData(project, sourceClips);
     expect(result.finishing.lut?.lutId).toBe("film");
@@ -376,7 +374,7 @@ describe("project - applyProjectData (advanced)", () => {
           fileName: "source1.mp4",
         },
       ],
-      finishing: serialized.finishing,
+      finishing: serialized.finishing!,
     };
     const result = await applyProjectData(project, sourceClips);
     expect(result.finishing.primaryColor?.enabled).toBe(true);
@@ -450,17 +448,17 @@ describe("project - applyProjectData (advanced)", () => {
           fileName: "source1.mp4",
         },
       ],
-      finishing: serialized.finishing,
+      finishing: serialized.finishing!,
     };
     const result = await applyProjectData(project, sourceClips);
     expect(result.finishing.secondaryColor?.enabled).toBe(true);
     expect(result.finishing.secondaryColor?.amount).toBe(0.85);
     expect(result.finishing.secondaryColor?.grades).toHaveLength(2);
-    expect(result.finishing.secondaryColor?.grades?.[0].maskType).toBe("hue");
-    expect(result.finishing.secondaryColor?.grades?.[0].satScale).toBe(0.6);
-    expect(result.finishing.secondaryColor?.grades?.[1].maskType).toBe("window");
-    expect(result.finishing.secondaryColor?.grades?.[1].invertMask).toBe(true);
-    expect(result.finishing.secondaryColor?.grades?.[1].windowRotation).toBe(-20);
+    expect(result.finishing.secondaryColor?.grades?.[0]!.maskType).toBe("hue");
+    expect(result.finishing.secondaryColor?.grades?.[0]!.satScale).toBe(0.6);
+    expect(result.finishing.secondaryColor?.grades?.[1]!.maskType).toBe("window");
+    expect(result.finishing.secondaryColor?.grades?.[1]!.invertMask).toBe(true);
+    expect(result.finishing.secondaryColor?.grades?.[1]!.windowRotation).toBe(-20);
   });
 
   it("should fail-safe unknown secondary mask types on load", async () => {
@@ -508,7 +506,7 @@ describe("project - applyProjectData (advanced)", () => {
       },
     };
     const result = await applyProjectData(project, sourceClips);
-    expect(result.finishing.secondaryColor?.grades?.[0].maskType).toBe("hue");
+    expect(result.finishing.secondaryColor?.grades?.[0]!.maskType).toBe("hue");
   });
 
   it("should roundtrip noise reduction finishing settings", async () => {
@@ -543,7 +541,7 @@ describe("project - applyProjectData (advanced)", () => {
           fileName: "source1.mp4",
         },
       ],
-      finishing: serialized.finishing,
+      finishing: serialized.finishing!,
     };
     const result = await applyProjectData(project, sourceClips);
     expect(result.finishing.noiseReduction?.enabled).toBe(true);

@@ -69,13 +69,13 @@ describe('deserializeTextOverlays', () => {
       { id: 'b', font: 'comic-sans' },
       { id: 'c', font: 42 },
     ]);
-    expect(textOverlays[0].font).toBe('robotoBold');
-    expect(textOverlays[1].font).toBeUndefined();
-    expect(textOverlays[2].font).toBeUndefined();
+    expect(textOverlays[0]!.font).toBe('robotoBold');
+    expect(textOverlays[1]!.font).toBeUndefined();
+    expect(textOverlays[2]!.font).toBeUndefined();
   });
 
   it('keeps a known shader fill and drops malformed shader params and colors', () => {
-    const [overlay] = deserialize([
+    const overlay = deserialize([
       {
         id: 'a',
         fill: 'shader',
@@ -83,7 +83,7 @@ describe('deserializeTextOverlays', () => {
         shaderParams: { scale: 4, speed: '2', bad: Number.NaN },
         shaderColors: { color1: '#ff0000', color2: 5 },
       },
-    ]).textOverlays;
+    ]).textOverlays[0]!;
     expect(overlay.fill).toBe('shader');
     expect(overlay.shaderId).toBe('plasma');
     expect(overlay.shaderParams).toEqual({ scale: 4 });
@@ -94,16 +94,16 @@ describe('deserializeTextOverlays', () => {
     const { textOverlays, invalidColorWarnings } = deserialize([
       { id: 'a', text: 'Hi', fill: 'glitter', shaderId: 'nope', shaderParams: [1, 2] },
     ]);
-    expect(textOverlays[0].fill).toBeUndefined();
-    expect(textOverlays[0].shaderId).toBeUndefined();
-    expect(textOverlays[0].shaderParams).toBeUndefined();
+    expect(textOverlays[0]!.fill).toBeUndefined();
+    expect(textOverlays[0]!.shaderId).toBeUndefined();
+    expect(textOverlays[0]!.shaderParams).toBeUndefined();
     expect(invalidColorWarnings).toEqual([
       'Text overlay "Hi": unknown shader "nope" — falling back to solid color.',
     ]);
   });
 
   it('keeps well-formed keyframes and drops malformed ones', () => {
-    const [overlay] = deserialize([
+    const overlay = deserialize([
       {
         id: 'a',
         keyframes: {
@@ -118,7 +118,7 @@ describe('deserializeTextOverlays', () => {
           rotation: [{ t: 0, value: 45 }],
         },
       },
-    ]).textOverlays;
+    ]).textOverlays[0]!;
     expect(overlay.keyframes).toEqual({
       x: [
         { t: 0, value: 0.1 },
@@ -138,7 +138,7 @@ describe('deserializeTextOverlays', () => {
   });
 
   it('migrates legacy pixel positions and position keyframes', () => {
-    const [overlay] = deserialize(
+    const overlay = deserialize(
       [
         {
           id: 'a',
@@ -149,7 +149,7 @@ describe('deserializeTextOverlays', () => {
       ],
       true,
       '1920x1080',
-    ).textOverlays;
+    ).textOverlays[0]!;
     expect(overlay.x).toBeCloseTo(0.1);
     expect(overlay.y).toBeCloseTo(0.5);
     expect(overlay.keyframes).toEqual({
