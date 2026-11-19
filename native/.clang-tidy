@@ -1,0 +1,33 @@
+# clang-tidy for the native DSP modules (scripts/clang-tidy-native.sh, CI
+# native-host job). Every enabled check passes today and WarningsAsErrors
+# keeps it that way. Each disabled sub-check says why; re-enable one by
+# fixing its sites, not by adding NOLINTs.
+#
+# Linted: the modules' own sources and headers (common/include,
+# media_engine/{include,src}, video_stabilize, audio_analysis) plus
+# media_engine/tools. Not linted: vendored kissfft (third_party/) and the
+# tests, which compare floats bit for bit with memcmp and divide integers on
+# purpose.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  cppcoreguidelines-narrowing-conversions,
+  readability-container-size-empty,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -performance-enum-size
+
+# Why each is off:
+#   bugprone-easily-swappable-parameters: the C API is the JS FFI, long runs
+#     of int / double arguments by design (73 sites).
+#   bugprone-implicit-widening-of-multiplication-result: 17 int index
+#     products (row * STRIDE, channel * frames) on counts validated before
+#     the multiply; making them 64-bit changes the WASM bytes for no
+#     behaviour change. A ratchet target.
+#   performance-enum-size: the enums are the C ABI's named constants
+#     (MIX_*, CS_*), mirrored in TypeScript; a narrower base type buys nothing.
+
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*/native/(common/include|media_engine/(include|src)|video_stabilize|audio_analysis)/[^/]+(/[^/]+)?$'
+FormatStyle: none

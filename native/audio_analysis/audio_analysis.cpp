@@ -85,8 +85,8 @@ void initBands(Analyzer* a) {
     const float t1 = static_cast<float>(b + 1) / AUDIO_ANALYSIS_BAND_COUNT;
     const float freq0 = fMin * std::pow(fMax / fMin, t0);
     const float freq1 = fMin * std::pow(fMax / fMin, t1);
-    int s = static_cast<int>(freq0 * a->fftSize / static_cast<float>(a->sampleRate));
-    int e = static_cast<int>(freq1 * a->fftSize / static_cast<float>(a->sampleRate));
+    int s = static_cast<int>(freq0 * static_cast<float>(a->fftSize) / static_cast<float>(a->sampleRate));
+    int e = static_cast<int>(freq1 * static_cast<float>(a->fftSize) / static_cast<float>(a->sampleRate));
     s = std::clamp(s, 1, usefulBins - 1);
     e = std::clamp(e, s + 1, usefulBins);
     a->bandStart[b] = s;
@@ -126,7 +126,7 @@ void* createAnalyzer(int sampleRate, int fftSize) {
   a->fftSize = fftSize;
   a->hopSize = fftSize / 2;
   a->bins = fftSize / 2;
-  a->cfg = kiss_fft_alloc(fftSize, /*inverse=*/0, nullptr, nullptr);
+  a->cfg = kiss_fft_alloc(fftSize, /*inverse_fft=*/0, nullptr, nullptr);
   if (!a->cfg) {
     delete a;
     return nullptr;
