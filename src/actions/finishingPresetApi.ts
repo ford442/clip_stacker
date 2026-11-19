@@ -79,13 +79,16 @@ export function createFinishingPresetApi(): FinishingPresetApi {
   };
 }
 
-type ClipStackerGlobal = { finishing?: FinishingPresetApi } & Record<string, unknown>;
+declare global {
+  interface ClipStackerGlobal {
+    finishing?: FinishingPresetApi;
+  }
+}
 
 /** Install `window.clipStacker.finishing` and the event listener. Returns an uninstall. */
 export function installFinishingPresetApi(target: Window = window): () => void {
   const api = createFinishingPresetApi();
-  const host = target as unknown as { clipStacker?: ClipStackerGlobal };
-  host.clipStacker = { ...(host.clipStacker ?? {}), finishing: api };
+  target.clipStacker = { ...(target.clipStacker ?? {}), finishing: api };
 
   const onApply = (event: Event) => {
     const detail = (event as CustomEvent).detail as
@@ -98,6 +101,6 @@ export function installFinishingPresetApi(target: Window = window): () => void {
   target.addEventListener(APPLY_FINISHING_PRESET_EVENT, onApply);
   return () => {
     target.removeEventListener(APPLY_FINISHING_PRESET_EVENT, onApply);
-    if (host.clipStacker?.finishing === api) delete host.clipStacker.finishing;
+    if (target.clipStacker?.finishing === api) delete target.clipStacker.finishing;
   };
 }

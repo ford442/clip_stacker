@@ -6,8 +6,8 @@ import {
   mixTexels,
   overlayBlitPixel,
   overlayTexel,
-  type Rgba,
 } from './overlayBlit';
+import type { Rgba } from '../types/tuples';
 
 /** A white glyph's anti-aliased edge: coverage ramps 1 → 0 over a few pixels. */
 const EDGE: Rgba[] = [1, 0.85, 0.5, 0.2, 0.05, 0].map((a) => [1, 1, 1, a] as const);

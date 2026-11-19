@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { Clip, ClipGroup, ClipTransition, TextOverlay, Track } from "../types";
+import type { Clip, ClipTransition, TextOverlay } from "../types";
 import type { EditSnapshot } from "../timeline/editHistory";
 import {
   summarizeProjectForSave,
@@ -38,29 +38,19 @@ export type PendingRemoteUploadError = RemoteUploadErrorEvent & {
 import { settingsStore } from "../store/settingsStore";
 import { renderJobStore } from '../store/renderJobStore';
 
+/**
+ * Save / load the project (file and remote). Saves read the whole project from
+ * the stores; loads restore it through `resetHistory`.
+ */
 export function useProjectSaveLoad({
   clips,
-  tracks,
-  clipGroups,
   transitions,
   textOverlays,
-  setClips,
-  setClipGroups,
-  setSelectedClipId,
-  setTransitions,
-  setTextOverlays,
   resetHistory,
 }: {
   clips: Clip[];
-  tracks: Track[];
-  clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
-  setClips: (c: Clip[]) => void;
-  setClipGroups: (cg: ClipGroup[]) => void;
-  setSelectedClipId: (id: string | null) => void;
-  setTransitions: (t: ClipTransition[]) => void;
-  setTextOverlays: (to: TextOverlay[]) => void;
   resetHistory: (snapshot: EditSnapshot) => void;
 }) {
   const [isRemoteSaving, setIsRemoteSaving] = useState(false);
@@ -117,7 +107,7 @@ export function useProjectSaveLoad({
     } catch (error) {
       setStatus(`Could not export project: ${(error as Error).message}`);
     }
-  }, [clips, tracks, clipGroups, transitions, textOverlays]);
+  }, [clips, transitions, textOverlays]);
 
   const handleLoadProject = useCallback(
     async (file: File) => {
@@ -144,8 +134,7 @@ export function useProjectSaveLoad({
           invalidColorWarnings,
           mediaDownloadWarnings,
         } = await applyProjectData(parsed, clips);
-        const selectedId =
-          updatedClips.length > 0 ? updatedClips[updatedClips.length - 1].id : null;
+        const selectedId = updatedClips.at(-1)?.id ?? null;
         resetHistory({
           clips: updatedClips,
           tracks: loadedTracks,
@@ -177,15 +166,7 @@ export function useProjectSaveLoad({
         renderJobStore.getState().setStatus(`Could not load project: ${(error as Error).message}`);
       }
     },
-    [
-      clips,
-      setClips,
-      setClipGroups,
-      setSelectedClipId,
-      setTransitions,
-      setTextOverlays,
-      resetHistory,
-    ],
+    [clips, resetHistory],
   );
 
   const handleSaveRemote = useCallback(
@@ -235,7 +216,7 @@ export function useProjectSaveLoad({
         );
         setStatus(
           clips.length > 0
-            ? `Uploading clip 1/${clips.length}: ${clips[0].file.name} (0%)`
+            ? `Uploading clip 1/${clips.length}: ${clips[0]?.file.name} (0%)`
             : "Saving project to remote storage...",
         );
         const project = await serializeProjectWithMedia(currentProjectSnapshot(), {
@@ -282,7 +263,7 @@ export function useProjectSaveLoad({
         setIsRemoteSaving(false);
       }
     },
-    [clips, tracks, clipGroups, transitions, textOverlays],
+    [clips, transitions, textOverlays],
   );
 
   const handleLoadRemote = useCallback(
@@ -324,8 +305,7 @@ export function useProjectSaveLoad({
           },
         });
 
-        const selectedId =
-          updatedClips.length > 0 ? updatedClips[updatedClips.length - 1].id : null;
+        const selectedId = updatedClips.at(-1)?.id ?? null;
         resetHistory({
           clips: updatedClips,
           tracks: loadedTracks,
@@ -363,15 +343,7 @@ export function useProjectSaveLoad({
         setRemoteLoadStage("");
       }
     },
-    [
-      clips,
-      setClips,
-      setClipGroups,
-      setSelectedClipId,
-      setTransitions,
-      setTextOverlays,
-      resetHistory,
-    ],
+    [clips, resetHistory],
   );
 
   return {

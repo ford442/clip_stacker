@@ -138,16 +138,16 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     expect(renderLayers).toHaveBeenCalledTimes(1);
     expect(clearToBlack).not.toHaveBeenCalled();
 
-    const layers = renderLayers.mock.calls[0][0] as Array<{ params: LayerRenderParams }>;
+    const layers = renderLayers.mock.calls[0]![0] as Array<{ params: LayerRenderParams }>;
     expect(layers).toHaveLength(1);
-    const params = layers[0].params;
+    const params = layers[0]!.params;
     expect(params.clear).toBe(true);
     expect(params.destRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
     expect(params.elapsed).toBeCloseTo(2);
 
     // Frame released after drawing.
     expect(createdFrames).toHaveLength(1);
-    expect(createdFrames[0].close).toHaveBeenCalledTimes(1);
+    expect(createdFrames[0]!.close).toHaveBeenCalledTimes(1);
   });
 
   it('draws clip "b" (not "a") after the cut boundary', async () => {
@@ -157,9 +157,9 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     await renderClipsAt(clips, 7);
 
     expect(renderLayers).toHaveBeenCalledTimes(1);
-    const layers = renderLayers.mock.calls[0][0] as Array<{ params: LayerRenderParams }>;
+    const layers = renderLayers.mock.calls[0]![0] as Array<{ params: LayerRenderParams }>;
     expect(layers).toHaveLength(1);
-    const params = layers[0].params;
+    const params = layers[0]!.params;
     expect(params.elapsed).toBeCloseTo(2); // 7 - 5
   });
 
@@ -178,14 +178,14 @@ describe('TimelinePreviewEngine.renderPlan', () => {
 
     // Base drawn first (clears), PiP drawn over it — one batched submit.
     expect(renderLayers).toHaveBeenCalledTimes(1);
-    const layers = renderLayers.mock.calls[0][0] as Array<{ params: LayerRenderParams }>;
+    const layers = renderLayers.mock.calls[0]![0] as Array<{ params: LayerRenderParams }>;
     expect(layers).toHaveLength(2);
 
-    const baseParams = layers[0].params;
+    const baseParams = layers[0]!.params;
     expect(baseParams.clear).toBe(true);
     expect(baseParams.destRect).toEqual({ x: 0, y: 0, w: 1, h: 1 });
 
-    const pipParams = layers[1].params;
+    const pipParams = layers[1]!.params;
     expect(pipParams.clear).toBe(false);
     // 1280x720 canvas (default): 128/1280=0.1, 72/720=0.1, 320/1280=0.25, 180/720=0.25
     expect(pipParams.destRect).toEqual({ x: 0.1, y: 0.1, w: 0.25, h: 0.25 });
@@ -210,8 +210,8 @@ describe('TimelinePreviewEngine.renderPlan', () => {
     expect(renderTransition).toHaveBeenCalledTimes(1);
     expect(renderLayers).not.toHaveBeenCalled();
 
-    const transitionId = renderTransition.mock.calls[0][2];
-    const transitionParams = renderTransition.mock.calls[0][3] as {
+    const transitionId = renderTransition.mock.calls[0]![2];
+    const transitionParams = renderTransition.mock.calls[0]![3] as {
       progress: number;
       clear: boolean;
     };

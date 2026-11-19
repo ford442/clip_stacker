@@ -49,7 +49,9 @@ is never used. `INCOMING_MODULE_JS_API` is pinned to `locateFile` and
 - `cs_math.h` — `cs::kPi`; the code builds as strict C++17 (no GNU
   extensions), where `M_PI` is not guaranteed.
 
-WASM targets compile with `-Wall -Wextra`; host targets add `-Werror`.
+WASM and host targets both compile with `-Wall -Wextra -Werror` (a vendored
+file silences its own warnings per file, e.g. kissfft). Warning flags never
+change the emitted bytes.
 
 ## Host tests (no Emscripten)
 
@@ -62,7 +64,9 @@ through the JS glue:
 npm run test:native                      # configure + build + ctest in native/build-host
 npm run test:native:pr                   # the PR subset (ctest -L pr): skips the long battery
 HOST_SANITIZE=0 npm run test:native      # plain Release build
-npm run fuzz:native                      # libFuzzer over FX rows (clang; FUZZ_SECONDS=60)
+npm run fuzz:native                      # libFuzzer, all targets (clang; FUZZ_SECONDS=60 each)
+FUZZ_TARGETS=mix_fuzz FUZZ_SECONDS_MIX=300 npm run fuzz:native   # one target, its own budget
+bash scripts/clang-tidy-native.sh        # clang-tidy (native/.clang-tidy) over the host database
 native/build-host/media_engine/tests/media_engine_tests --list
 native/build-host/video_stabilize/video_stabilize_tests translated   # name filter
 native/build-host/media_engine/tests/bus_fx_tests --long             # only the long cases
@@ -71,8 +75,9 @@ native/build-host/media_engine/tests/bus_fx_tests --long             # only the 
 Each test binary is registered twice: `<name>` (label `pr`, runs with
 `--fast`, skipping `LONG_TEST_CASE`s) and `<name>_long` (label `nightly`,
 `--long`, only those). PR CI runs `-L pr` under GCC and again under clang
-(which adds a 30 s fuzz run); `.github/workflows/nightly-native.yml` runs
-everything on both compilers plus a 10 minute fuzz. Sanitizers are
+(which adds a 30 s run of each fuzz target), and the GCC job runs
+`scripts/clang-tidy-native.sh`; `.github/workflows/nightly-native.yml` runs
+everything on both compilers plus 10 minutes of each fuzz target. Sanitizers are
 `address,undefined,float-cast-overflow` on both compilers (GCC leaves
 float-cast-overflow out of `undefined`).
 
@@ -85,7 +90,34 @@ float-cast-overflow out of `undefined`).
 | `media_engine` | `time_stretch_tests` | WSOLA: rate 1 is bit-exact (mono, stereo, offsets a hair off whole frames); 2x and 0.5x keep pitch (zero-crossing) and level; the similarity search keeps a slowed tone's envelope flat where plain OLA (tolerance 0) dips; positions past 2^24 frames stay sub-sample; output past the last offset and reads outside the input are silence; bad args are `CS_EINVAL`. The chunked `time_stretch_session_*` equals the whole-buffer call bit for bit for any chunking, refuses a window short of its reads (`CS_ERANGE`), and each call's window stays a second or so of source however long the clip. |
 | `media_engine` | `rt_safety_tests` | counting `operator new` / `delete`: `bus_graph_process` / `update` / `meters` / `reset` and the loudness meter never allocate after create. |
 | `media_engine` | `fx_property_tests` | seeded random FX rows and signals (SplitMix64; `FX_PROPERTY_SEEDS` for longer soaks): finite output, a structural peak bound, the final limiter's ceiling, no subnormals, whole / 128 / random block invariance and retunes; an inactive insert chain is an identity. |
+| `media_engine` | `allocator_tests` | the allocator is not load-bearing (below): the all-FX bus golden through the worklet graph and the export session is bit-identical under the system allocator and a poisoning, address-shifting `operator new`. |
 | `media_engine` | `fx_fuzz` (clang, `-DCLIP_STACKER_HOST_FUZZ=ON`) | libFuzzer: arbitrary rows and samples into the bus graph, same properties. |
+| `media_engine` | `mix_fuzz` (libFuzzer) | `mix_timeline_audio_range`: random schedules, slices (raw, near-valid and near-`INT_MIN`/`INT_MAX` ints) and keyframes against an exactly sized `pcm_floats` blob; a non-OK status is fine, a sanitizer finding is not; successful mixes are chunk-invariant bit for bit. It found the `first_frame` index overflow fixed in `resampler.h`. |
+| `video_stabilize` | `stab_fuzz` (libFuzzer) | the C API end to end: random sizes (1–160 x 1–120, raw ints for `stab_create`), radii, textures and motion; matrices / zoom finite, zoom ≥ 1, push after finalize refused, warps within the exact RGBA buffers. |
+
+### The allocator is not load-bearing
+
+`media_engine` (dlmalloc) and `media_engine_fx` (emmalloc, the worklet's
+module) compile the same bus sources, and preview / export parity assumes
+they produce the same samples. Two allocators differ only in where a block
+lands and what it holds before it is written (fresh `memory.grow` pages are
+zero, a reused block keeps its last owner's bytes), so output could depend on
+the allocator only through a read of unwritten memory or arithmetic on
+addresses. Linking emmalloc or dlmalloc into a host binary would not test
+that (ASan owns `malloc` there, and host placement says nothing about
+wasm32's). `allocator_tests` instead replaces `operator new` / `delete` with
+one that defers to the system allocator or fills each new block with a
+poison byte (0xFF = NaN, 0x7F = huge, 0xA5 = noise; freed blocks are
+refilled) and moves it by a different multiple of 16 bytes, churns the heap,
+and requires the golden to match the system allocator's run bit for bit.
+Every media-engine allocation goes through `operator new`. Today the code is
+immune by construction: all state lives in value-initialized storage
+(`std::vector`, `emplace_back()`, `new T()`), which the language zeroes
+whatever the allocator returned. The test fails if that stops being true; a
+class with a user-provided constructor that leaves state for `reset()` to
+fill, with the reset missing, is the case it was checked against. It cannot
+see uninitialized *stack* reads; MemorySanitizer would, but needs an
+instrumented C++ standard library.
 
 Tests use the tiny runner in `host_test/host_test.h` (no third-party test
 framework). Configuring `native/` with plain `cmake` requires

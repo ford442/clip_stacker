@@ -8,7 +8,9 @@
  * compositor. This module is the one place the key math lives:
  *
  * - {@link keyPixel} is the reference implementation (unit tested).
- * - `preview.wgsl`'s `keyAlpha()` is the same function in WGSL, uniform-driven.
+ * - `preview.wgsl`'s `keyAlpha()` is the same function in WGSL, driven by the
+ *   key block of the layer uniforms (`KEY_UNIFORM_FIELDS` in
+ *   `webgpu/uniformSpecs.ts`, filled by {@link keyUniformValues}).
  * - `drawClipLayer` (Canvas2D) calls {@link applyKeyToImageData} for the
  *   non-GPU encoder.
  *
@@ -20,6 +22,8 @@ import type { Clip } from '../types';
 import { resolveChromaKey, resolveOverlayBlend } from './overlayBlend';
 import { ffmpegColorToRgb01 } from './color';
 import { clamp01Finite } from '../utils/math';
+import type { UniformValues } from '../webgpu/uniformLayout';
+import type { KEY_UNIFORM_FIELDS } from '../webgpu/uniformSpecs';
 
 /** Key mode as packed into the shader uniform. Must match `preview.wgsl`. */
 export const KEY_MODE = {
@@ -51,9 +55,6 @@ export interface LayerKeyUniforms {
   /** 0–1 — width of the soft edge above `similarity`. */
   blend: number;
 }
-
-/** Number of uniform floats {@link packKeyUniforms} writes. */
-export const KEY_UNIFORM_FLOATS = 6;
 
 /** Nothing keyed — every pixel keeps its source alpha. */
 export const NO_KEY: LayerKeyUniforms = {
@@ -104,19 +105,20 @@ export function layerKeyEntry(
   return key ? { key } : {};
 }
 
-/** Write `key` into `target` at `offset` in the shader's field order. */
-export function packKeyUniforms(
-  target: Float32Array,
-  offset: number,
-  key: LayerKeyUniforms | undefined,
-): void {
+/** The layer-uniform key block for `key` (all zero = unkeyed). */
+export type KeyUniformValues = UniformValues<typeof KEY_UNIFORM_FIELDS>;
+
+/** `key` as the key block of the preview layer uniforms ({@link NO_KEY} when omitted). */
+export function keyUniformValues(key: LayerKeyUniforms | undefined): KeyUniformValues {
   const k = key ?? NO_KEY;
-  target[offset] = k.mode;
-  target[offset + 1] = k.keyR;
-  target[offset + 2] = k.keyG;
-  target[offset + 3] = k.keyB;
-  target[offset + 4] = k.similarity;
-  target[offset + 5] = k.blend;
+  return {
+    keyMode: k.mode,
+    keyR: k.keyR,
+    keyG: k.keyG,
+    keyB: k.keyB,
+    keySimilarity: k.similarity,
+    keyBlend: k.blend,
+  };
 }
 
 /** BT.601 luma of an sRGB 0–1 triple — the `Y` plane FFmpeg's lumakey reads. */
@@ -188,13 +190,13 @@ export function applyKeyToImageData(
   key: LayerKeyUniforms,
 ): void {
   if (key.mode === KEY_MODE.none) return;
-  for (let i = 0; i < data.length; i += 4) {
+  for (let i = 0; i + 3 < data.length; i += 4) {
     const alpha = keyPixel(
-      data[i] / 255,
-      data[i + 1] / 255,
-      data[i + 2] / 255,
+      (data[i] ?? 0) / 255,
+      (data[i + 1] ?? 0) / 255,
+      (data[i + 2] ?? 0) / 255,
       key,
     );
-    if (alpha < 1) data[i + 3] = Math.round(data[i + 3] * alpha);
+    if (alpha < 1) data[i + 3] = Math.round((data[i + 3] ?? 0) * alpha);
   }
 }

@@ -86,8 +86,8 @@ function entryFromClip(
             trimStart: clip.trimStart,
             trimEnd: clip.trimEnd,
             duration: clip.duration,
-            playbackRate: clip.playbackRate,
-            automation: clip.automation,
+            ...(clip.playbackRate !== undefined && { playbackRate: clip.playbackRate }),
+            ...(clip.automation !== undefined && { automation: clip.automation }),
             ...(reversed ? { reversed: true } : {}),
           },
         }
@@ -258,10 +258,10 @@ export function schedulesMatchStructure(
   b: AudioScheduleEntry[],
 ): boolean {
   if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    const left = a[i];
+  for (const [i, left] of a.entries()) {
     const right = b[i];
     if (
+      !right ||
       left.clipId !== right.clipId ||
       left.objectUrl !== right.objectUrl ||
       left.timelineStart !== right.timelineStart ||
@@ -297,15 +297,17 @@ function keyframesMatch(
 ): boolean {
   if (!a?.length && !b?.length) return true;
   if (!a?.length || !b?.length || a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
+  for (const [i, ka] of a.entries()) {
+    const kb = b[i];
     if (
-      a[i].t !== b[i].t ||
-      a[i].value !== b[i].value ||
-      a[i].easing?.type !== b[i].easing?.type ||
-      a[i].easing?.x1 !== b[i].easing?.x1 ||
-      a[i].easing?.y1 !== b[i].easing?.y1 ||
-      a[i].easing?.x2 !== b[i].easing?.x2 ||
-      a[i].easing?.y2 !== b[i].easing?.y2
+      !kb ||
+      ka.t !== kb.t ||
+      ka.value !== kb.value ||
+      ka.easing?.type !== kb.easing?.type ||
+      ka.easing?.x1 !== kb.easing?.x1 ||
+      ka.easing?.y1 !== kb.easing?.y1 ||
+      ka.easing?.x2 !== kb.easing?.x2 ||
+      ka.easing?.y2 !== kb.easing?.y2
     ) {
       return false;
     }

@@ -13,36 +13,20 @@ import {
   type MediaEngineMixEntry,
   type TimelineMixStreamOptions,
 } from '../wasm/mediaEngine';
-import { __setAudioRenderWorkerFactoryForTests, openMixStream, type MixStream, type RenderWorkerLike } from './audioRenderClient';
-import { AudioRenderWorkerCore } from './audioRender.worker';
-import { PCM_PART_FRAMES, type RenderWorkerRequest, type RenderWorkerResponse } from './audioRenderProtocol';
+import { __setAudioRenderWorkerFactoryForTests, openMixStream, type MixStream } from './audioRenderClient';
+import { createAudioRenderHandlers } from './audioRender.worker';
+import { PCM_PART_FRAMES, type AudioRenderProtocol } from './audioRenderProtocol';
+import { InProcessWorker } from '../workers/inProcessWorker.test.helpers';
+import { exposeWorker } from '../workers/workerRpc';
 
 const WASM_BASE = pathToFileURL(path.resolve(process.cwd(), 'public/wasm') + path.sep).href;
 const RATE = 48_000;
 
-/** Client and worker core joined in-process, through structuredClone with transfer (as postMessage). */
-class InProcessRenderWorker implements RenderWorkerLike {
-  onmessage: ((ev: MessageEvent<RenderWorkerResponse>) => void) | null = null;
-  onerror: ((ev: ErrorEvent) => void) | null = null;
-  readonly received: RenderWorkerRequest[] = [];
-  readonly sent: RenderWorkerResponse[] = [];
-  terminated = false;
-  private readonly core = new AudioRenderWorkerCore((message, transfer) => {
-    const copy = structuredClone(message, { transfer: transfer ?? [] });
-    this.sent.push(copy);
-    setTimeout(() => this.onmessage?.({ data: copy } as MessageEvent<RenderWorkerResponse>), 0);
-  });
-  postMessage(message: RenderWorkerRequest, transfer: Transferable[]): void {
-    const copy = structuredClone(message, { transfer });
-    this.received.push(copy);
-    queueMicrotask(() => this.core.handle(copy));
-  }
-  crash(message: string): void {
-    this.onerror?.({ message } as ErrorEvent);
-  }
-  terminate(): void {
-    this.terminated = true;
-  }
+/** Client and the real worker handlers joined in-process, through structuredClone with transfer (as postMessage). */
+function inProcessRenderWorker(): InProcessWorker {
+  const worker = new InProcessWorker();
+  exposeWorker<AudioRenderProtocol>(createAudioRenderHandlers, { scope: worker.scope });
+  return worker;
 }
 
 function tone(seconds: number, hz: number, level: number): ClipPcm {
@@ -127,7 +111,7 @@ describe('export premix in the audio render worker', () => {
     reference!.close();
     released.length = 0;
 
-    const worker = new InProcessRenderWorker();
+    const worker = inProcessRenderWorker();
     __setAudioRenderWorkerFactoryForTests(() => worker);
     const stream = await openMixStream(entries, provider(), options);
     expect(stream).not.toBeNull();
@@ -142,17 +126,17 @@ describe('export premix in the audio render worker', () => {
     expect(mismatches).toBe(0);
     expect(meters).toEqual(want.meters);
     // The worker asked for each clip once, in slices, and released both.
-    expect(worker.sent.filter((m) => m.type === 'need-pcm').map((m) => (m as { index: number }).index)).toEqual([0, 1]);
-    expect(worker.received.filter((m) => m.type === 'pcm-part').length).toBe(2 * 2 * 2);
+    expect(worker.eventPayloads<{ index: number }>('need-pcm').map((m) => m.index)).toEqual([0, 1]);
+    expect(worker.sentPayloads('notify', 'pcm-part').length).toBe(2 * 2 * 2);
     expect(released.sort()).toEqual([0, 1]);
     // The page's resampler choice and wasm base travel with the stream.
-    const open = worker.received.find((m) => m.type === 'open') as Extract<RenderWorkerRequest, { type: 'open' }>;
-    expect(open.options.resampler).toBe('polyphase');
-    expect(open.options.baseUrl).toBe(WASM_BASE);
+    const [open] = worker.sentPayloads<AudioRenderProtocol['open']['req']>('call', 'open');
+    expect(open?.options.resampler).toBe('polyphase');
+    expect(open?.options.baseUrl).toBe(WASM_BASE);
   }, 60_000);
 
   it('aborts the stream when a clip fails to decode', async () => {
-    __setAudioRenderWorkerFactoryForTests(() => new InProcessRenderWorker());
+    __setAudioRenderWorkerFactoryForTests(() => inProcessRenderWorker());
     const stream = await openMixStream(
       [{ clipId: 'a', timelineStart: 0, duration: 1, bufferOffset: 0, volume: 1, audioFadeIn: 0, audioFadeOut: 0 }],
       {
@@ -168,7 +152,7 @@ describe('export premix in the audio render worker', () => {
 
   it('fails an open stream when the worker dies, so export can fall back', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const worker = new InProcessRenderWorker();
+    const worker = inProcessRenderWorker();
     __setAudioRenderWorkerFactoryForTests(() => worker);
     let release: () => void = () => {};
     const stream = await openMixStream(
@@ -185,7 +169,7 @@ describe('export premix in the audio render worker', () => {
   });
 
   it('stays on this thread under ?no_media_engine (and returns no stream)', async () => {
-    const factory = vi.fn(() => new InProcessRenderWorker());
+    const factory = vi.fn(() => inProcessRenderWorker());
     __setAudioRenderWorkerFactoryForTests(factory);
     __setMediaEngineKillSwitchForTests(true);
     const stream = await openMixStream([], { acquire: () => null }, { baseUrl: WASM_BASE });

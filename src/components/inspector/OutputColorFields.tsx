@@ -35,27 +35,24 @@ export function OutputColorFields({
   onChange,
 }: OutputColorFieldsProps) {
   const [probe, setProbe] = useState<ProbeState>(SUPPORTED);
+  // Only what the probe reads: other export edits do not re-probe.
+  const { outputResolution, videoBitrate, crf, videoCodec } = exportSettings;
 
   useEffect(() => {
     let cancelled = false;
-    const { width, height } = parseOutputResolution(exportSettings.outputResolution);
-    const bitrate = resolveEncoderBitrate(exportSettings, width, height);
+    const { width, height } = parseOutputResolution(outputResolution);
+    const bitrate = resolveEncoderBitrate({ videoBitrate, crf }, width, height);
     void (async () => {
       const [displayP3, hdr10] = await Promise.all([
-        probeOutputColorSupport('display-p3', width, height, bitrate, exportSettings.videoCodec),
-        probeOutputColorSupport('hdr10', width, height, bitrate, exportSettings.videoCodec),
+        probeOutputColorSupport('display-p3', width, height, bitrate, videoCodec),
+        probeOutputColorSupport('hdr10', width, height, bitrate, videoCodec),
       ]);
       if (!cancelled) setProbe({ displayP3, hdr10 });
     })();
     return () => {
       cancelled = true;
     };
-  }, [
-    exportSettings.outputResolution,
-    exportSettings.videoBitrate,
-    exportSettings.crf,
-    exportSettings.videoCodec,
-  ]);
+  }, [outputResolution, videoBitrate, crf, videoCodec]);
 
   const p3Reason = probe.displayP3.supported ? '' : probe.displayP3.reason;
   const hdrReason = probe.hdr10.supported ? '' : probe.hdr10.reason;

@@ -1,5 +1,5 @@
 // Color transforms for the managed pipeline. Mode numbers match ColorXformMode
-// in src/utils/colorManagement.ts. Matrices arrive as uniform rows so this
+// in src/finishing/colorManagement.ts. Matrices arrive as uniform rows so this
 // file does not hard-code a second copy of the D65 primaries.
 //
 // f32 variant. colorManagementPass.ts builds an f16 variant of applyMatrix

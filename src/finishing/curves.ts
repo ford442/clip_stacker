@@ -17,6 +17,8 @@
  */
 
 import { clamp, clamp01, finiteOr } from '../utils/math';
+import { CURVES_UNIFORMS, CURVE_KNOTS_PER_CHANNEL } from '../webgpu/uniformSpecs';
+import type { Vec4 } from '../types/tuples';
 
 export interface CurvePoint {
   x: number;
@@ -49,14 +51,14 @@ export interface CurvesSettings {
   curves: Record<CurveChannel, CurvePoint[]>;
 }
 
-export const CURVE_MAX_POINTS = 16;
+export const CURVE_MAX_POINTS = CURVE_KNOTS_PER_CHANNEL;
 /** Two knots closer than this in x are merged (keeps the spline well-posed). */
 export const CURVE_MIN_SPACING = 0.01;
 export const LEVELS_GAMMA_MIN = 0.1;
 export const LEVELS_GAMMA_MAX = 10;
 
-/** 3 header vec4s + 4 curves × 16 knots (x, y, slope, pad). */
-export const CURVES_UNIFORM_FLOATS = 12 + 4 * CURVE_MAX_POINTS * 4;
+/** 3 header vec4s + 4 curves × 16 knots (x, y, slope, pad): `CURVES_UNIFORMS`. */
+export const CURVES_UNIFORM_FLOATS = CURVES_UNIFORMS.floats;
 
 export const IDENTITY_CURVE: readonly CurvePoint[] = [
   { x: 0, y: 0 },
@@ -270,40 +272,36 @@ export function evalPackedCurve(
 }
 
 /**
- * Pack into WGSL `CurvesUniforms`:
- *   [0..3]  levels: inBlack, inWhite, gamma, outBlack
- *   [4..7]  outWhite, amount, pad, pad
- *   [8..11] knot counts: master, red, green, blue (0 = identity, skipped)
- *   [12 + c·64 + i·4] knot i of channel c: x, y, slope, pad
+ * Pack into WGSL `CurvesUniforms` (`CURVES_UNIFORMS`): levels, amount, the
+ * knot count per channel (master, red, green, blue; 0 = identity, skipped)
+ * and knot i of channel c at `knots[c · 16 + i]` = (x, y, slope, 0).
  */
 export function packCurvesUniforms(
   pass: CurvesSettings,
   out: Float32Array = new Float32Array(CURVES_UNIFORM_FLOATS),
 ): Float32Array {
-  if (out.length < CURVES_UNIFORM_FLOATS) {
-    throw new Error(`Curves uniform buffer needs ${CURVES_UNIFORM_FLOATS} floats`);
-  }
-  out.fill(0);
   const levels = normalizeLevels(pass.levels);
-  out[0] = levels.inBlack;
-  out[1] = levels.inWhite;
-  out[2] = levels.gamma;
-  out[3] = levels.outBlack;
-  out[4] = levels.outWhite;
-  out[5] = pass.enabled ? clamp01(finiteOr(pass.amount, 1)) : 0;
+  const counts: [number, number, number, number] = [0, 0, 0, 0];
+  const empty: Vec4 = [0, 0, 0, 0];
+  const knots: Vec4[] = Array.from({ length: CURVE_CHANNELS.length * CURVE_MAX_POINTS }, () => empty);
   CURVE_CHANNELS.forEach((channel, c) => {
     const points = normalizeCurvePoints(pass.curves?.[channel]);
     if (isIdentityCurve(points)) return;
     const slopes = monotoneSlopes(points);
-    out[8 + c] = points.length;
+    counts[c] = points.length;
     points.forEach((p, i) => {
-      const base = 12 + c * CURVE_MAX_POINTS * 4 + i * 4;
-      out[base] = p.x;
-      out[base + 1] = p.y;
-      out[base + 2] = slopes[i]!;
+      knots[c * CURVE_MAX_POINTS + i] = [p.x, p.y, slopes[i] ?? 0, 0];
     });
   });
-  return out;
+  return CURVES_UNIFORMS.pack(
+    {
+      levels0: [levels.inBlack, levels.inWhite, levels.gamma, levels.outBlack],
+      levels1: [levels.outWhite, pass.enabled ? clamp01(finiteOr(pass.amount, 1)) : 0, 0, 0],
+      counts,
+      knots,
+    },
+    out,
+  );
 }
 
 /** Levels on one value; mirrors WGSL `applyLevels`. */

@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <vector>
 
 namespace {
@@ -30,6 +31,8 @@ struct Reader {
   }
   size_t left() const { return pos < size ? size - pos : 0; }
 };
+
+constexpr double kNoBound = static_cast<double>(std::numeric_limits<float>::max());
 
 void check_output(const float* out, size_t n, double ceiling) {
   for (size_t i = 0; i < n; ++i) {
@@ -74,7 +77,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   const int effect_count = static_cast<int>(effects.size() / MIX_FX_STRIDE);
 
   // A final limiter's output clamp is a guarantee: its ceiling bounds the output.
-  double ceiling = 3.4e38;
+  // No final limiter: no bound beyond finiteness (an identity graph passes FLT_MAX through).
+  double ceiling = kNoBound;
   for (int i = 0; i < final_count; ++i) {
     const double* row = effects.data() + static_cast<size_t>(final_first + i) * MIX_FX_STRIDE;
     if (row[MIX_FX_KIND] == MIX_FX_LIMITER && row[MIX_FX_ENABLED] != 0.0) {
@@ -137,7 +141,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     insert_chain_process(chain, planar.data(), frames, 2);
     // An inactive chain is an identity (its input may be anything); an
     // active one flushes non-finite and subnormal samples.
-    if (finite_in) check_output(planar.data(), planar.size(), 3.4e38);
+    if (finite_in) check_output(planar.data(), planar.size(), kNoBound);
     insert_chain_destroy(chain);
   }
   return 0;

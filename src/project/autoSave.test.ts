@@ -45,7 +45,7 @@ describe('autoSave', () => {
     const project = await buildAutoSaveProject(createProjectSnapshot({ clips }));
 
     expect(project.mediaMode).toBe('embed');
-    expect(project.clips[0].sourceMediaDataUrl).toMatch(/^data:video\/mp4;base64,/);
+    expect(project.clips[0]!.sourceMediaDataUrl).toMatch(/^data:video\/mp4;base64,/);
   });
 
   it('uses remote source URLs without embedding', async () => {
@@ -56,8 +56,8 @@ describe('autoSave', () => {
     const project = await buildAutoSaveProject(createProjectSnapshot({ clips: [clip] }));
 
     expect(project.mediaMode).toBe('remote');
-    expect(project.clips[0].sourceMediaUrl).toBe('https://example.com/clip.mp4');
-    expect(project.clips[0].sourceMediaDataUrl).toBeUndefined();
+    expect(project.clips[0]!.sourceMediaUrl).toBe('https://example.com/clip.mp4');
+    expect(project.clips[0]!.sourceMediaDataUrl).toBeUndefined();
   });
 
   it('falls back to metadata-only when forceMetadataOnly is set', async () => {
@@ -67,7 +67,7 @@ describe('autoSave', () => {
     });
 
     expect(project.mediaMode).toBe('metadata');
-    expect(project.clips[0].sourceMediaDataUrl).toBeUndefined();
+    expect(project.clips[0]!.sourceMediaDataUrl).toBeUndefined();
   });
 
   it('writes and reads autosave sessions from localStorage', () => {

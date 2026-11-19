@@ -36,7 +36,7 @@ function SliderRow({
   value: number;
   display: string;
   onValue: (v: number) => void;
-  warning?: string;
+  warning?: string | undefined;
 }) {
   return (
     <label title={title}>

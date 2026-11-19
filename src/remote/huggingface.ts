@@ -123,12 +123,12 @@ export async function processClipsWithRIFE(
 
   const results: RifeResult[] = [];
   try {
-    for (let i = 0; i < clipCount; i++) {
+    for (const [i, upload] of uploads.entries()) {
       const forClip = onProgress
         ? (event: RifeProgressEvent) =>
             onProgress({ ...event, clipIndex: i, clipCount })
         : undefined;
-      const path = await uploads[i];
+      const path = await upload;
       results.push(
         await interpolateUploadedClip(path, multiplier, mode, forClip, outputFormat),
       );
@@ -149,6 +149,7 @@ async function uploadClipForRife(videoBlob: Blob): Promise<string> {
     // @gradio/client — see the note on stitchClipsOnGpu for why the bundled
     // client cannot reach a public HF Space from a deployed browser origin.
     const [path] = await uploadFilesToSpace([videoBlob]);
+    if (!path) throw new Error('the Space returned no upload path');
     return path;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);

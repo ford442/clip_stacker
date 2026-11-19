@@ -21,13 +21,13 @@ function pcg4dBig(x: number, y: number, z: number, w: number): number[] {
   const M = (1n << 32n) - 1n;
   const v = [x, y, z, w].map((n) => (BigInt(n >>> 0) * 1664525n + 1013904223n) & M);
   const mixRound = () => {
-    v[0] = (v[0] + v[1] * v[3]) & M;
-    v[1] = (v[1] + v[2] * v[0]) & M;
-    v[2] = (v[2] + v[0] * v[1]) & M;
-    v[3] = (v[3] + v[1] * v[2]) & M;
+    v[0] = (v[0]! + v[1]! * v[3]!) & M;
+    v[1] = (v[1]! + v[2]! * v[0]) & M;
+    v[2] = (v[2]! + v[0] * v[1]) & M;
+    v[3] = (v[3]! + v[1] * v[2]) & M;
   };
   mixRound();
-  for (let i = 0; i < 4; i++) v[i] ^= v[i] >> 16n;
+  for (let i = 0; i < 4; i++) v[i]! ^= v[i]! >> 16n;
   mixRound();
   return v.map(Number);
 }

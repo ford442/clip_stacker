@@ -27,9 +27,9 @@ describe("project - applyProjectData (core)", () => {
 
     const result = await applyProjectData(project, sourceClips);
     expect(result.clips).toHaveLength(1);
-    expect(result.clips[0].title).toBe("Saved Clip");
-    expect(result.clips[0].trimStart).toBe(1);
-    expect(result.clips[0].trimEnd).toBe(8);
+    expect(result.clips[0]!.title).toBe("Saved Clip");
+    expect(result.clips[0]!.trimStart).toBe(1);
+    expect(result.clips[0]!.trimEnd).toBe(8);
   });
 
   it("should restore A/B groups from saved project", async () => {
@@ -80,10 +80,10 @@ describe("project - applyProjectData (core)", () => {
 
     const result = await applyProjectData(project, sourceClips);
     expect(result.clipGroups).toHaveLength(1);
-    expect(result.clipGroups[0].id).toBe("group1");
-    expect(result.clipGroups[0].activeVariant).toBe("B");
-    expect(result.clipGroups[0].variants.A).not.toBeNull();
-    expect(result.clipGroups[0].variants.B).not.toBeNull();
+    expect(result.clipGroups[0]!.id).toBe("group1");
+    expect(result.clipGroups[0]!.activeVariant).toBe("B");
+    expect(result.clipGroups[0]!.variants.A).not.toBeNull();
+    expect(result.clipGroups[0]!.variants.B).not.toBeNull();
   });
 
   it("should skip clips that cannot be restored", async () => {
@@ -156,9 +156,9 @@ describe("project - applyProjectData (core)", () => {
 
     const result = await applyProjectData(project, sourceClips);
     expect(result.transitions).toHaveLength(1);
-    expect(result.transitions[0].afterClipIndex).toBe(1);
-    expect(result.transitions[0].type).toBe("dissolve");
-    expect(result.transitions[0].duration).toBe(0.5);
+    expect(result.transitions[0]!.afterClipIndex).toBe(1);
+    expect(result.transitions[0]!.type).toBe("dissolve");
+    expect(result.transitions[0]!.duration).toBe(0.5);
   });
 
   it("should sanitize invalid text overlay colors and report a warning", async () => {
@@ -183,8 +183,8 @@ describe("project - applyProjectData (core)", () => {
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.textOverlays[0].fontcolor).toBe("#ffffff");
-    expect(result.textOverlays[0].boxColor).toBe("black@0.5");
+    expect(result.textOverlays[0]!.fontcolor).toBe("#ffffff");
+    expect(result.textOverlays[0]!.boxColor).toBe("black@0.5");
     expect(result.invalidColorWarnings).toHaveLength(2);
     expect(result.invalidColorWarnings[0]).toContain("notacolor");
     expect(result.invalidColorWarnings[1]).toContain("also-bad");
@@ -212,8 +212,8 @@ describe("project - applyProjectData (core)", () => {
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.textOverlays[0].fontcolor).toBe("yellow");
-    expect(result.textOverlays[0].boxColor).toBe("black@0.5");
+    expect(result.textOverlays[0]!.fontcolor).toBe("yellow");
+    expect(result.textOverlays[0]!.boxColor).toBe("black@0.5");
     expect(result.invalidColorWarnings).toHaveLength(0);
   });
 
@@ -239,7 +239,7 @@ describe("project - applyProjectData (core)", () => {
     };
     const result = await applyProjectData(project, sourceClips);
     // When default, we omit the field on restore to keep shape minimal
-    expect(result.textOverlays[0].font).toBeUndefined();
+    expect(result.textOverlays[0]!.font).toBeUndefined();
   });
 
   it("should preserve a valid explicit font id through apply", async () => {
@@ -263,7 +263,7 @@ describe("project - applyProjectData (core)", () => {
       ],
     };
     const result = await applyProjectData(project, sourceClips);
-    expect(result.textOverlays[0].font).toBe("robotoBold");
+    expect(result.textOverlays[0]!.font).toBe("robotoBold");
   });
 
   it("should fall back to default for unknown font id without crashing", async () => {
@@ -288,7 +288,7 @@ describe("project - applyProjectData (core)", () => {
     };
     const result = await applyProjectData(project, sourceClips);
     // Falls back; we don't persist default in the restored object
-    expect(result.textOverlays[0].font).toBeUndefined();
+    expect(result.textOverlays[0]!.font).toBeUndefined();
   });
 
   it("should preserve shader fill fields and warn on unknown shaderId", async () => {
@@ -310,7 +310,7 @@ describe("project - applyProjectData (core)", () => {
           fill: "shader",
           shaderId: "gradient",
           shaderParams: { speed: 2.5 },
-        } as any,
+        },
         {
           id: "ov2",
           text: "BadFX",
@@ -324,16 +324,16 @@ describe("project - applyProjectData (core)", () => {
           boxColor: "black@0.5",
           fill: "shader",
           shaderId: "nope-shader",
-        } as any,
+        },
       ],
     };
     const result = await applyProjectData(project, sourceClips);
-    expect(result.textOverlays[0].fill).toBe("shader");
-    expect(result.textOverlays[0].shaderId).toBe("gradient");
-    expect(result.textOverlays[0].shaderParams?.speed).toBeCloseTo(2.5);
+    expect(result.textOverlays[0]!.fill).toBe("shader");
+    expect(result.textOverlays[0]!.shaderId).toBe("gradient");
+    expect(result.textOverlays[0]!.shaderParams?.speed).toBeCloseTo(2.5);
     // Unknown shader falls back and emits a warning
-    expect(result.textOverlays[1].fill).toBe("shader");
-    expect(result.textOverlays[1].shaderId).toBeUndefined();
+    expect(result.textOverlays[1]!.fill).toBe("shader");
+    expect(result.textOverlays[1]!.shaderId).toBeUndefined();
     expect(result.invalidColorWarnings.some((w) => /unknown shader/i.test(w))).toBe(true);
   });
 
@@ -367,12 +367,12 @@ describe("project - applyProjectData (core)", () => {
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].trimStart).toBe(2);
-    expect(result.clips[0].trimEnd).toBe(8);
-    expect(result.clips[0].videoFadeIn).toBe(0.3);
-    expect(result.clips[0].videoFadeOut).toBe(0.2);
-    expect(result.clips[0].audioFadeIn).toBe(0.1);
-    expect(result.clips[0].audioFadeOut).toBe(0.15);
+    expect(result.clips[0]!.trimStart).toBe(2);
+    expect(result.clips[0]!.trimEnd).toBe(8);
+    expect(result.clips[0]!.videoFadeIn).toBe(0.3);
+    expect(result.clips[0]!.videoFadeOut).toBe(0.2);
+    expect(result.clips[0]!.audioFadeIn).toBe(0.1);
+    expect(result.clips[0]!.audioFadeOut).toBe(0.15);
   });
 
   it("should apply PiP properties when restoring normalized layout", async () => {
@@ -404,12 +404,12 @@ describe("project - applyProjectData (core)", () => {
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].layerIndex).toBe(1);
-    expect(result.clips[0].x).toBeCloseTo(100 / 1280);
-    expect(result.clips[0].y).toBeCloseTo(150 / 720);
-    expect(result.clips[0].width).toBeCloseTo(300 / 1280);
-    expect(result.clips[0].height).toBeCloseTo(200 / 720);
-    expect(result.clips[0].opacity).toBe(0.7);
+    expect(result.clips[0]!.layerIndex).toBe(1);
+    expect(result.clips[0]!.x).toBeCloseTo(100 / 1280);
+    expect(result.clips[0]!.y).toBeCloseTo(150 / 720);
+    expect(result.clips[0]!.width).toBeCloseTo(300 / 1280);
+    expect(result.clips[0]!.height).toBeCloseTo(200 / 720);
+    expect(result.clips[0]!.opacity).toBe(0.7);
   });
 
   it("should migrate legacy pixel PiP coordinates on load", async () => {
@@ -455,9 +455,9 @@ describe("project - applyProjectData (core)", () => {
     };
 
     const result = await applyProjectData(project, sourceClips);
-    expect(result.clips[0].x).toBeCloseTo(100 / 1280);
-    expect(result.clips[0].y).toBeCloseTo(150 / 720);
-    expect(result.textOverlays[0].x).toBeCloseTo(50 / 1280);
-    expect(result.textOverlays[0].y).toBeCloseTo(650 / 720);
+    expect(result.clips[0]!.x).toBeCloseTo(100 / 1280);
+    expect(result.clips[0]!.y).toBeCloseTo(150 / 720);
+    expect(result.textOverlays[0]!.x).toBeCloseTo(50 / 1280);
+    expect(result.textOverlays[0]!.y).toBeCloseTo(650 / 720);
   });
 });

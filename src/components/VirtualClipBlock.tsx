@@ -41,9 +41,9 @@ interface Props {
   style: CSSProperties;
   /** Whether this row's clip is the one currently being dragged (see `useIsClipSelected`). */
   isDragging: boolean;
-  thumbs?: string[];
-  waves?: Float32Array;
-  transition?: ClipTransition;
+  thumbs?: string[] | undefined;
+  waves?: Float32Array | undefined;
+  transition?: ClipTransition | undefined;
   showTransition: boolean;
   clipCount: number;
   /**
@@ -51,7 +51,7 @@ interface Props {
    * disabled here as well as in the store, so the row never offers an edit that
    * would be refused.
    */
-  locked?: boolean;
+  locked?: boolean | undefined;
   onMoveUp: (index: number) => void;
   onMoveDown: (index: number) => void;
   onDelete: (id: string) => void;
@@ -61,9 +61,9 @@ interface Props {
   /** Called on long-press to begin full drag-reorder. */
   onTouchStart: (index: number) => void;
   /** When true, show the Cubase-style speed remapping lane under the clip. */
-  showSpeedLane?: boolean;
+  showSpeedLane?: boolean | undefined;
   /** When true, draw audio waveform on video clips (lip-sync mode). */
-  showVideoWaveform?: boolean;
+  showVideoWaveform?: boolean | undefined;
 }
 
 function VirtualClipBlockImpl({
@@ -166,8 +166,8 @@ function VirtualClipBlockImpl({
 
   const handleTouchStart = useCallback(
     (e: TouchEvent) => {
-      if (e.touches.length !== 1) return;
       const t = e.touches[0];
+      if (e.touches.length !== 1 || !t) return;
       touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() };
       didLongPressRef.current = false;
       didSwipeRef.current = false;
@@ -190,8 +190,8 @@ function VirtualClipBlockImpl({
 
   const handleTouchMove = useCallback(
     (e: TouchEvent) => {
-      if (!touchStartRef.current || e.touches.length !== 1) return;
       const t = e.touches[0];
+      if (!touchStartRef.current || e.touches.length !== 1 || !t) return;
       const dx = t.clientX - touchStartRef.current.x;
       const dy = t.clientY - touchStartRef.current.y;
       // Cancel long-press as soon as the finger moves meaningfully.

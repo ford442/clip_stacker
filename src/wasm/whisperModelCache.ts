@@ -91,7 +91,7 @@ export async function fetchModel(
   const cached = await readCachedModel(url);
   if (cached) return cached;
 
-  const response = await fetch(url, { signal: options.signal });
+  const response = await fetch(url, { signal: options.signal ?? null });
   if (!response.ok) {
     throw new Error(`Model download failed (${response.status} ${response.statusText})`);
   }

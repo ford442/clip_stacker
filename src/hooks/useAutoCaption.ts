@@ -48,7 +48,6 @@ const NO_PROVIDER_REASON =
 
 export function useAutoCaption(): UseAutoCaptionResult {
   const [providers, setProviders] = useState<AutoCaptionProviderOption[]>([]);
-  const [probing, setProbing] = useState(true);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
@@ -57,10 +56,12 @@ export function useAutoCaption(): UseAutoCaptionResult {
   const abortRef = useRef<AbortController | null>(null);
 
   const endpoint = useStore(settingsStore, (s) => s.autoCaptionEndpoint);
+  // Probing until the probe for the current (token, endpoint) has answered.
+  const [probed, setProbed] = useState<{ token: number; endpoint: typeof endpoint } | null>(null);
+  const probing = probed?.token !== probeToken || probed.endpoint !== endpoint;
 
   useEffect(() => {
     let cancelledProbe = false;
-    setProbing(true);
     void listAvailableCaptionProviders().then((available) => {
       if (cancelledProbe) return;
       setProviders(available.map(({ id, label }) => ({ id, label })));
@@ -69,7 +70,7 @@ export function useAutoCaption(): UseAutoCaptionResult {
           ? null
           : (getWhisperUnavailableReason() ?? NO_PROVIDER_REASON),
       );
-      setProbing(false);
+      setProbed({ token: probeToken, endpoint });
     });
     return () => {
       cancelledProbe = true;
@@ -120,7 +121,7 @@ export function useAutoCaption(): UseAutoCaptionResult {
         `Transcribing ${durationSec.toFixed(1)}s of audio with ${provider.label}…`,
       );
       const cues = await provider.transcribe(audio, {
-        language: settings.autoCaptionLanguage || undefined,
+        ...(settings.autoCaptionLanguage ? { language: settings.autoCaptionLanguage } : {}),
         timeOffsetSec,
         signal: controller.signal,
         onProgress: (event) => {

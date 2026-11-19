@@ -30,7 +30,7 @@ function makeClip(id: string, overrides: Partial<Clip> = {}): Clip {
 
 function baseState(clips: Clip[], transitions: ClipTransition[] = []): EditState {
   const tracks = createDefaultTracks();
-  tracks[0] = { ...tracks[0], items: clips.map((c, i) => ({ clipId: c.id, startTime: i * 100 })) };
+  tracks[0] = { ...tracks[0]!, items: clips.map((c, i) => ({ clipId: c.id, startTime: i * 100 })) };
   return { tracks: normalizeBaseLane(tracks, clips, transitions), clips, transitions };
 }
 
@@ -83,7 +83,7 @@ describe('planSegmentReplacement', () => {
 
   it('cuts [before][replaced][after] at the same output times for a sub-range', () => {
     const state = baseState([makeClip('a'), makeClip('b')]);
-    const [[, bStart]] = lane(state).filter(([id]) => id === 'b');
+    const [, bStart] = lane(state).find(([id]) => id === 'b')!;
     const endBefore = laneEnd(state);
     const out = ok(planSegmentReplacement(state, { clipId: 'a', startSec: 3, endSec: 7, media: media(4) }));
 
@@ -92,11 +92,11 @@ describe('planSegmentReplacement', () => {
     expect(ids[0]).toBe('a');
     expect(ids[3]).toBe('b');
     const [left, mid, right] = ids.slice(0, 3).map((id) => out.state.clips.find((c) => c.id === id)!);
-    expect([left.trimStart, left.trimEnd]).toEqual([0, 3]);
-    expect([mid.trimStart, mid.trimEnd]).toEqual([0, 4]);
-    expect([right.trimStart, right.trimEnd]).toEqual([7, NaN]);
-    expect(mid.objectUrl).toBe('blob:processed');
-    expect(out.replacedClipId).toBe(mid.id);
+    expect([left?.trimStart, left?.trimEnd]).toEqual([0, 3]);
+    expect([mid?.trimStart, mid?.trimEnd]).toEqual([0, 4]);
+    expect([right?.trimStart, right?.trimEnd]).toEqual([7, NaN]);
+    expect(mid?.objectUrl).toBe('blob:processed');
+    expect(out.replacedClipId).toBe(mid?.id);
     expect(out.splitSourceClip?.id).toBe('a');
     expect(lane(out.state).map(([, t]) => t)).toEqual([0, 3, 7, bStart]);
     expect(laneEnd(out.state)).toBeCloseTo(endBefore, 6);

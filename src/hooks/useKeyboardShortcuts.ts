@@ -50,13 +50,14 @@ export function useKeyboardShortcuts(
 
       const shortcutKey = [...mods, e.key.toLowerCase()].join("+");
 
-      if (shortcutKey in shortcutsRef.current) {
+      const handler = shortcutsRef.current[shortcutKey];
+      if (handler) {
         // For media elements, let Space through to browser default (play/pause)
         if (isMediaElement && e.key === " ") {
           return;
         }
         e.preventDefault();
-        shortcutsRef.current[shortcutKey]();
+        handler();
       }
     };
 

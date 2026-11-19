@@ -80,8 +80,8 @@ describe('registerCustomTransition', () => {
     for (let i = 0; i < 20; i++) {
       ids.push(registerCustomTransition(`mix(sampleFrom(uv), sampleTo(uv), u.progress * ${i}.0)`));
     }
-    expect(getCustomTransitionDef(ids[0])).toBeUndefined();
-    expect(getCustomTransitionDef(ids[19])).toBeDefined();
+    expect(getCustomTransitionDef(ids[0]!)).toBeUndefined();
+    expect(getCustomTransitionDef(ids[19]!)).toBeDefined();
     // Re-registering a dropped expression brings it straight back.
     expect(registerCustomTransition('mix(sampleFrom(uv), sampleTo(uv), u.progress * 0.0)')).toBe(
       ids[0],

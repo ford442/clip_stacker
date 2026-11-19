@@ -98,7 +98,7 @@ describe("HuggingFaceRifeBackend", () => {
 
     expect(mockProcessClipWithRIFE).toHaveBeenCalledOnce();
     const [calledBlob, calledMult, calledMode] =
-      mockProcessClipWithRIFE.mock.calls[0];
+      mockProcessClipWithRIFE.mock.calls[0]!;
     expect(calledBlob).toBe(fakeBlob);
     expect(calledMult).toBe(2);
     expect(calledMode).toBe("interpolation");
@@ -111,7 +111,7 @@ describe("HuggingFaceRifeBackend", () => {
 
     await backend.processClip(fakeBlob, { multiplier: 4, mode: "boomerang" });
 
-    const [, mult, mode] = mockProcessClipWithRIFE.mock.calls[0];
+    const [, mult, mode] = mockProcessClipWithRIFE.mock.calls[0]!;
     expect(mult).toBe(4);
     expect(mode).toBe("boomerang");
   });
@@ -217,7 +217,7 @@ describe("SelfHostedRifeBackend", () => {
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(2);
-      const [predictUrl, predictOpts] = fetchMock.mock.calls[0];
+      const [predictUrl, predictOpts] = fetchMock.mock.calls[0]!;
       expect(predictUrl).toBe(`${ENDPOINT}/predict`);
       expect(predictOpts.method).toBe("POST");
       expect(result.blob).toBe(outputBlob);
@@ -280,7 +280,7 @@ describe("SelfHostedRifeBackend", () => {
       });
 
       // Verify FormData fields include boomerang=true and multiplier=4
-      const [, opts] = fetchMock.mock.calls[0];
+      const [, opts] = fetchMock.mock.calls[0]!;
       const formData = opts.body as FormData;
       expect(formData.get("boomerang")).toBe("true");
       expect(formData.get("multiplier")).toBe("4");

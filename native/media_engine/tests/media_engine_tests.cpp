@@ -729,6 +729,27 @@ TEST_CASE(frame_positions_past_int_max_do_not_wrap) {
   mix_fx_session_destroy(session);
 }
 
+TEST_CASE(slice_first_frame_at_int_limits_reads_silence) {
+  // MIX_SLICE_FIRST_FRAME is not range-checked (a slice may start anywhere
+  // in the clip): near INT_MIN / INT_MAX, `frame - first_frame` and the sinc
+  // window's taps used to overflow int (UB; mix_fuzz found it). The slice
+  // then covers no frame the entry reads, so every path mixes silence.
+  const float pcm[16] = {1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1};
+  for (const int first : {std::numeric_limits<int>::min(), std::numeric_limits<int>::max() - 31}) {
+    const int meta[MIX_SLICE_STRIDE] = {0, 16, 1, 48000, first, 1000};
+    for (const double rate : {1.0, 1.3}) {
+      for (const int flags : {0, static_cast<int>(MIX_FLAG_LINEAR_RESAMPLE)}) {
+        const double row[MIX_ENTRY_STRIDE] = {0, 0, 0.01, 0, 1, 0, 0, rate, 0, 0, 0, 0};
+        float out[960];
+        CHECK(mix_timeline_audio_range(out, 480, 0, 48000, 2, pcm, 16, meta, 1, row, 1, nullptr, 0, flags) == CS_OK);
+        bool silent = true;
+        for (float v : out) silent = silent && v == 0.f;
+        CHECK(silent);
+      }
+    }
+  }
+}
+
 TEST_CASE(rejects_malformed_arguments) {
   float out[8] = {};
   const float pcm[4] = {};

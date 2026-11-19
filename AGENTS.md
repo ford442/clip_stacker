@@ -14,6 +14,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
   - `composition/` — the preview composition plan, layout, keys, text.
   - `media/` — decoding, cursors, proxies, stabilization.
   - `audio/`, `remote/`, `webgpu/`, `wasm/`, `ffmpeg/`, `gpu-chores/` — as named.
+  - `workers/` — the typed worker RPC and every `new Worker` (see *Worker RPC*).
   - `utils/` — the few cross-cutting helpers left (CSP, storage keys, workspace layout, math).
 - `store/` — Zustand stores. `index.ts` re-exports them.
 - `actions/` + `playback/` — store-bound actions with no React.
@@ -25,11 +26,11 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
 **Layering** is enforced by `eslint-plugin-boundaries` (`eslint.config.js`):
 
 - Imports flow types → domain → store → actions → hooks → components → app.
-- Domain modules and `types/` never import React or Zustand. `webgpu/` and `wasm/` are domain, so they never reach `store/` or `components/`. Workers live in domain dirs, so they never import React.
+- Domain modules and `types/` never import React or Zustand. `webgpu/` and `wasm/` are domain, so they never reach `store/` or `components/`. Workers live in domain dirs, so they never import React; `new Worker(` is a lint error outside `src/workers/`.
 - A domain module that needs live store state reads it through a registry the store fills in, e.g. `export/exportSources.ts`, which `editorStore` / `settingsStore` register into.
 - Test files are exempt.
 
-Tests are colocated with source as `*.test.ts` or `*.test.tsx`. Browser end-to-end tests live in `e2e/` (Playwright). Static deployment assets live in `public/`; built output goes to `dist/` and should be treated as generated. `docs/history/` holds superseded design notes, kept for context only.
+Tests are colocated with source as `*.test.ts` or `*.test.tsx`. Browser end-to-end tests live in `e2e/` (Playwright). Static deployment assets live in `public/`; built output goes to `dist/` and should be treated as generated. `docs/history/` holds superseded design notes, kept for context only. `huggingface/RIFE/` is the one HuggingFace Space the app calls (`npm run deploy:rife-space`); `spaces/` parks Spaces it does not call — ESLint-ignored, never deployed (`spaces/README.md`). `.gitattributes` keeps media / wasm binary and WGSL LF. TypeScript targets ES2022 (every browser with WebGPU + WebCodecs runs it), so class fields use define semantics.
 
 Shared state worth knowing:
 
@@ -42,15 +43,17 @@ Shared state worth knowing:
 - `npm install` (or `npm ci` for a clean/CI install): install dependencies for local development.
 - `npm run dev`: start the Vite dev server with the headers needed for FFmpeg WASM.
 - `npm run typecheck`: run `tsc --noEmit`, matching CI behavior. Run this after any TypeScript change.
-- `npm run typecheck:strict`: the strictness ratchet (`tsconfig.strict.json` adds `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`). It must report 0 errors in the `strictDirs` of `scripts/strict-ratchet.json`, and the count elsewhere may not exceed its `baseline`. Test files are not counted yet. After a cleanup, `-- --update` lowers the baseline; add a directory to `strictDirs` once it is clean.
-- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint, react-hooks, boundaries). Must report 0 errors; warnings are tolerated debt.
+- `npm run typecheck:strict`: the strictness ratchets in `scripts/strict-ratchet.json` (`scripts/check-strict.mjs`). Each runs its tsconfig, fails on any error under its `strictDirs`, and may not exceed its `baseline` elsewhere; test files count like any other file.
+  - `strict` (`tsconfig.strict.json`: `noUncheckedIndexedAccess` + `exactOptionalPropertyTypes`) covers all of `src/` with a zero baseline. Give fixed-length data a tuple type (`Vec2` / `Vec3` / `Vec4` / `Rgba` / `Mat2x3` in `types/tuples.ts`) rather than reaching for `!`.
+  - `index-signature-access` (`tsconfig.strict-next.json` adds `noPropertyAccessFromIndexSignature`) is the next one: read index-signature keys as `obj['key']`. After a cleanup, `-- --update` lowers its baseline; add a directory to its `strictDirs` once it is clean.
+- `npm run lint`: ESLint (`eslint.config.js`: typescript-eslint, react-hooks, boundaries). Must report 0 problems: `--max-warnings 0`, and `no-explicit-any` and every react-hooks rule are errors (sync props to state during render or derive them; read refs in effects and handlers, not in render). The one disable is `react-hooks/incompatible-library` on `useVirtualizer` in `Timeline.tsx`.
   - Unused imports / variables and floating promises are errors.
   - So is any import that breaks the layering above.
   - Non-test `src/` files over 700 lines are an error (`max-lines`): split the module rather than raising the limit.
 - `npm run knip`: dead-code check with an empty baseline. Unused files, exports, types and dependencies fail CI. Delete them, or mark a deliberate extension point `@public` in its JSDoc. `knip.json` lists the entry points Vite cannot see (workers, the AudioWorklet, scripts, e2e).
 - `npm run check:cycles`: madge import-cycle check over `src/` (type-only imports count). Must report 0 cycles — import `getClipDuration` from `timeline/clipTiming` and `DEFAULT_CANVAS_*` from `utils/canvasDefaults`, not the `project` barrel (`src/project/index.ts`).
 - `npm test -- --run`: run the Vitest suite once, matching CI behavior.
-- `npm run test:coverage`: run tests with coverage reporting (CI runs it with `-- --run`). `vitest.config.ts` sets per-directory floors for the pure domain dirs; raise them as coverage grows, never lower one to land a change.
+- `npm run test:coverage`: run tests with coverage reporting (CI runs it with `-- --run`). `vitest.config.ts` sets per-directory floors for the domain dirs (timeline, finishing, captions, project, composition, store, audio, media, export, workers); raise them as coverage grows, never lower one to land a change.
 - `npm run e2e`: the Playwright render regression harness (see *Render regression harness* below). It builds nothing itself, so run `npm run build` first; it serves `dist/` with `npm run preview`. `npm run e2e:update-goldens` rewrites `e2e/goldens/`.
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
@@ -58,7 +61,8 @@ Shared state worth knowing:
 - `npm run sync:ffmpeg-core`: copy `@ffmpeg/core` / `@ffmpeg/core-mt` ESM dist into `public/ffmpeg-core{,-mt}/` (the self-hosted cores; CDNs are fallbacks). `ffmpeg/coreSources.ts` HEAD-probes them and passes them to the worker by URL (CDN copies as blob URLs), always js + wasm (+ pthread worker) from one source; `ffmpeg.worker.ts` drives the Emscripten core itself (`FfmpegCoreHost`, no `@ffmpeg/ffmpeg` worker inside it). Bytes passed to `writeFile` are transferred (detached) — copy anything you keep. `-- --check` exits non-zero if `public/` or `FFMPEG_CORE_VERSION` in `src/ffmpeg/ffmpegCommon.ts` drifts from `node_modules`.
 - `npm run build:wasm`: rebuild **all** native WASM modules (audio analysis, video stabilize, media engine incl. time stretch, and its glue-free bus-FX build `media_engine_fx.wasm`) via the shared CMake toolchain into `public/wasm/`. Requires Emscripten (`emcmake` / `emcc`); use the SDK pinned in `native/emsdk-version` to reproduce the committed bytes.
 - `npm run build:wasm:debug`: same, with `-O0 -g`, `ASSERTIONS=1`, `--profiling-funcs` (DWARF), written to `native/build-debug/wasm/` (never over `public/wasm`). The dev/preview servers serve it at `/wasm-debug/`; open the app with `?wasm_debug`.
-- `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan + float-cast-overflow). No Emscripten needed. `npm run test:native:pr` runs the `pr` label only (what PR CI runs; the `nightly` label holds the long battery). `npm run fuzz:native` runs the libFuzzer FX target (clang).
+- `npm run test:native`: build every native DSP module (audio analysis, video stabilize, media engine incl. time stretch) with the host compiler under `-Werror` and run ctest (ASan + UBSan + float-cast-overflow). No Emscripten needed. `npm run test:native:pr` runs the `pr` label only (what PR CI runs; the `nightly` label holds the long battery). `npm run fuzz:native` runs the libFuzzer targets (clang): `fx_fuzz` (bus rows), `mix_fuzz` (`mix_timeline_audio_range` bounds checks + chunk invariance), `stab_fuzz` (stabilizer API); `FUZZ_TARGETS` picks some, `FUZZ_SECONDS` / `FUZZ_SECONDS_<FX|MIX|STAB>` set the budget.
+- `bash scripts/clang-tidy-native.sh`: clang-tidy (`native/.clang-tidy`: bugprone-*, performance-*, narrowing conversions, container-size-empty, warnings as errors) over the native modules' own sources from the host build's `compile_commands.json` (no third_party, no tests). The `native-host` CI job runs it; it must exit 0.
 - `npm run gen:true-peak-taps`: regenerate `native/media_engine/src/fx/true_peak_taps.inc` (the limiter's 4x oversampling taps, generated from the resampler's sinc table so they cannot drift).
 - `npm run build:audio-analysis` / `build:video-stabilize` / `build:media-engine`: rebuild one module. `npm run build:whisper`: the opt-in auto-caption module (not committed).
 
@@ -99,6 +103,45 @@ Non-obvious caveats:
 - `npm ci` works against the committed `package-lock.json`. If you add/remove/upgrade a dependency, run `npm install` and commit the updated `package-lock.json` in the same change so `npm ci` stays in sync — it previously drifted (missing optional `@esbuild/*` platform packages) and broke CI.
 - `npm run dev` does not render in a CSP-enforcing browser as-is. Vite writes a `Content-Security-Policy` meta tag into `index.html` (generated from `src/utils/csp.ts` by `cspMetaPlugin` — the one place to edit the policy; `public/.htaccess` repeats it and `csp.test.ts` checks the copy) with `script-src 'self' 'wasm-unsafe-eval'` (no `'unsafe-inline'`), which blocks Vite's injected inline React-refresh/HMR preamble script and leaves a blank page with `@vitejs/plugin-react can't detect preamble` console errors. To run/verify the app in the browser, use the production build instead: `npm run build` then `npm run preview` (serves on `http://localhost:4173/`, no inline scripts, CSP-clean). Do not relax the CSP just to make dev mode load unless that is the actual task.
 - FFmpeg WASM needs cross-origin isolation; both the dev and preview servers already set the required COOP/COEP headers, so use those servers rather than a generic static server.
+
+## Worker RPC (`src/workers/`)
+
+Every dedicated worker (export premix, time stretch, audio analysis,
+gpu-chores, preview, Whisper, FFmpeg) talks through one typed RPC,
+`src/workers/workerRpc.ts` (domain layer).
+
+- **Protocol** is a plain type map next to the worker, shared by both sides:
+  `{ name: { req; res } }` is a call, `{ name: { notify } }` a main → worker
+  message, `{ name: { event } }` a worker → main message. Declare it as a
+  `type` alias, not an interface.
+- **Main:** `createWorkerClient<P>(factory, { name, restart?, timeoutMs?, onCrash? })`
+  → `call(name, req, { transfer, signal, timeoutMs })`, `notify`, `on(event)`,
+  `start()` (false when the factory throws), `available` / `failure`,
+  `terminate()`. Ids, pending calls and crash handling live there, nowhere
+  else. Abort and timeout reject the call and send the worker a cancel.
+- **Worker:** `exposeWorker<P>(handlers | (port) => handlers)`; the table is
+  checked against `P`. Handlers return a value or `withTransfer(value, list)`,
+  sync or async; get `ctx.signal` (aborted on cancel); thrown errors reject
+  the call with their message and name (`AbortError` comes back as a
+  `DOMException`). `port.emit` posts events. Outside a worker (a test
+  importing the module) it does nothing; tests pass `{ scope }`.
+- **Stream channel:** notifications and events are how the non
+  request/response protocols move data: the premix's `need-pcm` →
+  `pcm-begin` / `pcm-part` / `pcm-end`, and the preview's `need-frames` →
+  `frames-ready`. Payloads keep their shapes; only the plumbing is shared.
+- **Crashes:** a worker `error` / `messageerror`, `terminate()` or a factory
+  that throws rejects every pending call with `WorkerCrashedError`
+  (`workerName`, `reason`). By default a crash ends the client (callers fall
+  back in-realm); `restart: 'on-crash'` spawns a fresh worker on the next
+  call. Copy Debug labels the error and lists recent crashes
+  (`getWorkerCrashLog`).
+- **Factories:** Vite bundles a worker only from a literal
+  `new Worker(new URL('…', import.meta.url))`, so all of them are in
+  `src/workers/workerFactories.ts`; ESLint (`no-restricted-syntax`) forbids
+  `new Worker(` anywhere else in `src/` (tests aside).
+- **Tests:** `src/workers/inProcessWorker.test.helpers.ts` joins a client and
+  `exposeWorker` in-process through `structuredClone` with transfer (so
+  transferred buffers detach), with `crash()` / `messageError()`.
 
 ## Workspace layout (resizable zones)
 
@@ -148,6 +191,9 @@ Playwright runs against `npm run preview`, on Chromium with WebGPU on SwiftShade
 - `decodeFrame(blob, t)` decodes one frame of a file.
 - `compare` returns PSNR + SSIM (`imageMetrics.ts`).
 - `crash()` makes `App` throw, for `RootErrorBoundary`.
+- `listShaders()` returns every WGSL module as its pass assembles it (`webgpu/shaderCatalog.ts`).
+
+Under `?test_harness` the timeline export (`encodeTimelineComposite`) also copies its frame 0 and throws when it is black although the plan draws a visible clip.
 
 **Goldens** (`e2e/goldens.spec.ts`, cases in `e2e/fixtures.ts`). Each case renders at 320x180 and asserts:
 
@@ -158,13 +204,15 @@ Sample times sit on the 30 fps export grid. A new finishing case needs settings 
 
 HDR10 compares the PQ readback, not the preview: the preview is the SDR monitor view. The export may refuse where no 10-bit encoder exists, as in CI's Chromium.
 
-**Colour** (`e2e/color.spec.ts`): an HDR10 ramp (a custom transition drawing `uv.x^2.6`, +3 EV, 1280x720) must pack to I420P10 / BT.2020 PQ / limited range with > 600 distinct Y codes (it lands 638; an 8-bit path caps at ~250), and the file keeps them where a 10-bit encoder exists; the P3 chart keeps the P3 primaries where Rec.709 clips them; a Display P3 export's frame 0 is not black.
+**Colour** (`e2e/color.spec.ts`): an HDR10 ramp (a custom transition drawing `uv.x^2.6`, +3 EV, 1280x720) must pack to I420P10 / BT.2020 PQ / limited range with > 600 distinct Y codes (it lands 638; an 8-bit path caps at ~250), and the file keeps them where a 10-bit encoder exists; the P3 chart keeps the P3 primaries where Rec.709 clips them; frame 0 is not black for a Display P3 export (per-clip and timeline compositor) or an HDR10 PQ readback.
+
+**Shaders** (`e2e/shaders.spec.ts`): every assembled shader (each file in `src/webgpu/shaders/`, its scene-linear and shader-f16 variants, every registered transition through the template) compiles on the device with no error or warning.
 
 **Smoke flows** (`e2e/smoke.spec.ts`) go through the real UI: load demo clips → split → ripple delete → undo → render; crash → reload → recovery offer.
 
-**Known bugs** are pinned with `test.fail`, so they flip to an unexpected pass when fixed:
+**Smoke flows** also cover *recover session restores the embedded clips*: embedded media comes back from its `data:` URL through `project/dataUrl.ts` (decoded locally — the production `connect-src` blocks `fetch('data:…')`, and happy-dom enforces no CSP, so `dataUrl.test.ts` makes `fetch` throw instead).
 
-- recovering an autosave drops embedded media, because the restore `fetch()`es `data:` URLs that the production `connect-src` blocks.
+**Known bugs** are pinned with `test.fail`, so they flip to an unexpected pass when fixed. None are pinned today.
 
 ## Demo clips, Export-tab sections, encoder badge
 
@@ -241,13 +289,41 @@ secondary → LUT → sharpen → CA → bloom → grain. Primary color is untou
   "Curves & levels" (FFmpeg's `curves` / `colorlevels` could give
   best-effort parity later); Canvas2D does not apply finishing.
 
+## Shader uniform contracts (one spec per struct)
+
+A uniform struct is declared once, in `src/webgpu/uniformSpecs.ts`, as a
+`defineUniformLayout(structName, fields)` spec (`src/webgpu/uniformLayout.ts`;
+field types `f32` / `u32` / `vec2` / `vec3` / `vec4`, `vec4` arrays via
+`count`, `_`-prefixed fields are padding). The spec gives:
+
+- `wgsl` — the struct text. A shader carries the line `// @uniforms <StructName>`
+  where it goes; the pass builds its code with `spliceUniformStructs(raw, spec)`
+  (throws unless the line is there exactly once), so `?raw` imports stay.
+- `pack(values, out?, offset?)` — a packer typed from the spec (`vec2` → `Vec2`
+  etc.; padding packs 0, `u32` bit-exact).
+- `byteSize` / `floats` / `offsets` — WGSL alignment (vec2 8, vec3 / vec4 /
+  arrays 16, size rounded to 16). Slots a CPU reference reads
+  (`SHARPEN_MODE_SLOT`, `NR_QUALITY_SLOT`) or a pass pokes per draw (grain's
+  `blurAxis`) are `offsets.<field>`, never literals.
+
+Ported: grain, sharpen, denoise, curves, bloom, chromatic aberration, the
+overlay key block and the preview layer uniforms (`PREVIEW_LAYER_UNIFORMS`).
+The finishing modules keep the maths (clamps, defaults) and fill
+`SPEC.pack({...})`. The packed bytes are unchanged (a fuzzing parity test
+against the hand-written packers ran before they were deleted), which keeps
+the classic / standard modes byte-identical. `uniformLayout.test.ts` is the
+table test: each spec's size, the slots other code relies on, and that every
+assembled shader that binds it contains its struct. Append fields; do not
+reorder. Every assembled shader is listed in `webgpu/shaderCatalog.ts` and
+compiled by `e2e/shaders.spec.ts`; a new shader file or variant goes there.
+
 ## Noise reduction quality tiers (first finishing pass)
 
 `NoiseReductionGpuPass` (`src/webgpu/noiseReductionPass.ts` +
 `shaders/denoise.wgsl`) runs first in the finishing chain (noise → primary →
 curves → secondary → LUT → sharpen → CA → bloom → grain). The spatial stage
-has three tiers, picked by `NoiseReductionSettings.quality` (uniform slot 10;
-the layout stays 16 floats). Temporal blending and its motion gate are the
+has three tiers, picked by `NoiseReductionSettings.quality` (the `quality`
+field of `NOISE_REDUCTION_UNIFORMS`, see *Shader uniform contracts*). Temporal blending and its motion gate are the
 same in every tier, and still reset on seek (`resetTemporal`).
 
 - **`standard`** (omitted = standard) — the original 5×5 luma bilateral. Its
@@ -272,8 +348,8 @@ same in every tier, and still reset on seek (`resetTemporal`).
 ## Sharpen modes (after LUT, before CA)
 
 `SharpenGpuPass` (`src/webgpu/sharpenPass.ts` + `shaders/sharpen.wgsl`) has
-three modes, picked by `SharpenSettings.mode` (uniform slot 6; the layout
-stays 8 floats). Amount, radius, threshold and midtone detail mean the same
+three modes, picked by `SharpenSettings.mode` (the `mode` field of
+`SHARPEN_UNIFORMS`, see *Shader uniform contracts*). Amount, radius, threshold and midtone detail mean the same
 in all of them.
 
 - **`classic`** (omitted = classic) — the original unsharp mask. Its output
@@ -376,7 +452,7 @@ colour), so nothing later softens it. `GrainSettings.quality` picks the model:
   the shader only reads uniforms. Optical settings and coherence are kept.
 - Grain size is relative to frame height and grains stay round on any aspect,
   so a smaller preview canvas shows the same grain as the export.
-- Uniform layout (24 floats) is pinned by `grainUniformLayout.test.ts`.
+- The uniform layout is `GRAIN_UNIFORMS` (*Shader uniform contracts*).
   FFmpeg remains best-effort `noise` (no blue noise, coherence or response).
 
 ## Text overlay fonts
@@ -728,8 +804,9 @@ blend mode there, not in one backend.
   `overlayKey.test.ts`. Chroma follows `vf_chromakey.c` (normalized BT.601
   limited-range UV distance, ramped from `similarity` over `blend`); luma
   follows `vf_lumakey.c` as `buildOverlayAlphaFilters` configures it.
-- `preview.wgsl`'s `keyAlpha()` is the same function in WGSL, driven by six
-  uniforms at `KEY_UNIFORM_OFFSET` (packed by `packKeyUniforms`). It runs on
+- `preview.wgsl`'s `keyAlpha()` is the same function in WGSL, driven by the
+  key block of the layer uniforms (`KEY_UNIFORM_FIELDS` in
+  `PREVIEW_LAYER_UNIFORMS`, filled by `keyUniformValues`). It runs on
   the sampled colour *before* opacity and the fades, so a soft edge is not
   squashed by them.
 - `applyKeyToImageData` is the Canvas2D export path (`drawClipLayer` pre-keys
@@ -757,7 +834,7 @@ Real-time and offline audio features use a small Emscripten module (kissfft, BSD
 - `src/wasm/offlineAnalysis.ts` — full-buffer / clip-load analysis → `beatTimestamps` / `bpmEstimate` on `Clip`
 - `src/wasm/audioAnalysisWorker.ts` + `audioAnalysisClient.ts` — Worker offload (keep main-thread long tasks < 16 ms)
 - `src/wasm/audioReactiveUniforms.ts` — shared `AudioReactive` uniform shape + WGSL snippet docs
-- `src/webgpu/previewEngine.ts` — `setAudioReactive({ bass, mid, treble, beat })`; `packLayerUniforms` (`previewLayerUniforms.ts`) writes them to uniform slots 13–16
+- `src/webgpu/previewEngine.ts` — `setAudioReactive({ bass, mid, treble, beat })`; `packLayerUniforms` (`previewLayerUniforms.ts`) writes them to the `bass` … `beat` fields of `PREVIEW_LAYER_UNIFORMS` (`webgpu/uniformSpecs.ts`)
 - `src/webgpu/shaders/preview.wgsl` — `Uniforms.bass|mid|treble|beat` + optional warm lift
 - `src/timeline/beatMarkers.ts` + Timeline ruler — read-only beat overlay when metadata is present
 - `src/export/canvasRenderer.ts` — `setWasmBassLevel()` for export parity with the same analysis source
@@ -775,7 +852,7 @@ Do not vendor user-supplied DSP plugins; stick to kissfft (or another OSI-approv
 
 Three shipped Emscripten modules (plus the glue-free `media_engine_fx` build and the opt-in whisper target) share one flag file. Do not copy-paste `emcc` invocations.
 
-- `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / `-Wall -Wextra` / strict C++17 / `-ffp-contract=off` (no FMA contraction, so host tests and WASM round alike) / `EXPORTED_RUNTIME_METHODS` / `INCOMING_MODULE_JS_API=locateFile,instantiateWasm`; per-module `GZIP_BUDGET`, `THREADS` (pthreads — whisper only), `EXCEPTIONS` (throw support — whisper only) and `MALLOC` (standalone modules; `media_engine_fx` uses emmalloc). It owns the optimisation flags: CMake's per-config `-O3 -DNDEBUG` defaults are cleared
+- `native/toolchain.cmake` — shared SIMD / LTO / Closure / `STACK_SIZE` / `FILESYSTEM=0` / `-Wall -Wextra -Werror` (as the host build; warning flags never change the bytes) / strict C++17 / `-ffp-contract=off` (no FMA contraction, so host tests and WASM round alike) / `EXPORTED_RUNTIME_METHODS` / `INCOMING_MODULE_JS_API=locateFile,instantiateWasm`; per-module `GZIP_BUDGET`, `THREADS` (pthreads — whisper only), `EXCEPTIONS` (throw support — whisper only) and `MALLOC` (standalone modules; `media_engine_fx` uses emmalloc). It owns the optimisation flags: CMake's per-config `-O3 -DNDEBUG` defaults are cleared
 - `native/CMakeLists.txt` — builds `audio_analysis`, `video_stabilize`, `media_engine` (and `media_engine_fx`) into `public/wasm/`; `-DCLIP_STACKER_WHISPER=ON` adds `native/whisper/` (whisper.cpp via its own CMake, `EXCLUDE_FROM_ALL`)
 - `clip_stacker_standalone_wasm` (toolchain.cmake) — `-sSTANDALONE_WASM --no-entry`: plain `extern "C"` exports, no JS runtime, for realms that cannot load MODULARIZE glue (the AudioWorkletGlobalScope). Its only import is `env.emscripten_notify_memory_growth`; call `_initialize` after instantiating — emmalloc sets its heap up there, and skipping it makes the first allocation past the initial memory trap. Keep such modules free of static initializers
 - `native/emsdk-version` — the pinned SDK (CI installs it; the committed artifacts come from it). `scripts/emscripten-flags.sh` is the cmake driver: it rejects SDKs < 3.1.64, warns above the tested major, and sends `WASM_DEBUG=1` builds to `native/build-debug/`
@@ -783,8 +860,9 @@ Three shipped Emscripten modules (plus the glue-free `media_engine_fx` build and
 - `src/wasm/emscriptenLoader.ts` — the JS side of the boundary: `loadEmscriptenModule(name, factory)` (one instance per realm, transient fetch failures retry with backoff, then a cooldown instead of "disabled until reload"; a trap retires the instance) and `withHeap(mod, (heap) => …)` — **every `_malloc` goes through it**: null-checked, views rebuilt from the current buffer after each call, everything freed when the scope ends; null on OOM so callers fall back. `CS_STATUS` mirrors `cs_status.h`
 - `scripts/wasm-size-check.sh` — **fails** if gzip(`.wasm`) exceeds 200 KB
 - `native/host.cmake` + `-DCLIP_STACKER_HOST_TESTS=ON` — host (non-Emscripten) test build with `-Werror`; `scripts/test-native.sh` drives it
+- **The allocator is not load-bearing**: `media_engine` (dlmalloc) and `media_engine_fx` (emmalloc) run the same bus code, and `allocator_tests` runs the all-FX bus golden under a poisoning, address-shifting `operator new` and requires it bit-identical to the system allocator's (`native/README.md` explains why that, not a host emmalloc link, is the evidence). Keep engine state in value-initialized storage (`std::vector`, `emplace_back()`, `new T()`)
 - Configure exports `compile_commands.json` (linked to `native/compile_commands.json`, gitignored); `native/.clangd` points clangd at it — run clangd with `--query-driver=**/em++`
-- CI `wasm` job installs `native/emsdk-version`, runs `npm run build:wasm` and fails on any `public/wasm` diff or stray file; the `native-host` job runs `scripts/test-native.sh`, which ctests every module (`video_stabilize`'s pure matrix / smoothing helpers live in `stab_math.h`)
+- CI `wasm` job installs `native/emsdk-version`, runs `npm run build:wasm` and fails on any `public/wasm` diff or stray file; the `native-host` job runs `scripts/test-native.sh`, which ctests every module, then `scripts/clang-tidy-native.sh` (`video_stabilize`'s pure matrix / smoothing helpers live in `stab_math.h`)
 
 Keep WebGPU as the pixel owner. Do not fold video frames into this engine.
 
@@ -828,7 +906,7 @@ C++ owns the export premix DSP: polyphase resample, volume/pan automation curves
 - `public/wasm/media_engine.{js,wasm}` — committed artifacts (gzip budget 200 KB)
 - `src/wasm/mediaEngine.ts` — `openTimelineMixStream` (chunked; uploads only the source frames each chunk reads, each chunk in one `withHeap` scope, acquires/releases clip PCM lazily), `mixTimelineAudio` (whole buffer); lazy load, graceful disable
 - `src/export/webcodecsAudio.ts` — `encodeScheduleAudioStreaming` feeds chunks straight to `AudioEncoder` (no length cap); `renderTimelineAudioMix` prefers WASM; OfflineAudioContext fallback (≤ `MAX_OFFLINE_AUDIO_SECONDS`)
-- **Export premix runs in a worker.** `src/audio/audioRender.worker.ts` runs `openTimelineMixStream` (and the bus session / meter); `src/audio/audioRenderClient.ts` (`openMixStream`, the `MixStream` shape export uses) posts the schedule, answers the worker's `need-pcm` from the main-thread provider (decoding needs `OfflineAudioContext`, which workers lack) in 4 MB `pcm-part` slices with a yield between them, and keeps one `pull` ahead so the worker mixes the next chunk while main encodes. Protocol: `audioRenderProtocol.ts`. Page parameters (`?media_engine_resampler`, `?wasm_debug`) are resolved on main and passed in; `?no_media_engine` never starts the worker. No Worker (tests) or a failed start → the same stream in this realm; a worker that dies mid-export fails the stream, and export falls back as for any engine failure. Output is bit-identical to the in-realm stream (`audioRenderClient.test.ts`).
+- **Export premix runs in a worker.** `src/audio/audioRender.worker.ts` runs `openTimelineMixStream` (and the bus session / meter); `src/audio/audioRenderClient.ts` (`openMixStream`, the `MixStream` shape export uses) calls `open` with the schedule, answers the worker's `need-pcm` event from the main-thread provider (decoding needs `OfflineAudioContext`, which workers lack) in 4 MB `pcm-part` slices with a yield between them, and keeps one `pull` ahead so the worker mixes the next chunk while main encodes. Protocol: `audioRenderProtocol.ts`. Page parameters (`?media_engine_resampler`, `?wasm_debug`) are resolved on main and passed in; `?no_media_engine` never starts the worker. No Worker (tests) or a failed start → the same stream in this realm; a worker that dies mid-export fails the stream, and export falls back as for any engine failure. Output is bit-identical to the in-realm stream (`audioRenderClient.test.ts`).
 - Kill switch: `?no_media_engine` (curves and everything else go back to OfflineAudioContext). Debug: `?media_engine_resampler=linear`.
 - Keyframe semantics must match `sampleKeyframes` / `applyGainEnvelope` (`src/audio/gainEnvelope.ts`, the TS twin of `fade_gain` / `Curve` / `Panner`) / `StereoPannerNode`; change both sides together. Packed strides in `audio_mix.h` are mirrored in `mediaEngine.ts`.
 - **Insert effects** (`Clip.audioEffects`, `src/audio/audioEffects.ts`): ≤ 4 RBJ biquads then one compressor per clip (`native/media_engine/src/eq.cpp`, `dynamics.cpp`), after resample and before the volume curve; a look-ahead true-peak **bus limiter** from `ExportSettings.masterLimiter` (off by default). They are effect-block rows (`MIX_FX_STRIDE`) plus four fields on an fx entry (`MIX_ENTRY_FX_STRIDE`, `MIX_FLAG_EFFECTS`; the fourth routes it to a lane bus), run through a stateful `mix_fx_session_*` (contiguous calls from frame 0; the bus reads `mix_fx_session_latency` frames ahead). No enabled block, no bus processing and no limiter → the stream stays on `mix_timeline_audio_range`, byte-identical to before (host test pins it).
@@ -1072,9 +1150,9 @@ layer carries no warp fields at all.
 - **Features.** `requestedOptionalFeatures` asks only for what a code path reads: `shader-f16`, plus `timestamp-query` under `?gpu_profile`. Nothing else is requested.
 - **Fallback adapters** (SwiftShader / WARP, `adapter.info.isFallbackAdapter`) are reported in the probe and Copy Debug and refused for the on-screen preview (`assertPreviewAdapter` → `FallbackAdapterError`) unless `?test_harness` (CI runs on SwiftShader). Export may use one.
 - **Device loss** recovers with backoff 250 ms → 500 ms → 1 s → 2 s → 4 s and gives up after 5 attempts (`gpu-recovery-failed`, "WebGPU device lost repeatedly…"); a device that lived ≥ 30 s resets the count.
-- **Main-thread probe** stops at `requestAdapter` (`probeWebGpu({ device: false })`); the adapter is reused by the first `acquireGpuContext`, and the device is created by the first export or text fill. The preview worker probes after main's `configure` message (profiling + fallback flags).
+- **Main-thread probe** stops at `requestAdapter` (`probeWebGpu({ device: false })`); the adapter is reused by the first `acquireGpuContext`, and the device is created by the first export or text fill. The preview worker probes when main's `configure` call arrives (profiling + fallback flags) and answers it with the probe.
 - `captureStillFrame` caches one `VideoFrame` per `<img>` (cloned per call, redrawn when `src` changes, released by `ClipMediaPool.remove`); `textFill` configures through `canvasConfiguration()` like every canvas.
-- **`?gpu_profile`** (`webgpu/gpuProfiler.ts`): GPU time per finishing pass, compositor, transition and export readback, from timestamp queries written by empty compute passes (no pass class knows about it), resolved through a three-slot readback ring (a busy frame is skipped, never stalled) into a per-label moving average. One profiler per realm; the worker posts its snapshot in `render-complete`. Shown in `previewMetrics.gpuPassMs`, Copy Debug (*GPU profile*) and `GpuProfileOverlay` under the Effects Stack. Chrome quantizes timestamps to 100 µs.
+- **`?gpu_profile`** (`webgpu/gpuProfiler.ts`): GPU time per finishing pass, compositor, transition and export readback, from timestamp queries written by empty compute passes (no pass class knows about it), resolved through a three-slot readback ring (a busy frame is skipped, never stalled) into a per-label moving average. One profiler per realm; the worker returns its snapshot with each `render` result. Shown in `previewMetrics.gpuPassMs`, Copy Debug (*GPU profile*) and `GpuProfileOverlay` under the Effects Stack. Chrome quantizes timestamps to 100 µs.
 
 ## gpu-chores (import / library pixel work)
 
@@ -1116,14 +1194,14 @@ never main's `onGpuDeviceLost`.
 - `src/export/container/demux.ts` — the one demuxer (Mediabunny `Input` + `BlobSource`: MP4, MOV, WebM, MKV) behind every `ClipFrameDecoder` (export, preview, proxies, stabilization). Opening reads the container index and the packets decoded, never the whole file; the index is cached per Blob (`WeakMap`, evicted on a failed open) and the accepted acceleration rung per codec + coded size. Tagged files put `colorSpace` in the decoder config (`readVideoColorSpace` exposes the tags). WebM VP8 / VP9 with alpha decode through Mediabunny's `VideoSampleSink` (a second decoder for the alpha side data, merged into I420A frames; software rung first).
 - `src/media/decoderCursorPool.ts` — the shared cursor lifecycle: backward jump (> 1/60 s) closes and reopens the cursor **at the requested time** (`cursorStartAt` → `startAt`: decode from the previous key frame, same frames as decoding from the trim start), an exhausted cursor is freed immediately, and live cursors are hard-capped at `DEFAULT_MAX_DECODER_CURSORS` (8), matching `ClipMediaPool`. Forward jumps keep decoding through. **Both** `TimelineDecoderFrameProvider` (export) and `PreviewDecoderSource` (preview) use it, so the two paths cannot drift apart again.
 - Per-layer fallback is per-layer, not global: stills, non-video clips, RIFE morph segments (their own blob URL) and anything the facade cannot open (an unknown container, a codec no decoder accepts) come back in `need-frames` and are captured from the `<video>` pool as before. WebM / alpha layers are decoder-served. A render whose `fallback` list is empty never round-trips to main at all.
-- `render-complete` carries `frameSources: { decoder, element }`, mirrored into `previewMetrics`. `element > 0` during scrub means some layer still needs `HTMLVideoElement.currentTime`.
+- The `render` call's result carries `frameSources: { decoder, element }`, mirrored into `previewMetrics`. `element > 0` during scrub means some layer still needs `HTMLVideoElement.currentTime`.
 - Feature detection + escape hatch: `previewDecodeFlags.ts`. `?legacy_preview_video` forces the old path (resolved on **main** and passed in `init` — a worker's `location.search` is the worker script's URL, not the page's).
 
 **Measuring scrub long tasks.** No headless harness runs WebGPU in CI, so this is a manual protocol: open a 1080p multi-layer project, record a Performance profile while dragging the timeline scrubber for ~10 s, and compare `?legacy_preview_video` against the default. On the decoder path the main thread should show no `video.currentTime` / `seeked` work and no task > 50 ms; `previewMetrics.snapshot()` reports `elementSourcedLayers: 0` and the rolling frame/seek times.
 
 ### Scopes (waveform + vectorscope)
 
-- Off by default (each enabled scope is a compute dispatch plus a readback per composed frame). Toggles live in the preview controls; `set-scopes` tells the worker, which posts a `scopes` message with the bins.
+- Off by default (each enabled scope is a compute dispatch plus a readback per composed frame). Toggles live in the preview controls; `set-scopes` tells the worker, which emits a `scopes` event with the bins.
 - `PreviewEngine.captureScopeTexture()` copies the composed canvas texture into a private offscreen texture (`COPY_DST | TEXTURE_BINDING`) and hands it to gpu-chores. The canvas configuration stays swapchain-only (`RENDER_ATTACHMENT | COPY_SRC`) — scopes never bind or copy *into* it. The copy must happen in the same task as the render that drew the frame.
 - Kernels are ordinary gpu-chores ops, so `?no_gpu_compute` disables them and the CPU goldens (`lumaHistogramBt709`, `vectorscopeUv`) are the reference in tests.
 - `src/components/PreviewScopes.tsx` draws both from the bins; a failed scope readback is logged and dropped, never failing the frame.
@@ -1152,7 +1230,7 @@ file. Export never reads it.
   key; an undo writes a recently evicted blob back).
 - Preview: `PreviewWorkerAdapter.sendClipMedia` resolves each clip and re-sends
   when the resolved blob changes; the worker's `PreviewDecoderSource` tags it
-  `proxy`/`original`, and `render-complete.frameSources.proxy` lands in
+  `proxy`/`original`, and the `render` result's `frameSources.proxy` lands in
   `previewMetrics` as `proxySourcedLayers` / `originalSourcedLayers`.
 - Stabilization: `useClipStabilization` passes the proxy as
   `StabilizeOptions.source`. The plan is still sized from the original's

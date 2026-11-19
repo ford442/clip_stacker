@@ -11,7 +11,7 @@ interface InspectorSectionProps {
   /** Stable storage key for the remembered open state. */
   id: string;
   title: string;
-  defaultOpen?: boolean;
+  defaultOpen?: boolean | undefined;
   children: ReactNode;
 }
 

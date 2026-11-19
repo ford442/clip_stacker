@@ -63,10 +63,12 @@ export const PanelSplitter = memo(function PanelSplitter({
     const other: WorkspaceSide = side === 'library' ? 'inspector' : 'library';
     // Start from the rendered width: CSS caps a side at a share of the grid,
     // so the stored value can be wider than what is on screen.
+    const gridWidth = gridRef.current?.getBoundingClientRect().width;
+    const otherWidth = renderedWidth(WORKSPACE_ZONE_IDS[other]);
     return {
       width: renderedWidth(WORKSPACE_ZONE_IDS[side]) ?? layoutStore.getState()[`${side}Width`],
-      gridWidth: gridRef.current?.getBoundingClientRect().width,
-      otherWidth: renderedWidth(WORKSPACE_ZONE_IDS[other]),
+      ...(gridWidth !== undefined && { gridWidth }),
+      ...(otherWidth !== undefined && { otherWidth }),
     };
   }, [gridRef, side]);
 
@@ -249,7 +251,7 @@ export const WorkspaceControls = memo(function WorkspaceControls() {
             type="button"
             className={`workspace-control-btn${density === d.id ? ' is-active' : ''}`}
             aria-pressed={density === d.id}
-            aria-label={`${d.id[0].toUpperCase()}${d.id.slice(1)} controls`}
+            aria-label={`${d.id.charAt(0).toUpperCase()}${d.id.slice(1)} controls`}
             title={d.title}
             onClick={() => layoutActions.setDensity(d.id)}
           >

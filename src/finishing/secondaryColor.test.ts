@@ -130,9 +130,9 @@ describe('secondary color settings', () => {
     expect(normalized.secondaryColor?.enabled).toBe(true);
     expect(normalized.secondaryColor?.amount).toBe(0.8);
     expect(normalized.secondaryColor?.grades).toHaveLength(1);
-    expect(normalized.secondaryColor?.grades[0].maskType).toBe('hue+window');
-    expect(normalized.secondaryColor?.grades[0].invertMask).toBe(true);
-    expect(normalized.secondaryColor?.grades[0].hueShift).toBe(-12);
+    expect(normalized.secondaryColor?.grades[0]!.maskType).toBe('hue+window');
+    expect(normalized.secondaryColor?.grades[0]!.invertMask).toBe(true);
+    expect(normalized.secondaryColor?.grades[0]!.hueShift).toBe(-12);
   });
 
   it('presets produce sky / skin / shadows starters', () => {

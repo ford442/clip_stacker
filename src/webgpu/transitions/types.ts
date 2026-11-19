@@ -38,7 +38,7 @@ export interface TransitionRenderParams {
   /** Destination rectangle on the canvas in normalized 0–1 coordinates. */
   destRect?: { x: number; y: number; w: number; h: number };
   /** Per-transition custom uniforms (keys match registry param defs). */
-  custom?: Record<string, number>;
+  custom?: Record<string, number> | undefined;
   /**
    * Layer warp for the outgoing clip (`[a, b, tx, c, d, ty]`): stabilization
    * composed with its picture transform — see `composition/clipTransform.ts`.

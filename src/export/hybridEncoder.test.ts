@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import type { Clip, ClipTransition, TextOverlay } from '../types';
+import type { Clip, ClipTransition, RenderPlan, TextOverlay } from '../types';
 import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { hybridMergeClips } from './hybridEncoder';
 import { DEFAULT_COLOR_MANAGEMENT } from '../finishing/colorManagement';
@@ -58,21 +58,26 @@ function createTestClip(id: string, duration: number, overrides: Partial<Clip> =
   };
 }
 
+/** A render-plan estimate carrying only the fields a test cares about. */
+function renderPlan(fields: Partial<RenderPlan> = {}): RenderPlan {
+  return fields as RenderPlan;
+}
+
 describe('export/hybridEncoder', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (isAudioEncoderAvailable as any).mockResolvedValue(false);
-    (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
-    (prepareStreamingAudioMix as any).mockResolvedValue(false);
+    vi.mocked(isAudioEncoderAvailable).mockResolvedValue(false);
+    vi.mocked(assessWebCodecsAudioMix).mockReturnValue({ supported: true });
+    vi.mocked(prepareStreamingAudioMix).mockResolvedValue(false);
     // A real calculateRenderPlan always returns a plan.
-    (calculateRenderPlan as any).mockReturnValue({});
+    vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
     // Mock MediaRecorder for canvas tests
-    (global as any).MediaRecorder = vi.fn();
+    vi.stubGlobal('MediaRecorder', vi.fn());
   });
 
   const mockStatusCallback = vi.fn();
   const mockProgressCallback = vi.fn();
-  const testClips = [
+  const testClips: [Clip, Clip] = [
     createTestClip('a', 5),
     createTestClip('b', 3),
   ];
@@ -85,7 +90,7 @@ describe('export/hybridEncoder', () => {
   describe('Canvas renderer path selection', () => {
     it('should use canvas renderer when requested', async () => {
       const mockBlob = new Blob(['video data']);
-      (encodeClipsWithCanvas as any).mockResolvedValue(mockBlob);
+      vi.mocked(encodeClipsWithCanvas).mockResolvedValue(mockBlob);
 
       const result = await hybridMergeClips(
         testClips,
@@ -105,10 +110,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should fall back to FFmpeg if canvas renderer fails', async () => {
-      (encodeClipsWithCanvas as any).mockRejectedValue(new Error('Canvas error'));
+      vi.mocked(encodeClipsWithCanvas).mockRejectedValue(new Error('Canvas error'));
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
 
       const result = await hybridMergeClips(
         testClips,
@@ -127,9 +132,9 @@ describe('export/hybridEncoder', () => {
 
     it('skips canvas and falls through to FFmpeg when finishing is active', async () => {
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
 
       const activeFinishing = {
         ...DEFAULT_FINISHING,
@@ -161,9 +166,9 @@ describe('export/hybridEncoder', () => {
 
     it('skips canvas when a clip is chroma/luma keyed', async () => {
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
 
       const keyedClips = [
         createTestClip('a', 5, { overlayBlend: 'chroma', chromaKey: { color: '#00ff00', similarity: 0.4, blend: 0.1 } }),
@@ -187,9 +192,9 @@ describe('export/hybridEncoder', () => {
 
     it('skips canvas when a PiP clip is present', async () => {
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
 
       const pipClips = [testClips[0], { ...testClips[1], layerIndex: 1 }];
 
@@ -210,7 +215,7 @@ describe('export/hybridEncoder', () => {
 
     it('should pass audioReactive flag to canvas encoder', async () => {
       const mockBlob = new Blob(['video data']);
-      (encodeClipsWithCanvas as any).mockResolvedValue(mockBlob);
+      vi.mocked(encodeClipsWithCanvas).mockResolvedValue(mockBlob);
 
       await hybridMergeClips(
         testClips,
@@ -239,12 +244,12 @@ describe('export/hybridEncoder', () => {
   // =========================================================================
   describe('WebCodecs GPU path selection logic', () => {
     it('should use GPU path when rescaling is required and WebCodecs is available', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
       const videoBlob = new Blob(['gpu video']);
       const finalBlob = new Blob(['muxed video']);
-      (encodeVideoWithWebCodecs as any).mockResolvedValue(videoBlob);
-      (muxVideoWithAudio as any).mockResolvedValue(finalBlob);
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(encodeVideoWithWebCodecs).mockResolvedValue(videoBlob);
+      vi.mocked(muxVideoWithAudio).mockResolvedValue(finalBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       const result = await hybridMergeClips(
         testClips,
@@ -285,12 +290,12 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should use webcodecs-av path when AudioEncoder and audio mix are supported', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
-      (isAudioEncoderAvailable as any).mockResolvedValue(true);
-      (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
+      vi.mocked(isAudioEncoderAvailable).mockResolvedValue(true);
+      vi.mocked(assessWebCodecsAudioMix).mockReturnValue({ supported: true });
       const avBlob = new Blob(['av mp4']);
-      (encodeVideoWithWebCodecs as any).mockResolvedValue(avBlob);
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(encodeVideoWithWebCodecs).mockResolvedValue(avBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       const result = await hybridMergeClips(
         testClips,
@@ -323,12 +328,12 @@ describe('export/hybridEncoder', () => {
     });
 
     it('lifts the offline mix length cap when the streaming media engine is ready', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
-      (isAudioEncoderAvailable as any).mockResolvedValue(true);
-      (prepareStreamingAudioMix as any).mockResolvedValue(true);
-      (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
-      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['av mp4']));
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
+      vi.mocked(isAudioEncoderAvailable).mockResolvedValue(true);
+      vi.mocked(prepareStreamingAudioMix).mockResolvedValue(true);
+      vi.mocked(assessWebCodecsAudioMix).mockReturnValue({ supported: true });
+      vi.mocked(encodeVideoWithWebCodecs).mockResolvedValue(new Blob(['av mp4']));
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       const result = await hybridMergeClips(
         testClips,
@@ -345,11 +350,11 @@ describe('export/hybridEncoder', () => {
     });
 
     it('skips loading the media engine when AudioEncoder is unavailable', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
-      (isAudioEncoderAvailable as any).mockResolvedValue(false);
-      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['video']));
-      (muxVideoWithAudio as any).mockResolvedValue(new Blob(['muxed']));
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
+      vi.mocked(isAudioEncoderAvailable).mockResolvedValue(false);
+      vi.mocked(encodeVideoWithWebCodecs).mockResolvedValue(new Blob(['video']));
+      vi.mocked(muxVideoWithAudio).mockResolvedValue(new Blob(['muxed']));
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       await hybridMergeClips(testClips, [], testSettings, mockStatusCallback, mockProgressCallback);
 
@@ -360,11 +365,11 @@ describe('export/hybridEncoder', () => {
     });
 
     it('burns captions into the GPU composite and reports it', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
-      (isAudioEncoderAvailable as any).mockResolvedValue(true);
-      (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
-      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['av mp4']));
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
+      vi.mocked(isAudioEncoderAvailable).mockResolvedValue(true);
+      vi.mocked(assessWebCodecsAudioMix).mockReturnValue({ supported: true });
+      vi.mocked(encodeVideoWithWebCodecs).mockResolvedValue(new Blob(['av mp4']));
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       const captions = [
         { id: 'c1', startSec: 0, endSec: 2, text: 'hello' },
@@ -390,16 +395,16 @@ describe('export/hybridEncoder', () => {
       // The caller reads this to skip the FFmpeg burn-in post-pass, which
       // would otherwise burn a second copy and cost a full re-encode.
       expect(result.captionsBurnedIn).toBe(true);
-      const call = (encodeVideoWithWebCodecs as any).mock.calls[0];
+      const call = vi.mocked(encodeVideoWithWebCodecs).mock.calls[0]!;
       expect(call[10]).toEqual({ captions, captionStyle: { fontsize: 42 } });
     });
 
     it('does not claim a burn-in when there are no cues', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
-      (isAudioEncoderAvailable as any).mockResolvedValue(true);
-      (assessWebCodecsAudioMix as any).mockReturnValue({ supported: true });
-      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['av mp4']));
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
+      vi.mocked(isAudioEncoderAvailable).mockResolvedValue(true);
+      vi.mocked(assessWebCodecsAudioMix).mockReturnValue({ supported: true });
+      vi.mocked(encodeVideoWithWebCodecs).mockResolvedValue(new Blob(['av mp4']));
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       const result = await hybridMergeClips(
         testClips,
@@ -420,14 +425,14 @@ describe('export/hybridEncoder', () => {
       );
 
       expect(result.captionsBurnedIn).toBe(false);
-      expect((encodeVideoWithWebCodecs as any).mock.calls[0][10]).toEqual({});
+      expect(vi.mocked(encodeVideoWithWebCodecs).mock.calls[0]![10]).toEqual({});
     });
 
     it('should use FFmpeg lossless when clips already match export resolution', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: false, path: 'lossless-concat' });
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: false, path: 'lossless-concat' }));
       const matchedClips = [
         createTestClip('a', 5, { videoWidth: 1920, videoHeight: 1080 }),
         createTestClip('b', 3, { videoWidth: 1920, videoHeight: 1080 }),
@@ -450,11 +455,11 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should fall back to FFmpeg when GPU encode fails', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
-      (encodeVideoWithWebCodecs as any).mockRejectedValue(new Error('GPU encoder failed'));
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
+      vi.mocked(encodeVideoWithWebCodecs).mockRejectedValue(new Error('GPU encoder failed'));
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       const result = await hybridMergeClips(
         testClips,
@@ -475,10 +480,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should skip WebCodecs if transitions are present', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
 
       const transitions: ClipTransition[] = [
         { afterClipIndex: 1, type: 'dissolve', duration: 0.5 },
@@ -500,12 +505,12 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should use WebCodecs decoder path when solid text overlays are present', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
       const videoBlob = new Blob(['gpu video']);
       const finalBlob = new Blob(['muxed video']);
-      (encodeVideoWithWebCodecs as any).mockResolvedValue(videoBlob);
-      (muxVideoWithAudio as any).mockResolvedValue(finalBlob);
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(encodeVideoWithWebCodecs).mockResolvedValue(videoBlob);
+      vi.mocked(muxVideoWithAudio).mockResolvedValue(finalBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       const textOverlays: TextOverlay[] = [
         {
@@ -552,10 +557,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should skip WebCodecs if PiP overlays are present', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
 
       const clipsWithPiP = [
         testClips[0],
@@ -578,10 +583,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should skip WebCodecs if RIFE-processed clips are present', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
 
       const clipsWithRife = [
         { ...testClips[0], rifeProcessed: true },
@@ -603,10 +608,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should force FFmpeg when forceFFmpeg flag is set', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       const result = await hybridMergeClips(
         testClips,
@@ -629,10 +634,10 @@ describe('export/hybridEncoder', () => {
   // =========================================================================
   describe('FFmpeg path (default / fallback)', () => {
     it('should use FFmpeg when WebCodecs is not available', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
 
       const result = await hybridMergeClips(
         testClips,
@@ -647,11 +652,11 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should calculate render plan if not provided', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
       const mockBlob = new Blob(['ffmpeg video']);
-      const mockRenderPlan = { someKey: 'someValue' };
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue(mockRenderPlan);
+      const mockRenderPlan = renderPlan({ reason: 'mock estimate' });
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(mockRenderPlan);
 
       const result = await hybridMergeClips(
         testClips,
@@ -686,10 +691,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should use provided render plan', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
       const mockBlob = new Blob(['ffmpeg video']);
-      const providedRenderPlan = { cached: 'plan' };
-      (mergeClips as any).mockResolvedValue(mockBlob);
+      const providedRenderPlan = renderPlan({ description: 'cached plan' });
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
 
       const result = await hybridMergeClips(
         testClips,
@@ -702,7 +707,7 @@ describe('export/hybridEncoder', () => {
         false,
         true,
         false,
-        providedRenderPlan as any,
+        providedRenderPlan,
       );
 
       expect(result.renderPlan).toEqual({
@@ -714,10 +719,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should pass forceReencode to mergeClips', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
 
       await hybridMergeClips(
         testClips,
@@ -752,7 +757,7 @@ describe('export/hybridEncoder', () => {
   describe('Status and progress callbacks', () => {
     it('should call onStatus with canvas selection message', async () => {
       const mockBlob = new Blob(['video data']);
-      (encodeClipsWithCanvas as any).mockResolvedValue(mockBlob);
+      vi.mocked(encodeClipsWithCanvas).mockResolvedValue(mockBlob);
 
       await hybridMergeClips(
         testClips,
@@ -771,10 +776,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should call onStatus with GPU selection message when rescaling', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(true);
-      (encodeVideoWithWebCodecs as any).mockResolvedValue(new Blob(['gpu video']));
-      (muxVideoWithAudio as any).mockResolvedValue(new Blob(['muxed video']));
-      (calculateRenderPlan as any).mockReturnValue({ willReencode: true });
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(true);
+      vi.mocked(encodeVideoWithWebCodecs).mockResolvedValue(new Blob(['gpu video']));
+      vi.mocked(muxVideoWithAudio).mockResolvedValue(new Blob(['muxed video']));
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan({ willReencode: true }));
 
       await hybridMergeClips(
         testClips,
@@ -793,10 +798,10 @@ describe('export/hybridEncoder', () => {
     });
 
     it('should call onProgress callbacks', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
 
       await hybridMergeClips(
         testClips,
@@ -824,10 +829,10 @@ describe('export/hybridEncoder', () => {
   // =========================================================================
   describe('Return value structure', () => {
     it('should return HybridEncodeResult with blob and path', async () => {
-      (isWebCodecsAvailable as any).mockResolvedValue(false);
+      vi.mocked(isWebCodecsAvailable).mockResolvedValue(false);
       const mockBlob = new Blob(['ffmpeg video']);
-      (mergeClips as any).mockResolvedValue(mockBlob);
-      (calculateRenderPlan as any).mockReturnValue({});
+      vi.mocked(mergeClips).mockResolvedValue(mockBlob);
+      vi.mocked(calculateRenderPlan).mockReturnValue(renderPlan());
 
       const result = await hybridMergeClips(
         testClips,

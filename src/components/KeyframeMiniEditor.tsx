@@ -16,8 +16,8 @@ export interface KeyframeMiniEditorProps {
   currentTime: number;
   keyframes: Keyframe[] | undefined;
   defaultValue: number;
-  min?: number;
-  max?: number;
+  min?: number | undefined;
+  max?: number | undefined;
   step?: number;
   /** Format sampled value in the header and keyframe list. */
   formatValue?: (value: number) => string;
@@ -97,9 +97,11 @@ export function KeyframeMiniEditor({
     setSelectedIndex(index);
     const onMove = (event: PointerEvent) => {
       if (event.pointerId !== pointerId) return;
+      const key = track[index];
+      if (!key) return;
       const t = clamp(xToTime(event.clientX), 0, safeDuration);
       const next = [...track];
-      next[index] = { ...next[index], t };
+      next[index] = { ...key, t };
       onChange(sortKeyframes(next));
     };
     const onUp = (event: PointerEvent) => {
@@ -113,11 +115,12 @@ export function KeyframeMiniEditor({
 
   const nudgeSelectedTime = useCallback(
     (delta: number) => {
-      if (selectedIndex == null || !track[selectedIndex]) return;
+      if (selectedIndex == null) return;
       const key = track[selectedIndex];
+      if (!key) return;
       const t = clamp(key.t + delta, 0, safeDuration);
       const next = [...track];
-      next[selectedIndex] = { ...next[selectedIndex], t };
+      next[selectedIndex] = { ...key, t };
       onChange(sortKeyframes(next));
     },
     [onChange, safeDuration, selectedIndex, track],
@@ -250,7 +253,7 @@ export function KeyframeMiniEditor({
                   onChange={(e) => {
                     const t = clamp(Number(e.target.value), 0, safeDuration);
                     const next = [...track];
-                    next[index] = { ...next[index], t };
+                    next[index] = { ...key, t };
                     onChange(sortKeyframes(next));
                   }}
                 />
@@ -266,7 +269,7 @@ export function KeyframeMiniEditor({
                   onChange={(e) => {
                     const value = clamp(Number(e.target.value), min, max);
                     const next = [...track];
-                    next[index] = { ...next[index], value };
+                    next[index] = { ...key, value };
                     onChange(sortKeyframes(next));
                   }}
                   aria-label={`${valueFieldLabel} at ${formatTime(key.t)} seconds`}
@@ -287,7 +290,7 @@ export function KeyframeMiniEditor({
                     const preset = EASING_OPTIONS.find((opt) => opt.id === e.target.value);
                     const next = [...track];
                     next[index] = {
-                      ...next[index],
+                      ...key,
                       easing: preset?.easing ?? DEFAULT_LINEAR_EASING,
                     };
                     onChange(sortKeyframes(next));

@@ -70,6 +70,15 @@ export interface CaptionBurnInRequest {
   captionStyle?: Partial<TextOverlayStyle>;
 }
 
+/** An FFmpeg failure carries its log tail; re-wrapping the error keeps it. */
+interface FfmpegLogCarrier {
+  ffmpegLogs?: unknown;
+}
+
+function ffmpegLogsOf(err: unknown): unknown {
+  return typeof err === 'object' && err !== null && 'ffmpegLogs' in err ? err.ffmpegLogs : undefined;
+}
+
 /**
  * Merge clips using the best available encoder.
  */
@@ -361,8 +370,10 @@ export async function hybridMergeClips(
     if (gpuFailure) prev.push(`GPU: ${gpuFailure}`);
     if (prev.length > 0) {
       const orig = (err as Error).message;
-      const e = new Error(`${orig}\n\nPrevious encoder attempts that also failed:\n${prev.join('\n')}`);
-      (e as any).ffmpegLogs = (err as any).ffmpegLogs;
+      const e: Error & FfmpegLogCarrier = new Error(
+        `${orig}\n\nPrevious encoder attempts that also failed:\n${prev.join('\n')}`,
+      );
+      e.ffmpegLogs = ffmpegLogsOf(err);
       throw e;
     }
     throw err;

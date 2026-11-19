@@ -8,7 +8,7 @@ import {
 
 interface SourceColorSpaceFieldProps {
   clip: Clip;
-  onChange?: (override: SourceColorSpaceOverride | undefined) => void;
+  onChange?: ((override: SourceColorSpaceOverride | undefined) => void) | undefined;
 }
 
 /**

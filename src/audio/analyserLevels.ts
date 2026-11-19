@@ -24,7 +24,7 @@ export function bandEnergy(frequencyDb: Float32Array, start: number, end: number
   let sum = 0;
   for (let i = start; i < end; i++) {
     // getFloatFrequencyData is typically −100…0 dB.
-    const db = frequencyDb[i];
+    const db = frequencyDb[i] ?? -100;
     const linear = db <= -100 ? 0 : Math.pow(10, db / 20);
     sum += linear;
   }
@@ -51,8 +51,7 @@ export class AnalyserLevelReader {
 
     let sumSq = 0;
     let peak = 0;
-    for (let i = 0; i < timeDomain.length; i++) {
-      const s = timeDomain[i];
+    for (const s of timeDomain) {
       sumSq += s * s;
       const abs = Math.abs(s);
       if (abs > peak) peak = abs;

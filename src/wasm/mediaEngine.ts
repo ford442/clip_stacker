@@ -139,7 +139,7 @@ export interface TimelineMixStreamOptions {
   chunkFrames?: number;
   baseUrl?: string;
   /** Defaults to polyphase unless `?media_engine_resampler=linear`. */
-  resampler?: 'polyphase' | 'linear';
+  resampler?: 'polyphase' | 'linear' | undefined;
   /** Look-ahead limiter on the mix bus; omitted / disabled = none. Ignored with `bus`. */
   limiter?: MasterLimiterSettings | null;
   /**
@@ -193,7 +193,7 @@ function resamplerFlags(choice: TimelineMixStreamOptions['resampler']): number {
 }
 
 export async function loadMediaEngineModule(options?: {
-  baseUrl?: string;
+  baseUrl?: string | undefined;
 }): Promise<WasmModule | null> {
   return loadEmscriptenModule<WasmModule>(MEDIA_ENGINE_MODULE, MEDIA_ENGINE_FACTORY, options);
 }

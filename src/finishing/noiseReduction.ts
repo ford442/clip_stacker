@@ -7,9 +7,9 @@
  */
 
 import { clamp, clamp01, finiteOr } from '../utils/math';
-import { NR_QUALITY_SLOT } from './denoiseReference';
+import { NOISE_REDUCTION_UNIFORMS } from '../webgpu/uniformSpecs';
 
-export const NOISE_REDUCTION_UNIFORM_FLOATS = 16;
+export const NOISE_REDUCTION_UNIFORM_FLOATS = NOISE_REDUCTION_UNIFORMS.floats;
 
 /** Max spatial radius (px) in the WGSL bilateral kernel. */
 export const NOISE_REDUCTION_MAX_RADIUS = 4;
@@ -101,15 +101,7 @@ export function isNoiseReductionNeutral(pass: NoiseReductionSettings | undefined
   return spatial <= 1e-6 && (!temporalOn || temporal <= 1e-6);
 }
 
-/**
- * Pack NoiseReductionSettings into a Float32Array matching WGSL uniforms.
- *
- * Layout (4 × vec4):
- *   [0] amount, spatialStrength, spatialRadius, temporalStrength
- *   [1] temporalMotionThreshold, lumaOnly, draft, hasPrev
- *   [2] texelSize.x, texelSize.y, quality (0 standard / 1 high / 2 nlm), pad
- *   [3] pad × 4
- */
+/** Pack NoiseReductionSettings into WGSL `NoiseReductionUniforms` (`NOISE_REDUCTION_UNIFORMS`). */
 export function packNoiseReductionUniforms(
   pass: NoiseReductionSettings,
   texelWidth: number,
@@ -117,40 +109,25 @@ export function packNoiseReductionUniforms(
   hasPrev: boolean,
   out: Float32Array = new Float32Array(NOISE_REDUCTION_UNIFORM_FLOATS),
 ): Float32Array {
-  if (out.length < NOISE_REDUCTION_UNIFORM_FLOATS) {
-    throw new Error(`Noise reduction uniform buffer needs ${NOISE_REDUCTION_UNIFORM_FLOATS} floats`);
-  }
   const d = DEFAULT_NOISE_REDUCTION_PARAMS;
-  const amount = pass.enabled ? clamp01(pass.amount ?? 1) : 0;
   const draft = Boolean(pass.draft);
   let radius = clamp(finiteOr(pass.spatialRadius, d.spatialRadius), 0, NOISE_REDUCTION_MAX_RADIUS);
   if (draft) radius = Math.min(radius, 2);
-
-  out[0] = amount;
-  out[1] = clamp01(finiteOr(pass.spatialStrength, d.spatialStrength));
-  out[2] = radius;
-  out[3] = pass.temporal
-    ? clamp01(finiteOr(pass.temporalStrength, d.temporalStrength))
-    : 0;
-
-  out[4] = clamp01(finiteOr(pass.temporalMotionThreshold, d.temporalMotionThreshold));
-  out[5] = pass.lumaOnly === false ? 0 : 1;
-  out[6] = draft ? 1 : 0;
-  out[7] = hasPrev ? 1 : 0;
-
-  out[8] = texelWidth > 0 ? 1 / texelWidth : 0;
-  out[9] = texelHeight > 0 ? 1 / texelHeight : 0;
-  out[NR_QUALITY_SLOT] = isNoiseReductionQuality(pass.quality)
-    ? NOISE_REDUCTION_QUALITY_CODE[pass.quality]
-    : 0;
-  out[11] = 0;
-
-  out[12] = 0;
-  out[13] = 0;
-  out[14] = 0;
-  out[15] = 0;
-
-  return out;
+  return NOISE_REDUCTION_UNIFORMS.pack(
+    {
+      amount: pass.enabled ? clamp01(pass.amount ?? 1) : 0,
+      spatialStrength: clamp01(finiteOr(pass.spatialStrength, d.spatialStrength)),
+      spatialRadius: radius,
+      temporalStrength: pass.temporal ? clamp01(finiteOr(pass.temporalStrength, d.temporalStrength)) : 0,
+      temporalMotionThreshold: clamp01(finiteOr(pass.temporalMotionThreshold, d.temporalMotionThreshold)),
+      lumaOnly: pass.lumaOnly === false ? 0 : 1,
+      draft: draft ? 1 : 0,
+      hasPrev: hasPrev ? 1 : 0,
+      texelSize: [texelWidth > 0 ? 1 / texelWidth : 0, texelHeight > 0 ? 1 / texelHeight : 0],
+      quality: isNoiseReductionQuality(pass.quality) ? NOISE_REDUCTION_QUALITY_CODE[pass.quality] : 0,
+    },
+    out,
+  );
 }
 
 /** Normalize raw / partial noise reduction fields onto defaults. */

@@ -66,7 +66,7 @@ const MODULE_NAME = 'audio_analysis';
  */
 export async function loadAudioAnalysisModule(options?: {
   /** Directory URL containing audio_analysis.js / .wasm (trailing slash optional). */
-  baseUrl?: string;
+  baseUrl?: string | undefined;
 }): Promise<WasmModule | null> {
   return loadEmscriptenModule<WasmModule>(MODULE_NAME, 'createAudioAnalysisModule', options);
 }
@@ -100,7 +100,7 @@ function aggregateBands(bands: Float32Array): Pick<AudioBandEnergies, 'bass' | '
 export async function createAudioAnalyzer(
   sampleRate: number,
   fftSize = 2048,
-  options?: { baseUrl?: string },
+  options?: { baseUrl?: string | undefined },
 ): Promise<AudioAnalyzer> {
   const mod = await loadAudioAnalysisModule(options);
   if (!mod) {

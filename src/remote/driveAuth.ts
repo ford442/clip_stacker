@@ -162,10 +162,13 @@ function pickerDocs(value: unknown): PickerDoc[] {
     if (!entry || typeof entry !== 'object') continue;
     const doc = entry as Record<string, unknown>;
     const sizeBytes = typeof doc.sizeBytes === 'number' || typeof doc.sizeBytes === 'string' ? doc.sizeBytes : undefined;
+    const id = trimmed(doc.id);
+    const name = trimmed(doc.name);
+    const mimeType = trimmed(doc.mimeType);
     docs.push({
-      ...(trimmed(doc.id) ? { id: trimmed(doc.id) } : {}),
-      ...(trimmed(doc.name) ? { name: trimmed(doc.name) } : {}),
-      ...(trimmed(doc.mimeType) ? { mimeType: trimmed(doc.mimeType) } : {}),
+      ...(id ? { id } : {}),
+      ...(name ? { name } : {}),
+      ...(mimeType ? { mimeType } : {}),
       ...(sizeBytes !== undefined ? { sizeBytes } : {}),
     });
   }

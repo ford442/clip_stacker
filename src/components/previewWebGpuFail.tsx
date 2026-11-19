@@ -6,7 +6,7 @@ export function displayedWebGpuProbe(): WebGpuProbeResult | undefined {
   return published.worker ?? published.main;
 }
 
-export function WebGpuHardFailBanner({ probe }: { probe?: WebGpuProbeResult }) {
+export function WebGpuHardFailBanner({ probe }: { probe?: WebGpuProbeResult | undefined }) {
   const json = JSON.stringify(
     probe ?? { ok: false, browser: 'unknown', reason: 'WebGPU probe failed', adapter: null },
     null,

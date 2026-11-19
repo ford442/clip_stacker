@@ -101,15 +101,12 @@ test('crash → error boundary → reload → recovery offer', async ({ page }) 
 });
 
 /**
- * Known bug, found by this flow: recovery restores embedded media by
- * `fetch()`ing its `data:` URL, and the production CSP's `connect-src` does
- * not allow `data:` — so every embedded clip is dropped ("Could not restore
- * media … Failed to fetch") and the recovered timeline is empty. Unit tests
- * miss it because happy-dom enforces no CSP. `test.fail` keeps it visible
- * until the restore decodes data URLs without fetch.
+ * Recovery restores embedded media from its `data:` URL. It used to `fetch()`
+ * it, which the production CSP's `connect-src` blocks, so every embedded clip
+ * was dropped; `project/dataUrl.ts` now decodes it locally. Unit tests cannot
+ * catch a regression on their own because happy-dom enforces no CSP.
  */
-test('known bug: recover session restores the embedded clips', async ({ page }) => {
-  test.fail();
+test('recover session restores the embedded clips', async ({ page }) => {
   const { before } = await crashAndReload(page);
   await page.getByRole('button', { name: 'Recover session' }).click();
   await expect

@@ -21,6 +21,15 @@ export interface FakeGpu {
   compilationErrors: string[];
 }
 
+/**
+ * A test double of `T` that implements only the members a test exercises.
+ * Every member it does give is type-checked against `T`; calling one it
+ * leaves out fails loudly at runtime.
+ */
+function partialStub<T>(members: Partial<T>): T {
+  return members as T;
+}
+
 /** WebGPU enum globals happy-dom does not provide. */
 export function stubGpuGlobals(stub: (name: string, value: unknown) => void): void {
   if (typeof GPUShaderStage === 'undefined') {
@@ -41,11 +50,9 @@ export function stubGpuGlobals(stub: (name: string, value: unknown) => void): vo
 }
 
 export function createFakeGpu(): FakeGpu {
-  const gpu: FakeGpu = {
-    device: null as unknown as GPUDevice,
-    context: null as unknown as GPUCanvasContext,
-    sampler: {} as GPUSampler,
-    uniformBuffer: {} as GPUBuffer,
+  const gpu: Omit<FakeGpu, 'device' | 'context'> = {
+    sampler: partialStub<GPUSampler>({}),
+    uniformBuffer: partialStub<GPUBuffer>({}),
     shaderCodes: [],
     drawCalls: [],
     bindGroups: [],
@@ -58,74 +65,77 @@ export function createFakeGpu(): FakeGpu {
 
   const makeTexture = (desc: GPUTextureDescriptor): GPUTexture => {
     gpu.textureDescriptors.push(desc);
-    return {
-      createView: () => ({}) as GPUTextureView,
-      destroy: () => {},
-    } as unknown as GPUTexture;
+    return partialStub<GPUTexture>({
+      createView: () => partialStub<GPUTextureView>({}),
+      destroy: () => undefined,
+    });
   };
 
-  gpu.device = {
+  const device = partialStub<GPUDevice>({
     createBindGroupLayout: (d: GPUBindGroupLayoutDescriptor) =>
-      d as unknown as GPUBindGroupLayout,
+      partialStub<GPUBindGroupLayout>({ label: d.label ?? '' }),
     createPipelineLayout: (d: GPUPipelineLayoutDescriptor) =>
-      d as unknown as GPUPipelineLayout,
+      partialStub<GPUPipelineLayout>({ label: d.label ?? '' }),
     createShaderModule: ({ code }: GPUShaderModuleDescriptor) => {
       gpu.shaderCodes.push(code);
-      const messages = gpu.compilationErrors.map((message) => ({
-        type: 'error',
-        message,
-        lineNum: 0,
-        linePos: 0,
-        offset: 0,
-        length: 0,
-      }));
-      return {
-        getCompilationInfo: async () => ({ messages }),
-      } as unknown as GPUShaderModule;
+      const messages = gpu.compilationErrors.map((message) =>
+        partialStub<GPUCompilationMessage>({
+          type: 'error',
+          message,
+          lineNum: 0,
+          linePos: 0,
+          offset: 0,
+          length: 0,
+        }),
+      );
+      return partialStub<GPUShaderModule>({
+        getCompilationInfo: async () => partialStub<GPUCompilationInfo>({ messages }),
+      });
     },
     createRenderPipeline: () => {
       gpu.pipelineCount += 1;
-      return {
-        getBindGroupLayout: () => ({}) as GPUBindGroupLayout,
-      } as unknown as GPURenderPipeline;
+      return partialStub<GPURenderPipeline>({
+        getBindGroupLayout: () => partialStub<GPUBindGroupLayout>({}),
+      });
     },
     createBindGroup: ({ entries }: GPUBindGroupDescriptor) => {
-      gpu.bindGroups.push([...(entries as Iterable<GPUBindGroupEntry>)]);
-      return {} as GPUBindGroup;
+      gpu.bindGroups.push([...entries]);
+      return partialStub<GPUBindGroup>({});
     },
     createTexture: makeTexture,
-    createCommandEncoder: () => ({
-      beginRenderPass: () => ({
-        setPipeline: () => {},
-        setBindGroup: () => {},
-        draw: (count: number) => {
-          gpu.drawCalls.push(count);
-        },
-        end: () => {},
+    createCommandEncoder: () =>
+      partialStub<GPUCommandEncoder>({
+        beginRenderPass: () =>
+          partialStub<GPURenderPassEncoder>({
+            setPipeline: () => undefined,
+            setBindGroup: () => undefined,
+            draw: (count: number) => {
+              gpu.drawCalls.push(count);
+            },
+            end: () => undefined,
+          }),
+        finish: () => partialStub<GPUCommandBuffer>({}),
       }),
-      finish: () => ({}) as GPUCommandBuffer,
-    }),
-    importExternalTexture: () => ({}) as GPUExternalTexture,
-    pushErrorScope: () => {},
+    importExternalTexture: () => partialStub<GPUExternalTexture>({}),
+    pushErrorScope: () => undefined,
     popErrorScope: async () => null,
-    queue: {
-      writeBuffer: (_buffer: GPUBuffer, _offset: number, data: BufferSource) => {
+    queue: partialStub<GPUQueue>({
+      writeBuffer: (_buffer: GPUBuffer, _offset: number, data: GPUAllowSharedBufferSource) => {
         gpu.writtenUniforms.push(Float32Array.from(data as Float32Array));
       },
-      writeTexture: () => {},
+      writeTexture: () => undefined,
       copyExternalImageToTexture: () => {
         gpu.externalImageCopies += 1;
       },
-      submit: () => {},
-    },
-  } as unknown as GPUDevice;
+      submit: () => undefined,
+    }),
+  });
 
-  gpu.context = {
-    getCurrentTexture: () =>
-      makeTexture({ size: [1, 1, 1], format: 'bgra8unorm', usage: 0 }),
-  } as unknown as GPUCanvasContext;
+  const context = partialStub<GPUCanvasContext>({
+    getCurrentTexture: () => makeTexture({ size: [1, 1, 1], format: 'bgra8unorm', usage: 0 }),
+  });
 
-  return gpu;
+  return Object.assign(gpu, { device, context });
 }
 
 /** Params good enough to render any transition at a given progress. */

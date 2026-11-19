@@ -143,7 +143,7 @@ function estimate(row: Row, colorManagement = DEFAULT_COLOR_MANAGEMENT) {
     useCanvasRenderer: i.useCanvas,
     webGpuAvailable: row.webGpu,
     webCodecsAvailable: row.webCodecs,
-    forceReencode: row.forceReencode,
+    ...(row.forceReencode !== undefined ? { forceReencode: row.forceReencode } : {}),
     outputColor: colorManagement.outputColor,
   });
 }
@@ -237,7 +237,7 @@ describe('HDR10 with titles or captions (composited before the PQ transform)', (
   });
 
   it('says so for burned-in captions, not for plain HDR10 or Display P3 titles', () => {
-    const decide = (outputColor: 'hdr10' | 'display-p3', textOverlays: typeof row.textOverlays, burnCaptions: boolean) =>
+    const decide = (outputColor: 'hdr10' | 'display-p3', textOverlays: TextOverlay[], burnCaptions: boolean) =>
       selectEncoderPath({
         ...inputFor({ ...row, textOverlays }),
         webGpuAvailable: true,
@@ -262,19 +262,19 @@ describe('Display P3 / HDR10 never fall to an FFmpeg Rec.709 file', () => {
   beforeEach(() => {
     vi.mocked(encodeVideoWithWebCodecs).mockClear();
   });
-  const decide = (
+  const wideInput = (
     outputColor: 'hdr10' | 'display-p3' | 'rec709-sdr',
     overrides: Partial<Parameters<typeof selectEncoderPath>[0]> = {},
-  ) =>
-    selectEncoderPath({
-      ...inputFor({ name: 'wide', clips: PLAIN, transitions: XFADE, webGpu: true, webCodecs: true, expected: 'webcodecs' }),
-      webGpuAvailable: true,
-      webCodecsAvailable: true,
-      mediaRecorderAvailable: true,
-      willReencode: true,
-      outputColor,
-      ...overrides,
-    });
+  ) => ({
+    ...inputFor({ name: 'wide', clips: PLAIN, transitions: XFADE, webGpu: true, webCodecs: true, expected: 'webcodecs' }),
+    webGpuAvailable: true,
+    webCodecsAvailable: true,
+    mediaRecorderAvailable: true,
+    willReencode: true,
+    outputColor,
+    ...overrides,
+  });
+  const decide = (...args: Parameters<typeof wideInput>) => selectEncoderPath(wideInput(...args));
 
   it('takes the GPU encoder when the H.264 probe fails at this size (it does not speak for HEVC / AV1 10-bit)', () => {
     const hdr = decide('hdr10', { webCodecsAvailable: false });
@@ -288,7 +288,9 @@ describe('Display P3 / HDR10 never fall to an FFmpeg Rec.709 file', () => {
   it('refuses without WebGPU — even for a plain timeline the sequential encoder could take', () => {
     expect(decide('hdr10', { webGpuAvailable: false }).refusal).toMatch(/^HDR10 output is written only by the GPU encoder/);
     expect(decide('display-p3', { webGpuAvailable: false, transitions: [] }).refusal).toMatch(/^Display P3 output/);
-    expect(decide('hdr10', { transitions: [], webGpuAvailable: undefined }).refusal).toMatch(/WebGPU is not available/);
+    // Not probed at all (the estimate leaves the runtime probes unset).
+    const { webGpuAvailable: _notProbed, ...unprobed } = wideInput('hdr10', { transitions: [] });
+    expect(selectEncoderPath(unprobed).refusal).toMatch(/WebGPU is not available/);
     expect(decide('rec709-sdr', { webGpuAvailable: false }).refusal).toBeUndefined();
   });
 

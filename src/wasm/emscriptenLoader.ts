@@ -131,7 +131,7 @@ export async function readWasmBinaryIfFileUrl(wasmUrl: string): Promise<Uint8Arr
 
 export interface LoadEmscriptenModuleOptions {
   /** Directory holding `<name>.js` / `<name>.wasm` (trailing slash optional). */
-  baseUrl?: string;
+  baseUrl?: string | undefined;
   /** Attempts within one load before giving up (default 3). */
   attempts?: number;
 }

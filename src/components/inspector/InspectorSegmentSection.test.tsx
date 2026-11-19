@@ -102,7 +102,7 @@ describe('segmentRangeProblem', () => {
 describe('InspectorSegmentSection', () => {
   it('starts from the trimmed range', () => {
     const el = mount(clipOf());
-    const [start, end] = Array.from(el.querySelectorAll<HTMLInputElement>('input[type="number"]'));
+    const [start, end] = Array.from(el.querySelectorAll<HTMLInputElement>('input[type="number"]')) as [HTMLInputElement, HTMLInputElement];
     expect([start.value, end.value]).toEqual(['2', '6']);
   });
 
@@ -112,25 +112,25 @@ describe('InspectorSegmentSection', () => {
     await until(() => Boolean(button('Replace with result')));
 
     expect(cut).toHaveBeenCalledTimes(1);
-    expect(cut.mock.calls[0].slice(1, 4)).toEqual([2, 6, 'copy']);
+    expect(cut.mock.calls[0]?.slice(1, 4)).toEqual([2, 6, 'copy']);
     expect(container!.textContent).toContain('Segment ready — 4.00s');
 
     await click('Replace with result');
-    await until(() => editorStore.getState().clips[0].objectUrl === 'blob:measured');
+    await until(() => editorStore.getState().clips[0]?.objectUrl === 'blob:measured');
 
     const clip = editorStore.getState().clips[0];
-    expect([clip.id, clip.trimStart, clip.trimEnd, clip.duration]).toEqual(['c1', 0, 4, 4]);
+    expect([clip?.id, clip?.trimStart, clip?.trimEnd, clip?.duration]).toEqual(['c1', 0, 4, 4]);
     expect(button('Replace with result')).toBeUndefined();
 
     act(() => editorStore.getState().undo());
     const restored = editorStore.getState().clips[0];
     // History restores the saved file (and re-creates its object URL).
-    expect([restored.file.name, restored.trimStart, restored.trimEnd, restored.duration]).toEqual(['c1.mp4', 2, 6, 10]);
+    expect([restored?.file.name, restored?.trimStart, restored?.trimEnd, restored?.duration]).toEqual(['c1.mp4', 2, 6, 10]);
   });
 
   it('cuts a sub-range into [before][replaced][after]', async () => {
     mount(clipOf({ trimStart: 0, trimEnd: NaN }));
-    const [start, end] = Array.from(container!.querySelectorAll<HTMLInputElement>('input[type="number"]'));
+    const [start, end] = Array.from(container!.querySelectorAll<HTMLInputElement>('input[type="number"]')) as [HTMLInputElement, HTMLInputElement];
     const setValue = (input: HTMLInputElement, value: string) => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -152,7 +152,7 @@ describe('InspectorSegmentSection', () => {
     mediaInfo.mockImplementation(async () => ({ duration: 9, objectUrl: 'blob:long' }));
     await click('Replace with result');
     await until(() => (container!.textContent ?? '').includes('9.00s but the segment is 4.00s'));
-    expect(editorStore.getState().clips[0].objectUrl).toBe('blob:c1');
+    expect(editorStore.getState().clips[0]?.objectUrl).toBe('blob:c1');
     expect(button('Replace with result')).toBeDefined(); // can retry or discard
   });
 
@@ -167,7 +167,7 @@ describe('InspectorSegmentSection', () => {
 
   it('disables the actions and explains an invalid range', () => {
     mount(clipOf());
-    const [, end] = Array.from(container!.querySelectorAll<HTMLInputElement>('input[type="number"]'));
+    const [, end] = Array.from(container!.querySelectorAll<HTMLInputElement>('input[type="number"]')) as [HTMLInputElement, HTMLInputElement];
     act(() => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(end, '9');
       end.dispatchEvent(new Event('input', { bubbles: true }));
@@ -186,7 +186,7 @@ describe('InspectorSegmentSection', () => {
 
   it('offers only what the chosen backend can do', () => {
     mount(clipOf());
-    const [backend, operation] = Array.from(container!.querySelectorAll('select'));
+    const [backend, operation] = Array.from(container!.querySelectorAll('select')) as [HTMLSelectElement, HTMLSelectElement];
     const options = (select: Element) => Array.from(select.querySelectorAll('option')).map((o) => o.textContent);
     expect(options(backend)).toEqual(['Browser FFmpeg', 'HF RIFE Space', 'Colab (manual)', 'Contabo job']);
     expect(options(operation)).toEqual(['Extract only']);
@@ -200,7 +200,7 @@ describe('InspectorSegmentSection', () => {
 
   it('Colab: hands over the cut, then accepts only a result of the right length', async () => {
     mount(clipOf());
-    const [backend] = Array.from(container!.querySelectorAll('select'));
+    const [backend] = Array.from(container!.querySelectorAll('select')) as [HTMLSelectElement];
     act(() => {
       (backend as HTMLSelectElement).value = 'colab';
       backend.dispatchEvent(new Event('change', { bubbles: true }));

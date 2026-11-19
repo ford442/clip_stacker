@@ -83,9 +83,13 @@ void resample_linear(
     int clip_frames,
     float* out);
 
-/** Sample clip frame `frame` from a slice (0 outside the slice). */
-inline float slice_sample(const SourceSlice& slice, int frame) {
-  const int local = frame - slice.first_frame;
+/**
+ * Sample clip frame `frame` from a slice (0 outside the slice). 64-bit index
+ * maths: `first_frame` arrives from JS unchecked, and `frame - first_frame`
+ * (or a sinc window's `base + tap`) can leave int range (mix_fuzz found it).
+ */
+inline float slice_sample(const SourceSlice& slice, long long frame) {
+  const long long local = frame - slice.first_frame;
   if (local < 0 || local >= slice.frame_count) return 0.f;
   return slice.data[local];
 }

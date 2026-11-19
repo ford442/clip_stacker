@@ -124,9 +124,9 @@ export interface Clip {
   kind: ClipKind;
   duration: number;
   /** Native video width in pixels (video clips only). */
-  videoWidth?: number;
+  videoWidth?: number | undefined;
   /** Native video height in pixels (video clips only). */
-  videoHeight?: number;
+  videoHeight?: number | undefined;
   /**
    * Whether the source file has an audio stream.
    * `false` for video-only / silent media. Omitted when unknown (treated as
@@ -201,9 +201,9 @@ export interface Clip {
    * projects and on base-layer clips (treated as `source-alpha`, which is a
    * no-op for the opaque sources that PiP overlays have historically used).
    */
-  overlayBlend?: OverlayBlendMode;
+  overlayBlend?: OverlayBlendMode | undefined;
   /** Key parameters used when `overlayBlend` is `chroma` or `luma`. */
-  chromaKey?: ChromaKeySettings;
+  chromaKey?: ChromaKeySettings | undefined;
   /** Per-clip audio volume multiplier (0 = muted, 1 = unchanged, 2 = double). */
   volume?: number;
   /**
@@ -236,7 +236,7 @@ export interface Clip {
    */
   audioEffects?: import('../audio/audioEffects').ClipAudioEffects;
   /** Optional per-property keyframe animation (local clip time in seconds). */
-  keyframes?: ClipKeyframes;
+  keyframes?: ClipKeyframes | undefined;
   /** True when the source is a still image (Ken Burns / UV keyframes). */
   stillImage?: boolean;
   /**
@@ -271,7 +271,7 @@ export interface Clip {
   /** Computed corrections. Recomputed on load; never serialized. */
   stabilization?: ClipStabilization;
   /** Why analysis could not run for this clip (WASM disabled, undecodable, …). */
-  stabilizeError?: string;
+  stabilizeError?: string | undefined;
   /**
    * Interpret the source as this colour space instead of its own tags (a
    * mistagged or untagged file). Applied in the decoder config, so preview
@@ -286,7 +286,7 @@ export interface Clip {
    * the bytes live in the working-media store under `proxyStoreKey(hash, profile)`.
    * Preview and stabilization read the proxy; export always reads `file`.
    */
-  proxy?: ClipProxy;
+  proxy?: ClipProxy | undefined;
   // ---------------------------------------------------------------------------
   // Nested sequence (see `types/sequence.ts`)
   // ---------------------------------------------------------------------------

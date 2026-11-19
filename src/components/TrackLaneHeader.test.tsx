@@ -51,18 +51,18 @@ describe('TrackLaneHeader', () => {
     render(<TrackLaneHeader trackId={MAIN_VIDEO_TRACK_ID} showRemove={false} />);
 
     click('M');
-    expect(editorStore.getState().tracks[0].muted).toBe(true);
+    expect(editorStore.getState().tracks[0]?.muted).toBe(true);
     expect(container.querySelector('[aria-pressed="true"]')?.textContent).toBe('M');
 
     click('M');
-    expect(editorStore.getState().tracks[0].muted).toBeUndefined();
+    expect(editorStore.getState().tracks[0]?.muted).toBeUndefined();
   });
 
   it('L toggles the lane lock flag in the store', () => {
     render(<TrackLaneHeader trackId={MAIN_VIDEO_TRACK_ID} showRemove={false} />);
 
     click('L');
-    expect(editorStore.getState().tracks[0].locked).toBe(true);
+    expect(editorStore.getState().tracks[0]?.locked).toBe(true);
     expect(container.querySelector('.timeline-lane-header--locked')).not.toBeNull();
   });
 

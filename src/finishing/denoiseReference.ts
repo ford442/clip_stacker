@@ -8,8 +8,10 @@
  * Images are RGB in [0, 1], row-major, top row first (texture order).
  */
 
+import { NOISE_REDUCTION_UNIFORMS } from '../webgpu/uniformSpecs';
+
 /** Uniform slot holding the quality mode (see `NOISE_REDUCTION_QUALITY_CODE`). */
-export const NR_QUALITY_SLOT = 10;
+export const NR_QUALITY_SLOT = NOISE_REDUCTION_UNIFORMS.offsets.quality;
 
 /**
  * `high`: spatial reach = radius × scale, capped (dense taps — a strided

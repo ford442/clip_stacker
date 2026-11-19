@@ -91,7 +91,7 @@ export interface TextOverlay extends TextOverlayStyle {
    */
   scrollSpeed: number;
   /** Optional keyframe animation (time = seconds on the output timeline). */
-  keyframes?: TextOverlayKeyframes;
+  keyframes?: TextOverlayKeyframes | undefined;
 
   /**
    * Fill mode for the text glyphs.
@@ -104,7 +104,7 @@ export interface TextOverlay extends TextOverlayStyle {
    * Identifier of a registered shader fill when fill === 'shader'.
    * Unknown ids fall back to solid on load with a warning.
    */
-  shaderId?: string;
+  shaderId?: string | undefined;
   /** Per-shader numeric parameters (uniforms). Keys are shader-defined. */
   shaderParams?: Record<string, number>;
   /** Per-shader color parameters (hex/named FFmpeg colors). Keys are shader-defined. */

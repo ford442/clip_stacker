@@ -49,8 +49,8 @@ describe('buildAudioSchedule', () => {
       duration: 3,
     });
     // Adjacent clips abut — no audible gap at the cut.
-    expect(schedule[1].timelineStart).toBe(
-      schedule[0].timelineStart + schedule[0].duration,
+    expect(schedule[1]?.timelineStart).toBe(
+      schedule[0]!.timelineStart + schedule[0]!.duration,
     );
   });
 
@@ -61,10 +61,10 @@ describe('buildAudioSchedule', () => {
     ];
     const schedule = buildAudioSchedule(clips, [], transitions);
 
-    expect(schedule[0].timelineStart).toBe(0);
-    expect(schedule[0].duration).toBe(5);
-    expect(schedule[1].timelineStart).toBe(4.5);
-    expect(schedule[1].duration).toBe(3);
+    expect(schedule[0]?.timelineStart).toBe(0);
+    expect(schedule[0]?.duration).toBe(5);
+    expect(schedule[1]?.timelineStart).toBe(4.5);
+    expect(schedule[1]?.duration).toBe(3);
   });
 
   it('respects trim as bufferOffset and duration', () => {
@@ -73,27 +73,27 @@ describe('buildAudioSchedule', () => {
     ];
     const schedule = buildAudioSchedule(clips, [], []);
 
-    expect(schedule[0].bufferOffset).toBe(2);
-    expect(schedule[0].duration).toBe(5);
-    expect(schedule[0].volume).toBe(1.5);
-    expect(schedule[0].playbackRate).toBe(1);
+    expect(schedule[0]?.bufferOffset).toBe(2);
+    expect(schedule[0]?.duration).toBe(5);
+    expect(schedule[0]?.volume).toBe(1.5);
+    expect(schedule[0]?.playbackRate).toBe(1);
   });
 
   it('shortens schedule duration by playbackRate', () => {
     const clips = [makeClip('a', 10, { playbackRate: 2 })];
     const schedule = buildAudioSchedule(clips, [], []);
-    expect(schedule[0].duration).toBe(5);
-    expect(schedule[0].playbackRate).toBe(2);
+    expect(schedule[0]?.duration).toBe(5);
+    expect(schedule[0]?.playbackRate).toBe(2);
   });
 
   it('plays a reversed trim from a buffer that already starts at 0', () => {
     const clips = [makeClip('a', 10, { trimStart: 2, trimEnd: 7, reversed: true, playbackRate: 2 })];
     const schedule = buildAudioSchedule(clips, [], []);
-    expect(schedule[0].reverseAudio).toBe(true);
-    expect(schedule[0].bufferOffset).toBe(0);
-    expect(schedule[0].duration).toBe(2.5);
-    expect(schedule[0].playbackRate).toBe(2);
-    expect(schedule[0].rateRemap).toBeUndefined();
+    expect(schedule[0]?.reverseAudio).toBe(true);
+    expect(schedule[0]?.bufferOffset).toBe(0);
+    expect(schedule[0]?.duration).toBe(2.5);
+    expect(schedule[0]?.playbackRate).toBe(2);
+    expect(schedule[0]?.rateRemap).toBeUndefined();
   });
 
   it('marks rateRemap and plays remapped buffers at 1×', () => {
@@ -108,16 +108,16 @@ describe('buildAudioSchedule', () => {
       }),
     ];
     const schedule = buildAudioSchedule(clips, [], []);
-    expect(schedule[0].rateRemap).toBe(true);
-    expect(schedule[0].playbackRate).toBe(1);
-    expect(schedule[0].bufferOffset).toBe(0);
+    expect(schedule[0]?.rateRemap).toBe(true);
+    expect(schedule[0]?.playbackRate).toBe(1);
+    expect(schedule[0]?.bufferOffset).toBe(0);
     // ∫₀² (1+t)dt = 4; remaining 6s source @ 3× → +2; total out = 4s
-    expect(schedule[0].duration).toBeCloseTo(4, 2);
+    expect(schedule[0]?.duration).toBeCloseTo(4, 2);
   });
 
   it('clamps volume into 0–200%', () => {
     const clips = [makeClip('a', 2, { volume: 5 })];
-    expect(buildAudioSchedule(clips, [], [])[0].volume).toBe(2);
+    expect(buildAudioSchedule(clips, [], [])[0]?.volume).toBe(2);
   });
 
   it('schedules PiP overlays from output time 0', () => {
@@ -194,7 +194,7 @@ describe('bed ducking helpers', () => {
     expect(schedulesMatchStructure(base, louder)).toBe(true);
     expect(
       schedulesMatchStructure(base, [
-        { ...base[0], timelineStart: 1 },
+        { ...base[0]!, timelineStart: 1 },
       ]),
     ).toBe(false);
   });

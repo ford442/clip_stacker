@@ -180,8 +180,8 @@ export interface TimelineRenderOptions {
 
 /** Caption inputs for `buildPreviewCompositionPlan`. */
 export interface CaptionPlanOptions {
-  captions?: CaptionEntry[];
-  captionStyle?: Partial<TextOverlayStyle>;
+  captions?: CaptionEntry[] | undefined;
+  captionStyle?: Partial<TextOverlayStyle> | undefined;
 }
 
 /** Narrow a plan's render options down to just its caption inputs. */

@@ -7,15 +7,14 @@
  * it encodes the last). Protocol: `audioRenderProtocol.ts`.
  */
 
-import type { RenderWorkerRequest, RenderWorkerResponse } from './audioRenderProtocol';
+import type { AudioRenderProtocol, RenderPullResult } from './audioRenderProtocol';
 import {
   openTimelineMixStream,
   type ClipPcm,
   type ClipPcmProvider,
   type TimelineMixStream,
 } from '../wasm/mediaEngine';
-
-type Post = (message: RenderWorkerResponse, transfer?: Transferable[]) => void;
+import { exposeWorker, withTransfer, type TransferReply, type WorkerHandlers, type WorkerPort } from '../workers/workerRpc';
 
 interface PendingPcm {
   resolve: (pcm: ClipPcm | null) => void;
@@ -31,149 +30,116 @@ interface StreamState {
   queue: Promise<void>;
 }
 
-/** The worker's message handling, separate from `onmessage` so tests drive it in-process. */
-export class AudioRenderWorkerCore {
-  private readonly streams = new Map<number, StreamState>();
+const closedError = () => new Error('mix stream closed');
 
-  constructor(private readonly post: Post) {}
+/** The worker's handlers, separate from the scope so tests serve them in-process. */
+export function createAudioRenderHandlers(port: WorkerPort<AudioRenderProtocol>): WorkerHandlers<AudioRenderProtocol> {
+  const streams = new Map<number, StreamState>();
 
-  handle(msg: RenderWorkerRequest): void {
-    switch (msg.type) {
-      case 'open':
-        void this.open(msg.id, msg);
-        return;
-      case 'pull': {
-        const state = this.streams.get(msg.id);
-        if (!state) return;
-        state.queue = state.queue.then(() => this.pull(msg.id, state));
-        return;
-      }
-      case 'pcm-begin': {
-        const pending = this.streams.get(msg.id)?.pcm.get(msg.index);
-        if (!pending) return;
-        pending.pcm = {
-          sampleRate: msg.sampleRate,
-          channelData: Array.from({ length: msg.channels }, () => new Float32Array(msg.frames)),
-        };
-        return;
-      }
-      case 'pcm-part': {
-        const pending = this.streams.get(msg.id)?.pcm.get(msg.index);
-        pending?.pcm?.channelData[msg.channel]?.set(msg.data, msg.offset);
-        return;
-      }
-      case 'pcm-end': {
-        const state = this.streams.get(msg.id);
-        const pending = state?.pcm.get(msg.index);
-        if (!state || !pending) return;
-        state.pcm.delete(msg.index);
-        pending.resolve(pending.pcm);
-        return;
-      }
-      case 'pcm-error': {
-        const state = this.streams.get(msg.id);
-        const pending = state?.pcm.get(msg.index);
-        if (!state || !pending) return;
-        state.pcm.delete(msg.index);
-        if (msg.skip) pending.resolve(null);
-        else pending.reject(new Error(msg.message));
-        return;
-      }
-      case 'close':
-        this.close(msg.id);
-        return;
-    }
-  }
+  const close = (id: number) => {
+    const state = streams.get(id);
+    if (!state) return;
+    state.closed = true;
+    streams.delete(id);
+    for (const pending of state.pcm.values()) pending.reject(closedError());
+    state.pcm.clear();
+    state.stream?.close();
+  };
 
-  private async open(id: number, msg: Extract<RenderWorkerRequest, { type: 'open' }>): Promise<void> {
-    const state: StreamState = { stream: null, pcm: new Map(), closed: false, queue: Promise.resolve() };
-    this.streams.set(id, state);
-    const provider: ClipPcmProvider = {
-      acquire: (index) =>
-        new Promise<ClipPcm | null>((resolve, reject) => {
-          if (state.closed) {
-            reject(new Error('mix stream closed'));
-            return;
-          }
-          state.pcm.set(index, { resolve, reject, pcm: null });
-          this.post({ type: 'need-pcm', id, index });
-        }),
-      release: (index) => {
-        if (!state.closed) this.post({ type: 'release', id, index });
-      },
-    };
-    let stream: TimelineMixStream | null;
-    try {
-      stream = await openTimelineMixStream(msg.entries, provider, msg.options);
-    } catch (err) {
-      this.fail(id, err);
-      return;
-    }
-    if (state.closed) {
-      stream?.close();
-      return;
-    }
-    if (!stream) {
-      this.streams.delete(id);
-      this.post({ type: 'unavailable', id });
-      return;
-    }
-    state.stream = stream;
-    this.post({
-      type: 'opened',
-      id,
-      totalFrames: stream.totalFrames,
-      sampleRate: stream.sampleRate,
-      channels: stream.channels,
-    });
-  }
+  const pendingPcm = (id: number, index: number) => streams.get(id)?.pcm.get(index);
 
-  private async pull(id: number, state: StreamState): Promise<void> {
+  const settlePcm = (id: number, index: number, settle: (pending: PendingPcm) => void) => {
+    const state = streams.get(id);
+    const pending = state?.pcm.get(index);
+    if (!state || !pending) return;
+    state.pcm.delete(index);
+    settle(pending);
+  };
+
+  const pullOnce = async (id: number, state: StreamState): Promise<RenderPullResult | TransferReply<RenderPullResult>> => {
     const stream = state.stream;
-    if (state.closed || !stream) return;
+    if (state.closed || !stream) throw closedError();
     try {
       const chunk = await stream.next();
-      if (state.closed) return;
-      if (!chunk) {
-        this.post({ type: 'done', id, meters: stream.readMeters() });
-        return;
-      }
+      if (state.closed) throw closedError();
+      if (!chunk) return { type: 'done', id, meters: stream.readMeters() };
       // The stream reuses its chunk buffer: send a copy, by transfer.
       const frames = chunk.frames.slice();
-      this.post(
+      return withTransfer<RenderPullResult>(
         { type: 'chunk', id, startFrame: chunk.startFrame, frameCount: chunk.frameCount, frames },
         [frames.buffer],
       );
     } catch (err) {
-      this.fail(id, err);
+      close(id);
+      throw err;
     }
-  }
+  };
 
-  private fail(id: number, err: unknown): void {
-    if (this.streams.get(id)?.closed) return;
-    this.post({ type: 'error', id, message: (err as Error)?.message || String(err) });
-    this.close(id);
-  }
+  return {
+    open: async ({ id, entries, options }) => {
+      const state: StreamState = { stream: null, pcm: new Map(), closed: false, queue: Promise.resolve() };
+      streams.set(id, state);
+      const provider: ClipPcmProvider = {
+        acquire: (index) =>
+          new Promise<ClipPcm | null>((resolve, reject) => {
+            if (state.closed) {
+              reject(closedError());
+              return;
+            }
+            state.pcm.set(index, { resolve, reject, pcm: null });
+            port.emit('need-pcm', { id, index });
+          }),
+        release: (index) => {
+          if (!state.closed) port.emit('release', { id, index });
+        },
+      };
+      let stream: TimelineMixStream | null;
+      try {
+        stream = await openTimelineMixStream(entries, provider, options);
+      } catch (err) {
+        close(id);
+        throw err;
+      }
+      if (state.closed || !stream) {
+        stream?.close();
+        streams.delete(id);
+        return null;
+      }
+      state.stream = stream;
+      return { totalFrames: stream.totalFrames, sampleRate: stream.sampleRate, channels: stream.channels };
+    },
 
-  private close(id: number): void {
-    const state = this.streams.get(id);
-    if (!state) return;
-    state.closed = true;
-    this.streams.delete(id);
-    for (const pending of state.pcm.values()) pending.reject(new Error('mix stream closed'));
-    state.pcm.clear();
-    state.stream?.close();
-  }
+    pull: ({ id }) => {
+      const state = streams.get(id);
+      if (!state) throw closedError();
+      const run = state.queue.then(() => pullOnce(id, state));
+      state.queue = run.then(
+        () => undefined,
+        () => undefined,
+      );
+      return run;
+    },
+
+    close: ({ id }) => close(id),
+
+    'pcm-begin': ({ id, index, sampleRate, channels, frames }) => {
+      const pending = pendingPcm(id, index);
+      if (!pending) return;
+      pending.pcm = {
+        sampleRate,
+        channelData: Array.from({ length: channels }, () => new Float32Array(frames)),
+      };
+    },
+
+    'pcm-part': ({ id, index, channel, offset, data }) => {
+      pendingPcm(id, index)?.pcm?.channelData[channel]?.set(data, offset);
+    },
+
+    'pcm-end': ({ id, index }) => settlePcm(id, index, (pending) => pending.resolve(pending.pcm)),
+
+    'pcm-error': ({ id, index, message, skip }) =>
+      settlePcm(id, index, (pending) => (skip ? pending.resolve(null) : pending.reject(new Error(message)))),
+  };
 }
 
-interface WorkerScope {
-  onmessage: ((ev: MessageEvent<RenderWorkerRequest>) => void) | null;
-  postMessage(message: RenderWorkerResponse, transfer: Transferable[]): void;
-  document?: unknown;
-}
-
-const scope = globalThis as unknown as WorkerScope;
-if (typeof scope.document === 'undefined' && typeof scope.postMessage === 'function') {
-  const core = new AudioRenderWorkerCore((message, transfer) => scope.postMessage(message, transfer ?? []));
-  scope.onmessage = (ev) => core.handle(ev.data);
-}
+exposeWorker<AudioRenderProtocol>(createAudioRenderHandlers);

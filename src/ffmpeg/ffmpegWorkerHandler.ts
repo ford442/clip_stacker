@@ -1,14 +1,6 @@
 import type { FfmpegCoreHost } from './ffmpegCoreHost';
-import {
-  transferableBytes,
-  type WorkerRpcRequest,
-  type WorkerRpcResponse,
-} from './ffmpegWorkerProtocol';
-
-export interface WorkerReply {
-  response: WorkerRpcResponse;
-  transfer: Transferable[];
-}
+import { transferableBytes, type FfmpegWorkerProtocol } from './ffmpegWorkerProtocol';
+import { withTransfer, type WorkerHandlers } from '../workers/workerRpc';
 
 /**
  * Error text for the main thread. Emscripten's `FS.ErrnoError` says only
@@ -25,45 +17,37 @@ export function describeWorkerError(error: unknown): string {
   return String(error);
 }
 
-/** Run one RPC against the core host and build the reply to post back. */
-export async function handleFfmpegWorkerRequest(
-  host: FfmpegCoreHost,
-  request: WorkerRpcRequest,
-): Promise<WorkerReply> {
-  const { id } = request;
-  const ok = (result?: unknown): WorkerReply => ({
-    response: { id, ok: true, result },
-    transfer: [],
-  });
+/** Run `fn`, rethrowing any failure as a plain Error carrying `describeWorkerError`'s text. */
+async function described<T>(fn: () => T | Promise<T>): Promise<T> {
   try {
-    switch (request.type) {
-      case 'load':
-        await host.load(request.urls);
-        return ok();
-      case 'exec': {
-        const code = host.exec(request.args);
-        if (code !== 0) throw new Error(`FFmpeg exited with code ${code}`);
-        return ok(code);
-      }
-      case 'writeFile':
-        host.writeFile(request.name, request.data);
-        return ok();
-      case 'readFile': {
-        // FS.readFile returns a fresh array: transfer it without a copy.
-        const { bytes, transfer } = transferableBytes(host.readFile(request.name));
-        return { response: { id, ok: true, result: bytes }, transfer };
-      }
-      case 'deleteFile':
-        host.deleteFile(request.name);
-        return ok(true);
-      case 'listDir':
-        return ok(host.listDir(request.path));
-      default: {
-        const exhaustive: never = request;
-        throw new Error(`Unknown worker request type: ${String((exhaustive as { type?: unknown }).type)}`);
-      }
-    }
+    return await fn();
   } catch (error) {
-    return { response: { id, ok: false, error: describeWorkerError(error) }, transfer: [] };
+    throw new Error(describeWorkerError(error), { cause: error });
   }
+}
+
+/** The worker's handler table over one core host. */
+export function createFfmpegWorkerHandlers(host: FfmpegCoreHost) {
+  return {
+    load: ({ urls }) => described(() => host.load(urls)),
+    exec: ({ args }) =>
+      described(() => {
+        const code = host.exec(args);
+        if (code !== 0) throw new Error(`FFmpeg exited with code ${code}`);
+        return code;
+      }),
+    writeFile: ({ name, data }) => described(() => host.writeFile(name, data)),
+    readFile: ({ name }) =>
+      described(() => {
+        // FS.readFile returns a fresh array: transfer it without a copy.
+        const { bytes, transfer } = transferableBytes(host.readFile(name));
+        return withTransfer<Uint8Array | string>(bytes, transfer);
+      }),
+    deleteFile: ({ name }) =>
+      described(() => {
+        host.deleteFile(name);
+        return true;
+      }),
+    listDir: ({ path }) => described(() => host.listDir(path)),
+  } satisfies WorkerHandlers<FfmpegWorkerProtocol>;
 }

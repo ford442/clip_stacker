@@ -81,7 +81,7 @@ describe('processSegment', () => {
       });
       const result = await processSegment(request, deps, { backend: 'hf-rife', operation: 'rife2' });
       expect(order).toEqual(['cut', 'rife', 'mux']);
-      expect(vi.mocked(deps.rifeOnHuggingFace).mock.calls[0][1]).toBe(2);
+      expect(vi.mocked(deps.rifeOnHuggingFace).mock.calls[0]?.[1]).toBe(2);
       expect(result).toMatchObject({ backend: 'hf-rife', method: 'rife', url: 'blob:result', durationSec: 10 });
     });
 

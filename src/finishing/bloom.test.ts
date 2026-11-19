@@ -44,7 +44,7 @@ function image(w: number, h: number, fn: (u: number, v: number) => number): RgbI
   return { width: w, height: h, data };
 }
 
-const at = (img: RgbImage, x: number, y: number, k = 1) => img.data[(y * img.width + x) * 3 + k];
+const at = (img: RgbImage, x: number, y: number, k = 1) => img.data[(y * img.width + x) * 3 + k]!;
 
 /** Dark frame with a bright disc on the left and a small dot on the right. */
 const scene = (w: number, h: number) =>
@@ -60,7 +60,7 @@ describe('bloom settings', () => {
     expect(isFinishingActive(DEFAULT_FINISHING)).toBe(false);
     expect(isBloomActive(on({ amount: 0 }))).toBe(false);
     expect(isBloomActive(on())).toBe(true);
-    expect(normalizeFinishingSettings({ sharpen: DEFAULT_FINISHING.sharpen }).bloom).toEqual(
+    expect(normalizeFinishingSettings({ sharpen: DEFAULT_FINISHING.sharpen! }).bloom).toEqual(
       DEFAULT_BLOOM,
     );
   });
@@ -103,7 +103,7 @@ describe('bloom settings', () => {
           fileName: 'source1.mp4',
         },
       ],
-      finishing: json.finishing,
+      finishing: json.finishing!,
     };
     const result = await applyProjectData(project, sourceClips);
     expect(result.finishing.bloom).toEqual(bloom);
@@ -236,25 +236,8 @@ describe('bloom reference', () => {
 });
 
 describe('bloom.wgsl mirrors bloom.ts', () => {
-  it('has the packed uniform layout', () => {
+  it('shares the prefilter clamp', () => {
     expect(BLOOM_UNIFORM_FLOATS).toBe(12);
-    const body = /struct BloomUniforms \{([\s\S]*?)\n\};/.exec(bloomShader)?.[1] ?? '';
-    const fields = body
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('//'))
-      .map((l) => l.replace(/,$/, ''));
-    expect(fields).toEqual([
-      'srcTexel: vec2<f32>',
-      'threshold: f32',
-      'knee: f32',
-      'weight: f32',
-      'mode: f32',
-      'gain: f32',
-      'norm: f32',
-      'tint: vec3<f32>',
-      '_pad: f32',
-    ]);
     expect(Number(/const BLOOM_LINEAR_CLAMP: f32 = ([0-9.]+);/.exec(bloomShader)?.[1])).toBe(
       BLOOM_LINEAR_CLAMP,
     );

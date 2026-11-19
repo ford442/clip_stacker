@@ -1,11 +1,32 @@
 {
-  "strictDirs": [
-    "src/export",
-    "src/timeline",
-    "src/finishing",
-    "src/captions",
-    "src/project",
-    "src/app"
-  ],
-  "baseline": 416
+  "ratchets": [
+    {
+      "name": "strict",
+      "tsconfig": "tsconfig.strict.json",
+      "strictDirs": [
+        "src"
+      ],
+      "baseline": 0
+    },
+    {
+      "name": "index-signature-access",
+      "tsconfig": "tsconfig.strict-next.json",
+      "strictDirs": [
+        "src/actions",
+        "src/app",
+        "src/components",
+        "src/composition",
+        "src/context",
+        "src/export",
+        "src/ffmpeg",
+        "src/media",
+        "src/playback",
+        "src/store",
+        "src/timeline",
+        "src/types",
+        "src/workers"
+      ],
+      "baseline": 179
+    }
+  ]
 }

@@ -22,8 +22,9 @@ export default defineConfig({
       // Floors for the pure domain directories, a few points under what the
       // suite measures today (`npm run test:coverage -- --run`), so they
       // ratchet without flaking. Raise them as coverage grows; never lower
-      // one to land a change. Browser-glue dirs (export, webgpu, components,
-      // ffmpeg) are left to the e2e harness.
+      // one to land a change. export and media are floored at what their
+      // unit-testable halves cover; the WebCodecs / WebGPU glue in them, and
+      // webgpu / components / ffmpeg, are left to the e2e harness.
       thresholds: {
         'src/timeline/**': { lines: 89, statements: 85, functions: 90, branches: 74 },
         'src/finishing/**': { lines: 93, statements: 91, functions: 94, branches: 76 },
@@ -31,6 +32,10 @@ export default defineConfig({
         'src/project/**': { lines: 84, statements: 81, functions: 84, branches: 75 },
         'src/composition/**': { lines: 81, statements: 79, functions: 87, branches: 69 },
         'src/store/**': { lines: 89, statements: 86, functions: 83, branches: 73 },
+        'src/audio/**': { lines: 85, statements: 81, functions: 87, branches: 70 },
+        'src/media/**': { lines: 57, statements: 56, functions: 66, branches: 54 },
+        'src/export/**': { lines: 53, statements: 53, functions: 63, branches: 53 },
+        'src/workers/**': { lines: 89, statements: 86, functions: 83, branches: 73 },
       },
     },
   },

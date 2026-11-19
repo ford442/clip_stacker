@@ -65,8 +65,8 @@ describe('caption layers in the composition plan', () => {
   it('emits the cue active at a mid-cue timestamp', () => {
     const layers = captionLayers(planAt(2, [cue()]));
     expect(layers).toHaveLength(1);
-    expect(layers[0].captionId).toBe('cue-1');
-    expect(layers[0].text).toBe('Hello there');
+    expect(layers[0]?.captionId).toBe('cue-1');
+    expect(layers[0]?.text).toBe('Hello there');
   });
 
   it('emits nothing before, at the out-point, or after the cue', () => {
@@ -89,8 +89,8 @@ describe('caption layers in the composition plan', () => {
   it('anchors at bottom centre in canvas pixels', () => {
     const [layer] = captionLayers(planAt(2, [cue()]));
     // DEFAULT_CAPTION_STYLE: x 0.5, y 0.92 — fractions of the output size.
-    expect(layer.x).toBeCloseTo(640);
-    expect(layer.y).toBeCloseTo(662.4);
+    expect(layer?.x).toBeCloseTo(640);
+    expect(layer?.y).toBeCloseTo(662.4);
   });
 
   it('scales the anchor with a capped preview canvas', () => {
@@ -106,8 +106,8 @@ describe('caption layers in the composition plan', () => {
       { captions: [cue()] },
     );
     const [layer] = captionLayers(plan);
-    expect(layer.x).toBeCloseTo(plan.canvasWidth * 0.5);
-    expect(layer.y).toBeCloseTo(plan.canvasHeight * 0.92);
+    expect(layer?.x).toBeCloseTo(plan.canvasWidth * 0.5);
+    expect(layer?.y).toBeCloseTo(plan.canvasHeight * 0.92);
   });
 
   it('merges per-cue style over the project style over the defaults', () => {
@@ -126,10 +126,10 @@ describe('caption layers in the composition plan', () => {
       },
     );
     const [layer] = captionLayers(plan);
-    expect(layer.style.fontsize).toBe(48);
+    expect(layer?.style.fontsize).toBe(48);
     // Per-cue override wins over the project style.
-    expect(layer.style.fontcolor).toBe('#ff0000');
-    expect(layer.style.box).toBe(false);
+    expect(layer?.style.fontcolor).toBe('#ff0000');
+    expect(layer?.style.box).toBe(false);
   });
 
   it('draws above text overlays', () => {

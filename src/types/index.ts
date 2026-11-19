@@ -9,3 +9,4 @@ export * from './sequence';
 export * from './project';
 export * from './segment';
 export * from './inspector';
+export * from './tuples';

@@ -89,8 +89,8 @@ function referenceMix(
       const src = of + shift;
       if (src < 0 || src >= left.length) continue;
       const [l, r] = panFrame(pan, left[src]!, right[src]!, mono);
-      out[of * 2] += l * gain;
-      out[of * 2 + 1] += r * gain;
+      out[of * 2] = (out[of * 2] ?? 0) + l * gain;
+      out[of * 2 + 1] = (out[of * 2 + 1] ?? 0) + r * gain;
     }
   }
   return Float32Array.from(out);

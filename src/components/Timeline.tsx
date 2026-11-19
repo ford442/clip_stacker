@@ -158,6 +158,7 @@ function TimelineImpl({
     [clipLayouts],
   );
 
+  // eslint-disable-next-line react-hooks/incompatible-library -- @tanstack/react-virtual returns one mutable instance whose methods read live scroll state; it cannot be memoized, so this component stays uncompiled.
   const virtualizer = useVirtualizer({
     horizontal: true,
     count: clipLayouts.length,
@@ -171,9 +172,11 @@ function TimelineImpl({
 
   const virtualItems = virtualizer.getVirtualItems();
 
+  // `getVirtualItems()` is a new array every render; key the visible set on
+  // the indices it holds so scrolling within the same window does no work.
   const virtualIndexKey = virtualItems.map((item) => item.index).join(',');
   const visibleIndexSet = useMemo(() => {
-    const indices = new Set(virtualItems.map((item) => item.index));
+    const indices = new Set(virtualIndexKey === '' ? [] : virtualIndexKey.split(',').map(Number));
     if (dragIndex !== null) indices.add(dragIndex);
     return indices;
   }, [virtualIndexKey, dragIndex]);
@@ -225,7 +228,7 @@ function TimelineImpl({
         cancelTimelineMediaForClip(clip.id);
       }
     }
-  }, [virtualIndexKey, clipLayouts, clips, onThumbsLoaded, onWavesLoaded]);
+  }, [visibleIndexSet, clipLayouts, clips, onThumbsLoaded, onWavesLoaded]);
 
   useEffect(() => {
     virtualizerRef.current.measure();

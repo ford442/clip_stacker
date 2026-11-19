@@ -4,7 +4,7 @@
  * knots (no LUT texture). The managed chain uses the scene-linear variant.
  */
 
-import curvesShader from './shaders/curves.wgsl?raw';
+import curvesShaderSource from './shaders/curves.wgsl?raw';
 import { shaderForSceneLinear } from '../finishing/colorManagement';
 import type { CurvesPass } from '../finishing/finishing';
 import {
@@ -12,6 +12,15 @@ import {
   isCurvesNeutral,
   packCurvesUniforms,
 } from '../finishing/curves';
+import { spliceUniformStructs } from './uniformLayout';
+import { CURVES_UNIFORMS } from './uniformSpecs';
+
+const CURVES_SOURCE = spliceUniformStructs(curvesShaderSource, CURVES_UNIFORMS);
+
+/** `curves.wgsl` as compiled: its uniform struct spliced in, scene-linear when asked. */
+export function curvesShaderCode(sceneLinear = false): string {
+  return shaderForSceneLinear(CURVES_SOURCE, sceneLinear);
+}
 
 export class CurvesGpuPass {
   private readonly pipeline: GPURenderPipeline;
@@ -31,14 +40,14 @@ export class CurvesGpuPass {
 
   static create(device: GPUDevice, format: GPUTextureFormat, sceneLinear = false): CurvesGpuPass {
     const shaderModule = device.createShaderModule({
-      code: shaderForSceneLinear(curvesShader, sceneLinear),
+      code: curvesShaderCode(sceneLinear),
     });
     const sampler = device.createSampler({
       magFilter: 'linear',
       minFilter: 'linear',
     });
     const uniformBuffer = device.createBuffer({
-      size: CURVES_UNIFORM_FLOATS * 4,
+      size: CURVES_UNIFORMS.byteSize,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     const bindGroupLayout = device.createBindGroupLayout({

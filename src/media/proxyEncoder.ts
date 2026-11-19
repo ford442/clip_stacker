@@ -55,10 +55,12 @@ function createBlitter(width: number, height: number): ProxyBlitter {
   }
   if (!ctx || !canvas) throw new Error('no 2D canvas available to scale the proxy');
   ctx.imageSmoothingQuality = 'high';
+  const context = ctx;
+  const target = canvas;
   return {
     frameFrom(source, timestamp, duration) {
-      ctx!.drawImage(source as unknown as CanvasImageSource, 0, 0, width, height);
-      return new VideoFrame(canvas as unknown as CanvasImageSource, { timestamp, duration });
+      context.drawImage(source, 0, 0, width, height);
+      return new VideoFrame(target, { timestamp, duration });
     },
   };
 }

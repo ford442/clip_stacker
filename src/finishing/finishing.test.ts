@@ -73,7 +73,7 @@ describe('finishing settings', () => {
         ],
       },
     });
-    expect(normalized.secondaryColor?.grades[0].maskType).toBe('hue');
+    expect(normalized.secondaryColor?.grades[0]!.maskType).toBe('hue');
   });
 
   it('detects enabled grain pass with amount', () => {

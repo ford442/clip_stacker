@@ -90,7 +90,7 @@ describe('compositeFrame', () => {
     const expectedW = uvScale[0] * 1280;
     const expectedH = uvScale[1] * 720;
 
-    const [, alpha, x, y, w, h] = draws[0];
+    const [, alpha, x, y, w, h] = draws[0]!;
     expect(alpha).toBe(1);
     expect(x).toBeCloseTo(expectedX);
     expect(y).toBeCloseTo(expectedY);
@@ -126,8 +126,8 @@ describe('compositeFrame', () => {
     expect(draws).toHaveLength(2);
 
     // Base first at full opacity, then PiP over it at 0.5.
-    expect(draws[0][1]).toBe(1);
-    const [, pipAlpha, px, py, pw, ph] = draws[1];
+    expect(draws[0]![1]).toBe(1);
+    const [, pipAlpha, px, py, pw, ph] = draws[1]!;
     expect(pipAlpha).toBeCloseTo(0.5);
     expect([px, py, pw, ph]).toEqual([128, 72, 320, 180]);
   });
@@ -150,8 +150,8 @@ describe('compositeFrame', () => {
 
     const draws = drawImageCalls(calls);
     expect(draws).toHaveLength(2);
-    const outAlpha = draws[0][1] as number;
-    const inAlpha = draws[1][1] as number;
+    const outAlpha = draws[0]![1] as number;
+    const inAlpha = draws[1]![1] as number;
     expect(outAlpha).toBeCloseTo(0.5);
     expect(inAlpha).toBeCloseTo(0.5);
     expect(outAlpha + inAlpha).toBeCloseTo(1);

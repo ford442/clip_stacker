@@ -72,7 +72,7 @@ async function mixInChunks(
     baseUrl: WASM_BASE,
     durationSec,
     chunkFrames,
-    limiter,
+    limiter: limiter ?? null,
   });
   expect(stream).not.toBeNull();
   const out = new Float32Array(stream!.totalFrames * stream!.channels);

@@ -103,6 +103,17 @@ export function clearFfmpegLogs(): void {
 
 export { MAX_LOG_BUFFER };
 
+/** An FFmpeg failure carrying the log tail captured when it happened. */
+class FfmpegDetailedError extends Error {
+  constructor(
+    message: string,
+    readonly ffmpegLogs: string[],
+    readonly lastFfmpegError: string | null,
+  ) {
+    super(message);
+  }
+}
+
 export function buildDetailedError(
   operation: string,
   originalError: unknown,
@@ -113,10 +124,7 @@ export function buildDetailedError(
     ? `\nLast relevant FFmpeg log: ${getLastFfmpegError()}`
     : "";
   const full = `${operation} failed: ${errMsg}${lastErr}\n\n--- Recent FFmpeg logs (last 25) ---\n${recent || "(no logs captured)"}\n--- End FFmpeg logs ---`;
-  const e = new Error(full);
-  (e as any).ffmpegLogs = getLastFfmpegLogs(50);
-  (e as any).lastFfmpegError = getLastFfmpegError();
-  return e;
+  return new FfmpegDetailedError(full, getLastFfmpegLogs(50), getLastFfmpegError());
 }
 
 export {
@@ -183,7 +191,7 @@ export async function safeWriteFile(
   operation = "writeFile",
 ): Promise<void> {
   try {
-    await ffmpeg.writeFile(name, data as any);
+    await ffmpeg.writeFile(name, data);
   } catch (err) {
     throw buildDetailedError(`${operation} ${name}`, err);
   }
@@ -276,7 +284,7 @@ export async function ensureFont(
     mgr.markFontLoaded(virtualName);
   } catch (err) {
     // If already a detailed error from safeWrite, rethrow as-is
-    if ((err as any).ffmpegLogs) throw err;
+    if (err instanceof FfmpegDetailedError) throw err;
     throw new Error(
       `Failed to load font for text overlays: ${(err as Error).message}`,
       { cause: err },

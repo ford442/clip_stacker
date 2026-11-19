@@ -1,54 +1,57 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { FfmpegManager } from './ffmpegManager';
-import { transferableBytes, type WorkerRpcRequest } from './ffmpegWorkerProtocol';
+import { transferableBytes, type FfmpegWorkerProtocol } from './ffmpegWorkerProtocol';
 import { WorkerFfmpegRuntime } from './workerFfmpegRuntime';
+import { InProcessWorker } from '../workers/inProcessWorker.test.helpers';
+import { exposeWorker, withTransfer, type WorkerPort } from '../workers/workerRpc';
+
+type FfmpegCall = { method: string; payload: Record<string, unknown>; transfer: Transferable[] };
 
 /**
- * A Worker double: records what was posted (and transferred), answers RPCs
- * like ffmpeg.worker.ts on the next macrotask, and can crash on demand.
+ * A Worker double: serves the FFmpeg protocol like ffmpeg.worker.ts (through
+ * the real worker RPC, in-process), records what was called (and
+ * transferred), and can crash on demand.
  */
-class FakeWorker {
+class FakeWorker extends InProcessWorker {
   static instances: FakeWorker[] = [];
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onerror: ((event: ErrorEvent) => void) | null = null;
-  readonly posted: { request: WorkerRpcRequest; transfer: Transferable[] }[] = [];
-  terminated = false;
-  /** Leave requests unanswered (to test rejection of pending calls). */
-  hold = false;
   readFileResult: Uint8Array = new Uint8Array([9, 8, 7]);
+  /** The bytes the worker received per writeFile. */
+  readonly written = new Map<string, Uint8Array | string>();
+  private readonly port: WorkerPort<FfmpegWorkerProtocol> | null;
 
   constructor(
     readonly url?: URL | string,
     readonly options?: WorkerOptions,
   ) {
+    super();
     FakeWorker.instances.push(this);
+    this.port = exposeWorker<FfmpegWorkerProtocol>(
+      {
+        load: () => {},
+        exec: () => 0,
+        writeFile: ({ name, data }) => {
+          this.written.set(name, data);
+        },
+        readFile: () => {
+          const bytes = this.readFileResult.slice();
+          return withTransfer<Uint8Array | string>(bytes, [bytes.buffer]);
+        },
+        deleteFile: () => true,
+        listDir: () => [],
+      },
+      { scope: this.scope },
+    );
   }
 
-  postMessage(request: WorkerRpcRequest, transfer: Transferable[] = []): void {
-    this.posted.push({ request, transfer });
-    if (this.hold) return;
-    setTimeout(() => {
-      if (this.terminated) return;
-      const result =
-        request.type === 'readFile'
-          ? this.readFileResult
-          : request.type === 'listDir'
-            ? []
-            : undefined;
-      this.onmessage?.({ data: { id: request.id, ok: true, result } } as MessageEvent);
-    }, 0);
+  get calls(): FfmpegCall[] {
+    return this.posted.flatMap(({ message, transfer }) => {
+      const m = message as { rpc: string; method: string; payload: Record<string, unknown> };
+      return m.rpc === 'call' ? [{ method: m.method, payload: m.payload, transfer }] : [];
+    });
   }
 
   log(message: string): void {
-    this.onmessage?.({ data: { type: 'log', message } } as MessageEvent);
-  }
-
-  crash(message = 'Uncaught RuntimeError: memory access out of bounds'): void {
-    this.onerror?.({ message } as ErrorEvent);
-  }
-
-  terminate(): void {
-    this.terminated = true;
+    this.port?.emit('log', { message });
   }
 }
 
@@ -58,7 +61,7 @@ function makeRuntime(options: ConstructorParameters<typeof WorkerFfmpegRuntime>[
     ...options,
     createWorker: () => {
       worker = new FakeWorker();
-      return worker as unknown as Worker;
+      return worker;
     },
   });
   return { runtime, worker: () => worker! };
@@ -77,13 +80,16 @@ describe('WorkerFfmpegRuntime transfers', () => {
   it('transfers writeFile bytes without copying them', async () => {
     const { runtime, worker } = makeRuntime();
     const data = new Uint8Array([1, 2, 3, 4]);
+    const buffer = data.buffer;
     await runtime.writeFile('in.mp4', data);
 
-    const { request, transfer } = worker().posted[0]!;
-    expect(request).toMatchObject({ type: 'writeFile', name: 'in.mp4' });
-    expect((request as { data: Uint8Array }).data).toBe(data);
-    expect(transfer).toEqual([data.buffer]);
-    expect(transfer[0]).toBe(data.buffer);
+    const { method, payload, transfer } = worker().calls[0]!;
+    expect(method).toBe('writeFile');
+    expect(payload).toMatchObject({ name: 'in.mp4' });
+    expect(transfer).toEqual([buffer]);
+    expect(transfer[0]).toBe(buffer);
+    expect(data.byteLength).toBe(0); // moved, not copied
+    expect(Array.from(worker().written.get('in.mp4') as Uint8Array)).toEqual([1, 2, 3, 4]);
   });
 
   it('copies a view over part of a buffer, so the rest is not shipped or detached', async () => {
@@ -92,31 +98,30 @@ describe('WorkerFfmpegRuntime transfers', () => {
     const view = backing.subarray(2, 4);
     await runtime.writeFile('part.bin', view);
 
-    const { request, transfer } = worker().posted[0]!;
-    const sent = (request as { data: Uint8Array }).data;
-    expect(sent).not.toBe(view);
-    expect(Array.from(sent)).toEqual([2, 3]);
-    expect(transfer).toEqual([sent.buffer]);
+    const { transfer } = worker().calls[0]!;
+    expect(Array.from(worker().written.get('part.bin') as Uint8Array)).toEqual([2, 3]);
+    expect(transfer).toHaveLength(1);
     expect(transfer[0]).not.toBe(backing.buffer);
+    expect(backing.byteLength).toBe(6);
+    expect(view.byteLength).toBe(2);
   });
 
   it('posts strings with no transfer list', async () => {
     const { runtime, worker } = makeRuntime();
     await runtime.writeFile('list.txt', "file 'a.mp4'");
-    expect(worker().posted[0]!.transfer).toEqual([]);
+    expect(worker().calls[0]!.transfer).toEqual([]);
+    expect(worker().written.get('list.txt')).toBe("file 'a.mp4'");
   });
 
-  it('returns the transferred readFile array as-is', async () => {
-    const { runtime, worker } = makeRuntime();
-    const pending = runtime.readFile('out.mp4');
-    const expected = worker().readFileResult;
-    await expect(pending).resolves.toBe(expected);
+  it('returns the transferred readFile array', async () => {
+    const { runtime } = makeRuntime();
+    await expect(runtime.readFile('out.mp4')).resolves.toEqual(new Uint8Array([9, 8, 7]));
   });
 
   it('sends the resolved core URLs on load', async () => {
     const { runtime, worker } = makeRuntime();
     await runtime.load(URLS);
-    expect(worker().posted[0]!.request).toEqual({ id: 1, type: 'load', urls: URLS });
+    expect(worker().calls[0]).toMatchObject({ method: 'load', payload: { urls: URLS } });
   });
 
   it('forwards worker log lines', async () => {
@@ -124,7 +129,7 @@ describe('WorkerFfmpegRuntime transfers', () => {
     const { runtime, worker } = makeRuntime({ onLog });
     await runtime.load(URLS);
     worker().log('frame=  10 time=00:00:01.00');
-    expect(onLog).toHaveBeenCalledWith('frame=  10 time=00:00:01.00');
+    await vi.waitFor(() => expect(onLog).toHaveBeenCalledWith('frame=  10 time=00:00:01.00'));
   });
 });
 
@@ -143,7 +148,7 @@ describe('WorkerFfmpegRuntime worker failure', () => {
     worker().hold = true;
 
     const pending = runtime.exec(['-i', 'in.mp4', 'out.mp4']);
-    worker().crash();
+    worker().crash('Uncaught RuntimeError: memory access out of bounds');
 
     await expect(pending).rejects.toThrow('memory access out of bounds');
     expect(worker().terminated).toBe(true);
@@ -196,16 +201,18 @@ describe('FfmpegManager with the worker runtime', () => {
     const firstWorker = FakeWorker.instances[0]!;
     expect(firstWorker.url?.toString()).toContain('ffmpeg.worker');
     expect(firstWorker.options).toEqual({ type: 'module' });
-    expect(firstWorker.posted[0]!.request).toMatchObject({
-      type: 'load',
-      urls: {
+    expect(firstWorker.calls[0]).toMatchObject({
+      method: 'load',
+      payload: {
+        urls: {
         coreURL: 'http://localhost:3000/ffmpeg-core/ffmpeg-core.js',
-        wasmURL: 'http://localhost:3000/ffmpeg-core/ffmpeg-core.wasm',
+          wasmURL: 'http://localhost:3000/ffmpeg-core/ffmpeg-core.wasm',
+        },
       },
     });
     manager.markFontLoaded('roboto.ttf');
 
-    firstWorker.crash();
+    firstWorker.crash('Uncaught RuntimeError: memory access out of bounds');
     expect(firstWorker.terminated).toBe(true);
     expect(manager.getInstance()).toBeNull();
     expect(manager.isFontLoaded('roboto.ttf')).toBe(false);
@@ -214,7 +221,7 @@ describe('FfmpegManager with the worker runtime', () => {
     const second = await manager.ensureFfmpeg(vi.fn());
     expect(second).not.toBe(first);
     expect(FakeWorker.instances).toHaveLength(2);
-    expect(FakeWorker.instances[1]!.posted[0]!.request.type).toBe('load');
+    expect(FakeWorker.instances[1]!.calls[0]!.method).toBe('load');
     await manager.reset();
     expect(FakeWorker.instances[1]!.terminated).toBe(true);
   });

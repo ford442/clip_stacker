@@ -48,7 +48,9 @@ export function waitForQueueBelow(
   if (queueSize(codec) < limit) return Promise.resolve();
 
   return new Promise((resolve, reject) => {
-    const target = codec as unknown as Partial<EventTarget>;
+    // Codecs became EventTargets together with the `dequeue` event; older
+    // ones (and plain test fakes) have no listener methods, so they are optional.
+    const target: Partial<EventTarget> = codec;
     const deadline = Date.now() + timeoutMs;
     let timer: ReturnType<typeof setTimeout> | undefined;
 

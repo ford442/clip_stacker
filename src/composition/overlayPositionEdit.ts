@@ -35,10 +35,10 @@ export function applyClipLayoutAtPlayhead(
     value: number;
     dimension: number;
   }> = [
-    { prop: 'x', value: normalized.x ?? 0, dimension: canvas.width },
-    { prop: 'y', value: normalized.y ?? 0, dimension: canvas.height },
-    { prop: 'width', value: normalized.width ?? 0, dimension: canvas.width },
-    { prop: 'height', value: normalized.height ?? 0, dimension: canvas.height },
+    { prop: 'x', value: normalized.x, dimension: canvas.width },
+    { prop: 'y', value: normalized.y, dimension: canvas.height },
+    { prop: 'width', value: normalized.width, dimension: canvas.width },
+    { prop: 'height', value: normalized.height, dimension: canvas.height },
   ];
 
   for (const { prop, value } of props) {

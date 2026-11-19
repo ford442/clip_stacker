@@ -15,7 +15,7 @@ export interface FfmpegLogProgressContext {
   totalDuration: number;
   rangeStart: number;
   rangeEnd: number;
-  onProgress?: ProgressCallback;
+  onProgress?: ProgressCallback | undefined;
 }
 
 export function extractErrorMessage(error: unknown): string {
@@ -50,8 +50,7 @@ export function emitProgress(
   if (!onProgress) return;
   onProgress({
     stage,
-    progress:
-      typeof progress === 'number' ? clampProgress(progress) : undefined,
+    ...(typeof progress === 'number' && { progress: clampProgress(progress) }),
     indeterminate: indeterminate || typeof progress !== 'number',
   });
 }
@@ -95,13 +94,13 @@ export function getLocalFfmpegCoreBaseURL(variant: 'mt' | 'st' = 'st'): string {
   return new URL(dir, base).href.replace(/\/$/, '');
 }
 
-export const FFMPEG_CORE_CDNS = [
+export const FFMPEG_CORE_CDNS: readonly [jsDelivr: string, unpkg: string] = [
   `https://cdn.jsdelivr.net/npm/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`,
   `https://unpkg.com/@ffmpeg/core@${FFMPEG_CORE_VERSION}/dist/esm`,
 ];
 
 /** CDN fallbacks for the multi-threaded FFmpeg core (requires SharedArrayBuffer). */
-export const FFMPEG_CORE_MT_CDNS = [
+export const FFMPEG_CORE_MT_CDNS: readonly [jsDelivr: string, unpkg: string] = [
   `https://cdn.jsdelivr.net/npm/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
   `https://unpkg.com/@ffmpeg/core-mt@${FFMPEG_CORE_VERSION}/dist/esm`,
 ];

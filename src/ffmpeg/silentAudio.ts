@@ -90,7 +90,7 @@ export async function encodeSilentAacUnitViaWebCodecs(
   const buffer = createSilentAudioBuffer(durationSec, SILENT_AAC_SAMPLE_RATE);
   type ChunkEntry = {
     chunk: EncodedAudioChunk;
-    meta?: EncodedAudioChunkMetadata;
+    meta?: EncodedAudioChunkMetadata | undefined;
   };
   const entries: ChunkEntry[] = [];
   let encodeError: Error | null = null;

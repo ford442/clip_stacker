@@ -1,5 +1,6 @@
 /**
- * Main-thread proxy for the off-thread WebGPU preview worker.
+ * Main-thread proxy for the off-thread WebGPU preview worker, through the
+ * worker RPC (protocol: `previewWorkerProtocol.ts`).
  *
  * Transfers OffscreenCanvas to the worker only after a successful GPU probe,
  * then provides a promise-based API for timeline rendering.  Frame capture
@@ -41,8 +42,7 @@ import {
   type CapturedFrame,
   type FrameRequest,
   type FrameSourceStats,
-  type PreviewWorkerInbound,
-  type PreviewWorkerOutbound,
+  type PreviewWorkerProtocol,
   type ScopeData,
   type ScopeSettings,
   type WorkerClip,
@@ -52,8 +52,10 @@ import {
   isGpuProfileRequestedByPage,
   isPreviewDecoderEnabled,
 } from './previewDecodeFlags';
-import { publishWebGpuProbe, type WebGpuProbeResult } from './webgpuProbe';
+import { publishWebGpuProbe } from './webgpuProbe';
 import { recordRemoteGpuError } from './gpuDevice';
+import { createPreviewWorker } from '../workers/workerFactories';
+import { createWorkerClient, type WorkerClient, type WorkerLike } from '../workers/workerRpc';
 
 export type { FrameRequest, CapturedFrame, ScopeData, ScopeSettings };
 
@@ -78,14 +80,14 @@ export interface RenderTimelineParams {
   textOverlays: TextOverlay[];
   exportSettings: Pick<ExportSettings, 'outputResolution'> | undefined;
   globalTime: number;
-  maxWidth?: number;
-  maxHeight?: number;
-  finishing?: FinishingSettings;
-  colorManagement?: ColorManagementSettings;
+  maxWidth?: number | undefined;
+  maxHeight?: number | undefined;
+  finishing?: FinishingSettings | undefined;
+  colorManagement?: ColorManagementSettings | undefined;
   /** @deprecated Prefer `finishing`. */
-  colorGrade?: ColorGradeSettings;
-  captions?: CaptionEntry[];
-  captionStyle?: Partial<TextOverlayStyle>;
+  colorGrade?: ColorGradeSettings | undefined;
+  captions?: CaptionEntry[] | undefined;
+  captionStyle?: Partial<TextOverlayStyle> | undefined;
 }
 
 /**
@@ -99,41 +101,18 @@ export type FrameCaptureCallback = (
 ) => Promise<CapturedFrame[]>;
 
 interface PendingRender {
-  resolve: (plan: PreviewCompositionPlan | null) => void;
-  reject: (err: Error) => void;
+  /** Aborting cancels the `render` call (and the frame in the worker). */
+  controller: AbortController;
   captureFrames: FrameCaptureCallback;
+  /** Set when capture failed: the render rejects with it instead of resolving null. */
+  captureError: Error | null;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(
-      () => reject(new Error(`${label} timed out after ${ms}ms`)),
-      ms,
-    );
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
-
-interface PendingChore {
-  resolve: (results: GpuChoreResult[]) => void;
-  reject: (err: Error) => void;
-}
+type PreviewClient = WorkerClient<PreviewWorkerProtocol>;
 
 export class PreviewWorkerRuntime {
-  private readonly worker: Worker;
   private nextRenderId = 0;
-  private nextChoreId = 0;
   private readonly pendingRenders = new Map<number, PendingRender>();
-  private readonly pendingChores = new Map<number, PendingChore>();
   private lastRenderId = -1;
   private destroyed = false;
   private choresRunner: PreviewWorkerChoresRunner | null = null;
@@ -144,17 +123,27 @@ export class PreviewWorkerRuntime {
     (state: PreviewDeviceState, message?: string) => void
   >();
 
-  private constructor(worker: Worker) {
-    this.worker = worker;
-    worker.onmessage = (event: MessageEvent<PreviewWorkerOutbound>) =>
-      this.handleMessage(event.data);
-    worker.onerror = (event) => {
-      const err = new Error(event.message ?? 'PreviewWorker error');
-      for (const pending of this.pendingRenders.values()) pending.reject(err);
-      this.pendingRenders.clear();
-      for (const pending of this.pendingChores.values()) pending.reject(err);
-      this.pendingChores.clear();
-    };
+  private constructor(private readonly client: PreviewClient) {
+    client.on('need-frames', ({ renderId, requests }) => this.captureFor(renderId, requests));
+    client.on('scopes', ({ scopes }) => this.scopesListener?.(scopes));
+    client.on('color-state', ({ snapshot }) => publishColorDebugSnapshot(snapshot));
+    // The worker's device is not main's: record its health for Copy Debug
+    // and tell the preview, which must not watch main's registry for it.
+    client.on('gpu-error', ({ entry }) => recordRemoteGpuError({ ...entry, realm: 'preview-worker' }));
+    client.on('gpu-lost', ({ message, timestamp }) => {
+      recordRemoteGpuError({ type: 'lost', message, timestamp, realm: 'preview-worker' });
+      this.emitDeviceState('lost', message);
+    });
+    client.on('gpu-recovered', () => this.emitDeviceState('recovered'));
+    client.on('gpu-recovery-failed', ({ message, timestamp }) => {
+      recordRemoteGpuError({
+        type: 'lost',
+        message: `Device recreate failed: ${message}`,
+        timestamp,
+        realm: 'preview-worker',
+      });
+      this.emitDeviceState('failed', message);
+    });
   }
 
   /**
@@ -171,6 +160,7 @@ export class PreviewWorkerRuntime {
   static async create(
     canvas: HTMLCanvasElement,
     decoderEnabled: boolean = isPreviewDecoderEnabled(),
+    createWorker: () => WorkerLike = createPreviewWorker,
   ): Promise<PreviewWorkerRuntime | null> {
     if (
       typeof OffscreenCanvas === 'undefined' ||
@@ -179,84 +169,42 @@ export class PreviewWorkerRuntime {
       return null;
     }
 
-    const worker = new Worker(
-      new URL('./preview.worker.ts', import.meta.url),
-      { type: 'module' },
-    );
-
-    const runtime = new PreviewWorkerRuntime(worker);
-    // Before anything else: the worker's GPU probe waits for these flags.
-    const configureMsg: PreviewWorkerInbound = {
-      type: 'configure',
-      gpuProfile: isGpuProfileRequestedByPage(),
-      allowFallbackAdapter: isFallbackAdapterAllowedByPage(),
-    };
-    worker.postMessage(configureMsg);
+    const client = createWorkerClient<PreviewWorkerProtocol>(createWorker, { name: 'preview' });
+    if (!client.start()) return null;
+    const runtime = new PreviewWorkerRuntime(client);
 
     try {
-      const webgpuProbe = await withTimeout(
-        new Promise<WebGpuProbeResult>((resolve, reject) => {
-          const onMessage = (event: MessageEvent<PreviewWorkerOutbound>) => {
-            if (event.data.type === 'ready') {
-              worker.removeEventListener('message', onMessage);
-              resolve(event.data.webgpuProbe);
-            }
-          };
-          worker.addEventListener('message', onMessage);
-          worker.addEventListener(
-            'error',
-            () => {
-              worker.removeEventListener('message', onMessage);
-              reject(new Error('Preview worker failed to load'));
-            },
-            { once: true },
-          );
-        }),
-        PREVIEW_WORKER_INIT_TIMEOUT_MS,
-        'Preview worker GPU probe',
+      // Before anything else: the worker's GPU probe waits for these flags.
+      const { webgpuProbe } = await client.call(
+        'configure',
+        { gpuProfile: isGpuProfileRequestedByPage(), allowFallbackAdapter: isFallbackAdapterAllowedByPage() },
+        { timeoutMs: PREVIEW_WORKER_INIT_TIMEOUT_MS },
       );
 
       publishWebGpuProbe('worker', webgpuProbe);
 
       if (!webgpuProbe.ok) {
-        worker.terminate();
+        client.terminate();
         return null;
       }
 
       // Phase 2 — only transfer after the probe succeeds.
       const offscreen = canvas.transferControlToOffscreen();
-      const initMsg: PreviewWorkerInbound = {
-        type: 'init',
-        canvas: offscreen,
-        width: canvas.clientWidth || 1280,
-        height: canvas.clientHeight || 720,
-        decoderEnabled,
-      };
-
-      await withTimeout(
-        new Promise<void>((resolve, reject) => {
-          const onMessage = (event: MessageEvent<PreviewWorkerOutbound>) => {
-            if (event.data.type === 'initialized') {
-              worker.removeEventListener('message', onMessage);
-              worker.onmessage = (e: MessageEvent<PreviewWorkerOutbound>) =>
-                runtime.handleMessage(e.data);
-              resolve();
-            } else if (event.data.type === 'error') {
-              worker.removeEventListener('message', onMessage);
-              reject(new Error(event.data.message));
-            }
-          };
-          worker.addEventListener('message', onMessage);
-          worker.postMessage(initMsg, [offscreen as unknown as Transferable]);
-        }),
-        PREVIEW_WORKER_INIT_TIMEOUT_MS,
-        'Preview worker canvas init',
+      await client.call(
+        'init',
+        {
+          canvas: offscreen,
+          width: canvas.clientWidth || 1280,
+          height: canvas.clientHeight || 720,
+          decoderEnabled,
+        },
+        { transfer: [offscreen], timeoutMs: PREVIEW_WORKER_INIT_TIMEOUT_MS },
       );
 
       runtime.registerChoresRunner();
       return runtime;
     } catch {
-      worker.terminate();
+      client.terminate();
       return null;
     }
   }
@@ -269,123 +217,25 @@ export class PreviewWorkerRuntime {
     setPreviewWorkerChoresRunner(runner);
   }
 
-  private handleMessage(msg: PreviewWorkerOutbound): void {
-    switch (msg.type) {
-      case 'ready':
-      case 'initialized': {
-        // Handled during create(); ignored after init.
-        break;
-      }
-
-      case 'need-frames': {
-        const pending = this.pendingRenders.get(msg.renderId);
-        if (!pending) break;
-
-        pending
-          .captureFrames(msg.requests)
-          .then((frames) => {
-            if (this.destroyed || !this.pendingRenders.has(msg.renderId)) {
-              frames.forEach((f) => f.frame.close());
-              return;
-            }
-            // VideoFrame is Transferable — transfer ownership to worker.
-            const transferList = frames.map((f) => f.frame as unknown as Transferable);
-            const response: PreviewWorkerInbound = {
-              type: 'frames-ready',
-              renderId: msg.renderId,
-              frames,
-            };
-            this.worker.postMessage(response, transferList);
-          })
-          .catch((err) => {
-            const pendingRender = this.pendingRenders.get(msg.renderId);
-            if (pendingRender) {
-              this.pendingRenders.delete(msg.renderId);
-              pendingRender.reject(err instanceof Error ? err : new Error(String(err)));
-            }
-          });
-        break;
-      }
-
-      case 'render-complete': {
-        const pending = this.pendingRenders.get(msg.renderId);
-        this.pendingRenders.delete(msg.renderId);
-        if (msg.frameSources) this.lastFrameSources = msg.frameSources;
-        if (msg.gpuProfile) this.lastGpuProfile = msg.gpuProfile;
-        pending?.resolve(msg.plan);
-        break;
-      }
-
-      case 'scopes': {
-        this.scopesListener?.(msg.scopes);
-        break;
-      }
-
-      case 'color-state': {
-        publishColorDebugSnapshot(msg.snapshot);
-        break;
-      }
-
-      // The worker's device is not main's: record its health for Copy Debug
-      // and tell the preview, which must not watch main's registry for it.
-      case 'gpu-error': {
-        recordRemoteGpuError({ ...msg.entry, realm: 'preview-worker' });
-        break;
-      }
-
-      case 'gpu-lost': {
-        recordRemoteGpuError({
-          type: 'lost',
-          message: msg.message,
-          timestamp: msg.timestamp,
-          realm: 'preview-worker',
-        });
-        this.emitDeviceState('lost', msg.message);
-        break;
-      }
-
-      case 'gpu-recovered': {
-        this.emitDeviceState('recovered');
-        break;
-      }
-
-      case 'gpu-recovery-failed': {
-        recordRemoteGpuError({
-          type: 'lost',
-          message: `Device recreate failed: ${msg.message}`,
-          timestamp: msg.timestamp,
-          realm: 'preview-worker',
-        });
-        this.emitDeviceState('failed', msg.message);
-        break;
-      }
-
-      case 'render-cancelled': {
-        const pending = this.pendingRenders.get(msg.renderId);
-        this.pendingRenders.delete(msg.renderId);
-        pending?.resolve(null);
-        break;
-      }
-
-      case 'chore-jobs-result': {
-        const pending = this.pendingChores.get(msg.id);
-        this.pendingChores.delete(msg.id);
-        if (!pending) break;
-        if (msg.ok) pending.resolve(msg.results);
-        else pending.reject(new Error(msg.message));
-        break;
-      }
-
-      case 'error': {
-        console.error('[PreviewWorker]', msg.message);
-        const err = new Error(msg.message);
-        for (const pending of this.pendingRenders.values()) pending.reject(err);
-        this.pendingRenders.clear();
-        for (const pending of this.pendingChores.values()) pending.reject(err);
-        this.pendingChores.clear();
-        break;
-      }
-    }
+  /** Answer the worker's `need-frames` with `frames-ready` (frames transferred). */
+  private captureFor(renderId: number, requests: FrameRequest[]): void {
+    const pending = this.pendingRenders.get(renderId);
+    if (!pending) return;
+    pending
+      .captureFrames(requests)
+      .then((frames) => {
+        if (this.destroyed || this.pendingRenders.get(renderId) !== pending) {
+          frames.forEach((f) => f.frame.close());
+          return;
+        }
+        // VideoFrame is Transferable — transfer ownership to worker.
+        this.client.notify('frames-ready', { renderId, frames }, { transfer: frames.map((f) => f.frame) });
+      })
+      .catch((err: unknown) => {
+        if (this.pendingRenders.get(renderId) !== pending) return;
+        pending.captureError = err instanceof Error ? err : new Error(String(err));
+        pending.controller.abort(pending.captureError);
+      });
   }
 
   private emitDeviceState(state: PreviewDeviceState, message?: string): void {
@@ -400,41 +250,54 @@ export class PreviewWorkerRuntime {
 
   /**
    * Request a timeline render.  Resolves with the composition plan on success,
-   * or null if the render was cancelled before it completed.
+   * or null if the render was cancelled (or superseded) before it completed.
    */
   async renderTimeline(
     params: RenderTimelineParams,
     captureFrames: FrameCaptureCallback,
   ): Promise<PreviewCompositionPlan | null> {
     // Cancel any in-flight render — only the latest frame matters.
-    if (this.lastRenderId >= 0 && this.pendingRenders.has(this.lastRenderId)) {
-      this.cancel(this.lastRenderId);
-    }
+    if (this.lastRenderId >= 0) this.cancel(this.lastRenderId);
 
     const renderId = ++this.nextRenderId;
     this.lastRenderId = renderId;
+    const pending: PendingRender = { controller: new AbortController(), captureFrames, captureError: null };
+    this.pendingRenders.set(renderId, pending);
 
-    return new Promise<PreviewCompositionPlan | null>((resolve, reject) => {
-      this.pendingRenders.set(renderId, { resolve, reject, captureFrames });
-
-      const renderMsg: PreviewWorkerInbound = {
-        type: 'render',
-        renderId,
-        clips: params.clips,
-        clipGroups: params.clipGroups,
-        transitions: params.transitions,
-        textOverlays: params.textOverlays,
-        exportSettings: params.exportSettings,
-        globalTime: params.globalTime,
-        maxWidth: params.maxWidth,
-        maxHeight: params.maxHeight,
-        finishing: resolveTimelineFinishing(params),
-        colorManagement: params.colorManagement,
-        captions: params.captions,
-        captionStyle: params.captionStyle,
-      };
-      this.worker.postMessage(renderMsg);
-    });
+    try {
+      const result = await this.client.call(
+        'render',
+        {
+          renderId,
+          clips: params.clips,
+          clipGroups: params.clipGroups,
+          transitions: params.transitions,
+          textOverlays: params.textOverlays,
+          exportSettings: params.exportSettings,
+          globalTime: params.globalTime,
+          maxWidth: params.maxWidth,
+          maxHeight: params.maxHeight,
+          finishing: resolveTimelineFinishing({
+            ...(params.finishing ? { finishing: params.finishing } : {}),
+            ...(params.colorGrade ? { colorGrade: params.colorGrade } : {}),
+          }),
+          colorManagement: params.colorManagement,
+          captions: params.captions,
+          captionStyle: params.captionStyle,
+        },
+        { signal: pending.controller.signal },
+      );
+      if (!result) return null;
+      this.lastFrameSources = result.frameSources;
+      if (result.gpuProfile) this.lastGpuProfile = result.gpuProfile;
+      return result.plan;
+    } catch (err) {
+      if (pending.captureError) throw pending.captureError;
+      if (pending.controller.signal.aborted) return null;
+      throw err;
+    } finally {
+      if (this.pendingRenders.get(renderId) === pending) this.pendingRenders.delete(renderId);
+    }
   }
 
   /**
@@ -443,12 +306,7 @@ export class PreviewWorkerRuntime {
    */
   runChoreJobs(jobs: GpuChoreJobSpec[], source: ImageBitmap): Promise<GpuChoreResult[]> {
     if (this.destroyed) return Promise.reject(new Error('PreviewWorkerRuntime destroyed'));
-    const id = ++this.nextChoreId;
-    return new Promise((resolve, reject) => {
-      this.pendingChores.set(id, { resolve, reject });
-      const msg: PreviewWorkerInbound = { type: 'chore-jobs', id, jobs, source };
-      this.worker.postMessage(msg, [source]);
-    });
+    return this.client.call('chore-jobs', { jobs, source }, { transfer: [source] });
   }
 
   /**
@@ -467,8 +325,7 @@ export class PreviewWorkerRuntime {
   /** Hand the worker the preview bytes (proxy or original) for clips it should decode itself. */
   sendClipMedia(media: Array<{ clipId: string; blob: Blob; source?: PreviewMediaSource }>): void {
     if (this.destroyed || media.length === 0) return;
-    const msg: PreviewWorkerInbound = { type: 'clip-media', media };
-    this.worker.postMessage(msg);
+    this.client.notify('clip-media', { media });
   }
 
   /** Enable/disable scope computation and subscribe to the per-frame bins. */
@@ -476,61 +333,50 @@ export class PreviewWorkerRuntime {
     if (this.destroyed) return;
     if (listener) this.scopesListener = listener;
     else if (!scopes.waveform && !scopes.vectorscope) this.scopesListener = null;
-    const msg: PreviewWorkerInbound = { type: 'set-scopes', scopes };
-    this.worker.postMessage(msg);
+    this.client.notify('set-scopes', { scopes });
   }
 
   /** Tell the worker whether the page's display is HDR (`(dynamic-range: high)`). */
   setDisplayHdr(hdr: boolean): void {
     if (this.destroyed) return;
-    const msg: PreviewWorkerInbound = { type: 'display-hdr', hdr };
-    this.worker.postMessage(msg);
+    this.client.notify('display-hdr', { hdr });
   }
 
+  /** Cancel one render: its promise resolves null and the worker drops the frame. */
   cancel(renderId: number): void {
+    const pending = this.pendingRenders.get(renderId);
+    if (!pending) return;
     this.pendingRenders.delete(renderId);
-    const msg: PreviewWorkerInbound = { type: 'cancel', renderId };
-    this.worker.postMessage(msg);
+    pending.controller.abort();
   }
 
   resize(width: number, height: number): void {
-    const msg: PreviewWorkerInbound = { type: 'resize', width, height };
-    this.worker.postMessage(msg);
+    this.client.notify('resize', { width, height });
   }
 
   syncClips(clips: Clip[]): void {
-    const msg: PreviewWorkerInbound = {
-      type: 'sync-clips',
-      clips: clips.map(toWorkerClip),
-    };
-    this.worker.postMessage(msg);
+    this.client.notify('sync-clips', { clips: clips.map(toWorkerClip) });
   }
 
   pauseDecoders(): void {
-    const msg: PreviewWorkerInbound = { type: 'pause-decoders' };
-    this.worker.postMessage(msg);
+    this.client.notify('pause-decoders');
   }
 
   resetFinishingTemporal(): void {
-    const msg: PreviewWorkerInbound = { type: 'reset-finishing' };
-    this.worker.postMessage(msg);
+    this.client.notify('reset-finishing');
   }
 
   destroy(): void {
     if (this.destroyed) return;
     this.destroyed = true;
     try {
-      const msg: PreviewWorkerInbound = { type: 'destroy' };
-      this.worker.postMessage(msg);
+      this.client.notify('destroy');
     } catch {
       // Worker may already be gone.
     }
-    this.worker.terminate();
-    const err = new Error('PreviewWorkerRuntime destroyed');
-    for (const pending of this.pendingRenders.values()) pending.reject(err);
+    // Rejects every pending render and chore job (WorkerCrashedError).
+    this.client.terminate();
     this.pendingRenders.clear();
-    for (const pending of this.pendingChores.values()) pending.reject(err);
-    this.pendingChores.clear();
     if (this.choresRunner) {
       clearPreviewWorkerChoresRunner(this.choresRunner);
       this.choresRunner = null;

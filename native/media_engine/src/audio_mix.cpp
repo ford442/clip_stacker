@@ -177,8 +177,9 @@ struct MixFxSession {
     if (!(state >= 0.0 && state < static_cast<double>(states.size()))) return CS_ERANGE;
     EntryFx& fx = states[static_cast<size_t>(state)];
     if (!fx.built) {
-      fx.chain.build(effects.data() + static_cast<size_t>(first) * MIX_FX_STRIDE, static_cast<int>(count),
-                     static_cast<double>(sample_rate));
+      const int rows = static_cast<int>(count);
+      const double rate = static_cast<double>(sample_rate);
+      fx.chain.build(effects.data() + static_cast<size_t>(first) * MIX_FX_STRIDE, rows, rate);
       fx.built = true;
     }
     if (fx.chain.active()) *chain = &fx.chain;

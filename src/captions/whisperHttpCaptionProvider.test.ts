@@ -67,12 +67,12 @@ describe('whisperHttpCaptionProvider', () => {
     );
 
     expect(fetchMock).toHaveBeenCalledOnce();
-    expect(fetchMock.mock.calls[0][0]).toBe('https://example.com/inference');
-    expect(fetchMock.mock.calls[0][1].method).toBe('POST');
+    expect(fetchMock.mock.calls[0]![0]).toBe('https://example.com/inference');
+    expect(fetchMock.mock.calls[0]![1].method).toBe('POST');
     expect(cues).toHaveLength(1);
-    expect(cues[0].startSec).toBe(5);
-    expect(cues[0].endSec).toBe(6);
-    expect(cues[0].text).toBe('hello');
+    expect(cues[0]!.startSec).toBe(5);
+    expect(cues[0]!.endSec).toBe(6);
+    expect(cues[0]!.text).toBe('hello');
   });
 
   it('surfaces a failed request as an error', async () => {

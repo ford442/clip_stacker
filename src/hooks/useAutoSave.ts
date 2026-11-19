@@ -154,9 +154,7 @@ export function useAutoSave({
         session.selectedClipId &&
         restoredClips.some((clip) => clip.id === session.selectedClipId)
           ? session.selectedClipId
-          : restoredClips.length > 0
-            ? restoredClips[restoredClips.length - 1].id
-            : null;
+          : (restoredClips.at(-1)?.id ?? null);
 
       // Restore everything the snapshot holds — the same fields a save wrote.
       const restored: ProjectSnapshot = {
@@ -188,7 +186,7 @@ export function useAutoSave({
         masterAudioMarkers: restored.masterAudioMarkers,
         selectedClipId: selectedId,
         masterAudio: restored.masterAudio,
-        masterBus: restored.masterBus,
+        ...(restored.masterBus !== undefined && { masterBus: restored.masterBus }),
       });
       const { setExportSettings } = settingsStore.getState();
       const { setStatus } = renderJobStore.getState();

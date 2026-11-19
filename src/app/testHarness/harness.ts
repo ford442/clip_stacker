@@ -20,6 +20,8 @@
  * - `compare`, `toPng`, `fromPng`, `mediaDuration` — helpers that keep pixel
  *   data in the page (Playwright only sees scores and PNG strings).
  * - `timelineSummary`, `autoSaveSummary`, `crash` — for the smoke flows.
+ * - `listShaders()` — every WGSL module as its pass assembles it
+ *   (`webgpu/shaderCatalog.ts`), for `e2e/shaders.spec.ts` to compile.
  */
 
 import type {
@@ -64,6 +66,7 @@ import {
   type LumaStats,
 } from './colorProbes';
 import type { LayerFrameProvider } from '../../composition/previewComposition';
+import { listAssembledShaders } from '../../webgpu/shaderCatalog';
 
 export interface HarnessClipSpec {
   /** Which bundled demo clip (`public/demo/demo-clip-{a,b}.mp4`). */
@@ -567,6 +570,7 @@ export const testHarness = {
   timelineSummary,
   autoSaveSummary,
   crash,
+  listShaders: listAssembledShaders,
   toPng,
   fromPng,
   compare: (a: ImageData, b: ImageData): ImageComparison => compareImages(a, b),
@@ -579,8 +583,8 @@ export const testHarness = {
 export type TestHarness = typeof testHarness;
 
 declare global {
-  interface Window {
-    clipStacker?: { test?: TestHarness } & Record<string, unknown>;
+  interface ClipStackerGlobal {
+    test?: TestHarness;
   }
 }
 

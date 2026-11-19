@@ -7,7 +7,7 @@ import { makeClip } from './segments.test.helpers';
 
 function setup(clip: Clip, readMedia?: ReplaceDeps['readMedia']) {
   const tracks = createDefaultTracks();
-  tracks[0] = { ...tracks[0], items: [{ clipId: clip.id, startTime: 0 }] };
+  tracks[0] = { ...tracks[0]!, items: [{ clipId: clip.id, startTime: 0 }] };
   let state: EditState = { tracks: normalizeBaseLane(tracks, [clip], []), clips: [clip], transitions: [] };
   const deps: ReplaceDeps = {
     fetchBlob: vi.fn(async () => new Blob(['processed'], { type: 'video/mp4' })),
@@ -33,15 +33,15 @@ describe('replaceSegment', () => {
     expect(deps.commitEdit).toHaveBeenCalledTimes(1);
     expect(deps.select).toHaveBeenCalledWith('clip1');
     const clip = get().clips[0];
-    expect(clip.file.name).toBe('seg one.mp4');
-    expect(clip.remoteSourceUrl).toBe(REMOTE.url);
-    expect([clip.trimStart, clip.trimEnd, clip.objectUrl]).toEqual([0, 4, 'blob:new']);
+    expect(clip?.file.name).toBe('seg one.mp4');
+    expect(clip?.remoteSourceUrl).toBe(REMOTE.url);
+    expect([clip?.trimStart, clip?.trimEnd, clip?.objectUrl]).toEqual([0, 4, 'blob:new']);
   });
 
   it('does not remember a blob: URL as a library copy', async () => {
     const { deps, get } = setup(makeClip({ trimStart: 2, trimEnd: 6 }));
     await replaceSegment('clip1', { startSec: 2, endSec: 6 }, { url: 'blob:abc', durationSec: 4 }, deps);
-    expect(get().clips[0].remoteSourceUrl).toBeUndefined();
+    expect(get().clips[0]?.remoteSourceUrl).toBeUndefined();
   });
 
   it('trusts the measured media over the length the result claims', async () => {
@@ -59,7 +59,7 @@ describe('replaceSegment', () => {
     expect(result.ok).toBe(true);
     expect(get().clips).toHaveLength(3);
     expect(deps.afterSplit).toHaveBeenCalledWith(expect.objectContaining({ id: 'clip1' }));
-    expect(deps.select).toHaveBeenCalledWith(get().clips[1].id);
+    expect(deps.select).toHaveBeenCalledWith(get().clips[1]?.id);
   });
 
   it('reports download failures without touching the timeline', async () => {

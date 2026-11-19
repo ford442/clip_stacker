@@ -50,7 +50,7 @@ describe("project - serializeProjectWithMedia", () => {
         onRemoteUploadError: () => "retry",
       });
 
-      expect(project.clips[0].sourceMediaUrl).toBe(
+      expect(project.clips[0]!.sourceMediaUrl).toBe(
         "https://example.com/clip1.mp4",
       );
       expect(mediaClient.uploadMedia).toHaveBeenCalledTimes(2);
@@ -68,7 +68,7 @@ describe("project - serializeProjectWithMedia", () => {
         mediaClient,
       });
 
-      expect(project.clips[0].sourceMediaUrl).toBe(
+      expect(project.clips[0]!.sourceMediaUrl).toBe(
         "https://example.com/library/clip1.mp4",
       );
       expect(mediaClient.uploadMedia).not.toHaveBeenCalled();
@@ -97,8 +97,8 @@ describe("project - serializeProjectWithMedia", () => {
         onEmbedWarning,
       });
 
-      expect(project.clips[0].sourceMediaDataUrl).toBeDefined();
-      expect(project.clips[0].sourceMediaUrl).toBeUndefined();
+      expect(project.clips[0]!.sourceMediaDataUrl).toBeDefined();
+      expect(project.clips[0]!.sourceMediaUrl).toBeUndefined();
       expect(onEmbedWarning).not.toHaveBeenCalled();
     });
 
@@ -111,9 +111,9 @@ describe("project - serializeProjectWithMedia", () => {
         onEmbedWarning,
       });
 
-      expect(project.clips[0].sourceMediaDataUrl).toBeDefined();
+      expect(project.clips[0]!.sourceMediaDataUrl).toBeDefined();
       expect(onEmbedWarning).toHaveBeenCalledTimes(1);
-      expect(onEmbedWarning.mock.calls[0][0]).toContain("clip1.mp4");
+      expect(onEmbedWarning.mock.calls[0]![0]).toContain("clip1.mp4");
     });
 
     it("uploads an oversized file to remote storage instead of embedding when a media client is provided", async () => {
@@ -129,10 +129,10 @@ describe("project - serializeProjectWithMedia", () => {
         onEmbedWarning,
       });
 
-      expect(project.clips[0].sourceMediaDataUrl).toBeUndefined();
-      expect(project.clips[0].sourceMediaUrl).toBe("https://example.com/clip1.mp4");
+      expect(project.clips[0]!.sourceMediaDataUrl).toBeUndefined();
+      expect(project.clips[0]!.sourceMediaUrl).toBe("https://example.com/clip1.mp4");
       expect(onEmbedWarning).toHaveBeenCalledTimes(1);
-      expect(onEmbedWarning.mock.calls[0][0]).toContain("uploaded to remote storage");
+      expect(onEmbedWarning.mock.calls[0]![0]).toContain("uploaded to remote storage");
     });
   });
 
@@ -147,8 +147,8 @@ describe("project - serializeProjectWithMedia", () => {
         mediaMode: "embed",
       });
       expect(embedded.mediaMode).toBe("embed");
-      expect(embedded.clips[0].sourceMediaDataUrl).toBeDefined();
-      expect(embedded.clips[0].sourceMediaUrl).toBeUndefined();
+      expect(embedded.clips[0]!.sourceMediaDataUrl).toBeDefined();
+      expect(embedded.clips[0]!.sourceMediaUrl).toBeUndefined();
 
       const mediaClient = {
         uploadMedia: vi.fn().mockResolvedValue("https://example.com/clip1.mp4"),
@@ -158,8 +158,8 @@ describe("project - serializeProjectWithMedia", () => {
         mediaClient,
       });
       expect(remote.mediaMode).toBe("remote");
-      expect(remote.clips[0].sourceMediaUrl).toBe("https://example.com/clip1.mp4");
-      expect(remote.clips[0].sourceMediaDataUrl).toBeUndefined();
+      expect(remote.clips[0]!.sourceMediaUrl).toBe("https://example.com/clip1.mp4");
+      expect(remote.clips[0]!.sourceMediaDataUrl).toBeUndefined();
     });
   });
 });

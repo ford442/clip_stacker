@@ -23,8 +23,8 @@ describe('project captions round-trip', () => {
       endSec: 2.5,
       text: 'First cue',
     });
-    expect(restored.captions[1].text).toBe('Second\ncue');
-    expect(restored.captions[1].style).toEqual({ fontsize: 72 });
+    expect(restored.captions[1]!.text).toBe('Second\ncue');
+    expect(restored.captions[1]!.style).toEqual({ fontsize: 72 });
   });
 
   it('round-trips the project-wide caption style', async () => {
@@ -65,7 +65,7 @@ describe('project captions round-trip', () => {
       captions: [{ startSec: 1, endSec: 2, text: 'No id' }] as CaptionEntry[],
     };
     const restored = await applyProjectData(project, CLIPS);
-    expect(restored.captions[0].id).toBeTruthy();
+    expect(restored.captions[0]!.id).toBeTruthy();
   });
 
   it('survives the full .srt import → project save → load → .srt export path', async () => {
@@ -85,9 +85,9 @@ cue
 
     expect(exported).toHaveLength(imported.length);
     exported.forEach((entry, index) => {
-      expect(entry.startSec).toBeCloseTo(imported[index].startSec, 3);
-      expect(entry.endSec).toBeCloseTo(imported[index].endSec, 3);
-      expect(entry.text).toBe(imported[index].text);
+      expect(entry.startSec).toBeCloseTo(imported[index]!.startSec, 3);
+      expect(entry.endSec).toBeCloseTo(imported[index]!.endSec, 3);
+      expect(entry.text).toBe(imported[index]!.text);
     });
   });
 });

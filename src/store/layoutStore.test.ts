@@ -72,7 +72,7 @@ describe('layoutStore', () => {
       vi.advanceTimersByTime(LAYOUT_PERSIST_DELAY_MS);
       const writes = setItem.mock.calls.filter(([key]) => key === WORKSPACE_LAYOUT_STORAGE_KEY);
       expect(writes).toHaveLength(1);
-      expect(JSON.parse(writes[0][1] as string).libraryWidth).toBe(320);
+      expect(JSON.parse(writes[0]?.[1] as string).libraryWidth).toBe(320);
     } finally {
       setItem.mockRestore();
     }

@@ -408,7 +408,7 @@ export function getXfadeName(type: string): string {
  */
 export function resolveTransitionShaderId(transition: {
   type: string;
-  customShader?: string;
+  customShader?: string | undefined;
 }): string {
   if (transition.type !== CUSTOM_TRANSITION_TYPE) return transition.type;
   if (!transition.customShader) return CUSTOM_TRANSITION_TYPE;
@@ -420,7 +420,7 @@ export function listTransitionOptions(): Array<{
   value: string;
   label: string;
   description: string;
-  params?: TransitionParamDef[];
+  params?: TransitionParamDef[] | undefined;
 }> {
   return REGISTRY_LIST.map(({ id, label, description, params }) => ({
     value: id,

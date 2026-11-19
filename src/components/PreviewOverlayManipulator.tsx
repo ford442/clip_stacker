@@ -52,7 +52,7 @@ interface Props {
   clipGroups: ClipGroup[];
   transitions: ClipTransition[];
   textOverlays: TextOverlay[];
-  exportSettings?: ExportSettings;
+  exportSettings?: ExportSettings | undefined;
   playheadTime: number;
   selectedClipId: string | null;
   selectedTextOverlayId: string | null;
@@ -229,7 +229,7 @@ export function PreviewOverlayManipulator({
     (x: number, y: number): ManipulableTarget | null => {
       for (let i = targets.length - 1; i >= 0; i -= 1) {
         const target = targets[i];
-        if (pointInRect(x, y, target.rect)) return target;
+        if (target && pointInRect(x, y, target.rect)) return target;
       }
       return null;
     },
@@ -395,7 +395,7 @@ export function PreviewOverlayManipulator({
     dragRef.current = {
       mode: handle ? 'resize' : 'move',
       target,
-      handle: handle ?? undefined,
+      ...(handle ? { handle } : {}),
       startPointer: pointer,
       startRect: { ...target.rect },
       aspectRatio:

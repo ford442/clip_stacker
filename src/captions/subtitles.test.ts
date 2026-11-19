@@ -82,7 +82,7 @@ describe('parseSrt', () => {
       text: 'Hello world',
     });
     expect(captions[1]).toMatchObject({ startSec: 4, endSec: 6, text: 'Second cue' });
-    expect(captions[0].id).not.toBe(captions[1].id);
+    expect(captions[0]!.id).not.toBe(captions[1]!.id);
   });
 
   it('preserves multi-line cue text', () => {
@@ -92,26 +92,26 @@ First line
 Second line
 Third line
 `);
-    expect(captions[0].text).toBe('First line\nSecond line\nThird line');
+    expect(captions[0]!.text).toBe('First line\nSecond line\nThird line');
   });
 
   it('handles Windows line endings', () => {
     const captions = parseSrt(BASIC_SRT.replace(/\n/g, '\r\n'));
     expect(captions).toHaveLength(2);
-    expect(captions[0].text).toBe('Hello world');
-    expect(captions[0].text).not.toContain('\r');
+    expect(captions[0]!.text).toBe('Hello world');
+    expect(captions[0]!.text).not.toContain('\r');
   });
 
   it('handles lone carriage returns', () => {
     const captions = parseSrt(BASIC_SRT.replace(/\n/g, '\r'));
     expect(captions).toHaveLength(2);
-    expect(captions[1].text).toBe('Second cue');
+    expect(captions[1]!.text).toBe('Second cue');
   });
 
   it('strips a UTF-8 BOM', () => {
     const captions = parseSrt(`\uFEFF${BASIC_SRT}`);
     expect(captions).toHaveLength(2);
-    expect(captions[0].startSec).toBe(1);
+    expect(captions[0]!.startSec).toBe(1);
   });
 
   it('parses cues that are not separated by blank lines', () => {
@@ -134,7 +134,7 @@ Three`);
 00:00:01,000 --> 00:00:02,000
 The answer is
 42`);
-    expect(captions[0].text).toBe('The answer is\n42');
+    expect(captions[0]!.text).toBe('The answer is\n42');
   });
 
   it('parses cues with no sequence numbers at all', () => {
@@ -158,7 +158,7 @@ Loose timing`);
 00:00:01,000 --> 00:00:02,000  X1:100 X2:200 Y1:10 Y2:20
 Positioned`);
     expect(captions).toHaveLength(1);
-    expect(captions[0].text).toBe('Positioned');
+    expect(captions[0]!.text).toBe('Positioned');
   });
 
   it('skips cues with empty text instead of emitting blanks', () => {
@@ -169,7 +169,7 @@ Positioned`);
 00:00:03,000 --> 00:00:04,000
 Real text`);
     expect(captions).toHaveLength(1);
-    expect(captions[0].text).toBe('Real text');
+    expect(captions[0]!.text).toBe('Real text');
   });
 
   it('returns an empty list for empty or junk input', () => {
@@ -193,7 +193,7 @@ Early`);
     const captions = parseSrt(`1
 00:00:01,000 --> 00:00:01,000
 Instant`);
-    expect(captions[0].endSec).toBeCloseTo(1 + MIN_CAPTION_DURATION_SEC, 6);
+    expect(captions[0]!.endSec).toBeCloseTo(1 + MIN_CAPTION_DURATION_SEC, 6);
   });
 });
 
@@ -203,9 +203,9 @@ describe('serializeSrt', () => {
     const reparsed = parseSrt(serializeSrt(captions));
     expect(reparsed).toHaveLength(captions.length);
     reparsed.forEach((entry, index) => {
-      expect(entry.startSec).toBeCloseTo(captions[index].startSec, 3);
-      expect(entry.endSec).toBeCloseTo(captions[index].endSec, 3);
-      expect(entry.text).toBe(captions[index].text);
+      expect(entry.startSec).toBeCloseTo(captions[index]!.startSec, 3);
+      expect(entry.endSec).toBeCloseTo(captions[index]!.endSec, 3);
+      expect(entry.text).toBe(captions[index]!.text);
     });
   });
 
@@ -260,14 +260,14 @@ Comment: 0,0:00:07.00,0:00:08.00,Default,,0,0,0,,Not rendered
 
   it('strips override tags and keeps commas in the text field', () => {
     const captions = parseAss(ASS);
-    expect(captions[1].text).toBe('Styled, with a comma');
+    expect(captions[1]!.text).toBe('Styled, with a comma');
   });
 
   it('converts \\N and \\h escapes', () => {
     const captions = parseAss(`[Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Top\\NBottom\\hspaced`);
-    expect(captions[0].text).toBe('Top\nBottom spaced');
+    expect(captions[0]!.text).toBe('Top\nBottom spaced');
   });
 
   it('honours a reordered Format line', () => {
@@ -280,7 +280,7 @@ Dialogue: 0:00:02.00,0:00:04.00,Default,Reordered fields`);
   it('falls back to the v4+ field order when Format is missing', () => {
     const captions = parseAss(`[Events]
 Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,No format line`);
-    expect(captions[0].text).toBe('No format line');
+    expect(captions[0]!.text).toBe('No format line');
   });
 
   it('ignores dialogue outside the Events section', () => {
@@ -321,9 +321,9 @@ Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Hi`,
 
 describe('normalizeCaptions', () => {
   it('clamps negative starts and enforces a minimum duration', () => {
-    const [entry] = normalizeCaptions([
+    const entry = normalizeCaptions([
       { id: 'a', startSec: -2, endSec: -5, text: 'x' },
-    ]);
+    ])[0]!;
     expect(entry.startSec).toBe(0);
     expect(entry.endSec).toBeCloseTo(MIN_CAPTION_DURATION_SEC, 6);
   });
@@ -399,7 +399,7 @@ describe('buildAssDocument', () => {
   });
 
   it('positions cues in PlayRes pixels from the normalized style', () => {
-    const doc = buildAssDocument([captions[0]], { width: 1280, height: 720 });
+    const doc = buildAssDocument([captions[0]!], { width: 1280, height: 720 });
     // Defaults: x 0.5, y 0.92 → centre 640, bottom 662.
     expect(doc).toContain('{\\pos(640,662)}Plain');
   });
@@ -407,8 +407,8 @@ describe('buildAssDocument', () => {
   it('adds one extra Style row per distinct per-cue override', () => {
     const doc = buildAssDocument(
       [
-        captions[0],
-        captions[1],
+        captions[0]!,
+        captions[1]!,
         { id: 'c', startSec: 5, endSec: 6, text: 'Also big', style: { fontsize: 72 } },
       ],
       { width: 1280, height: 720 },

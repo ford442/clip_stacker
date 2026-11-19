@@ -6,18 +6,25 @@ import type { Clip } from "../types";
  */
 export const DEFAULT_MEMORY_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024; // 2 GB
 
+/** Chrome's non-standard `performance.memory` (absent from lib.dom). */
+interface PerformanceMemory {
+  usedJSHeapSize?: unknown;
+  jsHeapSizeLimit?: unknown;
+}
+
+function performanceMemory(): PerformanceMemory | null {
+  if (typeof performance === "undefined" || !("memory" in performance)) return null;
+  const { memory } = performance as Performance & { memory?: PerformanceMemory | null };
+  return memory ?? null;
+}
+
 /**
  * Get the current memory usage from the browser's performance API if available.
  * (Chrome/Edge only; returns null on other browsers)
  */
 export function getCurrentMemoryUsage(): number | null {
-  if (typeof performance !== "undefined" && "memory" in performance) {
-    const memory = (performance as any).memory;
-    if (memory && typeof memory.usedJSHeapSize === "number") {
-      return memory.usedJSHeapSize;
-    }
-  }
-  return null;
+  const memory = performanceMemory();
+  return typeof memory?.usedJSHeapSize === "number" ? memory.usedJSHeapSize : null;
 }
 
 /**
@@ -25,13 +32,8 @@ export function getCurrentMemoryUsage(): number | null {
  * (Chrome/Edge only; returns null on other browsers)
  */
 export function getMemoryLimit(): number | null {
-  if (typeof performance !== "undefined" && "memory" in performance) {
-    const memory = (performance as any).memory;
-    if (memory && typeof memory.jsHeapSizeLimit === "number") {
-      return memory.jsHeapSizeLimit;
-    }
-  }
-  return null;
+  const memory = performanceMemory();
+  return typeof memory?.jsHeapSizeLimit === "number" ? memory.jsHeapSizeLimit : null;
 }
 
 /**

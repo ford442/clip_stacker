@@ -167,9 +167,9 @@ describe('webcodecsAudio', () => {
       ];
       expect(timelineHasAudioAutomation(clips)).toBe(true);
       const schedule = buildAudioSchedule(clips, [], []);
-      expect(schedule[0].volumeAutomation).toHaveLength(2);
-      expect(schedule[0].panAutomation).toHaveLength(2);
-      expect(schedule[0].volume).toBe(0.8);
+      expect(schedule[0]!.volumeAutomation).toHaveLength(2);
+      expect(schedule[0]!.panAutomation).toHaveLength(2);
+      expect(schedule[0]!.volume).toBe(0.8);
     });
 
     it('applyGainEnvelope matches schedule automation defaults', () => {
@@ -198,7 +198,7 @@ describe('webcodecsAudio', () => {
           },
         }),
       ];
-      const [entry] = buildAudioSchedule(clips, [], []);
+      const entry = buildAudioSchedule(clips, [], [])[0]!;
       applyGainEnvelope(
         param as unknown as AudioParam,
         entry,

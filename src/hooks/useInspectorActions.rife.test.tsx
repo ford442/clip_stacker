@@ -80,12 +80,12 @@ describe('handleRife cleanup', () => {
       });
     });
     expect(calls).toEqual(['mux', 'finalize']);
-    expect(finalize.mock.calls[0][1]).toMatchObject({
+    expect(finalize.mock.calls[0]?.[1]).toMatchObject({
       outputFormat: 'prores',
       lightVideoCleanup: true,
       audioCleanup: false,
     });
-    expect(editorStore.getState().clips[0].file.name).toBe('rife_2x_a.mov');
+    expect(editorStore.getState().clips[0]?.file.name).toBe('rife_2x_a.mov');
   });
 
   it('skips the extra pass when no cleanup is selected', async () => {

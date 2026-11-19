@@ -19,7 +19,9 @@ import {
   type TimelineMixStreamOptions,
 } from '../wasm/mediaEngine';
 import { getWasmPublicBaseUrl } from '../wasm/emscriptenLoader';
-import { PCM_PART_FRAMES, type RenderWorkerRequest, type RenderWorkerResponse } from './audioRenderProtocol';
+import { createAudioRenderWorker } from '../workers/workerFactories';
+import { createWorkerClient, type WorkerClient, type WorkerLike } from '../workers/workerRpc';
+import { PCM_PART_FRAMES, type AudioRenderProtocol, type RenderPullResult } from './audioRenderProtocol';
 
 /** What export needs of a mix stream, wherever it runs. */
 export interface MixStream extends AsyncIterable<TimelineMixChunk> {
@@ -31,64 +33,48 @@ export interface MixStream extends AsyncIterable<TimelineMixChunk> {
   close(): void;
 }
 
-/** What the client needs of a Worker (tests substitute an in-process one). */
-export interface RenderWorkerLike {
-  postMessage(message: RenderWorkerRequest, transfer: Transferable[]): void;
-  onmessage: ((ev: MessageEvent<RenderWorkerResponse>) => void) | null;
-  onerror: ((ev: ErrorEvent) => void) | null;
-  terminate(): void;
-}
+type WorkerFactory = () => WorkerLike;
+type RenderClient = WorkerClient<AudioRenderProtocol>;
 
-type WorkerFactory = () => RenderWorkerLike;
+const defaultFactory = (): WorkerFactory | null => (typeof Worker === 'undefined' ? null : createAudioRenderWorker);
 
-const defaultFactory: WorkerFactory = () =>
-  new Worker(new URL('./audioRender.worker.ts', import.meta.url), {
-    type: 'module',
-  }) as unknown as RenderWorkerLike;
-
-let factory: WorkerFactory | null = typeof Worker === 'undefined' ? null : defaultFactory;
-let worker: RenderWorkerLike | null = null;
-let workerFailed = false;
+let factory: WorkerFactory | null = defaultFactory();
+let client: RenderClient | null = null;
 let nextId = 1;
 const streams = new Map<number, WorkerMixStream>();
 
 /** Yield to the event loop between PCM slices, so a long clip's copy is many short tasks. */
 const yieldTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
-function failWorker(reason: string): void {
-  console.warn(`[audioRender] worker failed (${reason})`);
-  workerFailed = true;
-  worker?.terminate();
-  worker = null;
-  for (const stream of streams.values()) stream.fail(new Error(`audio render worker failed: ${reason}`));
-  streams.clear();
-}
-
-function ensureWorker(): RenderWorkerLike | null {
-  if (worker) return worker;
-  if (workerFailed || !factory) return null;
-  try {
-    const w = factory();
-    w.onmessage = (ev) => streams.get(ev.data.id)?.receive(ev.data);
-    w.onerror = (ev) => failWorker(ev.message || 'worker error');
-    worker = w;
-    return w;
-  } catch (err) {
-    workerFailed = true;
-    console.warn('[audioRender] cannot start the worker; mixing on this thread', err);
-    return null;
+function workerClient(): RenderClient | null {
+  if (!factory) return null;
+  if (!client) {
+    const c = createWorkerClient<AudioRenderProtocol>(factory, {
+      name: 'audio render',
+      // A worker that dies mid-export fails its streams; export falls back.
+      onCrash: (err) => {
+        console.warn(`[audioRender] ${err.message}`);
+        for (const stream of streams.values()) stream.fail(err);
+        streams.clear();
+      },
+    });
+    c.on('need-pcm', ({ id, index }) => streams.get(id)?.needPcm(index));
+    c.on('release', ({ id, index }) => streams.get(id)?.release(index));
+    if (!c.start()) console.warn('[audioRender] cannot start the worker; mixing on this thread', c.failure);
+    client = c;
   }
+  return client.available ? client : null;
 }
 
 /** `?media_engine_resampler=linear` is a page parameter; the worker cannot see it. */
-function pageResampler(): TimelineMixStreamOptions['resampler'] {
+function pageResampler(): 'linear' | 'polyphase' {
   const search = typeof location !== 'undefined' ? location.search : '';
   return new URLSearchParams(search.replace(/^\?/, '')).get(MEDIA_ENGINE_RESAMPLER_PARAM) === 'linear'
     ? 'linear'
     : 'polyphase';
 }
 
-type Settled = { chunk: TimelineMixChunk } | { done: true } | { error: Error };
+type Settled = { result: RenderPullResult } | { error: unknown };
 
 class WorkerMixStream implements MixStream {
   totalFrames = 0;
@@ -97,72 +83,53 @@ class WorkerMixStream implements MixStream {
   private meters: MixMeterReading | null = null;
   private closed = false;
   private finished = false;
-  private opened: ((ok: boolean) => void) | null = null;
-  private failure: Error | null = null;
-  /** Responses to pulls, in order, and the reader waiting for the next one. */
-  private readonly settled: Settled[] = [];
-  private waiter: ((value: Settled) => void) | null = null;
-  private pullsInFlight = 0;
+  /** Pulls in flight, in order; each settles (never rejects). */
+  private readonly inflight: Promise<Settled>[] = [];
+  /** Settles when the stream fails on this side (a post failed, the worker died). */
+  private readonly failed: Promise<Settled>;
+  private failWith: (value: Settled) => void = () => {};
+  private failure: unknown = null;
   /** Entries whose PCM the worker asked for and has not released. */
   private readonly held = new Set<number>();
 
   constructor(
     readonly id: number,
-    private readonly w: RenderWorkerLike,
+    private readonly rpc: RenderClient,
     private readonly provider: ClipPcmProvider,
-  ) {}
-
-  open(entries: MediaEngineMixEntry[], options: TimelineMixStreamOptions): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
-      this.opened = resolve;
-      this.send({ type: 'open', id: this.id, entries, options });
+  ) {
+    this.failed = new Promise((resolve) => {
+      this.failWith = resolve;
     });
   }
 
-  receive(msg: RenderWorkerResponse): void {
-    if (this.closed) return;
-    switch (msg.type) {
-      case 'opened':
-        this.totalFrames = msg.totalFrames;
-        this.sampleRate = msg.sampleRate;
-        this.channels = msg.channels;
-        this.opened?.(true);
-        this.opened = null;
-        return;
-      case 'unavailable':
-        streams.delete(this.id);
-        this.opened?.(false);
-        this.opened = null;
-        return;
-      case 'need-pcm':
-        this.held.add(msg.index);
-        void this.sendPcm(msg.index);
-        return;
-      case 'release':
-        if (this.held.delete(msg.index)) this.provider.release?.(msg.index);
-        return;
-      case 'chunk':
-        this.settle({ chunk: { startFrame: msg.startFrame, frameCount: msg.frameCount, frames: msg.frames } });
-        return;
-      case 'done':
-        this.meters = msg.meters;
-        this.settle({ done: true });
-        return;
-      case 'error':
-        this.fail(new Error(msg.message));
-        return;
+  async open(entries: MediaEngineMixEntry[], options: TimelineMixStreamOptions): Promise<boolean> {
+    try {
+      const dims = await this.rpc.call('open', { id: this.id, entries, options });
+      if (!dims) return false;
+      this.totalFrames = dims.totalFrames;
+      this.sampleRate = dims.sampleRate;
+      this.channels = dims.channels;
+      return true;
+    } catch {
+      // Failed before it opened: no stream (callers fall back).
+      return false;
     }
   }
 
-  fail(err: Error): void {
+  needPcm(index: number): void {
     if (this.closed) return;
+    this.held.add(index);
+    void this.sendPcm(index);
+  }
+
+  release(index: number): void {
+    if (!this.closed && this.held.delete(index)) this.provider.release?.(index);
+  }
+
+  fail(err: unknown): void {
+    if (this.closed || this.failure) return;
     this.failure = err;
-    if (this.opened) {
-      // Failed before it opened: no stream (callers fall back).
-      this.opened(false);
-      this.opened = null;
-    }
-    this.settle({ error: err });
+    this.failWith({ error: err });
   }
 
   readMeters(): MixMeterReading | null {
@@ -171,16 +138,18 @@ class WorkerMixStream implements MixStream {
 
   async *[Symbol.asyncIterator](): AsyncIterator<TimelineMixChunk> {
     while (!this.finished) {
+      if (this.closed) throw new Error('mix stream is closed');
       // Keep one pull ahead: the worker mixes chunk k + 1 while we encode k.
-      while (this.pullsInFlight < 2) this.pull();
-      const next = await this.take();
-      this.pullsInFlight -= 1;
+      while (this.inflight.length < 2) this.inflight.push(this.pull());
+      const next = await Promise.race([this.inflight.shift()!, this.failed]);
       if ('error' in next) throw next.error;
-      if ('done' in next) {
+      const result = next.result;
+      if (result.type === 'done') {
         this.finished = true;
+        this.meters = result.meters;
         return;
       }
-      yield next.chunk;
+      yield { startFrame: result.startFrame, frameCount: result.frameCount, frames: result.frames };
     }
   }
 
@@ -192,73 +161,52 @@ class WorkerMixStream implements MixStream {
     for (const index of this.held) this.provider.release?.(index);
     this.held.clear();
     try {
-      this.w.postMessage({ type: 'close', id: this.id }, []);
+      this.rpc.notify('close', { id: this.id });
     } catch {
       // The worker is gone; nothing to close.
     }
   }
 
-  private pull(): void {
-    if (this.closed) throw new Error('mix stream is closed');
-    this.pullsInFlight += 1;
-    this.send({ type: 'pull', id: this.id });
-  }
-
-  private take(): Promise<Settled> {
-    const ready = this.settled.shift();
-    if (ready) return Promise.resolve(ready);
-    if (this.failure) return Promise.resolve({ error: this.failure });
-    return new Promise((resolve) => {
-      this.waiter = resolve;
-    });
-  }
-
-  private settle(value: Settled): void {
-    const waiter = this.waiter;
-    if (waiter) {
-      this.waiter = null;
-      waiter(value);
-    } else {
-      this.settled.push(value);
-    }
-  }
-
-  private send(msg: RenderWorkerRequest, transfer: Transferable[] = []): void {
-    try {
-      this.w.postMessage(msg, transfer);
-    } catch (err) {
-      this.fail(err as Error);
-    }
+  private pull(): Promise<Settled> {
+    return this.rpc.call('pull', { id: this.id }).then(
+      (result): Settled => ({ result }),
+      (error: unknown): Settled => ({ error }),
+    );
   }
 
   /** Answer `need-pcm`: decode on this thread, then send the planes in slices. */
   private async sendPcm(index: number): Promise<void> {
     const id = this.id;
-    let pcm;
     try {
-      pcm = await this.provider.acquire(index);
-    } catch (err) {
-      this.send({ type: 'pcm-error', id, index, message: (err as Error)?.message || String(err) });
-      return;
-    }
-    if (this.closed) return;
-    if (!pcm || pcm.channelData.length === 0 || !(pcm.sampleRate > 0)) {
-      this.send({ type: 'pcm-error', id, index, message: 'no audio', skip: true });
-      return;
-    }
-    const planes = pcm.channelData.slice(0, 2);
-    const frames = planes[0]!.length;
-    this.send({ type: 'pcm-begin', id, index, sampleRate: pcm.sampleRate, channels: planes.length, frames });
-    for (let offset = 0; offset < frames; offset += PCM_PART_FRAMES) {
-      for (let channel = 0; channel < planes.length; channel++) {
-        if (this.closed) return;
-        // A copy: the planes are AudioBuffer views (or a cache's), never ours to transfer.
-        const data = planes[channel]!.slice(offset, Math.min(frames, offset + PCM_PART_FRAMES));
-        this.send({ type: 'pcm-part', id, index, channel, offset, data }, [data.buffer]);
+      let pcm;
+      try {
+        pcm = await this.provider.acquire(index);
+      } catch (err) {
+        this.rpc.notify('pcm-error', { id, index, message: err instanceof Error ? err.message : String(err) });
+        return;
       }
-      if (offset + PCM_PART_FRAMES < frames) await yieldTask();
+      if (this.closed) return;
+      if (!pcm || pcm.channelData.length === 0 || !(pcm.sampleRate > 0)) {
+        this.rpc.notify('pcm-error', { id, index, message: 'no audio', skip: true });
+        return;
+      }
+      const planes = pcm.channelData.slice(0, 2);
+      const frames = planes[0]?.length ?? 0;
+      this.rpc.notify('pcm-begin', { id, index, sampleRate: pcm.sampleRate, channels: planes.length, frames });
+      for (let offset = 0; offset < frames; offset += PCM_PART_FRAMES) {
+        for (let channel = 0; channel < planes.length; channel++) {
+          if (this.closed) return;
+          // A copy: the planes are AudioBuffer views (or a cache's), never ours to transfer.
+          const data = planes[channel]!.slice(offset, Math.min(frames, offset + PCM_PART_FRAMES));
+          this.rpc.notify('pcm-part', { id, index, channel, offset, data }, { transfer: [data.buffer] });
+        }
+        if (offset + PCM_PART_FRAMES < frames) await yieldTask();
+      }
+      if (!this.closed) this.rpc.notify('pcm-end', { id, index });
+    } catch (err) {
+      // A post failed: the worker will never get this PCM.
+      this.fail(err);
     }
-    if (!this.closed) this.send({ type: 'pcm-end', id, index });
   }
 }
 
@@ -273,10 +221,10 @@ export async function openMixStream(
   options: TimelineMixStreamOptions,
 ): Promise<MixStream | null> {
   if (!isMediaEngineMixEnabled()) return openTimelineMixStream(entries, provider, options);
-  const w = ensureWorker();
-  if (!w) return openTimelineMixStream(entries, provider, options);
+  const rpc = workerClient();
+  if (!rpc) return openTimelineMixStream(entries, provider, options);
   const id = nextId++;
-  const stream = new WorkerMixStream(id, w, provider);
+  const stream = new WorkerMixStream(id, rpc, provider);
   streams.set(id, stream);
   const ok = await stream.open(entries, {
     ...options,
@@ -292,9 +240,8 @@ export async function openMixStream(
 
 /** Test-only: swap the worker factory (null = no Worker support) and forget the worker. */
 export function __setAudioRenderWorkerFactoryForTests(next: WorkerFactory | null | undefined): void {
-  worker?.terminate();
-  worker = null;
-  workerFailed = false;
+  client?.terminate();
+  client = null;
   streams.clear();
-  factory = next === undefined ? (typeof Worker === 'undefined' ? null : defaultFactory) : next;
+  factory = next === undefined ? defaultFactory() : next;
 }

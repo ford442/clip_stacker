@@ -1,47 +1,39 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PreviewWorkerRuntime } from './previewWorkerRuntime';
 import { getGpuErrorLog, __resetGpuContextForTests } from './gpuDevice';
-import type { PreviewWorkerInbound, PreviewWorkerOutbound } from './previewWorkerProtocol';
+import type { PreviewWorkerProtocol } from './previewWorkerProtocol';
+import type { WebGpuProbeResult } from './webgpuProbe';
+import { InProcessWorker, flushWorkerMessages } from '../workers/inProcessWorker.test.helpers';
+import { exposeWorker, type WorkerPort } from '../workers/workerRpc';
 
-/** Just enough of a module Worker to get through the two-phase handshake. */
-class FakeWorker extends EventTarget {
-  static last: FakeWorker | null = null;
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  onerror: ((event: ErrorEvent) => void) | null = null;
-  terminate = vi.fn();
+const PROBE_OK: WebGpuProbeResult = { ok: true, browser: 'test', reason: '', adapter: null };
+
+/** Just enough of the preview worker to get through the two-phase handshake. */
+class FakePreviewWorker extends InProcessWorker {
+  static last: FakePreviewWorker | null = null;
+  port: WorkerPort<PreviewWorkerProtocol> | null = null;
 
   constructor() {
     super();
-    FakeWorker.last = this;
-    queueMicrotask(() =>
-      this.emit({
-        type: 'ready',
-        webgpuAvailable: true,
-        webgpuProbe: { ok: true } as never,
-      }),
+    FakePreviewWorker.last = this;
+    // Only the handshake calls are served; every other message is dropped.
+    exposeWorker<Pick<PreviewWorkerProtocol, 'configure' | 'init' | 'gpu-error' | 'gpu-lost' | 'gpu-recovered' | 'gpu-recovery-failed'>>(
+      (port) => {
+        this.port = port;
+        return {
+          configure: () => ({ webgpuAvailable: true, webgpuProbe: PROBE_OK }),
+          init: () => {},
+        };
+      },
+      { scope: this.scope },
     );
-  }
-
-  postMessage(msg: PreviewWorkerInbound): void {
-    if (msg.type === 'init') queueMicrotask(() => this.emit({ type: 'initialized' }));
-  }
-
-  /** Deliver to `addEventListener` listeners and the `onmessage` handler, once each. */
-  emit(data: PreviewWorkerOutbound): void {
-    const event = new MessageEvent('message', { data });
-    const handler = this.onmessage;
-    this.onmessage = null; // happy-dom's dispatchEvent would also call it
-    this.dispatchEvent(event);
-    this.onmessage = handler;
-    handler?.(event);
   }
 }
 
 async function createRuntime(): Promise<PreviewWorkerRuntime> {
   const canvas = document.createElement('canvas');
-  (canvas as unknown as { transferControlToOffscreen: () => object }).transferControlToOffscreen =
-    () => ({});
-  const runtime = await PreviewWorkerRuntime.create(canvas, false);
+  canvas.transferControlToOffscreen = () => new OffscreenCanvas(1, 1);
+  const runtime = await PreviewWorkerRuntime.create(canvas, false, () => new FakePreviewWorker());
   if (!runtime) throw new Error('runtime did not start');
   return runtime;
 }
@@ -49,8 +41,8 @@ async function createRuntime(): Promise<PreviewWorkerRuntime> {
 describe('PreviewWorkerRuntime device state', () => {
   beforeEach(() => {
     __resetGpuContextForTests();
-    vi.stubGlobal('Worker', FakeWorker);
-    vi.stubGlobal('OffscreenCanvas', class {});
+    // Transferable through structuredClone, like the real OffscreenCanvas.
+    vi.stubGlobal('OffscreenCanvas', ArrayBuffer);
   });
 
   afterEach(() => {
@@ -62,11 +54,12 @@ describe('PreviewWorkerRuntime device state', () => {
     const runtime = await createRuntime();
     const states: Array<[string, string | undefined]> = [];
     runtime.onDeviceState((state, message) => states.push([state, message]));
-    const worker = FakeWorker.last!;
+    const port = FakePreviewWorker.last!.port!;
 
-    worker.emit({ type: 'gpu-error', entry: { type: 'validation', message: 'bad bind group', timestamp: 1 } });
-    worker.emit({ type: 'gpu-lost', message: 'GPU process crashed', timestamp: 2 });
-    worker.emit({ type: 'gpu-recovered' });
+    port.emit('gpu-error', { entry: { type: 'validation', message: 'bad bind group', timestamp: 1 } });
+    port.emit('gpu-lost', { message: 'GPU process crashed', timestamp: 2 });
+    port.emit('gpu-recovered');
+    await flushWorkerMessages();
 
     expect(states).toEqual([
       ['lost', 'GPU process crashed'],
@@ -83,7 +76,8 @@ describe('PreviewWorkerRuntime device state', () => {
     const runtime = await createRuntime();
     const listener = vi.fn();
     runtime.onDeviceState(listener);
-    FakeWorker.last!.emit({ type: 'gpu-recovery-failed', message: 'adapter gone', timestamp: 3 });
+    FakePreviewWorker.last!.port!.emit('gpu-recovery-failed', { message: 'adapter gone', timestamp: 3 });
+    await flushWorkerMessages();
     expect(listener).toHaveBeenCalledWith('failed', 'adapter gone');
     runtime.destroy();
   });

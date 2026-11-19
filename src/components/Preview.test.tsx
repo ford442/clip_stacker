@@ -111,7 +111,10 @@ describe('Preview', () => {
       1,
       720,
       undefined,
-      { captions: props.captions, captionStyle: props.captionStyle },
+      {
+        ...(props.captions && { captions: props.captions }),
+        ...(props.captionStyle && { captionStyle: props.captionStyle }),
+      },
     );
     const kinds = plan.layers.map((layer) => layer.kind);
     expect(kinds).toContain('text');

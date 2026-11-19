@@ -59,7 +59,7 @@ function TextOverlayPanelImpl({
   const overlays = useEditorTextOverlays();
   const previewGlobalTime = usePlayheadTime() ?? 0;
   const layoutCanvas = parseCanvasSize(exportSettings.outputResolution);
-  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(selectedOverlayId ?? null);
   const [activeKeyframeProp, setActiveKeyframeProp] =
     useState<TextAnimatableProp>("x");
   const itemRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -70,9 +70,12 @@ function TextOverlayPanelImpl({
     node?.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [editingId, overlays.length]);
 
-  useEffect(() => {
+  // Selecting an overlay elsewhere (the preview, the titles lane) opens it here.
+  const [syncedSelection, setSyncedSelection] = useState(selectedOverlayId);
+  if (syncedSelection !== selectedOverlayId) {
+    setSyncedSelection(selectedOverlayId);
     if (selectedOverlayId) setEditingId(selectedOverlayId);
-  }, [selectedOverlayId]);
+  }
 
   const handleToggleEdit = (id: string) => {
     setEditingId((prev) => {

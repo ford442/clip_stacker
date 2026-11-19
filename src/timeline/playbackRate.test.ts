@@ -110,10 +110,10 @@ describe('playbackRate', () => {
 
   it('reads loop count from a clip and detects looping', () => {
     expect(getClipLoopCount(undefined)).toBe(1);
-    expect(getClipLoopCount({ loopCount: undefined })).toBe(1);
+    expect(getClipLoopCount({})).toBe(1);
     expect(getClipLoopCount({ loopCount: 4 })).toBe(4);
     expect(clipHasLoop({ loopCount: 1 })).toBe(false);
-    expect(clipHasLoop({ loopCount: undefined })).toBe(false);
+    expect(clipHasLoop({})).toBe(false);
     expect(clipHasLoop({ loopCount: 4 })).toBe(true);
   });
 });

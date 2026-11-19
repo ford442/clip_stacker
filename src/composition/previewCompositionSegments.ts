@@ -43,7 +43,7 @@ export function filterBaseLayerTransitions(
 
   const remapped: ClipTransition[] = [];
   for (let baseSlot = 1; baseSlot < baseTimelineIndices.length; baseSlot++) {
-    const previousTimelineIndex = baseTimelineIndices[baseSlot - 1];
+    const previousTimelineIndex = baseTimelineIndices[baseSlot - 1] ?? -1;
     const timelineIndex = baseTimelineIndices[baseSlot];
     if (timelineIndex !== previousTimelineIndex + 1) continue;
 
@@ -65,13 +65,13 @@ export function buildClipTimelineSegments(
 ): ClipTimelineSegment[] {
   if (clips.length === 0) return [];
 
-  const durations = clips.map(getClipDuration);
   const transMap = buildTransitionMap(transitions);
   const segments: ClipTimelineSegment[] = [];
   let accumulated = 0;
   let overlapSoFar = 0;
 
-  for (let scheduleIndex = 0; scheduleIndex < clips.length; scheduleIndex++) {
+  clips.forEach((clip, scheduleIndex) => {
+    const duration = getClipDuration(clip);
     let startTime = 0;
     if (scheduleIndex > 0) {
       const transition = transMap.get(scheduleIndex);
@@ -81,12 +81,12 @@ export function buildClipTimelineSegments(
     }
 
     segments.push({
-      clip: clips[scheduleIndex],
-      timelineIndex: timelineIndices[scheduleIndex],
+      clip,
+      timelineIndex: timelineIndices[scheduleIndex] ?? scheduleIndex,
       scheduleIndex,
-      duration: durations[scheduleIndex],
+      duration,
       startTime,
-      endTime: startTime + durations[scheduleIndex],
+      endTime: startTime + duration,
     });
 
     if (scheduleIndex > 0) {
@@ -95,15 +95,15 @@ export function buildClipTimelineSegments(
         overlapSoFar += appliedTransition.duration;
       }
     }
-    accumulated += durations[scheduleIndex];
-  }
+    accumulated += duration;
+  });
 
   return segments;
 }
 
 export interface CanvasSizeOptions {
-  maxHeight?: number;
-  maxWidth?: number;
+  maxHeight?: number | undefined;
+  maxWidth?: number | undefined;
 }
 
 export function resolveCanvasSize(
