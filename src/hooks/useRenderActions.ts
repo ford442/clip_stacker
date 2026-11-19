@@ -289,13 +289,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         console.warn("Error during FFmpeg cleanup:", err);
       });
     }
-  }, [
-    effectiveClips,
-    clips,
-    clipGroups,
-    transitions,
-    textOverlays,
-  ]);
+  }, [effectiveClips, clipGroups, transitions, textOverlays]);
 
   const handleMerge = useCallback(async () => {
     // Check if high memory usage is detected based on actual timeline clips

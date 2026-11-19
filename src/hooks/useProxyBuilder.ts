@@ -153,7 +153,10 @@ export function useProxyBuilder(
   const queue = useProxyState((s) => s.queue);
   const [finished, setFinished] = useState(0);
   const clipsRef = useRef(clips);
-  clipsRef.current = clips;
+  // Declared before the effects that read it, so it is current when they run.
+  useEffect(() => {
+    clipsRef.current = clips;
+  });
   const inFlight = useRef<{ clipId: string; controller: AbortController } | null>(null);
   const reconciler = useRef<ProxyReconciler | null>(null);
   reconciler.current ??= new ProxyReconciler();

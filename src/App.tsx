@@ -78,15 +78,8 @@ export function App() {
     resolveRemoteUploadError,
   } = useProjectSaveLoad({
     clips,
-    tracks,
-    clipGroups,
     transitions,
     textOverlays,
-    setClips,
-    setClipGroups,
-    setSelectedClipId,
-    setTransitions,
-    setTextOverlays,
     resetHistory,
   });
 
