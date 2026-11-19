@@ -54,6 +54,8 @@ export interface EncoderPathInput {
   outputColor?: OutputColor;
   /** Caption cues drawn into the picture (burn-in mode with cues). */
   burnCaptions?: boolean;
+  /** Smart render is on (`renderCacheConfig().smartRender`); undefined = off. */
+  smartRender?: boolean;
 }
 
 export interface EncoderPathDecision {
@@ -125,7 +127,9 @@ export function wideOutputFfmpegRefusal(outputColor: OutputColor | undefined, wh
 
 /** True when the GPU encoder is the candidate (everything but the WebCodecs probe). */
 export function isGpuEncodeCandidate(input: EncoderPathInput): boolean {
-  if (input.forceFFmpeg || !(input.willReencode || mustReencode(input))) return false;
+  if (input.forceFFmpeg || !(input.willReencode || mustReencode(input) || smartRenderPrefersGpu(input))) {
+    return false;
+  }
   return canUseGpuVideoEncoder(input.clips, input.transitions, input.textOverlays, {
     forceFFmpeg: false,
     useCanvas: false,
@@ -137,6 +141,24 @@ export function isGpuEncodeCandidate(input: EncoderPathInput): boolean {
 /** A sequence clip has no file to stream-copy; a wide output has to be converted. */
 function mustReencode(input: Pick<EncoderPathInput, 'clips' | 'outputColor'>): boolean {
   return input.clips.some(isSequenceClip) || wideOutputFfmpegRefusal(input.outputColor, '') !== undefined;
+}
+
+/**
+ * A cut-only timeline FFmpeg would stream-copy, except that FFmpeg's concat
+ * re-encodes every clip trimmed at the start (a copy would snap to the key
+ * frame before the cut). Smart render on the GPU path copies such a clip
+ * from its next key frame on and encodes only the frames before it, so it
+ * takes the timeline when WebGPU is confirmed.
+ */
+export function smartRenderPrefersGpu(
+  input: Pick<EncoderPathInput, 'clips' | 'smartRender' | 'webGpuAvailable' | 'forceFFmpeg'>,
+): boolean {
+  return (
+    input.smartRender === true &&
+    input.webGpuAvailable === true &&
+    !input.forceFFmpeg &&
+    input.clips.some((clip) => clip.kind === 'video' && !clip.stillImage && clip.trimStart > 0)
+  );
 }
 
 /** The FFmpeg decision for a render that could not take the GPU encoder, refused when it must be. */
@@ -204,8 +226,13 @@ export function selectEncoderPath(input: EncoderPathInput): EncoderPathDecision 
     return ffmpegFallback(input, reasons, 'WebGPU is not available');
   }
   if (!input.willReencode && !mustReencode(input)) {
-    reasons.push('Nothing to re-encode — FFmpeg stream-copies (lossless concat)');
-    return { path: 'ffmpeg', reasons };
+    if (!smartRenderPrefersGpu(input)) {
+      reasons.push('Nothing to re-encode — FFmpeg stream-copies (lossless concat)');
+      return { path: 'ffmpeg', reasons };
+    }
+    reasons.push(
+      'Cut-only, but a clip is trimmed at the start: smart render copies its GOPs and re-encodes only the frames before its next key frame (FFmpeg would re-encode the whole clip)',
+    );
   }
   if (!input.willReencode && wideOutput) {
     reasons.push('Display P3 / HDR10 always re-encodes — a stream copy would keep the source colour');

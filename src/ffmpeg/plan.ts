@@ -58,6 +58,8 @@ export interface RenderPlanContext {
   /** Requested output colour (`ColorManagementSettings.outputColor`). */
   outputColor?: OutputColor;
   captionMode?: 'none' | 'burn' | 'soft';
+  /** Smart render is on (`renderCacheConfig().smartRender`). */
+  smartRender?: boolean;
 }
 
 export function calculateRenderPlan(
@@ -92,6 +94,7 @@ export function calculateRenderPlan(
       clipsNeedResolutionNormalization(clips, settings),
     ...(context.outputColor !== undefined && { outputColor: context.outputColor }),
     burnCaptions: context.captionMode === 'burn',
+    ...(context.smartRender !== undefined && { smartRender: context.smartRender }),
   });
   const encoderIntent = decision.path;
   const finishingActive = isFinishingActive(context.finishing);

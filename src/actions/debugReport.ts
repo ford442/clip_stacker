@@ -28,6 +28,7 @@ import { getLastDecoderAcceleration } from '../export/webcodecsDecoder';
 import { getColorDebugSnapshot, type ColorManagementSettings } from '../finishing/colorManagement';
 import { getAudioPlaybackManager } from '../playback/playbackManager';
 import { WorkerCrashedError, getWorkerCrashLog } from '../workers/workerRpc';
+import { renderCacheStore } from '../store/renderCacheStore';
 
 export interface DebugReportContext {
   status: string;
@@ -118,6 +119,32 @@ export function generateDebugReport(ctx: DebugReportContext): string {
     if (ctx.renderPlan.refusal) {
       lines.push(`- **Refused:** ${ctx.renderPlan.refusal}`);
     }
+    const cache = ctx.renderPlan.renderCache;
+    if (cache) {
+      lines.push(
+        `- **Render cache:** ${cache.hits}/${cache.segments} segments reused, ${cache.misses} rendered ` +
+          `(${cache.uncacheable} uncacheable); frames encoded ${cache.framesEncoded}, reused ${cache.framesReused}, ` +
+          `copied ${cache.framesCopied} (${cache.copies} spans); ${cache.bytesReused} B reused, ${cache.bytesStored} B stored; ` +
+          `parameter sets ${cache.parameterSets}`,
+      );
+    }
+    lines.push('');
+  }
+
+  {
+    const { settings, usage } = renderCacheStore.getState();
+    lines.push('## Render Cache');
+    lines.push(
+      `- Settings: cache ${settings.enabled ? 'on' : 'off'}, smart render ${settings.smartRender ? 'on' : 'off'}, ` +
+        `budget ${settings.budgetBytes} B, preview cache ${settings.previewCache ? 'on' : 'off'}, ` +
+        `background render ${settings.backgroundRender ? 'on' : 'off'}`,
+    );
+    lines.push(
+      usage
+        ? `- Holds ${usage.entries} segments, ${usage.bytes} B (${usage.backend}${usage.persistent ? ', persistent' : ', memory only'})`
+        : '- Not opened yet this session',
+    );
+    lines.push('- Clear it with **🗑 Clear render cache** next to Copy Debug (or Export → Render cache).');
     lines.push('');
   }
 

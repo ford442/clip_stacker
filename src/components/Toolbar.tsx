@@ -11,6 +11,7 @@ import { useStore } from 'zustand';
 import { useShallow } from 'zustand/react/shallow';
 import { settingsActions, settingsStore, useCanRedo, useCanUndo } from '../store';
 import { renderJobStore } from '../store/renderJobStore';
+import { renderCacheStore } from '../store/renderCacheStore';
 
 interface Props {
   onAddClips: (files: File[]) => void | Promise<void>;
@@ -278,6 +279,26 @@ export const Toolbar = forwardRef<{ triggerLoadDialog: () => void }, Props>(func
             title="Copy last FFmpeg logs + render plan + browser context (great for bug reports)"
           >
             📋 Copy Debug
+          </button>
+        )}
+        {onCopyDebugInfo && (
+          <button
+            type="button"
+            onClick={() => {
+              void renderCacheStore
+                .getState()
+                .clear()
+                .then(
+                  () => renderJobStore.getState().setStatus('Render cache cleared.'),
+                  (err: unknown) =>
+                    renderJobStore
+                      .getState()
+                      .setStatus(`Could not clear the render cache: ${err instanceof Error ? err.message : String(err)}`),
+                );
+            }}
+            title="Remove every cached render segment (the next export renders everything again)"
+          >
+            🗑 Clear render cache
           </button>
         )}
 

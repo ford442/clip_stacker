@@ -80,3 +80,19 @@ export async function fingerprintMedia(blob: Blob): Promise<string> {
   const digest = await crypto.subtle.digest('SHA-256', bytes);
   return toHex(digest);
 }
+
+const fingerprints = new WeakMap<Blob, Promise<string>>();
+
+/** {@link fingerprintMedia}, computed once per Blob (a failure is not remembered). */
+export function fingerprintMediaCached(blob: Blob): Promise<string> {
+  let pending = fingerprints.get(blob);
+  if (!pending) {
+    const computed = fingerprintMedia(blob);
+    pending = computed;
+    fingerprints.set(blob, computed);
+    void computed.catch(() => {
+      if (fingerprints.get(blob) === computed) fingerprints.delete(blob);
+    });
+  }
+  return pending;
+}

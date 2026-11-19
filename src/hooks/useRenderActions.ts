@@ -26,6 +26,9 @@ import {
   type FfmpegServiceModule,
 } from "../actions/renderJob";
 import { renderJobStore } from '../store/renderJobStore';
+import { renderCacheConfig } from '../export/renderCache/renderCacheConfig';
+// Registers the per-browser render-cache settings that export reads.
+import '../store/renderCacheStore';
 
 // The export pipeline (encoders, FFmpeg, the Mediabunny demux / mux, the GPU export
 // compositor) is most of the app's code and none of it is needed to edit, so
@@ -179,6 +182,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
           forceReencode,
           outputColor: colorManagement.outputColor,
           mediaRecorderAvailable: typeof MediaRecorder !== "undefined",
+          smartRender: renderCacheConfig().smartRender,
           ...(captions.length > 0 && { captionMode: captionExportMode }),
         },
       );

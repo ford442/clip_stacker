@@ -25,6 +25,9 @@ import { mergeClips, calculateRenderPlan, muxVideoWithAudio } from '../ffmpeg/ff
 import { encodeClipsWithCanvas } from './canvasEncoder';
 import { encodeVideoWithWebCodecs, isWebCodecsAvailable } from './webcodecs';
 import { getLastResolvedEncoderCodec } from './webcodecsCodec';
+import { getLastRenderCacheReport, resetRenderCacheReport } from './webcodecsTimelineExport';
+import type { SegmentedExportReport } from './renderCache/segmentedExport';
+import { renderCacheConfig } from './renderCache/renderCacheConfig';
 import {
   assessWebCodecsAudioMix,
   isAudioEncoderAvailable,
@@ -79,6 +82,23 @@ function ffmpegLogsOf(err: unknown): unknown {
   return typeof err === 'object' && err !== null && 'ffmpegLogs' in err ? err.ffmpegLogs : undefined;
 }
 
+/** `RenderPlan.renderCache` from the segmented export's report. */
+function renderCachePlanField(report: SegmentedExportReport): NonNullable<RenderPlan['renderCache']> {
+  return {
+    segments: report.segments,
+    hits: report.hits,
+    misses: report.misses,
+    uncacheable: report.uncacheable,
+    copies: report.copies,
+    framesEncoded: report.framesEncoded,
+    framesReused: report.framesReused,
+    framesCopied: report.framesCopied,
+    bytesReused: report.bytesReused,
+    bytesStored: report.bytesStored,
+    parameterSets: report.parameterSets,
+  };
+}
+
 /**
  * Merge clips using the best available encoder.
  */
@@ -102,8 +122,9 @@ export async function hybridMergeClips(
 ): Promise<HybridEncodeResult> {
   let canvasFailure: string | null = null;
   let gpuFailure: string | null = null;
-  // The audio premix reports what its bus graph did; start each render clean.
+  // The audio premix and the render cache report what they did; start each render clean.
   resetExportAudioReport();
+  resetRenderCacheReport();
   const busActive = exportBusActive(exportAudioBus());
 
   // Probed once, up front, so both the render-plan estimate and the GPU
@@ -123,6 +144,7 @@ export async function hybridMergeClips(
       webGpuAvailable,
       forceReencode,
       outputColor: colorManagement.outputColor,
+      smartRender: renderCacheConfig().smartRender,
       ...(captionBurnIn && captionBurnIn.captions.length > 0 ? { captionMode: 'burn' as const } : {}),
     });
 
@@ -139,14 +161,18 @@ export async function hybridMergeClips(
     overlayKeying?: RenderPlan['overlayKeying'],
     wideColorWhere?: 'gpu' | 'ignored',
   ): RenderPlan => {
+    const cacheReport =
+      path === 'webcodecs' || path === 'webcodecs-av' ? getLastRenderCacheReport() : null;
     const keyed: RenderPlan = {
       ...effectiveRenderPlan,
       encoderIntent: path,
-      encoderReasons: [...decision.reasons, ...fallbackReasons],
+      encoderReasons: [...decision.reasons, ...fallbackReasons, ...(cacheReport?.reasons ?? [])],
       ...(hasKeyedClip && overlayKeying ? { overlayKeying } : {}),
     };
     delete keyed.refusal;
     delete keyed.videoEncoder;
+    delete keyed.renderCache;
+    if (cacheReport) keyed.renderCache = renderCachePlanField(cacheReport);
     const encoder = getLastResolvedEncoderCodec();
     if ((path === 'webcodecs' || path === 'webcodecs-av') && encoder) {
       keyed.videoEncoder = {
@@ -193,6 +219,7 @@ export async function hybridMergeClips(
     willReencode: needsVideoNormalize || effectiveRenderPlan.willReencode === true,
     outputColor: colorManagement.outputColor,
     burnCaptions: burnCaptions !== null,
+    smartRender: renderCacheConfig().smartRender,
   };
   // Probe WebCodecs only when the GPU encoder is actually the candidate.
   const webCodecsAvailable = isGpuEncodeCandidate(pathInput)
@@ -273,6 +300,7 @@ export async function hybridMergeClips(
         useWebCodecsAudio,
         burnCaptions ?? {},
         colorManagement,
+        { forceReencode },
       );
       const captionsBurnedIn = Boolean(burnCaptions);
 
