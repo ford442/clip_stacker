@@ -10,6 +10,7 @@
  * has been seen.
  */
 
+import type { Mat2x3 } from '../types/tuples';
 import {
   CS_STATUS,
   describeStatus,
@@ -23,7 +24,7 @@ import {
 export const STAB_MATRIX_FLOATS = 6;
 
 /** Inverse-warp affine in normalized UV space, centred on the frame. */
-export type StabMatrix = readonly [number, number, number, number, number, number];
+export type StabMatrix = Mat2x3;
 
 export const IDENTITY_STAB_MATRIX: StabMatrix = [1, 0, 0, 0, 1, 0];
 
