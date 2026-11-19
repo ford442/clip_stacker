@@ -63,9 +63,10 @@ export type ProxyPlan =
  * those originals is no more expensive than decoding a proxy would be.
  */
 export function planProxy(
-  clip: Pick<Clip, 'kind' | 'stillImage' | 'videoWidth' | 'videoHeight'>,
+  clip: Pick<Clip, 'kind' | 'stillImage' | 'videoWidth' | 'videoHeight' | 'offline'>,
   profile: ProxyProfile = PROXY_PROFILE,
 ): ProxyPlan {
+  if (clip.offline) return { ok: false, reason: 'offline clips have no media' };
   if (clip.kind !== 'video') return { ok: false, reason: 'audio-only clips get no proxy' };
   if (clip.stillImage) return { ok: false, reason: 'stills get no proxy' };
   const w = clip.videoWidth ?? 0;

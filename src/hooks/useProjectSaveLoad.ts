@@ -131,9 +131,12 @@ export function useProjectSaveLoad({
           masterBus: loadedMasterBus,
           skippedClipCount,
           skippedClipFileNames,
+          offlineClipFileNames,
+          timecode: loadedTimecode,
           invalidColorWarnings,
           mediaDownloadWarnings,
-        } = await applyProjectData(parsed, clips);
+          // Missing media loads offline (a slate) so the cut keeps its timing.
+        } = await applyProjectData(parsed, clips, { missingMedia: "offline" });
         const selectedId = updatedClips.at(-1)?.id ?? null;
         resetHistory({
           clips: updatedClips,
@@ -151,9 +154,13 @@ export function useProjectSaveLoad({
         });
         setFinishing(loadedFinishing);
         setColorManagement(loadedColorManagement);
+        settingsStore.getState().setTimecode(loadedTimecode);
         let msg = `Project JSON loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
+        }
+        if (offlineClipFileNames.length > 0) {
+          msg += ` ⚠️ ${offlineClipFileNames.length} clip(s) offline — relink: ${formatSkippedClipMessage(offlineClipFileNames)}.`;
         }
         if (mediaDownloadWarnings.length > 0) {
           msg += ` ⚠️ Media download errors: ${mediaDownloadWarnings.join("; ")}`;
@@ -290,9 +297,12 @@ export function useProjectSaveLoad({
           masterBus: loadedMasterBus,
           skippedClipCount,
           skippedClipFileNames,
+          offlineClipFileNames,
+          timecode: loadedTimecode,
           invalidColorWarnings,
           mediaDownloadWarnings,
         } = await loadRemoteProject(client, projectName, clips, {
+          missingMedia: "offline",
           onProgress: (event: RemoteProjectLoadProgressEvent) => {
             setRemoteLoadStage(event.stage);
             if (event.indeterminate) {
@@ -322,10 +332,14 @@ export function useProjectSaveLoad({
         });
         setFinishing(loadedFinishing);
         setColorManagement(loadedColorManagement);
+        settingsStore.getState().setTimecode(loadedTimecode);
 
         let msg = `Remote project loaded (${updatedClips.length} clips applied).`;
         if (skippedClipCount > 0) {
           msg += ` ⚠️ ${skippedClipCount} clip(s) skipped — missing media: ${formatSkippedClipMessage(skippedClipFileNames)}.`;
+        }
+        if (offlineClipFileNames.length > 0) {
+          msg += ` ⚠️ ${offlineClipFileNames.length} clip(s) offline — relink: ${formatSkippedClipMessage(offlineClipFileNames)}.`;
         }
         if (mediaDownloadWarnings.length > 0) {
           msg += ` ⚠️ Media download errors: ${mediaDownloadWarnings.join("; ")}`;

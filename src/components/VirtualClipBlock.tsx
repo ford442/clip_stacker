@@ -316,11 +316,13 @@ function VirtualClipBlockImpl({
             isSelected ? ' selected' : ''
           }${isOverlay ? ' timeline-clip--pip' : ''}${locked ? ' timeline-clip--locked' : ''}${
             isSequence ? ' timeline-clip--sequence' : ''
-          }`}
+          }${clip.offline ? ' timeline-clip--offline' : ''}`}
           onClick={handleClick}
           onDoubleClick={isSequence ? handleDoubleClick : undefined}
           title={
-            isSequence
+            clip.offline
+              ? `${clip.title}\nMedia offline: ${clip.offline.fileName} — relink it with File → Relink media…`
+              : isSequence
               ? `${clip.title}\nNested sequence — double-click to open it.${locked ? '\n🔒 This lane is locked.' : ''}`
               : locked
               ? `${clip.title}\n🔒 This lane is locked — unlock it in the lane header to trim, drag or delete.`
@@ -379,6 +381,12 @@ function VirtualClipBlockImpl({
                 title={`Overlay on video lane ${layerIndex}. Stacking order is lane order; this clip appears at ${(clip.timelineStart ?? 0).toFixed(2)}s on the output.`}
               >
                 PiP · L{layerIndex}
+              </span>
+            )}
+
+            {clip.offline && (
+              <span className="timeline-clip-badge timeline-clip-badge--offline" title={`Media offline: ${clip.offline.fileName}`}>
+                OFFLINE
               </span>
             )}
 

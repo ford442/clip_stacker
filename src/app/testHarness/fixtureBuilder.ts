@@ -19,7 +19,7 @@ import type {
   OverlayBlendMode,
   TextOverlay,
 } from '../../types';
-import { DEFAULT_EXPORT_SETTINGS } from '../../types';
+import { DEFAULT_EXPORT_SETTINGS, DEFAULT_PROJECT_TIMECODE } from '../../types';
 import { editorStore } from '../../store/editorStore';
 import { settingsStore } from '../../store/settingsStore';
 import { moveClipToVideoLayer } from '../../timeline/trackModel';
@@ -85,6 +85,7 @@ export function resetFixtureProject(): void {
   });
   settingsStore.getState().setFinishing(DEFAULT_FINISHING);
   settingsStore.getState().setColorManagement(DEFAULT_COLOR_MANAGEMENT);
+  settingsStore.getState().setTimecode(DEFAULT_PROJECT_TIMECODE);
 }
 
 export function setFixtureResolution(resolution: string): void {

@@ -110,7 +110,8 @@ export async function buildAutoSaveProject(
   const enrichedClips: SerializedClip[] = [];
   for (const serialized of project.clips) {
     const clip = clipById.get(serialized.id);
-    if (!clip || isSequenceClip(clip)) {
+    // Offline clips have no media to embed: they come back offline.
+    if (!clip || isSequenceClip(clip) || clip.offline) {
       enrichedClips.push(serialized);
       continue;
     }

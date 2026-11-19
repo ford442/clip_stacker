@@ -21,6 +21,7 @@
  * stays on the `<video>` fallback for the rest of the session.
  */
 
+import { offlineSlateFrame } from '../media/offlineSlate';
 import type { Clip } from '../types';
 import type { PreviewMediaSource } from '../media/proxyMedia';
 import { DecoderFrameCursor, type DecoderCursorOptions } from '../media/decoderCursor';
@@ -174,6 +175,13 @@ export class PreviewDecoderSource {
     if (request.mediaObjectUrl) return null;
 
     const clip = clipsById.get(request.clipId);
+    if (clip?.offline) {
+      // No media to decode: the slate, so the layer still shows where the clip is.
+      const slate = offlineSlateFrame(clip);
+      return slate
+        ? { clipId: request.clipId, role: request.role, frame: slate, videoWidth: slate.displayWidth, videoHeight: slate.displayHeight }
+        : null;
+    }
     if (!clip || clip.kind !== 'video' || clip.stillImage) return null;
 
     const blob = this.media.get(request.clipId)?.blob;

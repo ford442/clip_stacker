@@ -1151,3 +1151,22 @@
   font-size: 0.62rem;
   padding: 0 8px 4px;
 }
+
+/* Offline clips (no media loaded): warning stripes until relinked. */
+.timeline-clip.timeline-clip--offline {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 196, 0, 0.22) 0,
+    rgba(255, 196, 0, 0.22) 6px,
+    transparent 6px,
+    transparent 14px
+  );
+  outline: 1px dashed rgba(255, 196, 0, 0.7);
+  outline-offset: -1px;
+}
+
+.timeline-clip-badge--offline {
+  background: #ffc400;
+  color: #1b1d22;
+  font-weight: 700;
+}

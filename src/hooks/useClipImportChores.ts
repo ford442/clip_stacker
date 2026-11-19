@@ -19,6 +19,7 @@ export function useClipImportChores(
     const pending = clips.filter(
       (c) =>
         c.stillImage &&
+        !c.offline &&
         Boolean(c.file) &&
         !c.lumaHistogram?.length &&
         !analyzing.current.has(c.id) &&

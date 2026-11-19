@@ -1,3 +1,4 @@
+import { offlineExportRefusal } from "../project/offlineClips";
 import { selectTimelineClips } from '../store/selectors';
 import { useCallback, useMemo, useRef, useState } from "react";
 import { useStore } from "zustand";
@@ -85,6 +86,12 @@ export function useRenderActions(deps: RenderActionsDeps) {
     const timelineClips = effectiveClips;
     if (timelineClips.length === 0) {
       renderJobStore.getState().setStatus("Upload clips before rendering.");
+      return;
+    }
+    // An offline clip would render as a slate: refuse until it is relinked.
+    const offlineRefusal = offlineExportRefusal(tracks, clips, timelineClips);
+    if (offlineRefusal) {
+      renderJobStore.getState().setStatus(`Render refused: ${offlineRefusal}`);
       return;
     }
 
@@ -289,7 +296,7 @@ export function useRenderActions(deps: RenderActionsDeps) {
         console.warn("Error during FFmpeg cleanup:", err);
       });
     }
-  }, [effectiveClips, clipGroups, transitions, textOverlays]);
+  }, [effectiveClips, clipGroups, transitions, textOverlays, tracks, clips]);
 
   const handleMerge = useCallback(async () => {
     // Check if high memory usage is detected based on actual timeline clips

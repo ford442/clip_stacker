@@ -12,7 +12,7 @@ import type {
   SerializedTrack,
   SyncMarker,
 } from '../types';
-import { PROJECT_SCHEMA_VERSION } from '../types';
+import { DEFAULT_PROJECT_TIMECODE, PROJECT_SCHEMA_VERSION } from '../types';
 import { isFinishingActive } from '../finishing/finishing';
 import { isColorManagementActive } from '../finishing/colorManagement';
 import { normalizeClipAutomation } from '../timeline/clipAutomation';
@@ -53,6 +53,7 @@ export function serializeProject(
     colorManagement,
     masterBus,
     sequences,
+    timecode,
   } = snapshot;
   // A/B groups are rebuilt from the pool's `groupId`s on load, wherever they sit.
   const allGroups = [...clipGroups, ...sequences.flatMap((seq) => seq.clipGroups)];
@@ -119,6 +120,9 @@ export function serializeProject(
           }),
         }
       : {}),
+    // Omitted at the defaults (01:00:00:00, 30), so older projects stay byte-identical.
+    ...(timecode.start !== DEFAULT_PROJECT_TIMECODE.start ? { timecodeStart: timecode.start } : {}),
+    ...(timecode.rate !== DEFAULT_PROJECT_TIMECODE.rate ? { timecodeRate: timecode.rate } : {}),
     ...(masterAudio
       ? {
           masterAudio: {
@@ -241,6 +245,7 @@ function serializeClip(clip: Clip): SerializedClip {
     // The record only — proxy bytes live in the media store, never in JSON.
     ...(clip.proxy ? { proxy: { ...clip.proxy } } : {}),
     ...(clip.source ? { source: { ...clip.source } } : {}),
+    ...(clip.offline ? { offline: { ...clip.offline } } : {}),
   };
 }
 

@@ -202,7 +202,8 @@ function buildScheduleAtDepth(
       scheduleTimelineIndices,
     );
     for (const segment of segments) {
-      if (segment.clip.trackMuted) continue;
+      // An offline clip keeps its slot (later clips stay put) but has no sound.
+      if (segment.clip.trackMuted || segment.clip.offline) continue;
       if (isSequenceClip(segment.clip)) {
         entries.push(
           ...sequenceClipEntries(segment.clip, segment.startTime, segment.duration, videoLane(segment.clip), depth),
@@ -216,7 +217,7 @@ function buildScheduleAtDepth(
   }
 
   for (const clip of pipClips) {
-    if (clip.trackMuted) continue;
+    if (clip.trackMuted || clip.offline) continue;
     const duration = getClipDuration(clip);
     const { start } = placementWindow(clip, duration);
     if (isSequenceClip(clip)) {
@@ -232,7 +233,7 @@ function buildScheduleAtDepth(
     if (track.muted) continue;
     for (const item of track.items) {
       const clip = clipsById.get(item.clipId);
-      if (!clip || clip.kind !== 'audio') continue;
+      if (!clip || clip.kind !== 'audio' || clip.offline) continue;
       entries.push(entryFromClip(clip, item.startTime, getClipDuration(clip), true, track));
     }
   }

@@ -41,6 +41,7 @@ export function useClipStabilization(
         c.kind === 'video' &&
         !c.stillImage &&
         !c.stabilization &&
+        !c.offline &&
         Boolean(c.file) &&
         !analyzing.current.has(c.id) &&
         !failed.current.has(c.id),

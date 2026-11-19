@@ -122,6 +122,7 @@ async function loadProject(json: Project | string): Promise<void> {
   });
   settingsStore.getState().setFinishing(applied.finishing);
   settingsStore.getState().setColorManagement(applied.colorManagement);
+  settingsStore.getState().setTimecode(applied.timecode);
 }
 
 function outputSize(): { width: number; height: number } {
