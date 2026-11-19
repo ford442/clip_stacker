@@ -23,6 +23,8 @@
 // retires the instance (its state is undefined afterwards).
 
 const QUANTUM = 128;
+/** `MIX_BUS_STRIDE` in audio_mix.h: ints per lane bus (first row, row count, flags). */
+const BUS_STRIDE = 3;
 const METER_INTERVAL_FRAMES = 4800;
 /** `MIX_METER_LANE_GR` in audio_mix.h: where the per-lane readouts start. */
 const METER_LANE_BASE = 7;
@@ -121,7 +123,7 @@ class BusFxProcessor extends AudioWorkletProcessor {
     const ex = this.exports;
     // The heap holds exactly `this.lanes` lane blocks (the node's inputs); a
     // layout naming more would make the graph read past them.
-    const laneCount = layout.buses.length / 2;
+    const laneCount = layout.buses.length / BUS_STRIDE;
     if (laneCount !== this.lanes) {
       this.fail(`layout has ${laneCount} lane buses, node has ${this.lanes}`);
       return;

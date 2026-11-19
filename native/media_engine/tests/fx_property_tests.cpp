@@ -168,7 +168,7 @@ Case random_case(uint64_t seed, double seconds) {
       const auto row = random_row(r, l);
       k.effects.insert(k.effects.end(), row.begin(), row.end());
     }
-    k.buses.insert(k.buses.end(), {first, n});
+    k.buses.insert(k.buses.end(), {first, n, 0});
   }
   k.master_first = k.effect_count();
   k.master_count = r.below(5);
@@ -304,7 +304,12 @@ bool check_seed(uint64_t seed, double seconds) {
   for (int l = 0; l <= k.lanes; ++l) {
     const double in = finite_peak(k.input.data() + static_cast<size_t>(l) * k.frames * 2,
                                   static_cast<size_t>(k.frames) * 2);
-    sum_bound += l < k.lanes ? chain_bound(k, k.buses[2 * l], k.buses[2 * l + 1], in) : in;
+    if (l == k.lanes) {
+      sum_bound += in;  // the direct input
+      continue;
+    }
+    const int* bus = k.buses.data() + static_cast<size_t>(MIX_BUS_STRIDE) * l;
+    sum_bound += chain_bound(k, bus[MIX_BUS_FX_FIRST], bus[MIX_BUS_FX_COUNT], in);
   }
   double bound = chain_bound(k, k.master_first, k.master_count, sum_bound);
   bound *= std::pow(10.0, std::max(-60.0, std::min(60.0, k.gain_db)) / 20.0);

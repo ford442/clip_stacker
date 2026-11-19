@@ -55,6 +55,10 @@ export interface AppliedProjectData {
   colorManagement: ColorManagementSettings;
   skippedClipCount: number;
   skippedClipFileNames: string[];
+  /** Clips that loaded offline (no media): they keep their place until relinked. */
+  offlineClipFileNames: string[];
+  /** The project's timecode start and rate (defaults when it saved none). */
+  timecode: import('../types').ProjectTimecode;
   /** Human-readable descriptions of invalid color values that were reset to defaults. */
   invalidColorWarnings: string[];
   /** Human-readable reasons remote media could not be downloaded, one per failed clip. */
@@ -72,12 +76,25 @@ export interface RemoteProjectLoadProgressEvent {
 
 export interface ApplyProjectDataOptions {
   onProgress?: ((event: RemoteProjectLoadProgressEvent) => void) | undefined;
+  /**
+   * What happens to a clip whose media cannot be found: `skip` (default)
+   * drops it; `offline` keeps it as an offline clip. A clip saved offline
+   * always loads offline when its media is still missing.
+   */
+  missingMedia?: 'skip' | 'offline';
+  /**
+   * Resolve each media clip's file yourself (an imported timeline's relink).
+   * Each saved clip then gets its own loaded clip with its saved id; the
+   * live-clip-by-name match is not used. Null = not found.
+   */
+  resolveMedia?: ((saved: import('../types').SerializedClip) => Promise<File | null> | File | null) | undefined;
   remoteProgressStart?: number;
   remoteProgressEnd?: number;
 }
 
 export interface LoadRemoteProjectOptions {
   onProgress?: (event: RemoteProjectLoadProgressEvent) => void;
+  missingMedia?: ApplyProjectDataOptions['missingMedia'];
 }
 
 /** A single entry in the remote media library, as returned by `listMedia`. */

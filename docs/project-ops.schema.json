@@ -1,0 +1,831 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:clip-stacker:project-ops:v1",
+  "title": "Clip Stacker project ops",
+  "description": "Scripted edits for window.clipStacker.project.apply(ops): applied in order as one undo step, all or nothing. Times are seconds (startTime / time on the output timeline, trimStart / trimEnd in the clip source).",
+  "type": "array",
+  "items": {
+    "$ref": "#/$defs/ProjectOp"
+  },
+  "$defs": {
+    "ProjectOp": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/addClip"
+        },
+        {
+          "$ref": "#/$defs/placeClip"
+        },
+        {
+          "$ref": "#/$defs/move"
+        },
+        {
+          "$ref": "#/$defs/trim"
+        },
+        {
+          "$ref": "#/$defs/split"
+        },
+        {
+          "$ref": "#/$defs/duplicate"
+        },
+        {
+          "$ref": "#/$defs/removeClip"
+        },
+        {
+          "$ref": "#/$defs/setClip"
+        },
+        {
+          "$ref": "#/$defs/setTransition"
+        },
+        {
+          "$ref": "#/$defs/setKeyframes"
+        },
+        {
+          "$ref": "#/$defs/addTrack"
+        },
+        {
+          "$ref": "#/$defs/setTrack"
+        },
+        {
+          "$ref": "#/$defs/setTrackAudioFx"
+        },
+        {
+          "$ref": "#/$defs/setDuck"
+        },
+        {
+          "$ref": "#/$defs/setMasterBus"
+        },
+        {
+          "$ref": "#/$defs/setFinishing"
+        },
+        {
+          "$ref": "#/$defs/addMarker"
+        },
+        {
+          "$ref": "#/$defs/setCaptions"
+        },
+        {
+          "$ref": "#/$defs/setTextOverlay"
+        },
+        {
+          "$ref": "#/$defs/setExportSettings"
+        },
+        {
+          "$ref": "#/$defs/setTimecode"
+        }
+      ]
+    },
+    "addClip": {
+      "description": "Add media to the pool and place it: by `fileName` (a clip already in the library, or a file under the API call's `mediaRoot`), `url` (same-origin) or `driveId` (a Drive library item; needs Drive access). Without `trackId` it goes where an import would (next free slot on the lane for its kind).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "addClip"
+        },
+        "id": {
+          "description": "Id for the new clip (default: generated; returned in the result).",
+          "type": "string",
+          "minLength": 1
+        },
+        "fileName": {
+          "description": "A library clip's file name, or a file under `mediaRoot`.",
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "description": "A same-origin URL to fetch the media from.",
+          "type": "string",
+          "minLength": 1
+        },
+        "driveId": {
+          "description": "A Drive library item's file id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "description": "Clip name (default: the file name).",
+          "type": "string",
+          "minLength": 1
+        },
+        "trackId": {
+          "description": "Lane to place it on.",
+          "type": "string",
+          "minLength": 1
+        },
+        "startTime": {
+          "description": "Output time on that lane (default: the lane's end).",
+          "type": "number",
+          "minimum": 0
+        },
+        "mode": {
+          "description": "What happens to items under it (default `overwrite`; the main lane always inserts).",
+          "type": "string",
+          "enum": [
+            "overwrite",
+            "insert"
+          ]
+        },
+        "trimStart": {
+          "description": "Source in-point, seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "trimEnd": {
+          "description": "Source out-point, seconds.",
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "op"
+      ]
+    },
+    "placeClip": {
+      "description": "Place a pool clip on a lane at an output time (an NLE drop: overwrite or insert).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "placeClip"
+        },
+        "clipId": {
+          "description": "Clip id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "trackId": {
+          "description": "Lane id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "startTime": {
+          "description": "Output time, seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "mode": {
+          "description": "Default `overwrite`; the main lane always inserts.",
+          "type": "string",
+          "enum": [
+            "overwrite",
+            "insert"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "clipId",
+        "trackId",
+        "startTime"
+      ]
+    },
+    "move": {
+      "description": "Move a placed clip to another time and/or lane.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "move"
+        },
+        "clipId": {
+          "description": "Clip id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "trackId": {
+          "description": "Target lane (default: the clip's lane).",
+          "type": "string",
+          "minLength": 1
+        },
+        "startTime": {
+          "description": "Output time, seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "mode": {
+          "description": "Default `overwrite`.",
+          "type": "string",
+          "enum": [
+            "overwrite",
+            "insert"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "clipId",
+        "startTime"
+      ]
+    },
+    "trim": {
+      "description": "Set a clip's source in / out points. The main lane closes up behind it; other lanes keep their start times.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "trim"
+        },
+        "clipId": {
+          "description": "Clip id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "trimStart": {
+          "description": "Source in-point, seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "trimEnd": {
+          "description": "Source out-point, seconds (omit to keep; use the clip duration for \"to the end\").",
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "op",
+        "clipId"
+      ]
+    },
+    "split": {
+      "description": "Split a clip at an output time; the right half gets a new id (returned).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "split"
+        },
+        "clipId": {
+          "description": "Clip id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "time": {
+          "description": "Output time inside the clip, seconds.",
+          "type": "number",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "op",
+        "clipId",
+        "time"
+      ]
+    },
+    "duplicate": {
+      "description": "Duplicate a clip right after itself on its lane; the copy's id is returned.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "duplicate"
+        },
+        "clipId": {
+          "description": "Clip id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "mode": {
+          "description": "Default `insert`.",
+          "type": "string",
+          "enum": [
+            "overwrite",
+            "insert"
+          ]
+        }
+      },
+      "required": [
+        "op",
+        "clipId"
+      ]
+    },
+    "removeClip": {
+      "description": "Remove a clip from the timeline and pool. `ripple` closes the gap on its lane (the main lane always closes up).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "removeClip"
+        },
+        "clipId": {
+          "description": "Clip id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "ripple": {
+          "description": "Close the gap (default false).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "op",
+        "clipId"
+      ]
+    },
+    "setClip": {
+      "description": "Change clip settings (volume, opacity, layout, speed, fades, keying, stabilization).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setClip"
+        },
+        "clipId": {
+          "description": "Clip id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "fields": {
+          "description": "The settings to change.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "title": {
+              "description": "Clip name.",
+              "type": "string",
+              "minLength": 1
+            },
+            "volume": {
+              "description": "Linear gain, 0–2.",
+              "type": "number",
+              "minimum": 0
+            },
+            "opacity": {
+              "description": "0–1.",
+              "type": "number",
+              "minimum": 0
+            },
+            "x": {
+              "description": "Overlay left edge, fraction of the output width.",
+              "type": "number"
+            },
+            "y": {
+              "description": "Overlay top edge, fraction of the output height.",
+              "type": "number"
+            },
+            "width": {
+              "description": "Overlay width, fraction of the output (0 = source width).",
+              "type": "number",
+              "minimum": 0
+            },
+            "height": {
+              "description": "Overlay height, fraction of the output (0 = source height).",
+              "type": "number",
+              "minimum": 0
+            },
+            "playbackRate": {
+              "description": "Constant speed, 0.25–4.",
+              "type": "number",
+              "minimum": 0.25
+            },
+            "loopCount": {
+              "description": "Play the trimmed window this many times.",
+              "type": "integer",
+              "minimum": 1
+            },
+            "reversed": {
+              "description": "Play the trimmed window backward.",
+              "type": "boolean"
+            },
+            "videoFadeIn": {
+              "description": "Seconds.",
+              "type": "number",
+              "minimum": 0
+            },
+            "videoFadeOut": {
+              "description": "Seconds.",
+              "type": "number",
+              "minimum": 0
+            },
+            "audioFadeIn": {
+              "description": "Seconds.",
+              "type": "number",
+              "minimum": 0
+            },
+            "audioFadeOut": {
+              "description": "Seconds.",
+              "type": "number",
+              "minimum": 0
+            },
+            "stabilize": {
+              "description": "Stabilize the clip (analysis runs in the background).",
+              "type": "boolean"
+            },
+            "overlayBlend": {
+              "description": "How an overlay keys against the layers below.",
+              "type": "string",
+              "enum": [
+                "opaque",
+                "source-alpha",
+                "premultiplied",
+                "chroma",
+                "luma"
+              ]
+            },
+            "chromaKey": {
+              "description": "`{ color, similarity, blend }` for chroma / luma keys.",
+              "type": "object"
+            }
+          }
+        }
+      },
+      "required": [
+        "op",
+        "clipId",
+        "fields"
+      ]
+    },
+    "setTransition": {
+      "description": "Set (or clear with `type: \"none\"`) the transition into a main-lane clip.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setTransition"
+        },
+        "clipId": {
+          "description": "The incoming main-lane clip (or give `afterClipIndex`).",
+          "type": "string",
+          "minLength": 1
+        },
+        "afterClipIndex": {
+          "description": "Main-lane index of the incoming clip (1 = second clip).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "type": {
+          "description": "Transition id (`dissolve`, `wipeLeft`, … `none`).",
+          "type": "string",
+          "minLength": 1
+        },
+        "duration": {
+          "description": "Seconds (default 0.5).",
+          "type": "number",
+          "minimum": 0
+        },
+        "params": {
+          "description": "Per-transition parameters.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "op",
+        "type"
+      ]
+    },
+    "setKeyframes": {
+      "description": "Replace one keyframe lane of a clip (layout, picture transform, or volume / pan / speed automation). An empty list clears it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setKeyframes"
+        },
+        "clipId": {
+          "description": "Clip id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "prop": {
+          "description": "Which lane.",
+          "type": "string",
+          "enum": [
+            "x",
+            "y",
+            "width",
+            "height",
+            "opacity",
+            "uvScaleX",
+            "uvScaleY",
+            "uvOffsetX",
+            "uvOffsetY",
+            "rotation",
+            "scaleX",
+            "scaleY",
+            "anchorX",
+            "anchorY",
+            "volume",
+            "pan",
+            "playbackRate"
+          ]
+        },
+        "keyframes": {
+          "description": "`[{ t, value }]`, clip-local seconds.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "t": {
+                "description": "Clip-local time, seconds.",
+                "type": "number",
+                "minimum": 0
+              },
+              "value": {
+                "description": "Value at `t`.",
+                "type": "number"
+              }
+            },
+            "required": [
+              "t",
+              "value"
+            ]
+          }
+        }
+      },
+      "required": [
+        "op",
+        "clipId",
+        "prop",
+        "keyframes"
+      ]
+    },
+    "addTrack": {
+      "description": "Append a lane; its id is returned.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "addTrack"
+        },
+        "kind": {
+          "description": "Lane kind.",
+          "type": "string",
+          "enum": [
+            "video",
+            "audio",
+            "text"
+          ]
+        },
+        "label": {
+          "description": "Lane name.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "op",
+        "kind"
+      ]
+    },
+    "setTrack": {
+      "description": "Rename, mute or lock a lane.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setTrack"
+        },
+        "trackId": {
+          "description": "Lane id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "description": "Lane name.",
+          "type": "string",
+          "minLength": 1
+        },
+        "muted": {
+          "description": "Mute (drops its audio).",
+          "type": "boolean"
+        },
+        "locked": {
+          "description": "Lock (blocks edits).",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "op",
+        "trackId"
+      ]
+    },
+    "setTrackAudioFx": {
+      "description": "Replace a lane's bus FX chain (`BusEffect[]`, see audio/audioBus.ts). An empty list clears it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setTrackAudioFx"
+        },
+        "trackId": {
+          "description": "Lane id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "fx": {
+          "description": "Bus effects in order.",
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      },
+      "required": [
+        "op",
+        "trackId",
+        "fx"
+      ]
+    },
+    "setDuck": {
+      "description": "Duck a lane under another lane (`{ sourceTrackId, … }`), switch it `\"off\"`, or omit `duck` for the default.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setDuck"
+        },
+        "trackId": {
+          "description": "Lane id.",
+          "type": "string",
+          "minLength": 1
+        },
+        "duck": {
+          "description": "`LaneDuckSettings`, or omit for the default.",
+          "type": "object"
+        },
+        "off": {
+          "description": "No ducking at all.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "op",
+        "trackId"
+      ]
+    },
+    "setMasterBus": {
+      "description": "Replace the master bus (`{ fx?, loudness?: { targetLufs, truePeakDb } }`); omit `masterBus` to clear it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setMasterBus"
+        },
+        "masterBus": {
+          "description": "`MasterBusSettings`.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "op"
+      ]
+    },
+    "setFinishing": {
+      "description": "Apply a finishing preset (the `finishing.*` API's document: `{ apply?: \"replace\" | \"merge\", finishing: {…} }`).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setFinishing"
+        },
+        "preset": {
+          "description": "A finishing preset document (docs/finishing-presets.md).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "op",
+        "preset"
+      ]
+    },
+    "addMarker": {
+      "description": "Add a master-track marker; its id is returned.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "addMarker"
+        },
+        "time": {
+          "description": "Output time, seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "text": {
+          "description": "Label.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Marker id.",
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "op",
+        "time",
+        "text"
+      ]
+    },
+    "setCaptions": {
+      "description": "Replace the caption track (`[{ startSec, endSec, text, id?, style? }]`) and, optionally, the caption style.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setCaptions"
+        },
+        "captions": {
+          "description": "Caption cues.",
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "style": {
+          "description": "Project caption style (`TextOverlayStyle` fields).",
+          "type": "object"
+        }
+      },
+      "required": [
+        "op",
+        "captions"
+      ]
+    },
+    "setTextOverlay": {
+      "description": "Create or update a title (`TextOverlay` fields; matched by `id`), optionally placing it on a titles lane; `remove` deletes it.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setTextOverlay"
+        },
+        "overlay": {
+          "description": "Title fields (`text`, `fontsize`, `fontcolor`, `x`, `y`, `box`, …).",
+          "type": "object"
+        },
+        "trackId": {
+          "description": "Titles lane to place it on.",
+          "type": "string",
+          "minLength": 1
+        },
+        "startTime": {
+          "description": "Placement time, seconds.",
+          "type": "number",
+          "minimum": 0
+        },
+        "remove": {
+          "description": "Delete the title.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "op",
+        "overlay"
+      ]
+    },
+    "setExportSettings": {
+      "description": "Change export settings (`outputResolution`, `filename`, `videoCodec`, `crf`, …). Not an undo step.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setExportSettings"
+        },
+        "settings": {
+          "description": "`ExportSettings` fields.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "op",
+        "settings"
+      ]
+    },
+    "setTimecode": {
+      "description": "Set the timecode of the first frame and the interchange / BWF rate. Not an undo step.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "const": "setTimecode"
+        },
+        "start": {
+          "description": "`HH:MM:SS:FF` (`;` before the frames for drop frame).",
+          "type": "string",
+          "minLength": 1
+        },
+        "rate": {
+          "description": "Rate.",
+          "type": "string",
+          "enum": [
+            "23.976",
+            "24",
+            "25",
+            "29.97",
+            "29.97df",
+            "30",
+            "50",
+            "59.94",
+            "59.94df",
+            "60"
+          ]
+        }
+      },
+      "required": [
+        "op"
+      ]
+    }
+  }
+}

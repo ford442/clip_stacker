@@ -13,6 +13,7 @@ This is a React 18 + TypeScript Vite app for browser-based clip editing and MP4 
   - `project/` — serialize / load, autosave, remote storage. `project/index.ts` is the barrel.
   - `composition/` — the preview composition plan, layout, keys, text.
   - `media/` — decoding, cursors, proxies, stabilization.
+  - `interchange/` — OTIO / FCPXML / EDL import and export, timecode, media relinking (see *Timeline interchange*).
   - `audio/`, `remote/`, `webgpu/`, `wasm/`, `ffmpeg/`, `gpu-chores/` — as named.
   - `workers/` — the typed worker RPC and every `new Worker` (see *Worker RPC*).
   - `utils/` — the few cross-cutting helpers left (CSP, storage keys, workspace layout, math).
@@ -53,7 +54,8 @@ Shared state worth knowing:
 - `npm run knip`: dead-code check with an empty baseline. Unused files, exports, types and dependencies fail CI. Delete them, or mark a deliberate extension point `@public` in its JSDoc. `knip.json` lists the entry points Vite cannot see (workers, the AudioWorklet, scripts, e2e).
 - `npm run check:cycles`: madge import-cycle check over `src/` (type-only imports count). Must report 0 cycles — import `getClipDuration` from `timeline/clipTiming` and `DEFAULT_CANVAS_*` from `utils/canvasDefaults`, not the `project` barrel (`src/project/index.ts`).
 - `npm test -- --run`: run the Vitest suite once, matching CI behavior.
-- `npm run test:coverage`: run tests with coverage reporting (CI runs it with `-- --run`). `vitest.config.ts` sets per-directory floors for the domain dirs (timeline, finishing, captions, project, composition, store, audio, media, export, workers); raise them as coverage grows, never lower one to land a change.
+- `npm run test:coverage`: run tests with coverage reporting (CI runs it with `-- --run`). `vitest.config.ts` sets per-directory floors for the domain dirs (timeline, finishing, captions, project, composition, store, audio, media, export, workers, interchange); raise them as coverage grows, never lower one to land a change.
+- `npm run cs -- <render|import|export|stems|mcp> …`: the headless CLI and MCP server over the built app (`scripts/cs/`, `docs/project-api.md`); needs `npm run build` first.
 - `npm run e2e`: the Playwright render regression harness (see *Render regression harness* below). It builds nothing itself, so run `npm run build` first; it serves `dist/` with `npm run preview`. `npm run e2e:update-goldens` rewrites `e2e/goldens/`.
 - `npm run build`: produce the production build in `dist/`.
 - `npm run preview`: serve the built app locally for verification.
@@ -183,11 +185,12 @@ Playwright runs against `npm run preview`, on Chromium with WebGPU on SwiftShade
 
 **Harness API.** `?test_harness` installs `window.clipStacker.test` (`src/app/testHarness/harness.ts`). It is a separate chunk that `main.tsx` imports only under the parameter, so normal loads never contain it.
 
-- `buildProject(spec)` builds fixtures from the demo clips. `loadProject(json)` loads a saved project.
+- `buildProject(spec)` builds fixtures from the demo clips (`app/testHarness/fixtureBuilder.ts`, which unit tests reuse with stand-in media). `loadProject(json)` loads a saved project.
+- `project` is `window.clipStacker.project` (synchronous here): state, ops, interchange, stems and render go through the supported API.
 - `renderPreviewFrame(t)` draws through the timeline compositor fed by WebCodecs cursors, the preview worker's happy path. The `<video>` fallback renders black under SwiftShader.
 - `renderPqFrame(t)` returns the PQ readback an HDR10 export encodes; `hdr10FrameStats(t)` packs that frame exactly as export does (`captureHdr10Frame`) and returns its luma statistics (format, bit depth, distinct / min / max Y codes, colour tags).
 - `decodeFrameStats(blob, t)` is the same statistics for a decoded file frame; `renderP3Chart(outputColor)` feeds a Display P3 test chart (`colorProbes.ts`) through the compositor and reads it back in P3.
-- `exportProject()` runs the real Render action, bound by `App` through `app/harnessBindings.ts`, and forces a re-encode by default.
+- `exportProject()` runs the real Render action (`project.render`, bound by `App` through `actions/renderBinding.ts`) and forces a re-encode by default.
 - `decodeFrame(blob, t)` decodes one frame of a file.
 - `compare` returns PSNR + SSIM (`imageMetrics.ts`).
 - `crash()` makes `App` throw, for `RootErrorBoundary`.
@@ -210,9 +213,63 @@ HDR10 compares the PQ readback, not the preview: the preview is the SDR monitor 
 
 **Smoke flows** (`e2e/smoke.spec.ts`) go through the real UI: load demo clips → split → ripple delete → undo → render; crash → reload → recovery offer.
 
+**Interchange** (`e2e/interchange.spec.ts`): every golden fixture round-trips through OTIO and FCPXML byte-identically through the app's import; a clip whose media is missing imports offline, survives save / load and blocks Render; stems give one BWF per lane plus the master. CI also runs `cs render` on `e2e/fixtures/cs-smoke.project.json`.
+
 **Smoke flows** also cover *recover session restores the embedded clips*: embedded media comes back from its `data:` URL through `project/dataUrl.ts` (decoded locally — the production `connect-src` blocks `fetch('data:…')`, and happy-dom enforces no CSP, so `dataUrl.test.ts` makes `fetch` throw instead).
 
 **Known bugs** are pinned with `test.fail`, so they flip to an unexpected pass when fixed. None are pinned today.
+
+## Timeline interchange, offline clips, stems and the project API
+
+Docs: `docs/interchange.md` (formats, the mapping table, relinking, stems,
+the manual NLE checks still to record) and `docs/project-api.md` (API, ops,
+`cs`, MCP).
+
+- **`src/interchange/`** (domain, pure): `toInterchange.ts` / `fromInterchange.ts`
+  map the saved `Project` JSON to the neutral frame-based timeline
+  (`model.ts`) and back; `otio.ts`, `fcpxml.ts` / `fcpxmlRead.ts`, `edl.ts`
+  only spell it. **A mapping change goes in `mapping.ts`'s table and the two
+  mapping modules**, never in one format; `docs/interchange.md`'s table is
+  generated from it (`UPDATE_INTERCHANGE_DOC=1`). `fast-xml-parser` is imported
+  only by `xml.ts` (lint rule). Main-lane positions come from
+  `buildClipTimelineSegments`, never stored start times; transitions are centred
+  on the edit; titles span the programme (they are not time-gated).
+- **Byte-identical round trips**: everything without a home rides in the
+  `clip_stacker` metadata namespace with sorted keys, and the importer uses it
+  only while it agrees with the file to a frame. Project settings in metadata
+  are written in their loaded form (`resolveFinishingFromProject`, …) — a field
+  a load normalizes must be normalized on export too, or the app round trip
+  drifts. `otio.test.ts` / `fcpxml.test.ts` (unit) and `e2e/interchange.spec.ts`
+  (the real app) check every `e2e/fixtures.ts` project; add a fixture there and
+  it is covered.
+- **Offline clips** (`Clip.offline`, `project/offlineClips.ts`): missing media
+  loads offline when the caller asks (`applyProjectData(…, { missingMedia: 'offline' })`
+  — file / remote load, autosave recovery and imports do), keeps its id and
+  settings, draws a slate (`media/offlineSlate.ts`, in `resolveLayerFrame` and the
+  worker's `PreviewDecoderSource`), plays no audio (`audio/schedule.ts`), and
+  Render refuses while one is on an unmuted lane (`offlineExportRefusal`, also a
+  remote-concat blocker). `applyProjectData`'s `resolveMedia` gives each saved clip
+  its own loaded clip with its saved id (what imports use). New background
+  jobs that read `clip.file` must skip offline clips.
+- **Project timecode** (`Project.timecodeStart` / `timecodeRate`, omitted at the
+  01:00:00:00 / 30 default) lives in `settingsStore.timecode` and the snapshot.
+- **Stems** (`export/exportStems.ts`): one pass of `openMixStream` with the bus
+  graph tapping each lane (`planBusGraph(…, { tapTrackIds, tapDirect })`), BWF
+  writer (`export/container/wavWriter.ts`, `bext` `TimeReference` = timecode start),
+  zip (`export/container/zipBundle.ts`, the only `fflate` import). No
+  OfflineAudioContext fallback.
+- **API**: `window.clipStacker.project` is a startup stub (`actions/projectApiInstall.ts`)
+  that loads `actions/projectApi.ts` on first call; keep heavy imports out of the
+  stub and of `components/interchange/FileMenu.tsx` (the entry chunk budget).
+  `ProjectOp`s (`actions/projectOps/`) are one declarative spec → JSON Schema
+  (`docs/project-ops.schema.json`, `UPDATE_PROJECT_OPS_SCHEMA=1`) → validator, and
+  each op is an existing pure edit applied to a draft and committed with
+  `editorStore.commitProjectEdit` (one undo step, all or nothing). The harness's
+  `test.project` is the same API; App binds Render through `actions/renderBinding.ts`.
+- **`cs` / MCP** (`scripts/cs/`): Vite preview in-process, Playwright Chromium
+  with the e2e flags, `--media` served same-origin at `/__cs_media/` as the API's
+  `mediaRoot`, downloads for outputs. `CS_CHROMIUM` (also honoured by
+  `playwright.config.ts`) points both at a local browser.
 
 ## Demo clips, Export-tab sections, encoder badge
 
@@ -716,7 +773,7 @@ colour management, master audio and the master bus stay root-only.
 - `selectProjectSnapshot(editor, settings)` (`project/snapshot.ts`) is
   the one definition of what a project contains (clips, tracks, transitions,
   text, captions, master audio + markers, master bus, nested sequences,
-  finishing, colour management). Manual save, remote save, autosave and the autosave hash all
+  finishing, colour management, timecode start / rate). Manual save, remote save, autosave and the autosave hash all
   serialize it with `serializeProject(snapshot, options)`, and recovery
   restores every field. Add a project field to the snapshot, not to a call
   site; `projectSnapshotHasContent` decides whether there is anything to keep.
@@ -945,8 +1002,20 @@ sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
   lanes are not buses. Entries route by `AudioScheduleEntry.trackId`.
 - **Engine rows** (`audio_mix.h`, mirrored in `mediaEngineLayout.ts`):
   `MIX_FX_STRIDE` 13 (adds HOLD, RANGE_DB, KEY), kinds 7–10 (low-pass, gate,
-  de-esser, ducker), `MIX_BUS_STRIDE` 2, `MIX_ENTRY_FX_BUS`. A ducker row in a
-  lane's range runs after the chain and delay compensation.
+  de-esser, ducker), `MIX_BUS_STRIDE` 3 (first row, row count, flags),
+  `MIX_ENTRY_FX_BUS`. A ducker row in a lane's range runs after the chain and
+  delay compensation.
+- **Output taps (stems)**: `MIX_BUS_TAP` on a lane row (and
+  `MIX_BUS_FLAG_TAP_DIRECT` for the direct input, last) taps what that lane
+  adds to the master sum — post chain, delay compensation and duck — through
+  a delay line of the master chain + final stage look-ahead, so tap frame N
+  is output frame N; with no master stage the taps sum to the master within
+  1 ulp. `bus_graph_process_taps` / `mix_bus_session_range` write them
+  (tap-major, interleaved); a tapped layout always keeps its graph; untapped
+  graphs run the original loop, bit-identical. TS: `planBusGraph(…,
+  { tapTrackIds, tapDirect })` → `TimelineMixChunk.taps` (transferred from
+  the render worker), `meterTaps` → `readTapMeters()` (one `loudness_meter_*`
+  per tap). The preview never taps (`busLayoutMessage` clears the flags).
 - **Limiter** is true peak: detection on 4× oversampled audio using the
   mixer's own polyphase sinc (`TruePeakDetector`, 32 frames of delay), a
   0.05 dB detection margin (ten times the worst overshoot the host battery
@@ -978,8 +1047,9 @@ sum -> master chain -> output gain (loudness) -> final limiter -> meter -> out
   `silence_after_a_tone_stays_out_of_subnormals` guards it. Between stages
   `flush_sample` also zeroes NaN / inf, so one bad input cannot poison a
   graph (the property harness found that).
-- **Real-time safe.** `bus_graph_process` / `update` / `meters` / `reset`
-  never allocate (`rt_safety_tests` counts `operator new`): `BusChain::matches`
+- **Real-time safe.** `bus_graph_process` (and `_process_taps`) / `update` /
+  `meters` / `reset`, and a warmed-up `mix_bus_session_range` at a fixed chunk
+  size, never allocate (`rt_safety_tests` counts `operator new`): `BusChain::matches`
   compares rows in place, loudness gating is a 0.1 dB histogram (−70 … +5
   LUFS, O(1) memory and read cost — flat over a 4 h programme, within 0.1 LU
   of exact gating), and gain-reduction meters keep only the minimum linear

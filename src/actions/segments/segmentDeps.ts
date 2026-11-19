@@ -33,7 +33,8 @@ export function fetchSegmentBlob(url: string): Promise<Blob> {
   return url.startsWith('blob:') ? fetch(url).then((r) => r.blob()) : downloadRemoteMedia(url);
 }
 
-async function fetchDriveFile(item: DriveMediaItem, token: string, signal?: AbortSignal): Promise<File> {
+/** Download a Drive library item with an access token (`getDriveAccessToken`). */
+export async function fetchDriveFile(item: DriveMediaItem, token: string, signal?: AbortSignal): Promise<File> {
   const response = await fetch(`${DRIVE_FILES_API}/${encodeURIComponent(item.fileId)}?alt=media&supportsAllDrives=true`, {
     headers: { authorization: `Bearer ${token}` },
     signal: signal ?? null,

@@ -44,6 +44,7 @@ export function useAutoSave({
   const editorFields = useStore(editorStore, useShallow(selectProjectSnapshotEditorFields));
   const finishing = useStore(settingsStore, (s) => s.finishing);
   const colorManagement = useStore(settingsStore, (s) => s.colorManagement);
+  const timecode = useStore(settingsStore, (s) => s.timecode);
   const [recoveryOffer, setRecoveryOffer] = useState<AutoSaveOffer | null>(() =>
     readAutoSaveOffer(),
   );
@@ -58,6 +59,7 @@ export function useAutoSave({
     const snapshot: ProjectSnapshot = selectProjectSnapshot(editorFields, {
       finishing,
       colorManagement,
+      timecode,
     });
     const stateHash = hashAutoSaveState(snapshot, selectedClipId, exportSettings);
     if (stateHash === lastSavedHashRef.current) return;
@@ -94,6 +96,7 @@ export function useAutoSave({
     editorFields,
     finishing,
     colorManagement,
+    timecode,
     selectedClipId,
     exportSettings,
   ]);
@@ -148,7 +151,10 @@ export function useAutoSave({
         masterAudio: restoredMasterAudio,
         masterAudioMarkers: restoredMarkers,
         masterBus: restoredMasterBus,
-      } = await applyProjectData(session.project, []);
+        offlineClipFileNames,
+        timecode: restoredTimecode,
+        // Media too large to embed comes back offline (a slate), not dropped.
+      } = await applyProjectData(session.project, [], { missingMedia: 'offline' });
 
       const selectedId =
         session.selectedClipId &&
@@ -171,8 +177,10 @@ export function useAutoSave({
         masterBus: restoredMasterBus,
         finishing: restoredFinishing,
         colorManagement: restoredColor,
+        timecode: restoredTimecode,
       };
       settingsStore.getState().setColorManagement(restored.colorManagement);
+      settingsStore.getState().setTimecode(restored.timecode);
       settingsStore.getState().setFinishing(restored.finishing);
       resetHistory({
         clips: restored.clips,
@@ -197,6 +205,9 @@ export function useAutoSave({
       let message = `Recovered autosave (${restoredClips.length} clip${restoredClips.length === 1 ? '' : 's'}).`;
       if (skippedClipCount > 0) {
         message += ` ${skippedClipCount} clip(s) skipped — re-import: ${skippedClipFileNames.join(', ')}.`;
+      }
+      if (offlineClipFileNames.length > 0) {
+        message += ` ${offlineClipFileNames.length} clip(s) offline — relink: ${offlineClipFileNames.join(', ')}.`;
       }
       if (mediaDownloadWarnings.length > 0) {
         message += ` Media warnings: ${mediaDownloadWarnings.join('; ')}`;

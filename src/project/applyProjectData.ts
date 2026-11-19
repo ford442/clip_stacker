@@ -44,6 +44,9 @@ import { createCaptionId, normalizeCaptions } from '../captions/subtitles';
 import { createSequenceClip, syncSequenceDurations } from '../timeline/sequenceModel';
 import { sanitizeSequenceClip } from '../timeline/sequenceResolve';
 import { isSourceColorSpaceOverride } from '../media/sourceColorSpace';
+import { createOfflineClip } from './offlineClips';
+import { isTimecodeRateId, normalizeTimecode, timecodeRate } from '../interchange/timecode';
+import { DEFAULT_PROJECT_TIMECODE, type ProjectTimecode } from '../types';
 
 function inferKind(savedClip: SerializedClip, file: File): ClipKind {
   if (savedClip.kind === 'audio' || savedClip.kind === 'video') return savedClip.kind;
@@ -237,6 +240,38 @@ function readSavedSequences(raw: Project['sequences']): Array<{
   return out;
 }
 
+/** A loaded clip for media found for a saved clip (its id kept, settings applied later). */
+async function clipForFile(file: File, savedClip: SerializedClip): Promise<Clip> {
+  const { duration, objectUrl, videoWidth, videoHeight, hasAudio } = await getMediaInfo(file);
+  const width = videoWidth ?? savedClip.videoWidth;
+  const height = videoHeight ?? savedClip.videoHeight;
+  return {
+    id: savedClip.id || createClipId(),
+    file,
+    objectUrl,
+    title: savedClip.title || file.name,
+    kind: inferKind(savedClip, file),
+    duration: Math.max(MIN_CLIP_DURATION, Number.isFinite(duration) && duration > 0 ? duration : Number(savedClip.duration) || 0),
+    ...(width !== undefined ? { videoWidth: width } : {}),
+    ...(height !== undefined ? { videoHeight: height } : {}),
+    ...(hasAudio !== undefined ? { hasAudio } : savedClip.hasAudio !== undefined ? { hasAudio: savedClip.hasAudio } : {}),
+    trimStart: 0,
+    trimEnd: NaN,
+    videoFadeIn: 0,
+    videoFadeOut: 0,
+    audioFadeIn: 0,
+    audioFadeOut: 0,
+  };
+}
+
+/** The saved timecode start / rate, coerced (defaults for anything malformed). */
+export function restoreProjectTimecode(project: Pick<Project, 'timecodeStart' | 'timecodeRate'>): ProjectTimecode {
+  const rate = isTimecodeRateId(project.timecodeRate) ? project.timecodeRate : DEFAULT_PROJECT_TIMECODE.rate;
+  const start =
+    typeof project.timecodeStart === 'string' ? normalizeTimecode(project.timecodeStart, timecodeRate(rate)) : null;
+  return { start: start ?? DEFAULT_PROJECT_TIMECODE.start, rate };
+}
+
 export async function applyProjectData(
   project: Project,
   clips: Clip[],
@@ -256,6 +291,7 @@ export async function applyProjectData(
   const mapped: Clip[] = [];
   let skippedCount = 0;
   const skippedClipFileNames: string[] = [];
+  const offlineClipFileNames: string[] = [];
   const mediaDownloadWarnings: string[] = [];
   const totalRemoteDownloads = countRemoteProjectDownloads(project, clips);
   const remoteProgressStart = options.remoteProgressStart ?? 0;
@@ -286,7 +322,19 @@ export async function applyProjectData(
             Number(savedClip.duration) || MIN_CLIP_DURATION,
             savedClip.id || createClipId(),
           )
-        : byName.get(savedClip.fileName);
+        : options.resolveMedia
+          ? undefined
+          : byName.get(savedClip.fileName);
+    if (!liveClip && sequenceId === null && options.resolveMedia) {
+      // The caller resolved the media (an imported timeline's relink): one
+      // fresh clip per saved clip, keeping its id, so lanes stay pointed at it.
+      try {
+        const file = await options.resolveMedia(savedClip);
+        if (file) liveClip = await clipForFile(file, savedClip);
+      } catch (error) {
+        mediaDownloadWarnings.push(`"${savedClip.fileName}": ${(error as Error).message || String(error)}`);
+      }
+    }
     if (!liveClip && hasRestorableRemoteMedia(savedClip)) {
       remoteDownloadIndex += 1;
       const clipIndex = remoteDownloadIndex;
@@ -376,6 +424,11 @@ export async function applyProjectData(
         mediaDownloadWarnings.push(`"${savedClip.fileName}": ${message}`);
         liveClip = undefined;
       }
+    }
+    if (!liveClip && sequenceId === null && (savedClip.offline || options.missingMedia === 'offline')) {
+      // Keep the clip's place and settings; preview draws a slate until it is relinked.
+      liveClip = createOfflineClip(savedClip);
+      offlineClipFileNames.push(savedClip.fileName);
     }
     if (!liveClip) {
       skippedCount++;
@@ -608,6 +661,8 @@ export async function applyProjectData(
     colorManagement,
     skippedClipCount: skippedCount,
     skippedClipFileNames,
+    offlineClipFileNames,
+    timecode: restoreProjectTimecode(project),
     invalidColorWarnings,
     mediaDownloadWarnings,
   };

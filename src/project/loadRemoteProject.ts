@@ -36,6 +36,7 @@ export async function loadRemoteProject(
 
   const result = await applyProjectData(project, clips, {
     onProgress: options.onProgress,
+    ...(options.missingMedia ? { missingMedia: options.missingMedia } : {}),
     remoteProgressStart: REMOTE_PROJECT_DOWNLOAD_PROGRESS_START,
     remoteProgressEnd: REMOTE_PROJECT_DOWNLOAD_PROGRESS_END,
   });

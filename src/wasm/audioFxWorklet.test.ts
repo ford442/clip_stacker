@@ -140,7 +140,7 @@ describe('bus FX worklet failure paths', () => {
     const { proc, internals } = await startProcessor();
     const p = plan();
     const layout = busLayoutMessage(p, false);
-    const extra = { ...layout, buses: Int32Array.from([...layout.buses, 0, 0]) };
+    const extra = { ...layout, buses: Int32Array.from([...layout.buses, 0, 0, 0]) };
     internals.onMessage({ type: 'layout', layout: extra });
     expect(internals.failed).toBe(true);
     expect(errors(proc)[0]).toMatch(/3 lane buses, node has 2/);

@@ -194,8 +194,8 @@ export async function serializeProjectWithMedia(
     const index = i + 1;
     const clip = clipById.get(serialized.id);
     if (!clip) throw new Error(`Could not find source media for clip "${serialized.fileName}".`);
-    // A sequence clip has no media of its own.
-    if (isSequenceClip(clip)) {
+    // A sequence clip has no media of its own; an offline clip has none loaded.
+    if (isSequenceClip(clip) || clip.offline) {
       enrichedClips.push(serialized);
       continue;
     }

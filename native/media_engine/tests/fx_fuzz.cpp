@@ -63,7 +63,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
     const int first = static_cast<int>(effects.size() / MIX_FX_STRIDE);
     const int count = in.byte() % 9;
     add_rows(count, l);
-    buses.insert(buses.end(), {first, count});
+    buses.insert(buses.end(), {first, count, in.byte() & MIX_BUS_TAP});
   }
   const int master_first = static_cast<int>(effects.size() / MIX_FX_STRIDE);
   const int master_count = in.byte() % 5;
@@ -72,7 +72,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   const int final_count = in.byte() % 3;
   add_rows(final_count, 0);
   const double gain_db = (in.byte() & 1) ? in.f64() : 0.0;
-  const int flags = in.byte() & 1 ? MIX_BUS_FLAG_METER : 0;
+  const int flag_bits = in.byte();
+  const int flags = ((flag_bits & 1) != 0 ? MIX_BUS_FLAG_METER : 0) | ((flag_bits & 2) != 0 ? MIX_BUS_FLAG_TAP_DIRECT : 0);
   if (effects.empty()) effects.assign(MIX_FX_STRIDE, 0.0);
   const int effect_count = static_cast<int>(effects.size() / MIX_FX_STRIDE);
 
@@ -109,6 +110,8 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
   constexpr int kQuantum = 128;
   std::vector<float> quantum(static_cast<size_t>(blocks) * kQuantum * 2);
   std::vector<float> out(static_cast<size_t>(kQuantum) * 2);
+  // Output taps (stems): ASan checks every write lands inside the tap blocks.
+  std::vector<float> taps(static_cast<size_t>(bus_graph_tap_count(g)) * kQuantum * 2);
   double meters[64];
   for (int begin = 0; begin < frames; begin += kQuantum) {
     const int n = std::min(kQuantum, frames - begin);
@@ -116,7 +119,10 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
       std::copy_n(lane_pcm.data() + (static_cast<size_t>(b) * frames + begin) * 2, static_cast<size_t>(n) * 2,
                   quantum.data() + static_cast<size_t>(b) * n * 2);
     }
-    if (bus_graph_process(g, quantum.data(), out.data(), n) != 0) __builtin_trap();
+    const bool tapped = !taps.empty() && (begin / kQuantum) % 2 == 0;
+    const int rc = tapped ? bus_graph_process_taps(g, quantum.data(), out.data(), taps.data(), n)
+                          : bus_graph_process(g, quantum.data(), out.data(), n);
+    if (rc != 0) __builtin_trap();
     check_output(out.data(), static_cast<size_t>(n) * 2, ceiling);
     if ((begin / kQuantum) % 8 == 7) {
       const int m = bus_graph_meters(g, meters, 64);
@@ -129,7 +135,7 @@ extern "C" int LLVMFuzzerTestOneInput(const uint8_t* data, size_t size) {
 
   // The first lane's rows as a clip insert chain, at a fuzzed design rate.
   const double rate = 8000.0 + static_cast<double>(in.byte()) * 700.0;
-  MixInsertChain* chain = insert_chain_create(rate, effects.data(), buses[1]);
+  MixInsertChain* chain = insert_chain_create(rate, effects.data(), buses[MIX_BUS_FX_COUNT]);
   if (chain) {
     std::vector<float> planar(static_cast<size_t>(frames) * 2);
     for (int i = 0; i < frames; ++i) {

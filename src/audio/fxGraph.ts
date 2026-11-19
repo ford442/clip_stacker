@@ -27,6 +27,7 @@ import {
 } from './audioBus';
 import {
   MIX_BUS_MAX_LANES,
+  MIX_BUS_TAP,
   MIX_FX_STRIDE,
   packBusEffectRows,
   packDuckRow,
@@ -38,7 +39,7 @@ export interface BusGraphPlan {
   laneIndex: ReadonlyMap<string, number>;
   /** `MIX_FX_STRIDE` rows: lane chains (and ducks), the master chain, the final stage. */
   effects: number[];
-  /** `MIX_BUS_STRIDE` ints per lane. */
+  /** `MIX_BUS_STRIDE` ints per lane: first effect row, row count, flags (`MIX_BUS_TAP`). */
   buses: number[];
   masterFirst: number;
   masterCount: number;
@@ -49,6 +50,13 @@ export interface BusGraphPlan {
   ducks: Array<{ trackId: string; keyTrackId: string }>;
   /** True when the graph processes anything beyond summing the lanes. */
   processing: boolean;
+  /**
+   * Lanes with an output tap (a stem), in packed order: tap `i` of a mix
+   * chunk is `tapTrackIds[i]`, then the direct input when `tapDirect`.
+   */
+  tapTrackIds: string[];
+  /** The direct (unrouted) input is tapped too, as the last tap. */
+  tapDirect: boolean;
 }
 
 export interface BusGraphOptions {
@@ -56,6 +64,14 @@ export interface BusGraphOptions {
   finalRows?: number[];
   /** Static gain after the master chain (loudness normalization), dB. */
   outputGainDb?: number;
+  /**
+   * Lanes to tap (export stems). Each tap is the lane's signal after its
+   * chain, delay compensation and duck, aligned with the master output.
+   * Ids that are not bus lanes (titles lanes, unknown ids) are ignored.
+   */
+  tapTrackIds?: string[];
+  /** Also tap the direct input: entries routed to no lane. */
+  tapDirect?: boolean;
 }
 
 /** Lanes that can carry audio, in timeline order, capped at the engine's lane limit. */
@@ -107,6 +123,7 @@ export function planBusGraph(
 ): BusGraphPlan {
   const { lanes, ducks } = orderLanes(tracks);
   const laneIndex = new Map(lanes.map((lane, i) => [lane.id, i]));
+  const tapped = new Set(options.tapTrackIds ?? []);
   const effects: number[] = [];
   const buses: number[] = [];
   const resolved: BusGraphPlan['ducks'] = [];
@@ -118,7 +135,7 @@ export function planBusGraph(
       effects.push(...packDuckRow(duck, laneIndex.get(duck.sourceTrackId)!));
       resolved.push({ trackId: lane.id, keyTrackId: duck.sourceTrackId });
     }
-    buses.push(first, effects.length / MIX_FX_STRIDE - first);
+    buses.push(first, effects.length / MIX_FX_STRIDE - first, tapped.has(lane.id) ? MIX_BUS_TAP : 0);
   }
   const masterFirst = effects.length / MIX_FX_STRIDE;
   effects.push(...packBusEffectRows(masterBus?.fx));
@@ -139,6 +156,8 @@ export function planBusGraph(
     outputGainDb,
     ducks: resolved,
     processing: effects.length > 0 || outputGainDb !== 0,
+    tapTrackIds: lanes.filter((lane) => tapped.has(lane.id)).map((lane) => lane.id),
+    tapDirect: options.tapDirect === true,
   };
 }
 

@@ -90,6 +90,14 @@ jobs:
         # webServer in playwright.config.ts runs `npm run preview`.
         run: npm run e2e
 
+      - name: Headless CLI smoke (cs render)
+        # The real Render action, driven through window.clipStacker.project
+        # (scripts/cs/), on the same SwiftShader WebGPU as the goldens.
+        run: |
+          node scripts/cs/render.mjs render e2e/fixtures/cs-smoke.project.json \
+            --media public/demo --preset 320x180 --out cs-smoke.mp4
+          test -s cs-smoke.mp4
+
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@v4

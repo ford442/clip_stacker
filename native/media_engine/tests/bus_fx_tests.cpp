@@ -101,6 +101,8 @@ struct Layout {
   std::vector<Fx> master;
   std::vector<Fx> final_stage;
   double gain_db = 0;
+  /** `MIX_BUS_FLAGS` per lane (missing = 0). */
+  std::vector<int> lane_flags;
 
   void pack(std::vector<double>* effects, std::vector<int>* buses, int* master_first, int* final_first) const {
     effects->clear();
@@ -110,9 +112,10 @@ struct Layout {
       for (const Fx& r : rows) effects->insert(effects->end(), r.begin(), r.end());
       return first;
     };
-    for (const auto& lane : lanes) {
-      const int first = append(lane);
-      buses->insert(buses->end(), {first, static_cast<int>(lane.size())});
+    for (size_t i = 0; i < lanes.size(); ++i) {
+      const int first = append(lanes[i]);
+      const int flags = i < lane_flags.size() ? lane_flags[i] : 0;
+      buses->insert(buses->end(), {first, static_cast<int>(lanes[i].size()), flags});
     }
     *master_first = append(master);
     *final_first = append(final_stage);
@@ -646,6 +649,8 @@ TEST_CASE(retune_keeps_state_or_refuses_structure_changes) {
 struct SessionRun {
   std::vector<float> out;
   std::vector<double> meters;
+  /** Output taps (`mix_bus_session_range`), one interleaved signal each. */
+  std::vector<std::vector<float>> taps;
 };
 
 SessionRun run_session(const std::vector<std::vector<float>>& lane_pcm, const Layout& l, int chunk, int flags,
@@ -680,11 +685,26 @@ SessionRun run_session(const std::vector<std::vector<float>>& lane_pcm, const La
                              1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, static_cast<double>(e),
                              route ? static_cast<double>(e) : -1.0});
   }
+  // Entries past the last lane route to the direct input. A tapped layout
+  // mixes through `mix_bus_session_range`, everything else as before.
+  const int tap_count = mix_bus_session_tap_count(s);
+  run.taps.assign(static_cast<size_t>(tap_count), std::vector<float>(static_cast<size_t>(frames) * 2));
+  std::vector<float> taps;
   for (int begin = 0; begin < frames; begin += chunk) {
     const int n = std::min(chunk, frames - begin);
-    CHECK(mix_fx_session_range(s, run.out.data() + static_cast<size_t>(begin) * 2, n, begin, pcm.data(),
-                               static_cast<int>(pcm.size()), meta.data(), entries, rows.data(), entries, nullptr, 0,
-                               MIX_FLAG_EFFECTS) == 0);
+    float* out = run.out.data() + static_cast<size_t>(begin) * 2;
+    if (tap_count == 0) {
+      CHECK(mix_fx_session_range(s, out, n, begin, pcm.data(), static_cast<int>(pcm.size()), meta.data(), entries,
+                                 rows.data(), entries, nullptr, 0, MIX_FLAG_EFFECTS) == 0);
+      continue;
+    }
+    taps.assign(static_cast<size_t>(tap_count) * n * 2, std::nanf(""));
+    CHECK(mix_bus_session_range(s, out, taps.data(), n, begin, pcm.data(), static_cast<int>(pcm.size()), meta.data(),
+                                entries, rows.data(), entries, nullptr, 0, MIX_FLAG_EFFECTS) == 0);
+    for (int t = 0; t < tap_count; ++t) {
+      std::copy_n(taps.begin() + static_cast<size_t>(t) * n * 2, static_cast<size_t>(n) * 2,
+                  run.taps[t].begin() + static_cast<size_t>(begin) * 2);
+    }
   }
   run.meters.resize(64);
   run.meters.resize(static_cast<size_t>(std::max(0, mix_fx_session_meters(s, run.meters.data(), 64))));
@@ -805,7 +825,7 @@ LONG_TEST_CASE(silence_after_a_tone_stays_out_of_subnormals) {
 
 TEST_CASE(api_rejects_malformed_layouts) {
   std::vector<double> effects = limiter(-1.0);
-  const int bad_bus[] = {0, 2};  // range past the blob
+  const int bad_bus[] = {0, 2, 0};  // range past the blob
   CHECK(bus_graph_create(kRate, 2, effects.data(), 1, bad_bus, 1, 0, 0, 0, 0, 0, 0) == nullptr);
   CHECK(bus_graph_create(kRate, 3, effects.data(), 1, nullptr, 0, 0, 0, 0, 0, 0, 0) == nullptr);
   CHECK(bus_graph_create(kRate, 2, effects.data(), 1, nullptr, 0, 0, 2, 0, 0, 0, 0) == nullptr);
@@ -815,6 +835,247 @@ TEST_CASE(api_rejects_malformed_layouts) {
   CHECK(loudness_meter_create(kRate, 6) == nullptr);
   CHECK(bus_graph_process(nullptr, nullptr, nullptr, 0) == CS_EINVAL);
   CHECK(mix_fx_session_meters(nullptr, nullptr, 0) == CS_EINVAL);
+}
+
+// ---------------------------------------------------------------------------
+// Output taps (stems)
+
+/** Graph output and taps, `block` frames per call; `inputs` are the lanes, then (optionally) the direct input. */
+struct TapRun {
+  std::vector<float> out;
+  std::vector<std::vector<float>> taps;
+};
+
+/**
+ * Every `skip_every`-th call (0 = none) goes through plain `bus_graph_process`
+ * instead and leaves its taps NaN: the taps' delay lines must keep running.
+ */
+TapRun run_graph_taps(Graph& g, const std::vector<std::vector<float>>& inputs, int block, int skip_every = 0) {
+  const int frames = static_cast<int>(inputs[0].size() / 2);
+  const int tap_count = bus_graph_tap_count(g.handle);
+  TapRun run;
+  run.out.resize(static_cast<size_t>(frames) * 2);
+  run.taps.assign(static_cast<size_t>(tap_count), std::vector<float>(static_cast<size_t>(frames) * 2, std::nanf("")));
+  std::vector<float> taps;
+  for (int begin = 0, call = 0; begin < frames; begin += block, ++call) {
+    const int n = std::min(block, frames - begin);
+    std::vector<float> lanes(static_cast<size_t>(g.lanes + 1) * n * 2, 0.f);
+    for (size_t l = 0; l < inputs.size(); ++l) {
+      std::copy_n(inputs[l].begin() + static_cast<size_t>(begin) * 2, static_cast<size_t>(n) * 2,
+                  lanes.begin() + static_cast<size_t>(l) * n * 2);
+    }
+    float* out = run.out.data() + static_cast<size_t>(begin) * 2;
+    if (skip_every > 0 && call % skip_every == skip_every - 1) {
+      CHECK(bus_graph_process(g.handle, lanes.data(), out, n) == CS_OK);
+      continue;
+    }
+    taps.assign(static_cast<size_t>(tap_count) * n * 2, std::nanf(""));
+    CHECK(bus_graph_process_taps(g.handle, lanes.data(), out, taps.data(), n) == CS_OK);
+    for (int t = 0; t < tap_count; ++t) {
+      std::copy_n(taps.begin() + static_cast<size_t>(t) * n * 2, static_cast<size_t>(n) * 2,
+                  run.taps[t].begin() + static_cast<size_t>(begin) * 2);
+    }
+  }
+  return run;
+}
+
+/** Distance in units in the last place (+0 and -0 are the same float). */
+long long ulp_distance(float a, float b) {
+  auto ordered = [](float v) {
+    int32_t i = 0;
+    std::memcpy(&i, &v, sizeof(i));
+    return i < 0 ? -static_cast<long long>(i & 0x7fffffff) : static_cast<long long>(i);
+  };
+  return std::llabs(ordered(a) - ordered(b));
+}
+
+/** Largest ulp distance between `out` and the float sum of `taps`, summed in tap order. */
+long long worst_sum_ulps(const std::vector<float>& out, const std::vector<std::vector<float>>& taps) {
+  long long worst = 0;
+  for (size_t i = 0; i < out.size(); ++i) {
+    float sum = 0.f;
+    for (const auto& tap : taps) sum += tap[i];
+    worst = std::max(worst, ulp_distance(sum, out[i]));
+  }
+  return worst;
+}
+
+/** Dialogue (compressor + lane limiter), music (EQ, ducked under dialogue), a dry lane; every lane tapped. */
+Layout stems_layout() {
+  Layout l;
+  l.lanes = {
+      {compressor(-24, 3, 0.005, 0.12), limiter(-3, 0.003, 0.05)},
+      {eq(MIX_FX_PEAKING, 900, -4, 1.2), eq(MIX_FX_HIGH_SHELF, 9000, 2, 0.7071), ducker(0, 9, -38, 0.04, 0.15, 0.4)},
+      {},
+  };
+  l.lane_flags = {MIX_BUS_TAP, MIX_BUS_TAP, MIX_BUS_TAP};
+  return l;
+}
+
+/** `everything_inputs` plus a busy direct input. */
+std::vector<std::vector<float>> stems_inputs(double seconds) {
+  auto inputs = everything_inputs(seconds);
+  inputs.push_back(programme(seconds, 0.3, 24));
+  return inputs;
+}
+
+double energy(const std::vector<float>& x) {
+  double e = 0;
+  for (float v : x) e += static_cast<double>(v) * v;
+  return e;
+}
+
+TEST_CASE(stems_sum_to_the_output_without_a_master_stage) {
+  // No master chain, 0 dB, no final stage: the output is the sum of what the
+  // lanes (post chain, post delay compensation, post duck) and the direct
+  // input add, so the taps (every lane, then direct) sum back to it.
+  const auto inputs = stems_inputs(3.0);
+  const int frames = static_cast<int>(inputs[0].size() / 2);
+  Graph whole(stems_layout(), MIX_BUS_FLAG_TAP_DIRECT);
+  CHECK(bus_graph_tap_count(whole.handle) == 4);
+  CHECK(bus_graph_latency(whole.handle) > 0);  // the lane limiter: delay compensation is exercised
+  const TapRun ref = run_graph_taps(whole, inputs, frames);
+  CHECK(worst_sum_ulps(ref.out, ref.taps) <= 1);
+  for (const auto& tap : ref.taps) CHECK(energy(tap) > 1.0);
+  // The taps are post-chain and post-duck: dialogue never passes its lane
+  // limiter's -3 dB ceiling, and the cut, ducked music is quieter than its input.
+  for (float v : ref.taps[0]) CHECK_LE(std::fabs(v), dbfs_amplitude(-3.0) * 1.0001);
+  CHECK(energy(ref.taps[1]) < energy(inputs[1]) * 0.9);
+  // Tapping never changes the output: the same layout untapped is bit-identical.
+  Layout untapped = stems_layout();
+  untapped.lane_flags.clear();
+  Graph plain(untapped);
+  CHECK(bus_graph_tap_count(plain.handle) == 0);
+  const TapRun plain_run = run_graph_taps(plain, inputs, 4096);
+  CHECK(std::memcmp(ref.out.data(), plain_run.out.data(), ref.out.size() * sizeof(float)) == 0);
+  // Any blocking gives the same taps.
+  for (int block : {128, 4097}) {
+    Graph g(stems_layout(), MIX_BUS_FLAG_TAP_DIRECT);
+    const TapRun run = run_graph_taps(g, inputs, block);
+    CHECK(std::memcmp(ref.out.data(), run.out.data(), ref.out.size() * sizeof(float)) == 0);
+    for (size_t t = 0; t < ref.taps.size(); ++t) {
+      CHECK(std::memcmp(ref.taps[t].data(), run.taps[t].data(), ref.taps[t].size() * sizeof(float)) == 0);
+    }
+  }
+  // Through the export session (the fourth entry routes direct), chunked or whole.
+  const SessionRun session = run_session(inputs, stems_layout(), frames, MIX_BUS_FLAG_TAP_DIRECT);
+  CHECK(session.taps.size() == 4);
+  CHECK(worst_sum_ulps(session.out, session.taps) <= 1);
+  for (int chunk : {1000, 48000 + 3}) {
+    const SessionRun chunked = run_session(inputs, stems_layout(), chunk, MIX_BUS_FLAG_TAP_DIRECT);
+    CHECK(std::memcmp(session.out.data(), chunked.out.data(), session.out.size() * sizeof(float)) == 0);
+    for (size_t t = 0; t < session.taps.size(); ++t) {
+      CHECK(std::memcmp(session.taps[t].data(), chunked.taps[t].data(), session.taps[t].size() * sizeof(float)) == 0);
+    }
+  }
+}
+
+TEST_CASE(stems_are_time_aligned_with_the_output_through_a_master_limiter) {
+  // A master and a final limiter delay the output past the point where the
+  // taps leave the graph; the taps' own delay lines land an impulse on any
+  // lane at the same tap frame as the output frame it reaches.
+  Layout l;
+  l.lanes = {{limiter(0, 0.002)}, {}, {}};
+  l.master = {limiter(-1, 0.004)};
+  l.final_stage = {limiter(-1, 0.005)};
+  l.lane_flags = {MIX_BUS_TAP, MIX_BUS_TAP, 0};
+  Graph g(l, MIX_BUS_FLAG_TAP_DIRECT);
+  CHECK(bus_graph_tap_count(g.handle) == 3);  // lanes 0 and 1, then direct
+  const int latency = bus_graph_latency(g.handle);
+  const int frames = 4000;
+  std::vector<std::vector<float>> inputs(4, std::vector<float>(static_cast<size_t>(frames) * 2, 0.f));
+  const int at[] = {500, 10, 2500, 900};  // lane 0, lane 1, lane 2 (untapped), direct
+  const float level[] = {0.125f, 0.25f, 0.5f, 0.0625f};
+  for (int k = 0; k < 4; ++k) inputs[k][2 * at[k]] = inputs[k][2 * at[k] + 1] = level[k];
+  const int tapped[] = {0, 1, 3};
+  for (int skip : {0, 2}) {
+    bus_graph_reset(g.handle);
+    const TapRun run = run_graph_taps(g, inputs, 128, skip);
+    for (int i = 0; i < frames; ++i) {
+      float want = 0.f;
+      for (int k = 0; k < 4; ++k) want += i == at[k] + latency ? level[k] : 0.f;
+      CHECK(run.out[2 * i] == want);
+    }
+    for (int t = 0; t < 3; ++t) {
+      const int k = tapped[t];
+      for (int i = 0; i < frames; ++i) {
+        const float v = run.taps[t][2 * i];
+        if (std::isnan(v)) continue;  // a call through plain bus_graph_process
+        CHECK(v == (i == at[k] + latency ? level[k] : 0.f));
+      }
+    }
+  }
+  // The session hides the latency: timeline frame N is output and tap frame N.
+  const SessionRun session = run_session(inputs, l, 700, MIX_BUS_FLAG_TAP_DIRECT);
+  CHECK(session.taps.size() == 3);
+  for (int t = 0; t < 3; ++t) {
+    const int k = tapped[t];
+    CHECK(session.out[2 * at[k]] == level[k]);
+    for (int i = 0; i < frames; ++i) CHECK(session.taps[t][2 * i] == (i == at[k] ? level[k] : 0.f));
+  }
+}
+
+TEST_CASE(stem_api_contract) {
+  Layout l = stems_layout();
+  Graph tapped(l, MIX_BUS_FLAG_TAP_DIRECT);
+  std::vector<float> lanes(static_cast<size_t>(4) * 64 * 2, 0.25f);
+  std::vector<float> out(static_cast<size_t>(64) * 2);
+  std::vector<float> taps(static_cast<size_t>(4) * 64 * 2);
+  CHECK(bus_graph_process_taps(tapped.handle, lanes.data(), out.data(), nullptr, 64) == CS_EINVAL);
+  CHECK(bus_graph_process_taps(tapped.handle, lanes.data(), out.data(), taps.data(), 64) == CS_OK);
+  CHECK(bus_graph_tap_count(nullptr) == 0);
+  CHECK(bus_graph_process_taps(nullptr, lanes.data(), out.data(), taps.data(), 64) == CS_EINVAL);
+  // A reset clears the taps' delay lines with everything else.
+  Layout delayed = l;
+  delayed.master = {limiter(-1, 0.004)};
+  Graph g(delayed, MIX_BUS_FLAG_TAP_DIRECT);
+  CHECK(bus_graph_process_taps(g.handle, lanes.data(), out.data(), taps.data(), 64) == CS_OK);
+  bus_graph_reset(g.handle);
+  std::fill(lanes.begin(), lanes.end(), 0.f);
+  CHECK(bus_graph_process_taps(g.handle, lanes.data(), out.data(), taps.data(), 64) == CS_OK);
+  for (float v : taps) CHECK(v == 0.f);
+  // Which lanes are tapped is structure: a retune that changes it is refused.
+  std::vector<double> effects;
+  std::vector<int> buses;
+  int master_first = 0;
+  int final_first = 0;
+  l.pack(&effects, &buses, &master_first, &final_first);
+  const int effect_count = static_cast<int>(effects.size() / MIX_FX_STRIDE);
+  CHECK(bus_graph_update(tapped.handle, effects.data(), effect_count, buses.data(), 3, master_first, 0, 0,
+                         final_first, 0) == CS_OK);
+  buses[2 * MIX_BUS_STRIDE + MIX_BUS_FLAGS] = 0;
+  CHECK(bus_graph_update(tapped.handle, effects.data(), effect_count, buses.data(), 3, master_first, 0, 0,
+                         final_first, 0) == CS_ESTATE);
+  // A session: its tap count, and null taps refused only when it has taps.
+  MixFxSession* s = mix_bus_session_create(kRate, 2, 0, effects.data(), effect_count, buses.data(), 3, master_first, 0,
+                                           0, final_first, 0, MIX_BUS_FLAG_TAP_DIRECT);
+  CHECK(s != nullptr);
+  CHECK(mix_bus_session_tap_count(s) == 3);  // lanes 0 and 1 (lane 2 untapped now), then direct
+  CHECK(mix_bus_session_range(s, out.data(), nullptr, 64, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 0) ==
+        CS_EINVAL);
+  CHECK(mix_bus_session_range(s, out.data(), taps.data(), 64, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 0) ==
+        CS_OK);
+  mix_fx_session_destroy(s);
+  // A dry layout with a tap keeps its graph (a pure sum), so the stem exists.
+  Layout dry;
+  dry.lanes = {{}, {}};
+  dry.lane_flags = {0, MIX_BUS_TAP};
+  dry.pack(&effects, &buses, &master_first, &final_first);
+  s = mix_bus_session_create(kRate, 2, 0, effects.data(), 0, buses.data(), 2, 0, 0, 0, 0, 0, 0);
+  CHECK(s != nullptr);
+  CHECK(mix_bus_session_tap_count(s) == 1);
+  mix_fx_session_destroy(s);
+  dry.lane_flags.clear();
+  dry.pack(&effects, &buses, &master_first, &final_first);
+  s = mix_bus_session_create(kRate, 2, 0, effects.data(), 0, buses.data(), 2, 0, 0, 0, 0, 0, 0);
+  CHECK(s != nullptr);
+  CHECK(mix_bus_session_tap_count(s) == 0);
+  CHECK(mix_bus_session_range(s, out.data(), nullptr, 64, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, 0) ==
+        CS_OK);
+  mix_fx_session_destroy(s);
+  CHECK(mix_bus_session_tap_count(nullptr) == 0);
+  CHECK(mix_bus_session_range(nullptr, out.data(), taps.data(), 64, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+                              0) == CS_EINVAL);
 }
 
 // ---------------------------------------------------------------------------

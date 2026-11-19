@@ -155,21 +155,36 @@ enum {
 };
 
 /**
- * Packed lane bus: two int32s per lane. The lane's chain is rows
+ * Packed lane bus: three int32s per lane. The lane's chain is rows
  * `[FX_FIRST, FX_FIRST + FX_COUNT)` of the effect blob, processed in order;
  * a `MIX_FX_DUCKER` row among them runs after the chain and after delay
- * compensation (one ducker per lane is honoured).
+ * compensation (one ducker per lane is honoured). `FLAGS` is a mask of
+ * `MIX_BUS_TAP`.
  */
 enum {
   MIX_BUS_FX_FIRST = 0,
   MIX_BUS_FX_COUNT = 1,
-  MIX_BUS_STRIDE = 2,
+  MIX_BUS_FLAGS = 2,
+  MIX_BUS_STRIDE = 3,
+};
+
+/** `MIX_BUS_FLAGS` bits. */
+enum {
+  /**
+   * Output tap: the lane's signal after its chain, delay compensation and
+   * duck — exactly what it adds to the master sum — delayed by the master
+   * chain's and final stage's look-ahead, so tap frame N is output frame N
+   * (`bus_graph_process_taps`, `mix_bus_session_range`).
+   */
+  MIX_BUS_TAP = 1,
 };
 
 /** `flags` for `mix_bus_session_create` / `bus_graph_create`. */
 enum {
   /** Run the BS.1770 meter (and gain-reduction readouts) on the output. */
   MIX_BUS_FLAG_METER = 1,
+  /** Tap the direct (unrouted) input too, as the last tap. */
+  MIX_BUS_FLAG_TAP_DIRECT = 2,
 };
 
 /**
@@ -297,8 +312,8 @@ MixFxSession* mix_fx_session_create(
  * `final_*` are row ranges of `effects`: the master chain, then
  * `output_gain_db` (a static gain, e.g. loudness normalization), then the
  * final stage (limiters only). `flags`: `MIX_BUS_FLAG_*`. A layout that
- * processes nothing (no stage, no duck, 0 dB, no meter) runs exactly like
- * `mix_fx_session_create` with no bus rows. Null on bad arguments or OOM.
+ * processes nothing (no stage, no duck, 0 dB, no meter, no tap) runs exactly
+ * like `mix_fx_session_create` with no bus rows. Null on bad arguments or OOM.
  */
 MixFxSession* mix_bus_session_create(
     int out_sample_rate,
@@ -349,6 +364,36 @@ int mix_fx_session_range(
     int flags);
 
 /**
+ * Output taps of a bus session (`MIX_BUS_TAP` lanes in packed order, then
+ * the direct input with `MIX_BUS_FLAG_TAP_DIRECT`); 0 without a graph.
+ */
+int mix_bus_session_tap_count(const MixFxSession* session);
+
+/**
+ * `mix_fx_session_range` that also writes the session's output taps:
+ * `taps` is `tap_count * out_frames * channels` floats, tap-major, each tap
+ * interleaved and aligned with `out` (frame i of every tap is output frame
+ * `start_frame + i`, the first call's look-ahead dropped the same way). With
+ * no master chain, final stage or output gain the taps sum to `out`. `taps`
+ * may be null only when the count is 0 (CS_EINVAL otherwise).
+ */
+int mix_bus_session_range(
+    MixFxSession* session,
+    float* out,
+    float* taps,
+    int out_frames,
+    double start_frame,
+    const float* pcm_blob,
+    int pcm_floats,
+    const int* slices,
+    int slice_count,
+    const double* entries,
+    int entry_count,
+    const double* keyframes,
+    int keyframe_count,
+    int flags);
+
+/**
  * Meter readout of a session created with `MIX_BUS_FLAG_METER` (it meters the
  * delivered output, after the final stage): writes up to `capacity` doubles
  * in the `MIX_METER_*` layout and returns how many it wrote (0 without a
@@ -380,8 +425,9 @@ BusGraphHandle* bus_graph_create(
 
 /**
  * Retune in place (filter and envelope state kept) when the new layout has
- * the same structure: lane count, stage kinds in order, ducks and limiter
- * look-aheads. CS_ESTATE when it does not (create a new graph instead).
+ * the same structure: lane count, stage kinds in order, ducks, limiter
+ * look-aheads and tapped lanes. CS_ESTATE when it does not (create a new
+ * graph instead).
  */
 int bus_graph_update(
     BusGraphHandle* graph,
@@ -405,6 +451,18 @@ int bus_graph_latency(const BusGraphHandle* graph);
  * delayed by `bus_graph_latency` frames (silence while it primes).
  */
 int bus_graph_process(BusGraphHandle* graph, const float* lanes, float* out, int frames);
+
+/** Output taps (`MIX_BUS_TAP` lanes in packed order, then direct with `MIX_BUS_FLAG_TAP_DIRECT`). */
+int bus_graph_tap_count(const BusGraphHandle* graph);
+
+/**
+ * `bus_graph_process` that also writes the taps: `taps` is
+ * `bus_graph_tap_count * frames * channels` floats, tap-major, each tap
+ * interleaved and time-aligned with `out`. `bus_graph_process` on a tapped
+ * graph keeps the taps' delay lines running, so the two calls mix freely.
+ * Never allocates.
+ */
+int bus_graph_process_taps(BusGraphHandle* graph, const float* lanes, float* out, float* taps, int frames);
 
 /** As `mix_fx_session_meters`; gain-reduction peaks restart after a read. */
 int bus_graph_meters(BusGraphHandle* graph, double* out, int capacity);

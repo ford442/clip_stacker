@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Upload, trim, reorder, fade, and merge video clips into one MP4 using FFmpeg WebAssembly",
   "type": "module",
+  "bin": {
+    "cs": "scripts/cs/render.mjs"
+  },
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
   },
@@ -35,7 +38,8 @@
     "e2e": "playwright test",
     "e2e:update-goldens": "UPDATE_GOLDENS=1 playwright test e2e/goldens.spec.ts",
     "lint": "eslint . --max-warnings 0",
-    "check:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src"
+    "check:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src",
+    "cs": "node scripts/cs/render.mjs"
   },
   "keywords": [
     "video",
@@ -48,6 +52,8 @@
   "dependencies": {
     "@ffmpeg/util": "^0.12.1",
     "@tanstack/react-virtual": "^3.14.8",
+    "fast-xml-parser": "^5.11.2",
+    "fflate": "^0.8.3",
     "mediabunny": "1.61.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -57,6 +63,7 @@
     "@eslint/js": "^10.0.1",
     "@ffmpeg/core": "0.12.10",
     "@ffmpeg/core-mt": "0.12.10",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@playwright/test": "^1.64.1",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",

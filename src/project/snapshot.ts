@@ -8,9 +8,11 @@ import type {
   SequenceBody,
   SyncMarker,
   TextOverlay,
+  ProjectTimecode,
   TextOverlayStyle,
   Track,
 } from '../types';
+import { DEFAULT_PROJECT_TIMECODE } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
 import {
   DEFAULT_COLOR_MANAGEMENT,
@@ -44,6 +46,8 @@ export interface ProjectSnapshot {
   masterBus: MasterBusSettings | undefined;
   finishing: FinishingSettings;
   colorManagement: ColorManagementSettings;
+  /** Timecode of the first frame and the interchange / BWF rate. */
+  timecode: ProjectTimecode;
   /** Nested sequences, live edits of an open one included. */
   sequences: Sequence[];
 }
@@ -73,7 +77,7 @@ type EditorSnapshotSource = ProjectSnapshotEditorFields & {
 /** The settings-store fields a snapshot reads. */
 export type ProjectSnapshotSettingsFields = Pick<
   ProjectSnapshot,
-  'finishing' | 'colorManagement'
+  'finishing' | 'colorManagement' | 'timecode'
 >;
 
 /**
@@ -115,6 +119,7 @@ export function selectProjectSnapshot(
     ...selectProjectSnapshotEditorFields(editor),
     finishing: settings.finishing,
     colorManagement: settings.colorManagement,
+    timecode: settings.timecode,
   };
 }
 
@@ -135,6 +140,7 @@ export function createProjectSnapshot(
     masterBus: undefined,
     finishing: DEFAULT_FINISHING,
     colorManagement: DEFAULT_COLOR_MANAGEMENT,
+    timecode: DEFAULT_PROJECT_TIMECODE,
     sequences: [],
     ...partial,
   };

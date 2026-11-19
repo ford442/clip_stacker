@@ -316,11 +316,13 @@ function VirtualClipBlockImpl({
             isSelected ? ' selected' : ''
           }${isOverlay ? ' timeline-clip--pip' : ''}${locked ? ' timeline-clip--locked' : ''}${
             isSequence ? ' timeline-clip--sequence' : ''
-          }`}
+          }${clip.offline ? ' timeline-clip--offline' : ''}`}
           onClick={handleClick}
           onDoubleClick={isSequence ? handleDoubleClick : undefined}
           title={
-            isSequence
+            clip.offline
+              ? `${clip.title}\nMedia offline: ${clip.offline.fileName} — relink it with File → Relink media…`
+              : isSequence
               ? `${clip.title}\nNested sequence — double-click to open it.${locked ? '\n🔒 This lane is locked.' : ''}`
               : locked
               ? `${clip.title}\n🔒 This lane is locked — unlock it in the lane header to trim, drag or delete.`
@@ -332,8 +334,9 @@ function VirtualClipBlockImpl({
           {clip.kind === 'video' ? (
             <div className={`timeline-thumbs${isLoadingThumbs ? ' is-loading' : ''}`}>
               {isSequence && <span className="timeline-sequence-icon" aria-hidden="true">▣</span>}
-              {thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null}
-              {(showVideoWaveform || hasRateCurve) && displayWaves && (
+              {/* An offline clip has no media: the cached strips (keyed by id) would be stale. */}
+              {clip.offline ? null : (thumbs?.map((src, ti) => <img key={ti} src={src} alt="" />) ?? null)}
+              {!clip.offline && (showVideoWaveform || hasRateCurve) && displayWaves && (
                 <div className="timeline-video-waveform">
                   <WaveformCanvas peaks={displayWaves} height={40} remapCurve={remapCurve} />
                 </div>
@@ -348,7 +351,7 @@ function VirtualClipBlockImpl({
             </div>
           ) : (
             <div className={`timeline-waveform${isLoadingWave ? ' is-loading' : ''}`}>
-              {displayWaves ? (
+              {displayWaves && !clip.offline ? (
                 <WaveformCanvas peaks={displayWaves} height={54} remapCurve={remapCurve} />
               ) : (
                 <span className="waveform-loading-icon">♫</span>
@@ -379,6 +382,12 @@ function VirtualClipBlockImpl({
                 title={`Overlay on video lane ${layerIndex}. Stacking order is lane order; this clip appears at ${(clip.timelineStart ?? 0).toFixed(2)}s on the output.`}
               >
                 PiP · L{layerIndex}
+              </span>
+            )}
+
+            {clip.offline && (
+              <span className="timeline-clip-badge timeline-clip-badge--offline" title={`Media offline: ${clip.offline.fileName}`}>
+                OFFLINE
               </span>
             )}
 

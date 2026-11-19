@@ -33,10 +33,16 @@ export const MIX_FLAG_EFFECTS = 2;
 export const MIX_ENTRY_FX_STRIDE = 16;
 /** f64 fields per packed effect block (`MIX_FX_STRIDE`). */
 export const MIX_FX_STRIDE = 13;
-/** i32 fields per lane bus (`MIX_BUS_STRIDE`): first effect row, row count. */
-export const MIX_BUS_STRIDE = 2;
+/** i32 fields per lane bus (`MIX_BUS_STRIDE`): first effect row, row count, flags. */
+export const MIX_BUS_STRIDE = 3;
+/** Field offsets within a lane bus row (`MIX_BUS_FX_FIRST`, `MIX_BUS_FX_COUNT`, `MIX_BUS_FLAGS`). */
+export const MIX_BUS = { fxFirst: 0, fxCount: 1, flags: 2 } as const;
+/** `MIX_BUS_TAP` (a lane's flags field): write the lane's output tap (stem). */
+export const MIX_BUS_TAP = 1;
 /** `MIX_BUS_FLAG_METER`: run the BS.1770 meter (and gain-reduction readouts). */
 export const MIX_BUS_FLAG_METER = 1;
+/** `MIX_BUS_FLAG_TAP_DIRECT`: tap the direct (unrouted) input too, as the last tap. */
+export const MIX_BUS_FLAG_TAP_DIRECT = 2;
 /** Lane buses per graph (`MIX_BUS_MAX_LANES`); lanes past it mix direct. */
 export const MIX_BUS_MAX_LANES = 32;
 /** `MIX_METER_*`: the meter readout layout (then one gain reduction per lane). */

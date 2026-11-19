@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 3,
+  "layoutReferenceResolution": "320x180",
+  "tracks": [
+    { "id": "v1", "kind": "video", "label": "Video 1", "items": [{ "clipId": "a", "startTime": 0 }, { "clipId": "b", "startTime": 1.5 }] },
+    { "id": "a1", "kind": "audio", "label": "Audio 1", "items": [] }
+  ],
+  "clips": [
+    { "id": "a", "title": "Pattern", "kind": "video", "duration": 6, "trimStart": 0, "trimEnd": 2, "videoFadeIn": 0, "videoFadeOut": 0, "audioFadeIn": 0, "audioFadeOut": 0, "fileName": "demo-clip-a.mp4", "fileType": "video/mp4" },
+    { "id": "b", "title": "Bars", "kind": "video", "duration": 6, "trimStart": 1, "trimEnd": 3, "videoFadeIn": 0, "videoFadeOut": 0, "audioFadeIn": 0, "audioFadeOut": 0, "fileName": "demo-clip-b.mp4", "fileType": "video/mp4" }
+  ],
+  "transitions": [{ "afterClipIndex": 1, "type": "dissolve", "duration": 0.5 }],
+  "textOverlays": [{ "id": "t1", "text": "cs smoke", "fontsize": 24, "fontcolor": "#ffffff", "x": 0.1, "y": 0.1, "scrolling": false, "scrollSpeed": 20, "box": true, "boxColor": "black@0.5" }]
+}

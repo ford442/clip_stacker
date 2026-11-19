@@ -2,6 +2,7 @@
  * WebGPU timeline preview — renders transition pairs via the shared WGSL registry.
  */
 
+import { offlineSlateFrame } from '../media/offlineSlate';
 import type { Clip } from '../types';
 import { withNestedInstances } from '../composition/nestedSequences';
 import { DEFAULT_FINISHING } from '../finishing/finishing';
@@ -76,6 +77,10 @@ async function resolveLayerFrame(
   mediaPool: ClipMediaPool,
   options?: TimelineRenderOptions,
 ): Promise<ResolvedLayerFrame | null> {
+  if (clip.offline) {
+    const slate = offlineSlateFrame(clip);
+    return slate ? { frame: slate, video: { videoWidth: slate.displayWidth, videoHeight: slate.displayHeight } as HTMLVideoElement } : null;
+  }
   if (options?.frameProvider) {
     const frame = await options.frameProvider.getFrame(layer, clip);
     if (frame) {

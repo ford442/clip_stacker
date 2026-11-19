@@ -24,31 +24,16 @@
  *   (`webgpu/shaderCatalog.ts`), for `e2e/shaders.spec.ts` to compile.
  */
 
-import type {
-  CaptionEntry,
-  CaptionExportMode,
-  ChromaKeySettings,
-  Clip,
-  ClipKeyframes,
-  ClipTransition,
-  ExportSettings,
-  OverlayBlendMode,
-  Project,
-  TextOverlay,
-} from '../../types';
-import { DEFAULT_EXPORT_SETTINGS } from '../../types';
+import type { Clip, Project } from '../../types';
 import { editorStore } from '../../store/editorStore';
 import { settingsStore } from '../../store/settingsStore';
 import { renderJobStore } from '../../store/renderJobStore';
 import { playbackStore } from '../../store/playbackStore';
 import { fetchDemoClips, DEMO_CLIPS } from '../../media/demoClips';
 import { createClipId, getMediaInfo } from '../../media/media';
-import { moveClipToVideoLayer } from '../../timeline/trackModel';
-import { applyProjectData, serializeProject } from '../../project';
-import { selectProjectSnapshot } from '../../project/snapshot';
-import { DEFAULT_FINISHING } from '../../finishing/finishing';
-import { DEFAULT_COLOR_MANAGEMENT, type ColorManagementSettings } from '../../finishing/colorManagement';
-import { applyFinishingPresetInput } from '../../store/finishingPresetStore';
+import { applyProjectData } from '../../project';
+import type { ColorManagementSettings } from '../../finishing/colorManagement';
+import { buildFixture, type HarnessFixtureSpec } from './fixtureBuilder';
 import { visibleTextOverlays } from '../../timeline/trackModel';
 import { selectTimelineClips } from '../../store/selectors';
 import { computeTotalDuration } from '../../timeline/transitions';
@@ -56,6 +41,8 @@ import { getClipDuration } from '../../timeline/clipTiming';
 import { readAutoSaveSession } from '../../project/autoSave';
 import { DecoderFrameCursor } from '../../media/decoderCursor';
 import { harnessBindings } from '../harnessBindings';
+import { renderBinding } from '../../actions/renderBinding';
+import { createProjectApi } from '../../actions/projectApi';
 import { compareImages, meanRgb, type ImageComparison } from './imageMetrics';
 import {
   P3_CHART_PATCHES,
@@ -67,47 +54,6 @@ import {
 } from './colorProbes';
 import type { LayerFrameProvider } from '../../composition/previewComposition';
 import { listAssembledShaders } from '../../webgpu/shaderCatalog';
-
-export interface HarnessClipSpec {
-  /** Which bundled demo clip (`public/demo/demo-clip-{a,b}.mp4`). */
-  demo: 'a' | 'b';
-  trimStart?: number;
-  trimEnd?: number;
-  /** Video lane: 0 = base sequence, 1+ = overlays (PiP). */
-  layer?: number;
-  /** Output start time on an overlay lane (seconds). */
-  startTime?: number;
-  x?: number;
-  y?: number;
-  width?: number;
-  height?: number;
-  opacity?: number;
-  overlayBlend?: OverlayBlendMode;
-  chromaKey?: ChromaKeySettings;
-  keyframes?: ClipKeyframes;
-}
-
-export interface HarnessFixtureSpec {
-  clips: HarnessClipSpec[];
-  transitions?: ClipTransition[];
-  textOverlays?: Partial<TextOverlay>[];
-  captions?: CaptionEntry[];
-  /** A finishing preset's `finishing` object (applied as `replace`). */
-  finishing?: Record<string, unknown>;
-  colorManagement?: Partial<ColorManagementSettings>;
-  /** Output size, `"WxH"`; defaults to the demo clips' 640x360. */
-  resolution?: string;
-  /** How export carries captions (`settingsStore.captionExportMode`); default `none`. */
-  captionExportMode?: CaptionExportMode;
-  /**
-   * Nest these clips (indices into `clips`) and titles (indices into
-   * `textOverlays`) into one sequence, placed where they were — the
-   * Library's *Nest selected*.
-   */
-  nest?: { clips: number[]; titles?: number[] };
-}
-
-const DEFAULT_RESOLUTION = '640x360';
 
 let demoFiles: Map<string, File> | null = null;
 
@@ -144,97 +90,17 @@ async function clipFromFile(file: File): Promise<Clip> {
   };
 }
 
-function resetProject(): void {
-  disposePreviewEngine();
-  const initial = editorStore.getInitialState();
-  editorStore.getState().resetHistory({
-    clips: [],
-    tracks: initial.tracks,
-    clipGroups: [],
-    transitions: [],
-    textOverlays: [],
-    captions: [],
-    captionStyle: {},
-    masterAudioMarkers: [],
-    selectedClipId: null,
-    masterAudio: null,
-  });
-  settingsStore.getState().setFinishing(DEFAULT_FINISHING);
-  settingsStore.getState().setColorManagement(DEFAULT_COLOR_MANAGEMENT);
-  renderJobStore.getState().setStatus('');
-}
-
-function setResolution(resolution: string): void {
-  const exportSettings: ExportSettings = {
-    ...DEFAULT_EXPORT_SETTINGS,
-    outputResolution: resolution,
-  };
-  delete exportSettings.resolutionPreset;
-  settingsStore.getState().setExportSettings(exportSettings);
-}
-
 async function buildProject(spec: HarnessFixtureSpec): Promise<void> {
-  resetProject();
-  setResolution(spec.resolution ?? DEFAULT_RESOLUTION);
-  const editor = editorStore.getState();
-  const clipIds: string[] = [];
-  for (const clipSpec of spec.clips) {
-    const { demo, layer = 0, startTime, ...fields } = clipSpec;
-    const clip: Clip = { ...(await clipFromFile(await demoFile(demo))), ...fields };
-    clipIds.push(clip.id);
-    editor.addClip(clip);
-    if (layer > 0) {
-      const state = editorStore.getState();
-      const tracks = moveClipToVideoLayer(state.tracks, clip.id, layer, state.clips);
-      editor.setTracks(
-        startTime === undefined
-          ? tracks
-          : tracks.map((track) => ({
-              ...track,
-              items: track.items.map((item) => (item.clipId === clip.id ? { ...item, startTime } : item)),
-            })),
-      );
-    }
-  }
-  if (spec.transitions) editor.setTransitions(spec.transitions);
-  if (spec.textOverlays) {
-    editor.setTextOverlays(
-      spec.textOverlays.map((overlay, index) => ({
-        id: `title-${index}`,
-        text: 'Title',
-        fontsize: 40,
-        fontcolor: '#ffffff',
-        x: 0.1,
-        y: 0.1,
-        scrolling: false,
-        scrollSpeed: 20,
-        box: true,
-        boxColor: 'black@0.5',
-        ...overlay,
-      })),
-    );
-  }
-  if (spec.captions) editor.setCaptions(spec.captions);
-  if (spec.nest) {
-    const refused = editor.nestClips({
-      clipIds: spec.nest.clips.map((index) => clipIds[index] ?? ''),
-      textOverlayIds: (spec.nest.titles ?? []).map((index) => `title-${index}`),
-    });
-    if (refused) throw new Error(`nest: ${refused}`);
-  }
-  if (spec.finishing) {
-    const result = applyFinishingPresetInput(spec.finishing);
-    if (!result.ok) throw new Error(`finishing: ${result.errors.join('; ')}`);
-  }
-  settingsStore.getState().setCaptionExportMode(spec.captionExportMode ?? 'none');
-  if (spec.colorManagement) {
-    settingsStore.getState().setColorManagement({ ...DEFAULT_COLOR_MANAGEMENT, ...spec.colorManagement });
-  }
-  editor.setSelectedClipId(null);
+  disposePreviewEngine();
+  renderJobStore.getState().setStatus('');
+  await buildFixture(spec, async (demo) => clipFromFile(await demoFile(demo)));
 }
+
+/** The harness is a thin layer over the supported API (`window.clipStacker.project`). */
+const project = createProjectApi();
 
 function snapshotProject(): Project {
-  return serializeProject(selectProjectSnapshot(editorStore.getState(), settingsStore.getState()));
+  return project.getState();
 }
 
 /** Load a saved project; its clips resolve against the demo clips by file name. */
@@ -260,6 +126,7 @@ async function loadProject(json: Project | string): Promise<void> {
   });
   settingsStore.getState().setFinishing(applied.finishing);
   settingsStore.getState().setColorManagement(applied.colorManagement);
+  settingsStore.getState().setTimecode(applied.timecode);
 }
 
 function outputSize(): { width: number; height: number } {
@@ -461,23 +328,23 @@ export interface ExportOptions {
 
 /** Run the app's Render action and return the produced file. */
 async function exportProject(options: ExportOptions = {}): Promise<Blob> {
-  if (!harnessBindings.performRender) throw new Error('App has not bound its render action yet');
+  if (!renderBinding.performRender) throw new Error('App has not bound its render action yet');
   const settings = settingsStore.getState();
   const previous = { forceReencode: settings.forceReencode, forceFFmpeg: settings.forceFFmpeg };
   settings.setForceReencode(options.forceReencode ?? true);
   settings.setForceFFmpeg(options.forceFFmpeg ?? false);
+  let report: Awaited<ReturnType<typeof project.render>>;
   try {
     // performRender closes over the clips React last rendered; let a fixture
     // built just now commit (and the binding effect re-run) first.
     await settle();
-    await harnessBindings.performRender();
+    report = await project.render();
   } finally {
     settings.setForceReencode(previous.forceReencode);
     settings.setForceFFmpeg(previous.forceFFmpeg);
   }
-  const { outputUrl, status } = renderJobStore.getState();
-  if (!outputUrl) throw new Error(`Render produced no output: ${status}`);
-  return (await fetch(outputUrl)).blob();
+  if (!report.url) throw new Error(`Render produced no output: ${report.status}`);
+  return (await fetch(report.url)).blob();
 }
 
 /** The exported file's frame at `t` (seconds), decoded with WebCodecs. */
@@ -571,6 +438,8 @@ export const testHarness = {
   autoSaveSummary,
   crash,
   listShaders: listAssembledShaders,
+  /** `window.clipStacker.project`, for the interchange / stems / ops specs. */
+  project,
   toPng,
   fromPng,
   compare: (a: ImageData, b: ImageData): ImageComparison => compareImages(a, b),

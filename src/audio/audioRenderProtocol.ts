@@ -5,15 +5,21 @@
  * worker can run the metering pass and the final pass back to back.
  *
  * - calls: `open` (null = the media engine is unavailable there), then one
- *   `pull` per chunk (a `chunk`, interleaved and transferred, or `done` with
- *   the output meter). A failed mix rejects the pull.
+ *   `pull` per chunk (a `chunk`, interleaved and transferred with its output
+ *   taps, or `done` with the output meter and the tap meters). A failed mix
+ *   rejects the pull.
  * - stream channel, worker → main: `need-pcm` / `release` (the stream's
  *   `ClipPcmProvider` calls); main → worker: the PCM in answer, as
  *   `pcm-begin`, `pcm-part`s (one channel slice each, transferred) and
  *   `pcm-end`, or `pcm-error`; `close` at the end.
  */
 
-import type { MediaEngineMixEntry, MixMeterReading, TimelineMixStreamOptions } from '../wasm/mediaEngine';
+import type {
+  MediaEngineMixEntry,
+  MixMeterReading,
+  TapMeterReading,
+  TimelineMixStreamOptions,
+} from '../wasm/mediaEngine';
 
 export interface RenderStreamDims {
   totalFrames: number;
@@ -22,8 +28,16 @@ export interface RenderStreamDims {
 }
 
 export type RenderPullResult =
-  | { type: 'chunk'; id: number; startFrame: number; frameCount: number; frames: Float32Array }
-  | { type: 'done'; id: number; meters: MixMeterReading | null };
+  | {
+      type: 'chunk';
+      id: number;
+      startFrame: number;
+      frameCount: number;
+      frames: Float32Array;
+      /** `TimelineMixChunk.taps`, one transferred block per tap. */
+      taps?: Float32Array[];
+    }
+  | { type: 'done'; id: number; meters: MixMeterReading | null; tapMeters: TapMeterReading[] | null };
 
 export type AudioRenderProtocol = {
   open: {

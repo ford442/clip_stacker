@@ -6,7 +6,14 @@
 
 import { withHeap } from './emscriptenLoader';
 import type { BusGraphPlan } from '../audio/fxGraph';
-import { MIX_BUS_FLAG_METER, MIX_BUS_STRIDE, MIX_FX_STRIDE, MIX_METER } from './mediaEngineLayout';
+import {
+  MIX_BUS,
+  MIX_BUS_FLAG_METER,
+  MIX_BUS_FLAG_TAP_DIRECT,
+  MIX_BUS_STRIDE,
+  MIX_FX_STRIDE,
+  MIX_METER,
+} from './mediaEngineLayout';
 
 /** The media-engine module's C exports (`EXPORTED_FUNCTIONS` in its CMakeLists). */
 export interface MediaEngineWasmModule {
@@ -51,6 +58,28 @@ export interface MediaEngineWasmModule {
     flags: number,
   ): number;
   _mix_fx_session_meters?(session: number, outPtr: number, capacity: number): number;
+  _mix_bus_session_tap_count?(session: number): number;
+  /** `_mix_fx_session_range` plus `tapsPtr`: `tapCount * outFrames * channels` floats, tap-major. */
+  _mix_bus_session_range?(
+    session: number,
+    outPtr: number,
+    tapsPtr: number,
+    outFrames: number,
+    startFrame: number,
+    pcmPtr: number,
+    pcmFloats: number,
+    slicesPtr: number,
+    sliceCount: number,
+    entriesPtr: number,
+    entryCount: number,
+    keyframesPtr: number,
+    keyframeCount: number,
+    flags: number,
+  ): number;
+  _loudness_meter_create?(sampleRate: number, channels: number): number;
+  _loudness_meter_process?(meter: number, interleavedPtr: number, frames: number): number;
+  _loudness_meter_read?(meter: number, outPtr: number, capacity: number): number;
+  _loudness_meter_destroy?(meter: number): void;
   _mix_fx_session_destroy?(session: number): void;
   _mix_fx_session_latency?(session: number): number;
   _mix_fx_session_range?(
@@ -83,6 +112,8 @@ export interface FxSession {
   latency: number;
   /** Lane buses in the session's graph (sizes the meter readout). */
   lanes: number;
+  /** Output taps (`BusGraphPlan.tapTrackIds`, then direct); 0 = mix with `_mix_fx_session_range`. */
+  taps: number;
 }
 
 /** A meter readout (`MIX_METER` layout): LUFS, LU, dBTP / dBFS, gain reduction dB. */
@@ -160,9 +191,11 @@ export function createBusSession(
       const effects = heap.f64(fxValues.length > 0 ? fxValues : [0]);
       const buses = heap.alloc(Math.max(1, lanes * MIX_BUS_STRIDE) * 4);
       const view = heap.i32View(buses, lanes * MIX_BUS_STRIDE);
+      view.set(bus.buses.slice(0, lanes * MIX_BUS_STRIDE));
+      // Each lane's first row shifts past the clip insert rows; count and flags copy as they are.
       for (let i = 0; i < lanes; i++) {
-        view[i * MIX_BUS_STRIDE] = bus.buses[i * MIX_BUS_STRIDE]! + busFirst;
-        view[i * MIX_BUS_STRIDE + 1] = bus.buses[i * MIX_BUS_STRIDE + 1]!;
+        const first = i * MIX_BUS_STRIDE + MIX_BUS.fxFirst;
+        view[first] = (bus.buses[first] ?? 0) + busFirst;
       }
       return mod._mix_bus_session_create!(
         sampleRate,
@@ -177,7 +210,7 @@ export function createBusSession(
         bus.outputGainDb,
         bus.finalFirst + busFirst,
         bus.finalCount,
-        meter ? MIX_BUS_FLAG_METER : 0,
+        (meter ? MIX_BUS_FLAG_METER : 0) | (bus.tapDirect ? MIX_BUS_FLAG_TAP_DIRECT : 0),
       );
     }) ?? 0
   );

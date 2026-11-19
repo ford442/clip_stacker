@@ -3,8 +3,9 @@ import type {
   AutoCaptionScope,
   CaptionExportMode,
   ExportSettings,
+  ProjectTimecode,
 } from '../types';
-import { DEFAULT_EXPORT_SETTINGS } from '../types';
+import { DEFAULT_EXPORT_SETTINGS, DEFAULT_PROJECT_TIMECODE } from '../types';
 import { registerExportStateSource } from '../export/exportSources';
 import { safeGet, safeRemove, safeSet } from '../utils/storageKeys';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
@@ -27,6 +28,8 @@ export interface SettingsState {
   exportSettings: ExportSettings;
   finishing: FinishingSettings;
   colorManagement: ColorManagementSettings;
+  /** Timecode of the first frame and the rate interchange and BWF stems count in. */
+  timecode: ProjectTimecode;
   forceFFmpeg: boolean;
   useCanvasRenderer: boolean;
   audioReactive: boolean;
@@ -58,6 +61,7 @@ export interface SettingsState {
   setExportSettings: (settings: ExportSettings) => void;
   setFinishing: (settings: FinishingSettings) => void;
   setColorManagement: (settings: ColorManagementSettings) => void;
+  setTimecode: (timecode: ProjectTimecode) => void;
   setForceFFmpeg: (v: boolean) => void;
   setUseCanvasRenderer: (v: boolean) => void;
   setAudioReactive: (v: boolean) => void;
@@ -75,6 +79,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   exportSettings: DEFAULT_EXPORT_SETTINGS,
   finishing: DEFAULT_FINISHING,
   colorManagement: DEFAULT_COLOR_MANAGEMENT,
+  timecode: DEFAULT_PROJECT_TIMECODE,
   forceFFmpeg: false,
   useCanvasRenderer: false,
   audioReactive: true,
@@ -91,6 +96,7 @@ export const settingsStore = createStore<SettingsState>()((set) => ({
   setExportSettings: (settings) => set({ exportSettings: settings }),
   setFinishing: (settings) => set({ finishing: settings }),
   setColorManagement: (settings) => set({ colorManagement: settings }),
+  setTimecode: (timecode) => set({ timecode }),
   setForceFFmpeg: (v) => set({ forceFFmpeg: v }),
   setUseCanvasRenderer: (v) => set({ useCanvasRenderer: v }),
   setAudioReactive: (v) => set({ audioReactive: v }),

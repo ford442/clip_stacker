@@ -183,7 +183,30 @@ export interface EditorState extends EditorSequenceActions {
    * Ordinary finishing edits do not touch the edit history.
    */
   applyFinishing: (next: FinishingSettings) => void;
+  /**
+   * Replace any of the project's editable fields in one undo step — a
+   * scripted batch (`window.clipStacker.project.apply`) or an import. With
+   * `finishing`, that step also restores the grade on undo.
+   */
+  commitProjectEdit: (next: ProjectEditState, finishing?: FinishingSettings) => void;
 }
+
+/** The fields `commitProjectEdit` can replace together. */
+export type ProjectEditState = Partial<
+  Pick<
+    EditorState,
+    | 'clips'
+    | 'tracks'
+    | 'clipGroups'
+    | 'transitions'
+    | 'textOverlays'
+    | 'captions'
+    | 'captionStyle'
+    | 'masterAudioMarkers'
+    | 'masterBus'
+    | 'selectedClipId'
+  >
+>;
 
 /**
  * Transient bookkeeping kept outside the reactive state so mutating it never
@@ -447,6 +470,29 @@ export const editorStore = createStore<EditorState>()((set, get) => {
       settingsStore.getState().setFinishing(next);
     },
 
+    commitProjectEdit: (next, finishing) => {
+      if (!isRestoring) {
+        undoStack.push(cloneSnapshot(snapshotOf(finishing !== undefined)));
+        trimHistoryStack(undoStack);
+        redoStack.length = 0;
+        publishDepths();
+      }
+      set((s) => {
+        const clips = next.clips ? sanitizeClips(next.clips) : s.clips;
+        const ids = new Set(clips.map((clip) => clip.id));
+        const selected = next.selectedClipId !== undefined ? next.selectedClipId : s.selectedClipId;
+        return {
+          ...next,
+          clips,
+          clipGroups: syncClipGroups(next.clipGroups ?? s.clipGroups, clips),
+          ...(next.captions ? { captions: normalizeCaptions(next.captions) } : {}),
+          ...(next.masterBus !== undefined || 'masterBus' in next ? { masterBus: normalizeMasterBus(next.masterBus) } : {}),
+          selectedClipId: selected && ids.has(selected) ? selected : null,
+        };
+      });
+      if (finishing) settingsStore.getState().setFinishing(finishing);
+    },
+
     resetHistory: (snapshot) => {
       // Master-audio blob URLs are owned by the editing session, not by any
       // clip, so `revokeOrphanedUrls` never sees them. Once the stacks are
@@ -585,6 +631,7 @@ export const editorActions: Pick<
   | 'redo'
   | 'resetHistory'
   | 'applyFinishing'
+  | 'commitProjectEdit'
   | 'enterSequence'
   | 'exitSequence'
   | 'exitToRootSequence'

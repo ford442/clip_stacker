@@ -19,7 +19,7 @@
 import type { BusGraphPlan } from '../audio/fxGraph';
 import { resolvePublicAssetUrl } from '../utils/publicAssetUrl';
 import { resolveWasmAssetUrl } from './emscriptenLoader';
-import { MIX_BUS_FLAG_METER, MIX_FX_STRIDE } from './mediaEngineLayout';
+import { MIX_BUS, MIX_BUS_FLAG_METER, MIX_BUS_STRIDE, MIX_BUS_TAP, MIX_FX_STRIDE } from './mediaEngineLayout';
 import { decodeMeterReading, type MixMeterReading } from './mediaEngineSession';
 
 export const AUDIO_FX_KILL_PARAM = 'no_audio_fx';
@@ -42,11 +42,12 @@ export interface BusLayoutMessage {
   flags: number;
 }
 
+/** The preview never taps (stems are export-only): its graph gets no tap flags, so it runs no tap delay lines. */
 export function busLayoutMessage(plan: BusGraphPlan, meter: boolean): BusLayoutMessage {
   return {
     effects: Float64Array.from(plan.effects),
     effectCount: plan.effects.length / MIX_FX_STRIDE,
-    buses: Int32Array.from(plan.buses),
+    buses: Int32Array.from(plan.buses, (v, i) => (i % MIX_BUS_STRIDE === MIX_BUS.flags ? v & ~MIX_BUS_TAP : v)),
     masterFirst: plan.masterFirst,
     masterCount: plan.masterCount,
     outputGainDb: plan.outputGainDb,

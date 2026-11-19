@@ -207,6 +207,7 @@ export function remoteConcatBlockers(timelineClips: Clip[], context: RemoteConca
 
   for (const clip of timelineClips) {
     if (isSequenceClip(clip)) add('nested sequences');
+    if (clip.offline) add('offline clips');
     if (clip.kind !== 'video') add('audio clips / audio lanes');
     if ((clip.layerIndex ?? 0) > 0) add('PiP/overlay lanes');
     if (clip.trackMuted) add('lane mute');
