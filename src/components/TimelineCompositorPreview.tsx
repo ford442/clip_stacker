@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   playbackStore,
   setPlayheadTime,
@@ -18,6 +18,8 @@ import type { FinishingSettings } from '../finishing/finishing';
 import type { ColorManagementSettings } from '../finishing/colorManagement';
 import { computeTotalDuration } from '../timeline/transitions';
 import { useTimelineAudioPlayback } from '../hooks/useTimelineAudioPlayback';
+import { usePreviewCacheControls } from '../hooks/usePreviewCacheControls';
+import { renderCacheStore } from '../store/renderCacheStore';
 import { usePlaybackAnalyserLevels } from '../hooks/usePlaybackAnalyserLevels';
 import {
   DEFAULT_PREVIEW_CONSTRAINTS,
@@ -186,10 +188,12 @@ export function TimelineCompositorPreview({
             ...(colorManagement && { colorManagement }),
             ...(captions && { captions }),
             ...(captionStyle && { captionStyle }),
+            previewCache: renderCacheStore.getState().settings.previewCache,
           },
         );
         if (isCancelled()) return;
 
+        if (playingRef.current) previewMetrics.recordPlayedFrame(Math.round(plan.globalTime * 30));
         previewMetrics.recordFrame(performance.now() - frameStart);
         previewMetrics.maybeLog();
         renderFailuresRef.current = 0;
@@ -226,22 +230,21 @@ export function TimelineCompositorPreview({
         }
       }
     },
-    [
-      timelineClips,
-      clipGroups,
-      transitions,
-      textOverlays,
-      captions,
-      captionStyle,
-      exportSettings,
-      finishing,
-      colorManagement,
-    ],
+    [timelineClips, clipGroups, transitions, textOverlays, captions, captionStyle, exportSettings, finishing, colorManagement],
   );
 
   const requestRender = useCallback((globalTime: number) => {
     schedulerRef.current?.request(globalTime);
   }, []);
+
+  // RAM preview: ruler bar, Render In→Out, idle background fill (`usePreviewCacheControls`).
+  const cacheInputs = useMemo(() => ({
+    clips: timelineClips, groups: clipGroups, transitions, overlays: textOverlays, exportSettings, totalDuration,
+    options: { ...(previewSize && { maxHeight: previewSize.canvasHeight, maxWidth: previewSize.canvasWidth }),
+      ...(finishing && { finishing }), ...(colorManagement && { colorManagement }), ...(captions && { captions }),
+      ...(captionStyle && { captionStyle }) },
+  }), [timelineClips, clipGroups, transitions, textOverlays, exportSettings, totalDuration, previewSize, finishing, colorManagement, captions, captionStyle]);
+  usePreviewCacheControls({ engineRef, renderAt, requestRender, isPlaying, inputs: cacheInputs });
 
   useEffect(() => {
     schedulerRef.current = createRenderScheduler(renderAt, () => {

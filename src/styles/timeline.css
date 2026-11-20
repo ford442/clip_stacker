@@ -1171,3 +1171,31 @@
   font-weight: 700;
 }
 
+
+/* RAM preview (PreviewCacheBar): cached frames in green along the ruler's
+   bottom edge, the In → Out range shaded above it. */
+.ruler-cache-span,
+.ruler-inout-range,
+.ruler-inout-mark {
+  position: absolute;
+  pointer-events: none;
+}
+.ruler-cache-span {
+  bottom: 0;
+  height: 3px;
+  background: var(--success, #2ecc71);
+}
+.ruler-inout-range {
+  top: 0;
+  bottom: 0;
+  background: color-mix(in srgb, var(--accent, #4aa3ff) 18%, transparent);
+}
+.ruler-inout-mark {
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent, #4aa3ff);
+}
+.ruler-inout-mark--out {
+  transform: translateX(-2px);
+}

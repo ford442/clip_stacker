@@ -17,6 +17,8 @@ const SHORTCUTS = [
   { key: "U", description: "Slide tool (move the clip, neighbours compensate)" },
   { key: "Alt+Arrow Left / Right", description: "Nudge the active tool by one frame (Shift: 10 frames)" },
   { key: "I / O", description: "Insert / overwrite drop mode" },
+  { key: "Shift+I / Shift+O", description: "Mark In / Out at the playhead (Shift+X clears)" },
+  { key: "Shift+Enter", description: "Render In → Out into the preview cache" },
   { key: "N", description: "Toggle timeline snapping" },
   { key: "Arrow Left (with Ctrl/Cmd)", description: "Move selected clip left" },
   {

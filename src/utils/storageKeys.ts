@@ -88,6 +88,12 @@ export const STORAGE_KEYS = {
     legacy: ['clip-stacker:speed-lane-last-seed-rate'],
     area: 'local',
   },
+  /** Render cache / smart render / preview cache settings (`store/renderCacheStore.ts`). View state. */
+  renderCache: {
+    key: 'clip_stacker.renderCache.v1',
+    legacy: [],
+    area: 'local',
+  },
   /** Remote storage auth token — tab-scoped, never in localStorage. */
   storageAuthToken: {
     key: 'clip_stacker.storageAuthToken.v1',

@@ -12,6 +12,7 @@ import { DEFAULT_EXPORT_SETTINGS } from '../types';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
 import { DEFAULT_COLOR_MANAGEMENT, type ColorManagementSettings } from '../finishing/colorManagement';
 import { selectEncoderPath, type SelectedEncoderPath } from './encoderPath';
+import { DEFAULT_RENDER_CACHE_CONFIG, registerRenderCacheConfigSource } from './renderCache/renderCacheConfig';
 
 const probes = vi.hoisted(() => ({ webGpu: false, webCodecs: false }));
 
@@ -62,6 +63,7 @@ function clip(id: string, overrides: Partial<Clip> = {}): Clip {
 }
 
 const PLAIN = [clip('a'), clip('b')];
+const START_TRIMMED = [clip('a'), clip('b', { trimStart: 1.5 })];
 const FADED = [clip('a', { videoFadeIn: 0.5 }), clip('b')];
 const SPEED_CURVE = [
   clip('a', { automation: { playbackRate: [{ t: 0, value: 1 }, { t: 2, value: 2 }] } }),
@@ -98,6 +100,8 @@ interface Row {
   forceFFmpeg?: boolean;
   useCanvas?: boolean;
   forceReencode?: boolean;
+  /** Smart render setting (default on, as in a fresh browser). */
+  smartRender?: boolean;
   webGpu: boolean;
   webCodecs: boolean;
   expected: SelectedEncoderPath;
@@ -122,6 +126,10 @@ const ROWS: Row[] = [
   { name: 'canvas, reversed → GPU', clips: REVERSED, useCanvas: true, webGpu: true, webCodecs: true, expected: 'webcodecs' },
   { name: 'canvas, keyed PiP → GPU', clips: KEYED, useCanvas: true, webGpu: true, webCodecs: true, expected: 'webcodecs' },
   { name: 'canvas, transition, no WebGPU', clips: PLAIN, transitions: XFADE, useCanvas: true, webGpu: false, webCodecs: false, expected: 'ffmpeg' },
+  // Smart render (on by default): FFmpeg's concat would re-encode a start-trimmed clip whole.
+  { name: 'cut-only, start-trimmed clip → smart render', clips: START_TRIMMED, webGpu: true, webCodecs: true, expected: 'webcodecs' },
+  { name: 'cut-only, start-trimmed, no WebGPU', clips: START_TRIMMED, webGpu: false, webCodecs: true, expected: 'ffmpeg' },
+  { name: 'cut-only, start-trimmed, smart render off', clips: START_TRIMMED, smartRender: false, webGpu: true, webCodecs: true, expected: 'ffmpeg' },
 ];
 
 function inputFor(row: Row) {
@@ -145,10 +153,12 @@ function estimate(row: Row, colorManagement = DEFAULT_COLOR_MANAGEMENT) {
     webCodecsAvailable: row.webCodecs,
     ...(row.forceReencode !== undefined ? { forceReencode: row.forceReencode } : {}),
     outputColor: colorManagement.outputColor,
+    smartRender: row.smartRender ?? true,
   });
 }
 
 async function route(row: Row, colorManagement = DEFAULT_COLOR_MANAGEMENT) {
+  registerRenderCacheConfigSource(() => ({ ...DEFAULT_RENDER_CACHE_CONFIG, smartRender: row.smartRender ?? true }));
   probes.webGpu = row.webGpu;
   probes.webCodecs = row.webCodecs;
   const i = inputFor(row);
@@ -188,6 +198,7 @@ describe('selectEncoderPath', () => {
       webCodecsAvailable: row.webCodecs,
       mediaRecorderAvailable: true,
       willReencode: estimate(row).willReencode || row.forceReencode === true,
+      smartRender: row.smartRender ?? true,
     });
     expect(decision.path).toBe(row.expected);
     expect(decision.reasons.length).toBeGreaterThan(0);

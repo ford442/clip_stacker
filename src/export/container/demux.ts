@@ -302,3 +302,31 @@ export async function readVideoColorSpace(source: Blob): Promise<VideoColorSpace
     return null;
   }
 }
+
+/** Reordering slack past the requested end before `readVideoPackets` stops. */
+const PACKET_READ_SLACK_US = 2_000_000;
+
+/**
+ * `source`'s video packets in decode order, from the key frame at or before
+ * `startUs` (µs from the first frame, as `packets`) until the first key
+ * frame at or after `endUs` — or, failing one, `PACKET_READ_SLACK_US` of
+ * presentation time past it, so B-frames shown before `endUs` are all read.
+ * What smart render copies from (`renderCache/smartRender.ts`).
+ */
+export async function readVideoPackets(source: Blob, startUs: number, endUs: number): Promise<DemuxPacket[]> {
+  const demux = await openVideoDemux(source);
+  const stream = demux.packets(startUs / 1_000_000);
+  const out: DemuxPacket[] = [];
+  try {
+    for (;;) {
+      const { value, done } = await stream.next();
+      if (done) break;
+      if (out.length > 0 && value.type === 'key' && value.timestamp >= endUs) break;
+      if (value.timestamp > endUs + PACKET_READ_SLACK_US) break;
+      out.push(value);
+    }
+  } finally {
+    stream.close();
+  }
+  return out;
+}

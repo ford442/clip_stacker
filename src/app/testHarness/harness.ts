@@ -54,6 +54,11 @@ import {
 } from './colorProbes';
 import type { LayerFrameProvider } from '../../composition/previewComposition';
 import { listAssembledShaders } from '../../webgpu/shaderCatalog';
+import { renderCacheStore, type RenderCacheSettings } from '../../store/renderCacheStore';
+import { previewCacheStore } from '../../store/previewCacheStore';
+import { previewCacheBinding } from '../../actions/previewCacheBinding';
+import { previewMetrics } from '../../composition/previewMetrics';
+import { mp4Digest } from './mp4Digest';
 
 let demoFiles: Map<string, File> | null = null;
 
@@ -422,6 +427,39 @@ function crash(message = 'test harness crash'): void {
   harnessBindings.crash(new Error(message));
 }
 
+/** The render cache (`export/renderCache/`): settings, usage, clear. */
+const renderCache = {
+  settings: (): RenderCacheSettings => renderCacheStore.getState().settings,
+  update: (patch: Partial<RenderCacheSettings>) => renderCacheStore.getState().update(patch),
+  async usage() {
+    await renderCacheStore.getState().refresh();
+    return renderCacheStore.getState().usage;
+  },
+  clear: () => renderCacheStore.getState().clear(),
+  /** `RenderPlan.renderCache` / `encoderReasons` of the last render. */
+  lastReport: () => {
+    const plan = renderJobStore.getState().renderPlan;
+    return plan ? { renderCache: plan.renderCache ?? null, reasons: plan.encoderReasons ?? [] } : null;
+  },
+};
+
+/** The RAM preview (`webgpu/previewFrameCache.ts`), through the mounted preview. */
+const previewCache = {
+  setMarks: (inPoint: number | null, outPoint: number | null) => {
+    previewCacheStore.getState().setInPoint(inPoint);
+    previewCacheStore.getState().setOutPoint(outPoint);
+  },
+  async renderRange(from: number, to: number) {
+    if (!previewCacheBinding.renderRange) throw new Error('The preview is not mounted');
+    return previewCacheBinding.renderRange(from, to);
+  },
+  async status() {
+    return previewCacheBinding.status ? previewCacheBinding.status() : null;
+  },
+  ranges: () => previewCacheStore.getState().cachedRanges,
+  metrics: () => previewMetrics.snapshot(),
+};
+
 export const testHarness = {
   buildProject,
   loadProject,
@@ -438,6 +476,10 @@ export const testHarness = {
   autoSaveSummary,
   crash,
   listShaders: listAssembledShaders,
+  renderCache,
+  previewCache,
+  /** SHA-256 of a file with its MP4 header times zeroed (bit-identical exports match). */
+  mp4Digest,
   /** `window.clipStacker.project`, for the interchange / stems / ops specs. */
   project,
   toPng,

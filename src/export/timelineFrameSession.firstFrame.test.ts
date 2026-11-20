@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { framePeakLevel, planExpectsPicture } from './webcodecsTimelineExport';
+import { framePeakLevel, planExpectsPicture } from './timelineFrameSession';
 import type { PreviewCompositionPlan } from '../composition/previewCompositionTypes';
 
 /** One plane of `width` × `height` samples of `bytesPerSample`, row stride padded by 8 bytes. */

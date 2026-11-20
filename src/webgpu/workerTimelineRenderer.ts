@@ -7,6 +7,7 @@ import { grainFrameSeedFromTime } from '../finishing/grain';
 import { layerWarpDrawParams, transitionWarpParams } from '../composition/clipTransform';
 import type { PreviewClipLayer, PreviewCompositionPlan } from '../composition/previewComposition';
 import { PreviewEngine, type LayerDraw } from './previewEngine';
+import { PreviewFrameCache, previewCacheBudgetBytes, type PreviewFrameCacheStats } from './previewFrameCache';
 import type { TransitionRenderParams } from './transitions/types';
 import {
   isGpuTransitionPair,
@@ -259,7 +260,56 @@ export class WorkerTimelineRenderer {
     this.engine.resetFinishingTemporal();
   }
 
+  // -- Preview frame cache (RAM preview, `previewFrameCache.ts`) ----------
+
+  private frameCache: PreviewFrameCache | null = null;
+
+  /** The cache on the engine's current device (a recovered device starts empty), sized for this canvas. */
+  private cache(): PreviewFrameCache {
+    const device = this.engine.gpuDevice;
+    if (!this.frameCache || this.frameCacheDevice !== device) {
+      this.frameCache?.destroy();
+      this.frameCache = new PreviewFrameCache(device, 0);
+      this.frameCacheDevice = device;
+    }
+    this.frameCache.setBudget(previewCacheBudgetBytes(device.limits, this.canvas.width, this.canvas.height));
+    return this.frameCache;
+  }
+
+  private frameCacheDevice: GPUDevice | null = null;
+
+  hasCachedFrame(key: string): boolean {
+    return this.frameCache?.has(key) === true && this.frameCacheDevice === this.engine.gpuDevice;
+  }
+
+  /** Copy the frame just drawn into the cache. Call in the task that drew it. */
+  storeCachedFrame(key: string, frame: number): boolean {
+    const texture = this.engine.currentCanvasTexture();
+    return texture ? this.cache().store(key, frame, texture) : false;
+  }
+
+  /** Present the cached frame for `key`; false on a miss. */
+  presentCachedFrame(key: string): boolean {
+    if (!this.hasCachedFrame(key)) return false;
+    const texture = this.engine.currentCanvasTexture();
+    return texture ? this.cache().present(key, texture) : false;
+  }
+
+  cachedFrames(): Array<[string, number]> {
+    return this.frameCache?.frames() ?? [];
+  }
+
+  frameCacheStats(): PreviewFrameCacheStats {
+    return this.frameCache?.stats() ?? { entries: 0, bytes: 0, budgetBytes: 0 };
+  }
+
+  clearFrameCache(): void {
+    this.frameCache?.clear();
+  }
+
   destroy(): void {
+    this.frameCache?.destroy();
+    this.frameCache = null;
     this.engine.destroy();
   }
 }

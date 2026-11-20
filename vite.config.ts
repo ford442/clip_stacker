@@ -1,4 +1,7 @@
+import { createHash } from 'node:crypto';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { Connect, Plugin } from 'vite';
 import { defineConfig } from 'vite';
@@ -123,8 +126,44 @@ function driveAuthCoopMiddleware(): Connect.NextHandleFunction {
   };
 }
 
+/**
+ * Content hash of everything that decides a rendered pixel: the app source
+ * (shaders, plan maths), the WASM modules and the bundled fonts. The render
+ * cache keys on it (`__CLIP_STACKER_BUILD_ID__`, `utils/buildId.ts`), so a
+ * redeploy that changes how frames are drawn never reuses old frames, and
+ * one that does not keeps the cache.
+ */
+function renderBuildId(): string {
+  const hash = createHash('sha256');
+  const root = fileURLToPath(new URL('.', import.meta.url));
+  const visit = (dir: string) => {
+    let entries: string[];
+    try {
+      entries = readdirSync(dir).sort();
+    } catch {
+      return;
+    }
+    for (const name of entries) {
+      const path = join(dir, name);
+      if (/\.test(\.helpers)?\.tsx?$/.test(name)) continue;
+      if (statSync(path).isDirectory()) {
+        visit(path);
+      } else {
+        // Relative, so every checkout of the same commit builds the same id.
+        hash.update(relative(root, path).split(sep).join('/'));
+        hash.update(readFileSync(path));
+      }
+    }
+  };
+  for (const dir of ['src', 'public/wasm', 'public/fonts']) visit(join(root, dir));
+  return hash.digest('hex').slice(0, 16);
+}
+
 export default defineConfig({
   base: './',
+  define: {
+    __CLIP_STACKER_BUILD_ID__: JSON.stringify(renderBuildId()),
+  },
   plugins: [
     {
       name: 'clip-stacker-drive-auth-coop',

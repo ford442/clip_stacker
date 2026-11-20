@@ -55,7 +55,8 @@ import {
   type GpuCompositorKind,
 } from './webcodecsCompositor';
 import { encodeVideoFrames } from './webcodecsClipEncode';
-import { encodeTimelineComposite } from './webcodecsTimelineExport';
+import { encodeTimelineComposite, type TimelineExportOptions } from './webcodecsTimelineExport';
+import { renderCacheConfig } from './renderCache/renderCacheConfig';
 
 export type { GpuCompositorKind } from './webcodecsCompositor';
 ;
@@ -100,16 +101,22 @@ export async function encodeVideoWithWebCodecs(
    */
   captionBurnIn: CaptionPlanOptions = {},
   colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
+  timelineOptions: TimelineExportOptions = {},
 ): Promise<Blob> {
   const { width, height } = parseOutputResolution(settings.outputResolution);
+  // The render cache and smart render work on the composition plan, so with
+  // either on (the default) every timeline takes the compositor when WebGPU
+  // is there; the per-clip encoder below stays the no-WebGPU path.
+  const cache = renderCacheConfig();
+  const segmented = (cache.enabled || cache.smartRender) && (await isWebGpuExportAvailable());
 
   // HDR10 titles / captions are composited in the working space before the
   // PQ output transform, which only the timeline compositor does.
   const hdr10Graphics =
     colorManagement.outputColor === 'hdr10' &&
     (textOverlays.length > 0 || (captionBurnIn.captions?.length ?? 0) > 0);
-  if (hdr10Graphics || shouldUseTimelineGpuExport(clips, transitions, textOverlays, finishing)) {
-    const webGpuOk = await isWebGpuExportAvailable();
+  if (segmented || hdr10Graphics || shouldUseTimelineGpuExport(clips, transitions, textOverlays, finishing)) {
+    const webGpuOk = segmented || (await isWebGpuExportAvailable());
     if (!webGpuOk) {
       throw new Error('WebGPU required for GPU timeline compositor export');
     }
@@ -127,6 +134,7 @@ export async function encodeVideoWithWebCodecs(
       includeWebCodecsAudio,
       captionBurnIn,
       colorManagement,
+      timelineOptions,
     );
   }
 

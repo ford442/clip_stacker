@@ -23,6 +23,7 @@ import { TEXT_FILL_SHADER } from './text/textFill';
 import { TRANSITION_REGISTRY } from './transitions/registry';
 import { buildTransitionShader } from './transitions/shaderTemplate';
 import { YUV_PACK_SHADER } from './yuvPackPass';
+import { FRAME_BLIT_SHADER } from './previewFrameCache';
 
 export interface AssembledShader {
   /** `<file>.wgsl` (plus a variant suffix), or `transition:<id>`. */
@@ -53,6 +54,7 @@ export function listAssembledShaders(): AssembledShader[] {
     { name: 'grain.wgsl', code: GRAIN_SHADER },
     { name: 'graphicsOverlay.wgsl', code: GRAPHICS_OVERLAY_SHADER },
     { name: 'yuvPack.wgsl', code: YUV_PACK_SHADER },
+    { name: 'frameBlit.wgsl', code: FRAME_BLIT_SHADER },
     { name: 'colorManagement.wgsl', code: COLOR_MANAGEMENT_SHADER },
     { name: 'colorManagement.wgsl (shader-f16)', code: colorManagementShaderF16(), requires: 'shader-f16' },
   ];

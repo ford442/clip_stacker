@@ -213,6 +213,8 @@ HDR10 compares the PQ readback, not the preview: the preview is the SDR monitor 
 
 **Smoke flows** (`e2e/smoke.spec.ts`) go through the real UI: load demo clips → split → ripple delete → undo → render; crash → reload → recovery offer.
 
+**Render cache** (`e2e/renderCache.spec.ts`): smart render copies a cut-only project but a GOP-straddling cut (demo A + B also checks the avc3 in-band path), a title edit re-encodes only its frames, cached and uncached exports have equal `mp4Digest`s, the cache survives a reload, and a Render In→Out'd NLM + bloom range plays with 0 dropped frames.
+
 **Interchange** (`e2e/interchange.spec.ts`): every golden fixture round-trips through OTIO and FCPXML byte-identically through the app's import; a clip whose media is missing imports offline, survives save / load and blocks Render; stems give one BWF per lane plus the master. CI also runs `cs render` on `e2e/fixtures/cs-smoke.project.json`.
 
 **Smoke flows** also cover *recover session restores the embedded clips*: embedded media comes back from its `data:` URL through `project/dataUrl.ts` (decoded locally — the production `connect-src` blocks `fetch('data:…')`, and happy-dom enforces no CSP, so `dataUrl.test.ts` makes `fetch` throw instead).
@@ -693,6 +695,62 @@ renderer still write Rec.709 (`wideColor: 'ignored'`). HDR10 titles and
 captions are no longer refused: they composite in the working space (see
 *Color pipeline*). `encoderPath.test.ts` table-tests that the estimate and
 the router agree; add a row there for any new routing rule.
+
+## Render cache, smart render and the RAM preview
+
+Docs: `docs/render-cache.md`. Everything keys off the composition plan.
+
+- **Keys** (`export/renderKey.ts`, pure): `frameKey(plan, ctx)` is XXH64
+  (`utils/xxhash64.ts`, the reference algorithm in TS) over a canonical JSON of
+  the drawn layers (clip ids, timeline indices and absolute transition starts
+  removed; invisible titles / captions dropped), each clip's media fingerprint
+  and frame-picking fields (trim, reverse, colour override), titles' clocks,
+  the grain seed (grain on only) and `renderSettingsHash` (finishing, colour,
+  size, `BUILD_ID` — a content hash of `src/`, `public/wasm/`, `public/fonts/`
+  from `vite.config.ts`, `'dev'` in tests). **Key and render the
+  `quantizePlan`-ed plan** (µs source times, float32 elsewhere), or a ripple's
+  float noise breaks keys and frame choice. `segmentFrames` splits at structure
+  changes and every 60 frames from the run start. A new compositor input that
+  is not in the plan must go into the key.
+- **Segmented export** (`export/renderCache/segmentedExport.ts`, deps injected,
+  unit tested with fakes): copy (smart render) / hit (render cache) / render
+  with a **fresh `VideoEncoder` per segment** and temporal NR reset at its
+  start — that is what makes cached = uncached bit for bit. One sample entry
+  per track: shared SPS / PPS → `avc1`, otherwise H.264 goes `avc3` with
+  in-band parameter sets; a mismatch the plan did not foresee throws
+  `SegmentConfigMismatchError` and `encodeTimelineComposite` re-runs it
+  continuously. With the cache or smart render on, every WebCodecs timeline
+  takes the compositor (`TimelineFrameSession`, `export/timelineFrameSession.ts`,
+  which owns the SDR / HDR10 frame loop). `RenderPlan.renderCache` and
+  `encoderReasons` report what ran.
+- **Storage** (`renderCache/renderCache.ts`, `cacheBackend.ts`,
+  `segmentRecord.ts`): OPFS `render-cache/<settingsKey>/<segmentKey>.chunk`,
+  LRU under a budget (default 2 GiB) with `index.json`, planned hits pinned.
+  `sharedRenderCache.ts` opens it lazily — keep the cache classes out of the
+  entry chunk (the store imports it dynamically).
+- **Smart render** (`smartRender.ts`): untouched full-frame H.264 base layers at
+  the output size, export at 30 fps; copy from the first source key frame to
+  the last closed decode-order prefix, render the rest. Cut-only timelines
+  with a start-trimmed clip route to the GPU path for it
+  (`smartRenderPrefersGpu`); plain cut-only stays FFmpeg lossless concat.
+- **Settings** (`store/renderCacheStore.ts`, per browser,
+  `clip_stacker.renderCache.v1`) reach export through
+  `renderCacheConfig()` (`?no_render_cache` kill switch). UI: Export →
+  *Render cache* (`RenderCacheFields`), **🗑 Clear render cache** beside Copy
+  Debug.
+- **RAM preview** (`webgpu/previewFrameCache.ts`, `previewWorkerCache.ts`,
+  worker only): `previewCache` on a `render` snaps to 30 fps, presents a cached
+  `GPUTexture` (exact `textureLoad` blit, `shaders/frameBlit.wgsl`) or stores
+  the swapchain copy in the drawing task; titles are not in the key (main draws
+  them). `prerender` fills without changing the shown frame; `cache-status`
+  re-keys cached frames for the ruler's green bar. Main side:
+  `hooks/usePreviewCacheControls.ts` (status poll, Render In→Out, idle
+  background fill), `store/previewCacheStore.ts` (In / Out — Shift+I / O / X,
+  Shift+Enter renders), `PreviewCacheBar`, `PreviewRenderControls`;
+  `previewMetrics` has `cacheHits` / `cacheMisses` / `droppedFrames`.
+- e2e: `e2e/renderCache.spec.ts` (smart render, title edit → only its frames,
+  cached = uncached digests, reload, RAM preview playback with 0 dropped frames).
+  The harness has `renderCache`, `previewCache` and `mp4Digest`.
 
 ## Nested sequences (compound clips)
 

@@ -179,6 +179,28 @@ export interface PreviewRenderRequest {
   /** Caption cues to plan for; omitted or empty means no caption layers. */
   captions?: CaptionEntry[] | undefined;
   captionStyle?: Partial<TextOverlayStyle> | undefined;
+  /**
+   * RAM preview (`previewFrameCache.ts`): snap to the 30 fps grid, present a
+   * cached frame when there is one, store the frame otherwise.
+   */
+  previewCache?: boolean | undefined;
+  /**
+   * Fill the cache without changing what is shown: draw and store this
+   * frame, then present the cached frame at `restoreTime` again (in the same
+   * task, so nothing flickers). Refused (null) when that frame is not cached.
+   */
+  prerender?: { restoreTime: number } | undefined;
+}
+
+/** `cache-status`: which frames of the timeline as it is now are in the RAM preview. */
+export type PreviewCacheStatusRequest = Omit<PreviewRenderRequest, 'renderId' | 'globalTime' | 'previewCache' | 'prerender'>;
+
+export interface PreviewCacheStatus {
+  /** Frame numbers (30 fps grid) whose cached frame still matches the timeline. */
+  frames: number[];
+  entries: number;
+  bytes: number;
+  budgetBytes: number;
 }
 
 /** A completed `render` (null = cancelled, or no compositor yet). */
@@ -186,6 +208,8 @@ export interface PreviewRenderResult {
   plan: PreviewCompositionPlan;
   /** Per-layer frame sourcing for this frame (decoder path vs `<video>`). */
   frameSources: FrameSourceStats;
+  /** RAM preview: presented from the cache (`hit`), drawn and stored (`miss`), or not cacheable / off. */
+  cache?: 'hit' | 'miss' | 'off';
   /** `?gpu_profile`: the worker's averaged GPU milliseconds per pass. */
   gpuProfile?: Record<string, number>;
 }
@@ -222,6 +246,8 @@ export type PreviewWorkerProtocol = {
   };
   /** Abort the call to cancel the frame (the worker checks between stages). */
   render: { req: PreviewRenderRequest; res: PreviewRenderResult | null };
+  /** RAM preview contents for the timeline as `req` describes it (null before init). */
+  'cache-status': { req: PreviewCacheStatusRequest; res: PreviewCacheStatus | null };
   /** gpu-chores kernels on the worker's adopted device (`source` transferred). */
   'chore-jobs': { req: { jobs: GpuChoreJobSpec[]; source?: ImageBitmap | undefined }; res: GpuChoreResult[] };
 
@@ -241,6 +267,8 @@ export type PreviewWorkerProtocol = {
   'set-scopes': { notify: { scopes: ScopeSettings } };
   /** Main's `(dynamic-range: high)`: an HDR10 project previews extended on an HDR display. */
   'display-hdr': { notify: { hdr: boolean } };
+  /** Drop every RAM-preview frame. */
+  'clear-preview-cache': { notify: void };
   destroy: { notify: void };
 
   // ---- stream channel: worker → main ------------------------------------

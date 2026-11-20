@@ -7,6 +7,7 @@ import {
   useTimelineTool,
 } from '../store';
 import type { DropEditMode, TimelineEditTool } from '../timeline/editModes';
+import { PreviewRenderControls } from './PreviewRenderControls';
 
 /**
  * Edit-mode tool cluster for the timeline chrome (#168 follow-up).
@@ -104,6 +105,7 @@ function TimelineToolsImpl() {
           <ToolLabel label="Link" shortcut="⇆" />
         </button>
       </div>
+      <PreviewRenderControls />
     </div>
   );
 }

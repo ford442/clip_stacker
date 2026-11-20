@@ -2,6 +2,7 @@ import { useCallback, useMemo } from "react";
 import type { RefObject } from "react";
 import { useKeyboardShortcuts } from "./useKeyboardShortcuts";
 import type { Clip } from "../types";
+import { markedRange, previewCacheStore } from "../store/previewCacheStore";
 import { playbackStore } from "../store/playbackStore";
 import { uiStore } from "../store/uiStore";
 import type { TimelineEditTool } from "../timeline/editModes";
@@ -108,6 +109,28 @@ export function useAppKeyboardShortcuts({
       "shift+alt+arrowright": () => handleEditNudge(10 * EDIT_NUDGE_FRAME_SEC),
       "shift+delete": handleRippleDeleteSelected,
       "shift+backspace": handleRippleDeleteSelected,
+      // RAM preview marks and render (`store/previewCacheStore.ts`).
+      "shift+i": () => {
+        previewCacheStore.getState().setInPoint(playbackStore.getState().playheadTime ?? 0);
+        setStatus("In marked at the playhead.");
+      },
+      "shift+o": () => {
+        previewCacheStore.getState().setOutPoint(playbackStore.getState().playheadTime ?? 0);
+        setStatus("Out marked at the playhead.");
+      },
+      "shift+x": () => {
+        previewCacheStore.getState().clearMarks();
+        setStatus("In / Out cleared.");
+      },
+      "shift+enter": () => {
+        const state = previewCacheStore.getState();
+        if (!markedRange(state)) {
+          setStatus("Mark In and Out first (Shift+I / Shift+O).");
+          return;
+        }
+        state.requestRender();
+        setStatus("Rendering In → Out into the preview cache…");
+      },
     };
   }, [handleEditNudge, handleRippleDeleteSelected, setStatus]);
 

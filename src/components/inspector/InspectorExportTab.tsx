@@ -9,6 +9,7 @@ import { InspectorSection } from './InspectorSection';
 import { LIMITER_LIMITS, normalizeMasterLimiter, type MasterLimiterSettings } from '../../audio/audioEffects';
 import { LoudnessTargetFields } from '../audio/LoudnessTargetFields';
 import { ProjectTimecodeFields } from '../interchange/ProjectTimecodeFields';
+import { RenderCacheFields } from './RenderCacheFields';
 
 interface InspectorExportTabProps {
   exportSettings: ExportSettings;
@@ -280,6 +281,10 @@ export function InspectorExportTab({
             exportSettings={exportSettings}
             onChange={onColorManagementChange}
           />
+      </InspectorSection>
+
+      <InspectorSection id="export.renderCache" title="Render cache" defaultOpen={false}>
+        <RenderCacheFields />
       </InspectorSection>
 
       <InspectorSection id="export.webcodecs" title="WebCodecs (GPU path)" defaultOpen={false}>

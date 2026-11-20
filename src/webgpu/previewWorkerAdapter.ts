@@ -8,6 +8,7 @@ import type {
 import { withNestedInstances } from '../composition/nestedSequences';
 import { resolveTimelineFinishing } from '../finishing/finishing';
 import type {
+  PreviewCacheSnapshot,
   PreviewCompositionPlan,
   PreviewDeviceState,
   TimelineCompositor,
@@ -73,6 +74,33 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
     const adapter = new PreviewWorkerAdapter(runtime, new ClipMediaPool(), proxyLookup);
     adapter.sendClipMedia(withNestedInstances(clips));
     return adapter;
+  }
+
+  async previewCacheStatus(
+    clips: Clip[],
+    groups: ClipGroup[],
+    transitions: ClipTransition[],
+    overlays: TextOverlay[],
+    settings: Pick<ExportSettings, 'outputResolution'> | undefined,
+    options?: TimelineRenderOptions,
+  ): Promise<PreviewCacheSnapshot | null> {
+    return this.runtime.cacheStatus({
+      clips: clips.map(toWorkerClip),
+      clipGroups: groups,
+      transitions,
+      textOverlays: overlays,
+      exportSettings: settings,
+      maxWidth: options?.maxWidth,
+      maxHeight: options?.maxHeight,
+      finishing: resolveTimelineFinishing(options),
+      colorManagement: options?.colorManagement,
+      captions: options?.captions,
+      captionStyle: options?.captionStyle,
+    });
+  }
+
+  clearPreviewCache(): void {
+    this.runtime.clearPreviewCache();
   }
 
   /** `(dynamic-range: high)` on main, forwarded to the worker's engine. */
@@ -222,10 +250,13 @@ export class PreviewWorkerAdapter implements TimelineCompositor {
         colorManagement: options?.colorManagement,
         captions: options?.captions,
         captionStyle: options?.captionStyle,
+        previewCache: options?.previewCache,
+        prerender: options?.prerender,
       },
       captureFrames,
     );
 
+    if (plan && !options?.prerender) previewMetrics.recordCacheResult(this.runtime.cacheResult);
     previewMetrics.setFrameSources(this.runtime.frameSources);
     if (this.runtime.gpuProfile) previewMetrics.setGpuProfile(this.runtime.gpuProfile);
 

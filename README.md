@@ -53,6 +53,14 @@ When you click "Render", the app automatically decides whether to use **lossless
 
 The app shows you the plan and reason before rendering starts, so you understand why a "simple" merge might take longer or look slightly different.
 
+On the GPU path, re-encoding is incremental (Inspector → Export → **Render cache**):
+
+- **Render cache** — each rendered run of frames is stored in the browser's private file system (OPFS), keyed by everything that decides its pixels. Change one title and the next export re-encodes only the frames the title covers. Least-recently-used segments go past the budget (default 2 GB); the cache survives reloads. **🗑 Clear render cache** sits next to Copy Debug.
+- **Smart render** — where the timeline shows an H.264 clip untouched at the output size, its encoded frames are copied from the source; only a cut inside a GOP re-encodes up to the next key frame.
+- **Preview cache (RAM preview)** — composed preview frames stay on the GPU. Mark In / Out (Shift+I / Shift+O) and **⏺ Render In→Out** (Shift+Enter) to play a heavy finishing stack in real time; the green bar on the ruler shows what is cached. *Background render while idle* is opt-in.
+
+`?no_render_cache` turns the render cache and smart render off for one page load. Details: [docs/render-cache.md](docs/render-cache.md).
+
 In Inspector → Export → Output, choose MP4 (default) or ProRes MOV. ProRes files
 are substantially larger. The same section has independent light denoise/deband
 and audio cleanup options (80 Hz high-pass, light noise reduction and loudness

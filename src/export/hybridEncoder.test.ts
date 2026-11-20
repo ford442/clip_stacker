@@ -276,6 +276,7 @@ describe('export/hybridEncoder', () => {
         false,
         {},
         DEFAULT_COLOR_MANAGEMENT,
+        { forceReencode: false },
       );
       expect(muxVideoWithAudio).toHaveBeenCalledWith(
         videoBlob,
@@ -322,6 +323,7 @@ describe('export/hybridEncoder', () => {
         true,
         {},
         DEFAULT_COLOR_MANAGEMENT,
+        { forceReencode: false },
       );
       expect(muxVideoWithAudio).not.toHaveBeenCalled();
       expect(result.blob).toBe(avBlob);
@@ -552,6 +554,7 @@ describe('export/hybridEncoder', () => {
         false,
         {},
         DEFAULT_COLOR_MANAGEMENT,
+        { forceReencode: false },
       );
       expect(mergeClips).not.toHaveBeenCalled();
     });

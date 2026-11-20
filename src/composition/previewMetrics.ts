@@ -50,6 +50,17 @@ export interface PreviewMetricsSnapshot {
    * (compositor, transition, each finishing pass). Empty when off.
    */
   gpuPassMs: Record<string, number>;
+  /** RAM preview: frames presented from the cache since the last reset. */
+  cacheHits: number;
+  /** RAM preview: frames drawn and stored. */
+  cacheMisses: number;
+  /**
+   * Frames skipped during playback (on the 30 fps grid) since playback last
+   * started: a frame slot that passed with no frame presented for it.
+   */
+  droppedFrames: number;
+  /** Frames presented during the current / last playback. */
+  playedFrames: number;
 }
 
 /** Returns true when running under Vite's dev flag (guarded for non-Vite envs). */
@@ -73,6 +84,11 @@ export class PreviewMetrics {
   private proxySourcedLayers = 0;
   private gpuPassMs: Record<string, number> = {};
   private lastLogAt = 0;
+  private cacheHits = 0;
+  private cacheMisses = 0;
+  private droppedFrames = 0;
+  private playedFrames = 0;
+  private lastPlayedFrame: number | null = null;
 
   recordFrame(ms: number): void {
     this.lastFrameMs = ms;
@@ -101,6 +117,33 @@ export class PreviewMetrics {
     this.proxySourcedLayers = Math.min(sources.proxy ?? 0, sources.decoder + sources.element);
   }
 
+  /** How the last frame used the RAM preview (`'off'`: not cacheable / disabled). */
+  recordCacheResult(result: 'hit' | 'miss' | 'off'): void {
+    if (result === 'hit') this.cacheHits += 1;
+    else if (result === 'miss') this.cacheMisses += 1;
+  }
+
+  /** Playback (re)started: count drops from here. */
+  startPlayback(): void {
+    this.droppedFrames = 0;
+    this.playedFrames = 0;
+    this.lastPlayedFrame = null;
+  }
+
+  /**
+   * A frame was presented during playback: `frame` is its number on the
+   * 30 fps grid. Slots skipped since the previous one count as dropped.
+   */
+  recordPlayedFrame(frame: number): void {
+    if (this.lastPlayedFrame !== null && frame > this.lastPlayedFrame + 1) {
+      this.droppedFrames += frame - this.lastPlayedFrame - 1;
+    }
+    if (this.lastPlayedFrame === null || frame > this.lastPlayedFrame) {
+      this.playedFrames += 1;
+      this.lastPlayedFrame = frame;
+    }
+  }
+
   /** The preview realm's GPU timings (`gpuProfiler` snapshot). */
   setGpuProfile(passMs: Record<string, number>): void {
     this.gpuPassMs = { ...passMs };
@@ -120,6 +163,10 @@ export class PreviewMetrics {
       originalSourcedLayers:
         this.decoderSourcedLayers + this.elementSourcedLayers - this.proxySourcedLayers,
       gpuPassMs: { ...this.gpuPassMs },
+      cacheHits: this.cacheHits,
+      cacheMisses: this.cacheMisses,
+      droppedFrames: this.droppedFrames,
+      playedFrames: this.playedFrames,
     };
   }
 
@@ -136,6 +183,9 @@ export class PreviewMetrics {
     this.proxySourcedLayers = 0;
     this.gpuPassMs = {};
     this.lastLogAt = 0;
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
+    this.startPlayback();
   }
 
   /**

@@ -1,134 +1,233 @@
 /**
- * WebGPU timeline compositor export: one frame per output timestamp with
- * overlapping GPU submit of N+1 after capturing N.
+ * WebGPU timeline compositor export: one frame per output timestamp through
+ * the preview compositor (`TimelineFrameSession`), encoded with WebCodecs.
+ *
+ * Two shapes:
+ * - **segmented** (default, `renderCache/segmentedExport.ts`): content-keyed
+ *   segments, each copied from its source (smart render), reused from the
+ *   render cache, or rendered by a fresh encoder and stored;
+ * - **continuous**: one encoder over every frame — with the render cache and
+ *   smart render off (or `?no_render_cache`), and as the fallback when a
+ *   segmented export cannot keep one set of parameter sets.
  */
 
-import { effectiveTextOverlays } from '../composition/nestedSequences';
+import { effectiveTextOverlays, withNestedInstances } from '../composition/nestedSequences';
 import type { Clip, ClipGroup, ClipTransition, ExportSettings, TextOverlay } from '../types';
 import type { StatusCallback, ProgressCallback } from '../ffmpeg/ffmpegService';
 import { computeTotalDuration } from '../timeline/transitions';
 import { canCaptureWebGpuCanvasWithText } from './renderEligibility';
 import { DEFAULT_FINISHING, type FinishingSettings } from '../finishing/finishing';
-import {
-  ColorPipelineExportError,
-  DEFAULT_COLOR_MANAGEMENT,
-  exportCanvas2dSettings,
-  type ColorManagementSettings,
-} from '../finishing/colorManagement';
+import { DEFAULT_COLOR_MANAGEMENT, type ColorManagementSettings } from '../finishing/colorManagement';
 import {
   buildPreviewCompositionPlan,
   type CaptionPlanOptions,
 } from '../composition/previewComposition';
 import type { PreviewCompositionPlan } from '../composition/previewCompositionTypes';
 import { isTestHarnessPage } from '../webgpu/previewDecodeFlags';
-import { renderTextOverlaysAsync } from './canvasRenderer';
-import { TimelineDecoderFrameProvider } from '../media/decoderFrameProvider';
-import { TimelinePreviewEngine } from '../webgpu/timelinePreview';
 import { getTimelineClips } from '../timeline/timelineClips';
+import { isSequenceClip } from '../timeline/sequenceResolve';
 import {
   computeTimelineExportFrameCount,
-  flushCaptureThenScheduleNext,
-  globalTimeForTimelineFrame,
-  shouldEmitTimelineStatusUpdate,
-  MAX_ENCODE_QUEUE_DEPTH,
-  timelineFrameTimestampUs,
-  timelineStatusThrottleFrames,
   TIMELINE_EXPORT_FPS,
+  TIMELINE_STATUS_THROTTLE_MS,
 } from './webcodecsTimeline';
-import { encodeAndClose, waitForQueueBelow } from './codecQueue';
 import {
   buildVideoEncoderConfig,
   resolveEncoderBitrate,
   resolveEncoderCodec,
   webCodecsEncodeProgress,
   WEBCODECS_PROGRESS_STAGES,
+  type ResolvedEncoderCodec,
 } from './webcodecsCodec';
 import { createExportMuxer, muxTimelineAudioIfRequested } from './webcodecsMux';
+import { TimelineFrameSession, frameSessionRoute, type FrameEncoderTarget } from './timelineFrameSession';
+import type { Mp4Writer } from './container';
+import { readVideoPackets, openVideoDemux } from './container/demux';
+import {
+  canonicalJson,
+  finishingIsFrameSeeded,
+  quantizePlan,
+  renderSettingsHash,
+  RENDER_KEY_VERSION,
+} from './renderKey';
+import { renderCacheConfig } from './renderCache/renderCacheConfig';
+import { sharedRenderCache } from './renderCache/sharedRenderCache';
+import {
+  runSegmentedExport,
+  SegmentConfigMismatchError,
+  type CopySource,
+  type EncodedRange,
+  type SegmentedExportReport,
+} from './renderCache/segmentedExport';
+import { smartRenderBlockers } from './renderCache/smartRender';
+import type { SegmentDecoderConfig, SegmentPacket } from './renderCache/segmentRecord';
+import { fingerprintMediaCached } from '../project/mediaStore';
+import { xxhash64String } from '../utils/xxhash64';
+import { BUILD_ID } from '../utils/buildId';
 
-/** Below this peak (8-bit scale) a frame counts as black. */
-const BLACK_FRAME_PEAK = 10;
+/** Key frame interval of the continuous export (and the segment length cap). */
+const GOP_FRAMES = 60;
 
-/**
- * Peak picture level of a frame on an 8-bit scale (0 = black … 255), from a
- * copy of its first plane: the max R/G/B of an RGB frame, or the Y plane
- * mapped from limited range (8-bit 16–235, 10-bit 64–940). Null for a pixel
- * format it does not read. `format` is a string because the DOM typings'
- * `VideoPixelFormat` lacks the 10-bit formats (`I420P10`, …).
- */
-export function framePeakLevel(
-  format: string | null,
-  data: Uint8Array,
-  plane: PlaneLayout,
+export interface TimelineExportOptions {
+  /** "Force re-encode": smart render copies nothing. */
+  forceReencode?: boolean;
+}
+
+/** What the last segmented export did (null after a continuous one). */
+let lastReport: SegmentedExportReport | null = null;
+
+/** The render-cache / smart-render report of the last timeline export (Copy Debug, `RenderPlan.renderCache`). */
+export function getLastRenderCacheReport(): SegmentedExportReport | null {
+  return lastReport;
+}
+
+export function resetRenderCacheReport(): void {
+  lastReport = null;
+}
+
+function toSegmentConfig(config: VideoDecoderConfig, width: number, height: number): SegmentDecoderConfig {
+  const out: SegmentDecoderConfig = {
+    codec: config.codec,
+    codedWidth: config.codedWidth ?? width,
+    codedHeight: config.codedHeight ?? height,
+  };
+  if (config.description) {
+    const d = config.description;
+    out.description = ArrayBuffer.isView(d)
+      ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength).slice()
+      : new Uint8Array(d).slice();
+  }
+  if (config.colorSpace) {
+    const { primaries, transfer, matrix, fullRange } = config.colorSpace;
+    out.colorSpace = {
+      ...(primaries != null ? { primaries } : {}),
+      ...(transfer != null ? { transfer } : {}),
+      ...(matrix != null ? { matrix } : {}),
+      ...(fullRange != null ? { fullRange } : {}),
+    };
+  }
+  return out;
+}
+
+function packetFrom(chunk: EncodedVideoChunk): SegmentPacket {
+  const data = new Uint8Array(chunk.byteLength);
+  chunk.copyTo(data);
+  return { type: chunk.type, timestamp: chunk.timestamp, duration: chunk.duration ?? 0, data };
+}
+
+/** Encode `[start, end)` with a fresh encoder; its packets and decoder config. */
+async function encodeFreshRange(
+  session: TimelineFrameSession,
+  encoderConfig: VideoEncoderConfig,
+  muxer: Mp4Writer,
   width: number,
   height: number,
-): number | null {
-  let peak = 0;
-  switch (format) {
-    case 'RGBA':
-    case 'RGBX':
-    case 'BGRA':
-    case 'BGRX':
-      for (let y = 0; y < height; y++) {
-        const row = plane.offset + y * plane.stride;
-        for (let x = 0; x < width; x++) {
-          const at = row + x * 4;
-          peak = Math.max(peak, data[at] ?? 0, data[at + 1] ?? 0, data[at + 2] ?? 0);
-        }
+  start: number,
+  end: number,
+  onFrame: () => void,
+): Promise<EncodedRange> {
+  const packets: SegmentPacket[] = [];
+  let config: SegmentDecoderConfig | null = null;
+  let error: Error | null = null;
+  const encoder = new VideoEncoder({
+    output: (chunk, meta) => {
+      if (!config && meta?.decoderConfig) config = toSegmentConfig(meta.decoderConfig, width, height);
+      packets.push(packetFrom(chunk));
+    },
+    error: (e) => {
+      error = e;
+    },
+  });
+  const target: FrameEncoderTarget = {
+    encoder,
+    failure: () => {
+      if (error) return error;
+      try {
+        muxer.throwIfFailed();
+      } catch (err) {
+        return err instanceof Error ? err : new Error(String(err));
       }
-      return peak;
-    case 'I420':
-    case 'I420A':
-    case 'I422':
-    case 'I444':
-    case 'NV12':
-      for (let y = 0; y < height; y++) {
-        const row = plane.offset + y * plane.stride;
-        for (let x = 0; x < width; x++) peak = Math.max(peak, data[row + x] ?? 0);
-      }
-      return Math.max(0, ((peak - 16) * 255) / 219);
-    case 'I420P10':
-    case 'I420AP10':
-    case 'I422P10':
-    case 'I444P10': {
-      const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-      for (let y = 0; y < height; y++) {
-        const row = plane.offset + y * plane.stride;
-        for (let x = 0; x < width; x++) peak = Math.max(peak, view.getUint16(row + x * 2, true));
-      }
-      return Math.max(0, ((peak - 64) * 255) / 876);
-    }
-    default:
       return null;
+    },
+  };
+  try {
+    encoder.configure(encoderConfig);
+    // A segment renders as if after a seek, so a cached copy of it is what this render produces.
+    session.resetTemporal();
+    await session.encodeRange(target, start, end, GOP_FRAMES, onFrame);
+    await encoder.flush();
+    if (error) throw error;
+  } finally {
+    if (encoder.state !== 'closed') encoder.close();
   }
+  if (!config) throw new SegmentConfigMismatchError('The encoder reported no decoder config');
+  return { packets, config };
 }
 
-/** Whether frame 0 of `plan` should show a picture: a clip layer at least half visible. */
-export function planExpectsPicture(plan: PreviewCompositionPlan): boolean {
-  return plan.layers.some((layer) => (layer.kind === 'base' || layer.kind === 'pip') && layer.opacity >= 0.5);
+/** One black frame through a throwaway encoder: the parameter sets this config writes. */
+async function probeEncoderConfig(
+  encoderConfig: VideoEncoderConfig,
+  width: number,
+  height: number,
+): Promise<SegmentDecoderConfig> {
+  let config: SegmentDecoderConfig | null = null;
+  let error: Error | null = null;
+  const encoder = new VideoEncoder({
+    output: (_chunk, meta) => {
+      if (!config && meta?.decoderConfig) config = toSegmentConfig(meta.decoderConfig, width, height);
+    },
+    error: (e) => {
+      error = e;
+    },
+  });
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, width, height);
+  }
+  try {
+    encoder.configure(encoderConfig);
+    const frame = new VideoFrame(canvas, { timestamp: 0 });
+    try {
+      encoder.encode(frame, { keyFrame: true });
+    } finally {
+      frame.close();
+    }
+    await encoder.flush();
+  } finally {
+    if (encoder.state !== 'closed') encoder.close();
+  }
+  if (error) throw error;
+  if (!config) throw new SegmentConfigMismatchError('The encoder probe reported no decoder config');
+  return config;
 }
 
-/**
- * `?test_harness` only: fail the export when its first frame is black
- * although the plan draws a visible clip — the managed-colour (Display P3 /
- * HDR10) "frame 0 is black" regression (#373). One copy of frame 0, never
- * on a normal load.
- */
-async function assertFirstFrameNotBlack(frame: VideoFrame, plan: PreviewCompositionPlan): Promise<void> {
-  if (!planExpectsPicture(plan)) return;
-  const data = new Uint8Array(frame.allocationSize());
-  const layout = await frame.copyTo(data);
-  const plane = layout[0];
-  if (!plane) return;
-  const width = frame.visibleRect?.width ?? frame.codedWidth;
-  const height = frame.visibleRect?.height ?? frame.codedHeight;
-  const peak = framePeakLevel(frame.format, data, plane, width, height);
-  if (peak !== null && peak < BLACK_FRAME_PEAK) {
-    throw new Error(
-      `test harness: frame 0 of the export is black (${frame.format}, peak level ${peak.toFixed(1)}) ` +
-        'although the plan draws a visible clip — the first managed-colour frame regression.',
-    );
-  }
+async function openCopySource(clip: Clip): Promise<CopySource | null> {
+  if (clip.file.size === 0) return null;
+  const demux = await openVideoDemux(clip.file);
+  if (demux.hasAlpha) return null;
+  return {
+    source: { config: demux.config, colorSpace: demux.colorSpace },
+    readPackets: (startUs, endUs) => readVideoPackets(clip.file, startUs, endUs),
+  };
 }
+
+/** Fingerprints of every file a layer can decode (sequence placeholders excluded). */
+async function mediaFingerprints(clips: Clip[]): Promise<Map<Blob, string>> {
+  const out = new Map<Blob, string>();
+  for (const clip of withNestedInstances(clips)) {
+    if (isSequenceClip(clip) || clip.offline || clip.file.size === 0 || out.has(clip.file)) continue;
+    try {
+      out.set(clip.file, await fingerprintMediaCached(clip.file));
+    } catch {
+      // No fingerprint: the clip's frames are rendered, never cached.
+    }
+  }
+  return out;
+}
+
+const yieldNow = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 export async function encodeTimelineComposite(
   clips: Clip[],
@@ -144,10 +243,11 @@ export async function encodeTimelineComposite(
   includeWebCodecsAudio = false,
   captionBurnIn: CaptionPlanOptions = {},
   colorManagement: ColorManagementSettings = DEFAULT_COLOR_MANAGEMENT,
+  options: TimelineExportOptions = {},
 ): Promise<Blob> {
   onStatus(`WebGPU timeline export (${width}x${height})...`);
-  const checkFirstFrame = isTestHarnessPage();
   onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.decodeCompositeEncode, progress: 0, indeterminate: false });
+  lastReport = null;
 
   const timelineClips = getTimelineClips(clips, clipGroups);
   const totalDuration = computeTotalDuration(timelineClips, transitions);
@@ -169,217 +269,58 @@ export async function encodeTimelineComposite(
   const shaderTextOnGpu =
     !hdr10 && hasTextOverlays && !hasCaptions && canCaptureWebGpuCanvasWithText(drawnOverlays);
   const use2dTextComposite = !hdr10 && (hasTextOverlays || hasCaptions) && !shaderTextOnGpu;
-  const statusThrottleFrames = timelineStatusThrottleFrames(TIMELINE_EXPORT_FPS);
-  const frameDurationUs = Math.round(1_000_000 / TIMELINE_EXPORT_FPS);
 
-  const videoCanvas = document.createElement('canvas');
-  videoCanvas.width = width;
-  videoCanvas.height = height;
-
-  let exportCanvas: HTMLCanvasElement | null = null;
-  let exportCtx: CanvasRenderingContext2D | null = null;
-  if (use2dTextComposite) {
-    exportCanvas = document.createElement('canvas');
-    exportCanvas.width = width;
-    exportCanvas.height = height;
-    exportCtx = exportCanvas.getContext('2d', exportCanvas2dSettings(colorManagement.outputColor));
-    if (!exportCtx) throw new Error('Could not create export canvas');
-  }
-
-  let graphicsCanvas: HTMLCanvasElement | null = null;
-  if (hdrGraphics) {
-    graphicsCanvas = document.createElement('canvas');
-    graphicsCanvas.width = width;
-    graphicsCanvas.height = height;
-  }
-
-  // Offscreen: an HDR10 timeline composites on a float canvas whatever the
-  // monitor is, and the encoder reads the PQ image, not the canvas.
-  const engine = await TimelinePreviewEngine.create(videoCanvas, clips, { surface: 'offscreen' });
-  engine.resetFinishingTemporal();
-  // Decoder cursors deliver frames by walking each layer's source time
-  // forward — export never scrubs — so this replaces the <video> element
-  // seek in the hot path. Layers whose codec/container it can't handle fall
-  // back to the seek path automatically (see TimelineDecoderFrameProvider).
-  const frameProvider = new TimelineDecoderFrameProvider();
-
-  const bitrate = resolveEncoderBitrate(settings, width, height);
-  const encoderCodec = await resolveEncoderCodec(
-    settings.videoCodec,
-    width,
-    height,
-    bitrate,
-    outputColor,
-  );
-  const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
-
-  let videoError: Error | null = null;
-  const videoEncoder = new VideoEncoder({
-    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-    error: (e) => { videoError = e; },
-  });
-
-  videoEncoder.configure(
-    buildVideoEncoderConfig(encoderCodec, width, height, bitrate, TIMELINE_EXPORT_FPS, outputColor),
-  );
-
-  const renderTimelineFrame = async (frameIndex: number) => {
-    const globalTime = globalTimeForTimelineFrame(frameIndex, TIMELINE_EXPORT_FPS);
-    const plan = buildPreviewCompositionPlan(
+  const cacheConfig = renderCacheConfig();
+  const segmented = totalFrames > 0 && (cacheConfig.enabled || cacheConfig.smartRender);
+  const rawPlan = (frameIndex: number): PreviewCompositionPlan =>
+    buildPreviewCompositionPlan(
       clips,
       clipGroups,
       transitions,
       textOverlays,
       settings,
-      globalTime,
+      frameIndex / TIMELINE_EXPORT_FPS,
       height,
       width,
       captionBurnIn,
     );
-    if (graphicsCanvas) {
-      await renderTextOverlaysAsync(graphicsCanvas, plan, { clear: true });
+  // A segmented export draws exactly the plans it keys (`quantizePlan`).
+  const planFor = segmented ? (frameIndex: number) => quantizePlan(rawPlan(frameIndex)) : rawPlan;
+
+  const route = { hdrGraphics, shaderTextOnGpu, use2dTextComposite };
+  const session = await TimelineFrameSession.create(clips, {
+    width,
+    height,
+    fps: TIMELINE_EXPORT_FPS,
+    finishing,
+    colorManagement,
+    checkFirstFrame: isTestHarnessPage(),
+    planFor,
+    ...route,
+  });
+
+  const bitrate = resolveEncoderBitrate(settings, width, height);
+  const encoderCodec = await resolveEncoderCodec(settings.videoCodec, width, height, bitrate, outputColor);
+  const encoderConfig = buildVideoEncoderConfig(
+    encoderCodec,
+    width,
+    height,
+    bitrate,
+    TIMELINE_EXPORT_FPS,
+    outputColor,
+  );
+
+  let lastStatusAt = 0;
+  const progress = (fraction: number) => {
+    const now = performance.now();
+    if (now - lastStatusAt >= TIMELINE_STATUS_THROTTLE_MS || fraction >= 1) {
+      lastStatusAt = now;
+      onStatus(`GPU timeline encode: ${(fraction * totalDuration).toFixed(1)}s / ${totalDuration.toFixed(1)}s`);
     }
-    await engine.renderPlan(plan, {
-      finishing,
-      frameProvider,
-      frameIndex,
-      colorManagement,
-      ...(graphicsCanvas ? { graphicsOverlay: graphicsCanvas } : {}),
-    });
-    return plan;
+    onProgress?.(webCodecsEncodeProgress(fraction * totalDuration, totalDuration));
   };
 
-  // HDR10 frames read back through the engine's three-slot ring: frame N
-  // maps while N+1 and N+2 compose. Encoded strictly in order.
-  const pendingHdr: Array<{
-    frame: Promise<VideoFrame>;
-    frameIndex: number;
-    plan: PreviewCompositionPlan;
-  }> = [];
-  const encodeOldestHdr = async () => {
-    const next = pendingHdr.shift();
-    if (!next) return;
-    let frame: VideoFrame;
-    try {
-      frame = await next.frame;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'the 10-bit frame readback failed';
-      throw new ColorPipelineExportError(
-        `HDR10 frame readback failed (${message}). This browser may not build I420P10 video frames; ` +
-          'the file was not written.',
-      );
-    }
-    if (checkFirstFrame && next.frameIndex === 0) {
-      try {
-        await assertFirstFrameNotBlack(frame, next.plan);
-      } catch (err) {
-        frame.close();
-        throw err;
-      }
-    }
-    encodeAndClose(videoEncoder, frame, { keyFrame: next.frameIndex % 60 === 0 });
-  };
-
-  let lastStatusFrame = -statusThrottleFrames;
-  let pendingRender: Promise<Awaited<ReturnType<typeof renderTimelineFrame>>> | null =
-    totalFrames > 0 ? renderTimelineFrame(0) : null;
-
-  try {
-    for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
-      const globalTime = globalTimeForTimelineFrame(frameIndex, TIMELINE_EXPORT_FPS);
-
-      if (
-        shouldEmitTimelineStatusUpdate(
-          frameIndex,
-          lastStatusFrame,
-          statusThrottleFrames,
-          totalFrames,
-        )
-      ) {
-        onStatus(`GPU timeline encode: ${globalTime.toFixed(1)}s / ${totalDuration.toFixed(1)}s`);
-        lastStatusFrame = frameIndex;
-      }
-      onProgress?.(webCodecsEncodeProgress(globalTime, totalDuration));
-
-      const plan = await pendingRender!;
-
-      if (hdr10) {
-        // No queue-wide flush: the capture is recorded behind this frame's
-        // render in queue order, so N+1 can be scheduled right away.
-        if (pendingHdr.length >= engine.hdr10ReadbackDepth) await encodeOldestHdr();
-        const frame = engine.captureHdr10Frame({
-          timestamp: timelineFrameTimestampUs(frameIndex, TIMELINE_EXPORT_FPS),
-          duration: frameDurationUs,
-        });
-        // Awaited in order by encodeOldestHdr; this only keeps an early
-        // rejection from being reported as unhandled in the meantime.
-        void frame.catch(() => undefined);
-        pendingHdr.push({ frame, frameIndex, plan });
-        pendingRender = frameIndex + 1 < totalFrames ? renderTimelineFrame(frameIndex + 1) : null;
-      } else {
-        await flushCaptureThenScheduleNext(
-          async () => {
-            // Wait for WebGPU submit to land before capturing pixels for encode.
-            await engine.flush();
-
-            let frameSource: CanvasImageSource;
-            if (shaderTextOnGpu) {
-              await engine.compositeShaderTextOverlays(plan);
-              frameSource = videoCanvas;
-            } else if (use2dTextComposite) {
-              exportCtx!.drawImage(videoCanvas, 0, 0);
-              await renderTextOverlaysAsync(exportCtx!.canvas, plan, {
-                clear: false,
-              });
-              frameSource = exportCanvas!;
-            } else {
-              frameSource = videoCanvas;
-            }
-
-            if (outputColor === 'display-p3' && engine.canvasPresentation.presentFallback) {
-              throw new ColorPipelineExportError(
-                'Display P3 canvas is not available in this browser. Export was not tagged as Display P3.',
-              );
-            }
-            const frame = new VideoFrame(frameSource, {
-              timestamp: timelineFrameTimestampUs(frameIndex, TIMELINE_EXPORT_FPS),
-              duration: frameDurationUs,
-            });
-            if (checkFirstFrame && frameIndex === 0) {
-              try {
-                await assertFirstFrameNotBlack(frame, plan);
-              } catch (err) {
-                frame.close();
-                throw err;
-              }
-            }
-            encodeAndClose(videoEncoder, frame, { keyFrame: frameIndex % 60 === 0 });
-          },
-          frameIndex + 1 < totalFrames
-            ? () => {
-                pendingRender = renderTimelineFrame(frameIndex + 1);
-              }
-            : null,
-        );
-      }
-
-      if (videoError) throw videoError;
-      muxer.throwIfFailed();
-      await waitForQueueBelow(videoEncoder, MAX_ENCODE_QUEUE_DEPTH + 1).catch((err: unknown) => {
-        throw videoError ?? err;
-      });
-    }
-
-    while (pendingHdr.length > 0) {
-      await encodeOldestHdr();
-      if (videoError) throw videoError;
-    }
-
-    onStatus('Flushing GPU encoder...');
-    onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.flush, progress: 0.9, indeterminate: false });
-    await videoEncoder.flush();
-    if (videoError) throw videoError;
-
+  const finish = async (muxer: Mp4Writer): Promise<Blob> => {
     await muxTimelineAudioIfRequested(
       muxer,
       clips,
@@ -389,15 +330,164 @@ export async function encodeTimelineComposite(
       onStatus,
       onProgress,
     );
-
     const buffer = await muxer.finalize();
     return new Blob([buffer], { type: 'video/mp4' });
-  } finally {
-    // Frames still mapping when an error stopped the loop: close what arrives.
-    for (const pending of pendingHdr.splice(0)) {
-      void pending.frame.then((frame) => frame.close(), () => undefined);
+  };
+
+  const frame = { width, height, totalFrames, progress, onStatus };
+  try {
+    if (segmented) {
+      try {
+        const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
+        lastReport = await encodeSegmented(session, muxer, frame, {
+          clips,
+          planFor,
+          finishing,
+          colorManagement,
+          encoderCodec,
+          encoderConfig,
+          route,
+          cacheConfig,
+          forceReencode: options.forceReencode === true,
+        });
+        return await finish(muxer);
+      } catch (err) {
+        if (!(err instanceof SegmentConfigMismatchError)) throw err;
+        onStatus(`Segmented export fell back to one continuous encode (${err.message})...`);
+        lastReport = null;
+      }
     }
-    frameProvider.destroy();
-    engine.destroy();
+    const muxer = createExportMuxer(width, height, encoderCodec, includeWebCodecsAudio);
+    await encodeContinuous(session, muxer, encoderConfig, frame);
+    onProgress?.({ stage: WEBCODECS_PROGRESS_STAGES.flush, progress: 0.9, indeterminate: false });
+    return await finish(muxer);
+  } finally {
+    session.destroy();
   }
+}
+
+interface FrameRun {
+  width: number;
+  height: number;
+  totalFrames: number;
+  progress: (fraction: number) => void;
+  onStatus: StatusCallback;
+}
+
+/** One encoder over every frame, a key frame every GOP. */
+async function encodeContinuous(
+  session: TimelineFrameSession,
+  muxer: Mp4Writer,
+  encoderConfig: VideoEncoderConfig,
+  run: FrameRun,
+): Promise<void> {
+  let videoError: Error | null = null;
+  const videoEncoder = new VideoEncoder({
+    output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+    error: (e) => {
+      videoError = e;
+    },
+  });
+  videoEncoder.configure(encoderConfig);
+  session.resetTemporal();
+  try {
+    await session.encodeRange(
+      {
+        encoder: videoEncoder,
+        failure: () => {
+          if (videoError) return videoError;
+          muxer.throwIfFailed();
+          return null;
+        },
+      },
+      0,
+      run.totalFrames,
+      GOP_FRAMES,
+      (frameIndex) => run.progress((frameIndex + 1) / Math.max(1, run.totalFrames)),
+    );
+    run.onStatus('Flushing GPU encoder...');
+    await videoEncoder.flush();
+    if (videoError) throw videoError;
+  } finally {
+    if (videoEncoder.state !== 'closed') videoEncoder.close();
+  }
+}
+
+interface SegmentedInputs {
+  clips: Clip[];
+  planFor: (frameIndex: number) => PreviewCompositionPlan;
+  finishing: FinishingSettings;
+  colorManagement: ColorManagementSettings;
+  encoderCodec: ResolvedEncoderCodec;
+  encoderConfig: VideoEncoderConfig;
+  route: Parameters<typeof frameSessionRoute>[0];
+  cacheConfig: ReturnType<typeof renderCacheConfig>;
+  forceReencode: boolean;
+}
+
+/** The segmented export (`renderCache/segmentedExport.ts`) wired to WebGPU, WebCodecs, OPFS and the demuxer. */
+async function encodeSegmented(
+  session: TimelineFrameSession,
+  muxer: Mp4Writer,
+  run: FrameRun,
+  input: SegmentedInputs,
+): Promise<SegmentedExportReport> {
+  const { width, height } = run;
+  const { cacheConfig, encoderConfig, finishing, colorManagement } = input;
+  const cache = cacheConfig.enabled ? await sharedRenderCache() : null;
+  if (cache && cache.usage().budgetBytes !== cacheConfig.budgetBytes) {
+    await cache.setBudget(cacheConfig.budgetBytes);
+  }
+  const fingerprints = await mediaFingerprints(input.clips);
+  const settingsHash = renderSettingsHash({ finishing, colorManagement, width, height, buildId: BUILD_ID });
+  const settingsKey = xxhash64String(
+    canonicalJson({
+      v: RENDER_KEY_VERSION,
+      settings: settingsHash,
+      encoder: encoderConfig,
+      route: frameSessionRoute(input.route),
+      fps: TIMELINE_EXPORT_FPS,
+      gop: GOP_FRAMES,
+    }),
+  );
+  return runSegmentedExport({
+    totalFrames: run.totalFrames,
+    frameDurationUs: Math.round(1_000_000 / TIMELINE_EXPORT_FPS),
+    width,
+    height,
+    planFor: input.planFor,
+    keyContext: {
+      clipsById: new Map(withNestedInstances(input.clips).map((clip) => [clip.id, clip])),
+      mediaKey: (clip) => fingerprints.get(clip.file) ?? null,
+      settingsHash,
+    },
+    frameSeeded: finishingIsFrameSeeded(finishing),
+    settingsKey,
+    cache,
+    smartRender: cacheConfig.smartRender
+      ? {
+          blockers: smartRenderBlockers({
+            smartRender: true,
+            forceReencode: input.forceReencode,
+            muxerCodec: input.encoderCodec.muxerCodec,
+            finishing,
+            colorManagement,
+          }),
+          openSource: openCopySource,
+        }
+      : null,
+    encodeRange: (start, end, onFrame) =>
+      encodeFreshRange(session, encoderConfig, muxer, width, height, start, end, onFrame),
+    probeEncoderConfig: () =>
+      probeEncoderConfig(encoderConfig, width, height).catch((err: unknown) => {
+        // An encoder that will not take the probe frame cannot be planned against: encode continuously.
+        throw new SegmentConfigMismatchError(
+          `the encoder probe failed (${err instanceof Error ? err.message : String(err)})`,
+        );
+      }),
+    sink: muxer,
+    onProgress: run.progress,
+    onStatus: run.onStatus,
+    yieldNow,
+  });
 }

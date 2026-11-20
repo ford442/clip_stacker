@@ -242,4 +242,27 @@ export interface RenderPlan {
    * something is actually lost.
    */
   pictureTransformGaps?: string[];
+  /**
+   * What the segmented GPU export did, on resolved plans whose video came
+   * from the timeline compositor with the render cache or smart render on:
+   * segments reused from the render cache (`hits`), rendered and encoded
+   * now (`misses`, of which `uncacheable` could not be stored), and source
+   * spans copied without re-encoding (`copies`). Frame counts add up to the
+   * programme; bytes are encoded video. `parameterSets: 'in-band'` means
+   * copied and re-encoded spans had different SPS / PPS, so the track was
+   * written `avc3` with them before every key frame.
+   */
+  renderCache?: {
+    segments: number;
+    hits: number;
+    misses: number;
+    uncacheable: number;
+    copies: number;
+    framesEncoded: number;
+    framesReused: number;
+    framesCopied: number;
+    bytesReused: number;
+    bytesStored: number;
+    parameterSets: 'single' | 'in-band';
+  };
 }
