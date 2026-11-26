@@ -6,9 +6,11 @@
 .file-menu > summary {
   list-style: none;
   cursor: pointer;
-  padding: var(--ws-btn-pad-y, 0.4rem) var(--ws-btn-pad-x, 0.8rem);
+  padding: var(--ws-btn-pad, 0.45rem 0.75rem);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-alt);
+  font-size: var(--ws-btn-font, 0.85rem);
   user-select: none;
 }
 .file-menu > summary::-webkit-details-marker {
@@ -20,6 +22,7 @@
   top: calc(100% + 4px);
   left: 0;
   min-width: 16rem;
+  max-width: calc(100vw - 2rem);
   display: flex;
   flex-direction: column;
   padding: 0.25rem;
@@ -27,6 +30,14 @@
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+}
+.file-menu[data-align='end'] > .file-menu-items {
+  left: auto;
+  right: 0;
+}
+.file-menu > summary:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }
 .file-menu-items > button,
 .file-menu-items > a {

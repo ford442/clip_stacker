@@ -458,3 +458,11 @@ audio {
   font-weight: 600;
   color: var(--text, #e6e9ef);
 }
+
+/* Performance notice under the canvas: secondary text, not a heading. */
+.preview-degradation-notice {
+  margin: 0.4rem 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}

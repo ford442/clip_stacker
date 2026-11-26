@@ -32,6 +32,14 @@ export function FileMenu() {
   const offlineCount = useStore(editorStore, (s) => allSequenceClips(s).filter((clip) => Boolean(clip.offline)).length);
   const stemsOutput = useStore(renderJobStore, (s) => s.stemsOutput);
   const close = () => menu.current?.removeAttribute('open');
+  // Open toward whichever side has room, so the list never leaves the viewport.
+  const alignMenu = () => {
+    const el = menu.current;
+    if (!el?.open) return;
+    const left = el.getBoundingClientRect().left;
+    const room = document.documentElement.clientWidth - left;
+    el.dataset['align'] = room < 288 ? 'end' : 'start';
+  };
 
   const onImport = async (file: File) => {
     const { setStatus } = renderJobStore.getState();
@@ -60,7 +68,7 @@ export function FileMenu() {
 
   return (
     <>
-      <details ref={menu} className="file-menu">
+      <details ref={menu} className="file-menu" onToggle={alignMenu}>
         <summary title="Timeline interchange (OTIO, FCPXML, EDL), stems and media relinking">File ▾</summary>
         <div className="file-menu-items" role="menu">
           <button
