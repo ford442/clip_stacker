@@ -31,14 +31,23 @@ export type FfmpegCoreVariant = 'mt' | 'st';
 
 /**
  * Resolve which FFmpeg core variant to attempt first.
- * Multi-threaded requires SharedArrayBuffer AND cross-origin isolation.
+ *
+ * Single-threaded by default. `@ffmpeg/core-mt` 0.12.10 traps in a pthread
+ * ("function signature mismatch") as soon as libx264 runs its own threads,
+ * which surfaces as `TypeError: Cannot read properties of undefined (reading
+ * 'startsWith')` from the core's `exec` and fails every re-encode (start-
+ * trimmed lossless copies, drawtext, transitions). The multi-threaded core
+ * stays available behind `?ffmpeg_mt` (it also needs SharedArrayBuffer and
+ * cross-origin isolation) until a core without that bug is pinned.
  */
-export function resolveFfmpegCoreVariant(): FfmpegCoreVariant {
+export function resolveFfmpegCoreVariant(
+  search: string = typeof location !== 'undefined' ? location.search : '',
+): FfmpegCoreVariant {
   const g = globalThis as { crossOriginIsolated?: boolean };
   if (typeof SharedArrayBuffer === 'undefined' || !g.crossOriginIsolated) {
     return 'st';
   }
-  return 'mt';
+  return new URLSearchParams(search).has('ffmpeg_mt') ? 'mt' : 'st';
 }
 
 let _cached: BrowserCapabilities | null = null;

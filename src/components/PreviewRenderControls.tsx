@@ -5,7 +5,9 @@ import { playbackStore } from '../store/playbackStore';
 /** Mark In / Out at the playhead, and render the range into the RAM preview. */
 export function PreviewRenderControls() {
   const enabled = useRenderCacheStore((s) => s.settings.previewCache);
-  const range = usePreviewCacheStore((s) => markedRange(s));
+  // A boolean, not the range: `markedRange` builds a new tuple per call, and a
+  // selector that never returns the same value re-renders forever (React #185).
+  const hasRange = usePreviewCacheStore((s) => markedRange(s) !== null);
   const job = usePreviewCacheStore((s) => s.job);
   const actions = previewCacheStore.getState();
   const playhead = () => playbackStore.getState().playheadTime ?? 0;
@@ -25,7 +27,7 @@ export function PreviewRenderControls() {
         <button
           type="button"
           className="timeline-tool-btn"
-          disabled={!enabled || !range}
+          disabled={!enabled || !hasRange}
           title={
             enabled
               ? 'Render the In → Out range into the preview cache so it plays back in real time (Shift+Enter)'

@@ -55,10 +55,17 @@ export interface PreviewMetricsSnapshot {
   /** RAM preview: frames drawn and stored. */
   cacheMisses: number;
   /**
-   * Frames skipped during playback (on the 30 fps grid) since playback last
-   * started: a frame slot that passed with no frame presented for it.
+   * Frames the renderer skipped during playback (on the 30 fps grid) since
+   * playback last started: a slot the playback tick asked for that passed
+   * with no frame presented for it — the render pipeline did not keep up.
    */
   droppedFrames: number;
+  /**
+   * Slots skipped because the playback tick itself never asked for them (a
+   * main-thread stall longer than a frame). Not a renderer drop: nothing was
+   * requested, so nothing could be presented.
+   */
+  tickGaps: number;
   /** Frames presented during the current / last playback. */
   playedFrames: number;
 }
@@ -87,7 +94,10 @@ export class PreviewMetrics {
   private cacheHits = 0;
   private cacheMisses = 0;
   private droppedFrames = 0;
+  private tickGaps = 0;
   private playedFrames = 0;
+  /** Slots the tick requested after `lastPlayedFrame` (bounded: pruned as frames are presented). */
+  private requestedFrames = new Set<number>();
   private lastPlayedFrame: number | null = null;
 
   recordFrame(ms: number): void {
@@ -126,21 +136,33 @@ export class PreviewMetrics {
   /** Playback (re)started: count drops from here. */
   startPlayback(): void {
     this.droppedFrames = 0;
+    this.tickGaps = 0;
     this.playedFrames = 0;
     this.lastPlayedFrame = null;
+    this.requestedFrames.clear();
+  }
+
+  /** The playback tick asked for the frame in slot `frame` (30 fps grid). */
+  recordRequestedFrame(frame: number): void {
+    if (this.lastPlayedFrame === null || frame > this.lastPlayedFrame) this.requestedFrames.add(frame);
   }
 
   /**
    * A frame was presented during playback: `frame` is its number on the
-   * 30 fps grid. Slots skipped since the previous one count as dropped.
+   * 30 fps grid. A skipped slot since the previous one is a drop when the
+   * tick had requested it, else a tick gap.
    */
   recordPlayedFrame(frame: number): void {
     if (this.lastPlayedFrame !== null && frame > this.lastPlayedFrame + 1) {
-      this.droppedFrames += frame - this.lastPlayedFrame - 1;
+      for (let slot = this.lastPlayedFrame + 1; slot < frame; slot++) {
+        if (this.requestedFrames.has(slot)) this.droppedFrames += 1;
+        else this.tickGaps += 1;
+      }
     }
     if (this.lastPlayedFrame === null || frame > this.lastPlayedFrame) {
       this.playedFrames += 1;
       this.lastPlayedFrame = frame;
+      for (const slot of this.requestedFrames) if (slot <= frame) this.requestedFrames.delete(slot);
     }
   }
 
@@ -166,6 +188,7 @@ export class PreviewMetrics {
       cacheHits: this.cacheHits,
       cacheMisses: this.cacheMisses,
       droppedFrames: this.droppedFrames,
+      tickGaps: this.tickGaps,
       playedFrames: this.playedFrames,
     };
   }
