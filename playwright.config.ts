@@ -10,6 +10,8 @@ const PORT = 4173;
 
 export default defineConfig({
   testDir: './e2e',
+  // The deployed-URL smoke has its own config (playwright.live.config.ts).
+  testIgnore: 'live.spec.ts',
   timeout: 120_000,
   expect: { timeout: 30_000 },
   fullyParallel: false,

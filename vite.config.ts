@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
@@ -159,10 +160,38 @@ function renderBuildId(): string {
   return hash.digest('hex').slice(0, 16);
 }
 
+/** The commit being built: CI's `GITHUB_SHA`, else `git rev-parse HEAD`. */
+function commitSha(): string {
+  const fromEnv = process.env.GITHUB_SHA?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim() || 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+const BUILD_ID = renderBuildId();
+const COMMIT_SHA = commitSha();
+
+/** `<meta name="clip-stacker-build|commit">` so the live page names its build. */
+function buildInfoMetaPlugin(): Plugin {
+  return {
+    name: 'clip-stacker-build-info-meta',
+    transformIndexHtml() {
+      return [
+        { tag: 'meta', attrs: { name: 'clip-stacker-build', content: BUILD_ID }, injectTo: 'head' },
+        { tag: 'meta', attrs: { name: 'clip-stacker-commit', content: COMMIT_SHA }, injectTo: 'head' },
+      ];
+    },
+  };
+}
+
 export default defineConfig({
   base: './',
   define: {
-    __CLIP_STACKER_BUILD_ID__: JSON.stringify(renderBuildId()),
+    __CLIP_STACKER_BUILD_ID__: JSON.stringify(BUILD_ID),
+    __CLIP_STACKER_COMMIT_SHA__: JSON.stringify(COMMIT_SHA),
   },
   plugins: [
     {
@@ -178,6 +207,7 @@ export default defineConfig({
     utf16JsMimePlugin(),
     wasmDebugPlugin(),
     cspMetaPlugin(),
+    buildInfoMetaPlugin(),
     cssCharsetPlugin(),
   ],
   build: {
