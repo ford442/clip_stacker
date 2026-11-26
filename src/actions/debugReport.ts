@@ -29,6 +29,7 @@ import { getColorDebugSnapshot, type ColorManagementSettings } from '../finishin
 import { getAudioPlaybackManager } from '../playback/playbackManager';
 import { WorkerCrashedError, getWorkerCrashLog } from '../workers/workerRpc';
 import { renderCacheStore } from '../store/renderCacheStore';
+import { BUILD_ID, COMMIT_SHA } from '../utils/buildId';
 
 export interface DebugReportContext {
   status: string;
@@ -94,6 +95,7 @@ export function generateDebugReport(ctx: DebugReportContext): string {
   lines.push('# clip_stacker Debug Report');
   lines.push('');
   lines.push(`**Generated:** ${now}`);
+  lines.push(`**Build:** ${BUILD_ID} (commit ${COMMIT_SHA})`);
   lines.push('');
 
   lines.push('## Environment');
