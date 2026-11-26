@@ -511,6 +511,7 @@ export function TimelineCompositorPreview({
 
       globalTimeRef.current = next;
       setPlayheadTime(next);
+      previewMetrics.recordRequestedFrame(Math.round(next * 30));
       requestRender(next);
       if (next >= totalDuration - 1e-3) {
         audioPlayback.pause();

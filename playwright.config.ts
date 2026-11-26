@@ -1,4 +1,5 @@
-import { defineConfig, devices } from '@playwright/test';
+import { chromium, defineConfig, devices } from '@playwright/test';
+import { swiftshaderLaunchEnv } from './scripts/cs/swiftshaderIcd.mjs';
 
 /**
  * Render regression harness (#346). Runs against the production build
@@ -28,6 +29,9 @@ export default defineConfig({
         launchOptions: {
           // CS_CHROMIUM: a local Chrome / Chromium instead of Playwright's download (as `cs` takes it).
           ...(process.env.CS_CHROMIUM ? { executablePath: process.env.CS_CHROMIUM } : {}),
+          // The Vulkan loader must find the browser's SwiftShader ICD, or ANGLE
+          // cannot start and every frame upload fails (scripts/cs/swiftshaderIcd.mjs).
+          env: swiftshaderLaunchEnv(process.env.CS_CHROMIUM, chromium.executablePath()),
           args: [
             '--enable-unsafe-webgpu',
             // ANGLE-on-Vulkan with SwiftShader Vulkan: the only combination

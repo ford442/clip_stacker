@@ -45,7 +45,9 @@ vi.mock("@ffmpeg/util", () => ({
 }));
 
 import {
+  aggressiveCleanupFFmpegVFS,
   ensureFfmpeg,
+  ensureFont,
   isFfmpegLoadFailed,
   resetFFmpegInstance,
 } from "./ffmpegService";
@@ -239,13 +241,17 @@ describe("FFmpeg loader", () => {
   });
 
   describe("multi-threaded / single-threaded variant selection", () => {
-    function mockIsolatedContext(isolated: boolean) {
+    /** Isolation, plus the `?ffmpeg_mt` opt-in the multi-threaded core needs (on by default here). */
+    function mockIsolatedContext(isolated: boolean, optInMt = true) {
       const orig = Object.getOwnPropertyDescriptor(globalThis, 'crossOriginIsolated');
       Object.defineProperty(globalThis, 'crossOriginIsolated', {
         configurable: true,
         get: () => isolated,
       });
+      const search = location.search;
+      history.replaceState(null, '', optInMt ? '?ffmpeg_mt' : '?');
       return () => {
+        history.replaceState(null, '', search || '?');
         if (orig) {
           Object.defineProperty(globalThis, 'crossOriginIsolated', orig);
         } else {
@@ -253,6 +259,17 @@ describe("FFmpeg loader", () => {
         }
       };
     }
+
+    it("loads single-threaded on an isolated page without ?ffmpeg_mt (core-mt traps in libx264)", async () => {
+      const restore = mockIsolatedContext(true, false);
+      try {
+        await ensureFfmpeg(vi.fn(), vi.fn());
+        const probed = mocked.fetch.mock.calls.map(([url]) => String(url));
+        expect(probed.some((url) => url.includes("core-mt"))).toBe(false);
+      } finally {
+        restore();
+      }
+    });
 
     it("loads single-threaded when not cross-origin isolated", async () => {
       const restore = mockIsolatedContext(false);
@@ -387,5 +404,25 @@ describe("FFmpeg loader", () => {
     expect(result).toBeInstanceOf(DirectFfmpegRuntime);
     expect((result as DirectFfmpegRuntime).underlying).toBe(second);
     expect(isFfmpegLoadFailed()).toBe(false);
+  });
+
+  it("re-writes a bundled font after the VFS sweep deleted it (drawtext 'Could not load font')", async () => {
+    const runtime = await ensureFfmpeg(vi.fn(), vi.fn());
+    const host = mocked.instances[0]!;
+    // A TrueType header is enough for the bundled-font check.
+    mocked.fetchFile.mockImplementation(async () => new Uint8Array([0, 1, 0, 0, 0, 0, 0, 0]));
+
+    await ensureFont(runtime, vi.fn(), "roboto.ttf");
+    expect(host.writeFile).toHaveBeenCalledTimes(1);
+
+    // The post-export sweep deletes every VFS file, the font included.
+    host.listDir.mockResolvedValue([{ name: "roboto.ttf", isDir: false }]);
+    await aggressiveCleanupFFmpegVFS();
+    expect(host.deleteFile).toHaveBeenCalledWith("roboto.ttf");
+
+    // The next text pass must write it again, not trust the stale mark.
+    await ensureFont(runtime, vi.fn(), "roboto.ttf");
+    expect(host.writeFile).toHaveBeenCalledTimes(2);
+    expect(host.writeFile.mock.calls[1]![0]).toBe("roboto.ttf");
   });
 });

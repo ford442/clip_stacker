@@ -403,6 +403,9 @@ export class FfmpegManager {
     try {
       onStatus?.('Cleaning up FFmpeg temporary files...');
       const files = await this.instance.listDir('/');
+      // The sweep deletes the bundled fonts too: forget them, or the next
+      // drawtext pass skips `ensureFont` and fails with "Could not load font".
+      this.resetFonts();
       for (const entry of files) {
         if (!entry.isDir) {
           try {

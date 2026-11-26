@@ -80,6 +80,7 @@ export async function openSession({ gpu = false, media = null, log = () => {}, h
   if (!existsSync(dist)) throw new Error('No production build: run `npm run build` first (cs serves dist/ like `npm run preview`).');
   const { preview } = await import('vite');
   const { chromium } = await import('@playwright/test');
+  const { swiftshaderLaunchEnv } = await import('./swiftshaderIcd.mjs');
   const server = await preview({
     root: REPO_ROOT,
     configFile: path.join(REPO_ROOT, 'vite.config.ts'),
@@ -98,6 +99,7 @@ export async function openSession({ gpu = false, media = null, log = () => {}, h
     headless: !headed,
     args: gpu ? GPU_ARGS : SWIFTSHADER_ARGS,
     ...(executablePath ? { executablePath } : {}),
+    ...(gpu ? {} : { env: swiftshaderLaunchEnv(executablePath, chromium.executablePath()) }),
   });
   const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
